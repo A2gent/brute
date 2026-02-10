@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/gratheon/aagent/internal/llm"
+	"github.com/gratheon/aagent/internal/logging"
 )
 
 // Tool defines the interface for executable tools
@@ -78,12 +80,16 @@ func (m *Manager) ExecuteParallel(ctx context.Context, calls []llm.ToolCall) []l
 	results := make([]llm.ToolResult, len(calls))
 	var wg sync.WaitGroup
 
+	logging.Debug("Executing %d tool(s) in parallel", len(calls))
+
 	for i, call := range calls {
 		wg.Add(1)
 		go func(idx int, tc llm.ToolCall) {
 			defer wg.Done()
 
+			start := time.Now()
 			result, err := m.Execute(ctx, tc.Name, json.RawMessage(tc.Input))
+			duration := time.Since(start)
 
 			tr := llm.ToolResult{
 				ToolCallID: tc.ID,
@@ -92,11 +98,16 @@ func (m *Manager) ExecuteParallel(ctx context.Context, calls []llm.ToolCall) []l
 			if err != nil {
 				tr.Content = fmt.Sprintf("Error: %v", err)
 				tr.IsError = true
+				logging.LogToolExecution(tc.Name, false, duration)
+				logging.Debug("Tool %s error: %v", tc.Name, err)
 			} else if !result.Success {
 				tr.Content = fmt.Sprintf("Error: %s", result.Error)
 				tr.IsError = true
+				logging.LogToolExecution(tc.Name, false, duration)
+				logging.Debug("Tool %s failed: %s", tc.Name, result.Error)
 			} else {
 				tr.Content = result.Output
+				logging.LogToolExecution(tc.Name, true, duration)
 			}
 
 			results[idx] = tr

@@ -75,6 +75,13 @@ var (
 
 	loadingStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#FFA500"))
+
+	sentStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00FF00")).
+			Bold(true)
+
+	receivedStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00AAFF"))
 )
 
 // Message types for the tea program
@@ -82,9 +89,11 @@ type (
 	tickMsg time.Time
 
 	agentResponseMsg struct {
-		content string
-		done    bool
-		err     error
+		content      string
+		done         bool
+		err          error
+		inputTokens  int
+		outputTokens int
 	}
 
 	tokenUpdateMsg struct {
@@ -243,6 +252,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.textarea.Reset()
 				m.viewport.SetContent(m.renderMessages())
 				m.viewport.GotoBottom()
+				// Start the agent in background
+				return m, m.runAgent(input)
 			}
 			return m, nil
 		}
@@ -254,6 +265,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, tickCmd())
 
 	case agentResponseMsg:
+		// Update token counts
+		m.totalInputTokens += msg.inputTokens
+		m.totalOutputTokens += msg.outputTokens
+
 		if msg.err != nil {
 			m.processing = false
 			m.messages = append(m.messages, message{
@@ -261,21 +276,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				content:   msg.err.Error(),
 				timestamp: time.Now(),
 			})
+			m.viewport.SetContent(m.renderMessages())
+			m.viewport.GotoBottom()
 		} else if msg.done {
 			m.processing = false
-		} else {
-			// Update existing assistant message or create new one
-			if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "assistant" {
-				m.messages[len(m.messages)-1].content = msg.content
-			} else {
+			// Add assistant response message
+			if msg.content != "" {
 				m.messages = append(m.messages, message{
 					role:      "assistant",
 					content:   msg.content,
 					timestamp: time.Now(),
 				})
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
 			}
-			m.viewport.SetContent(m.renderMessages())
-			m.viewport.GotoBottom()
 		}
 
 	case tokenUpdateMsg:
@@ -394,6 +408,7 @@ func (m Model) renderStatusLine() string {
 	if m.processing {
 		loading := loadingStyle.Render(m.loadingFrames[m.loadingIndex] + " Processing...")
 		parts = append(parts, loading)
+		parts = append(parts, "  ") // Add spacing
 	}
 
 	// Timer showing time since last user input
@@ -401,6 +416,9 @@ func (m Model) renderStatusLine() string {
 	timer := m.formatDuration(elapsed)
 	timerText := statsStyle.Render("⏱ " + timer)
 	parts = append(parts, timerText)
+
+	// Add separator between time and session
+	parts = append(parts, statsStyle.Render("  │  "))
 
 	// Session ID
 	sessionInfo := statsStyle.Render(fmt.Sprintf("Session: %s", m.session.ID[:8]))
@@ -442,12 +460,14 @@ func (m Model) renderMessage(msg message) string {
 	switch msg.role {
 	case "user":
 		header := userStyle.Render("You")
-		sb.WriteString(fmt.Sprintf("%s %s\n", timestamp, header))
+		indicator := sentStyle.Render(" ✓")
+		sb.WriteString(fmt.Sprintf("%s %s%s\n", timestamp, header, indicator))
 		sb.WriteString(msg.content)
 
 	case "assistant":
 		header := assistantStyle.Render("Assistant")
-		sb.WriteString(fmt.Sprintf("%s %s\n", timestamp, header))
+		indicator := receivedStyle.Render(" ⬇")
+		sb.WriteString(fmt.Sprintf("%s %s%s\n", timestamp, header, indicator))
 		sb.WriteString(msg.content)
 
 		// Render tool calls if any
@@ -498,15 +518,20 @@ func (m Model) handleUserInput(input string) Model {
 	return m
 }
 
-// RunAgent starts the agent loop (to be called after returning from Update)
-func (m Model) RunAgent() tea.Cmd {
+// runAgent starts the agent loop and returns a command
+func (m Model) runAgent(input string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
-		result, err := m.agent.Run(ctx, m.session, m.messages[len(m.messages)-1].content)
+		result, usage, err := m.agent.Run(ctx, m.session, input)
 		if err != nil {
 			return agentResponseMsg{err: err}
 		}
-		return agentResponseMsg{content: result, done: true}
+		return agentResponseMsg{
+			content:      result,
+			done:         true,
+			inputTokens:  usage.InputTokens,
+			outputTokens: usage.OutputTokens,
+		}
 	}
 }
 

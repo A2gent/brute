@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gratheon/aagent/internal/llm"
+	"github.com/gratheon/aagent/internal/logging"
 )
 
 const (
@@ -108,6 +109,13 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 		model = c.model
 	}
 
+	// Log request with last message content
+	lastMsg := ""
+	if len(request.Messages) > 0 {
+		lastMsg = request.Messages[len(request.Messages)-1].Content
+	}
+	logging.LogRequestWithContent(model, len(request.Messages), len(request.Tools) > 0, lastMsg)
+
 	// Convert messages
 	messages := make([]kimiMessage, 0, len(request.Messages)+1)
 
@@ -173,7 +181,9 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	if resp.StatusCode != http.StatusOK {
 		var errResp kimiError
 		json.Unmarshal(body, &errResp)
-		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, errResp.Error.Message)
+		err := fmt.Errorf("API error (%d): %s", resp.StatusCode, errResp.Error.Message)
+		logging.LogResponse(0, 0, 0, err)
+		return nil, err
 	}
 
 	var kimiResp kimiResponse
@@ -204,6 +214,13 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 			Input: tc.Function.Arguments,
 		})
 	}
+
+	// Log response with content and tool names
+	toolNames := make([]string, len(response.ToolCalls))
+	for i, tc := range response.ToolCalls {
+		toolNames[i] = tc.Name
+	}
+	logging.LogResponseWithContent(response.Usage.InputTokens, response.Usage.OutputTokens, len(response.ToolCalls), response.Content, toolNames)
 
 	return response, nil
 }

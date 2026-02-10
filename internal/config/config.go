@@ -41,7 +41,7 @@ func DefaultConfig() *Config {
 	workDir, _ := os.Getwd()
 
 	return &Config{
-		DefaultModel: "kimi-k2.5",
+		DefaultModel: "kimi-for-coding",
 		MaxSteps:     50,
 		Temperature:  0.0,
 		DataPath:     filepath.Join(homeDir, ".local", "share", "aagent"),

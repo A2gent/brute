@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gratheon/aagent/internal/llm"
+	"github.com/gratheon/aagent/internal/logging"
 )
 
 const (
@@ -31,6 +32,18 @@ func NewClient(apiKey, model string) *Client {
 	return &Client{
 		apiKey:  apiKey,
 		baseURL: defaultBaseURL,
+		model:   model,
+		httpClient: &http.Client{
+			Timeout: 5 * time.Minute,
+		},
+	}
+}
+
+// NewClientWithBaseURL creates a new Anthropic-compatible client with a custom base URL
+func NewClientWithBaseURL(apiKey, model, baseURL string) *Client {
+	return &Client{
+		apiKey:  apiKey,
+		baseURL: baseURL,
 		model:   model,
 		httpClient: &http.Client{
 			Timeout: 5 * time.Minute,
@@ -102,6 +115,13 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 		maxTokens = defaultMaxTokens
 	}
 
+	// Log request with last message content
+	lastMsg := ""
+	if len(request.Messages) > 0 {
+		lastMsg = request.Messages[len(request.Messages)-1].Content
+	}
+	logging.LogRequestWithContent(model, len(request.Messages), len(request.Tools) > 0, lastMsg)
+
 	// Convert messages
 	messages := make([]anthropicMessage, 0, len(request.Messages))
 	for _, msg := range request.Messages {
@@ -159,7 +179,10 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 			Error anthropicError `json:"error"`
 		}
 		json.Unmarshal(body, &errResp)
-		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, errResp.Error.Message)
+		err := fmt.Errorf("API error (%d): %s", resp.StatusCode, errResp.Error.Message)
+		logging.LogResponse(0, 0, 0, err)
+		logging.Debug("Response body: %s", string(body))
+		return nil, err
 	}
 
 	var anthroResp anthropicResponse
@@ -198,6 +221,13 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 			response.Content += "\n" + textParts[i]
 		}
 	}
+
+	// Log response with content and tool names
+	toolNames := make([]string, len(response.ToolCalls))
+	for i, tc := range response.ToolCalls {
+		toolNames[i] = tc.Name
+	}
+	logging.LogResponseWithContent(response.Usage.InputTokens, response.Usage.OutputTokens, len(response.ToolCalls), response.Content, toolNames)
 
 	return response, nil
 }

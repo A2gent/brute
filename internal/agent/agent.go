@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/gratheon/aagent/internal/llm"
+	"github.com/gratheon/aagent/internal/logging"
 	"github.com/gratheon/aagent/internal/session"
 	"github.com/gratheon/aagent/internal/tools"
 )
@@ -45,36 +46,43 @@ func New(config Config, llmClient llm.Client, toolManager *tools.Manager, sessio
 }
 
 // Run executes the agent with the given task
-func (a *Agent) Run(ctx context.Context, sess *session.Session, task string) (string, error) {
-	// Add user message
-	sess.AddUserMessage(task)
-
+// Returns the response content and total token usage
+func (a *Agent) Run(ctx context.Context, sess *session.Session, task string) (string, llm.TokenUsage, error) {
+	logging.Info("Agent run started: session=%s", sess.ID)
+	// Note: User message is already added by the TUI before calling Run
 	// Run the agentic loop
-	return a.loop(ctx, sess)
+	result, usage, err := a.loop(ctx, sess)
+	if err != nil {
+		logging.Error("Agent run failed: %v", err)
+	} else {
+		logging.Info("Agent run completed: total_input=%d total_output=%d", usage.InputTokens, usage.OutputTokens)
+	}
+	return result, usage, err
 }
 
 // loop implements the main agentic loop
-func (a *Agent) loop(ctx context.Context, sess *session.Session) (string, error) {
+// Returns the response content and total token usage
+func (a *Agent) loop(ctx context.Context, sess *session.Session) (string, llm.TokenUsage, error) {
 	step := 0
+	totalUsage := llm.TokenUsage{}
 
 	for {
 		// Check context
 		if ctx.Err() != nil {
 			sess.SetStatus(session.StatusPaused)
 			a.sessionManager.Save(sess)
-			return "", ctx.Err()
+			return "", totalUsage, ctx.Err()
 		}
 
 		// Check step limit
 		if step >= a.config.MaxSteps {
-			fmt.Printf("\n[Reached max steps limit (%d)]\n", a.config.MaxSteps)
 			sess.SetStatus(session.StatusCompleted)
 			a.sessionManager.Save(sess)
-			return a.getLastAssistantContent(sess), nil
+			return a.getLastAssistantContent(sess), totalUsage, nil
 		}
 
 		step++
-		fmt.Printf("\n[Step %d/%d]\n", step, a.config.MaxSteps)
+		logging.Debug("Agent step %d/%d", step, a.config.MaxSteps)
 
 		// Build chat request
 		request := a.buildRequest(sess)
@@ -84,15 +92,12 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session) (string, error)
 		if err != nil {
 			sess.SetStatus(session.StatusFailed)
 			a.sessionManager.Save(sess)
-			return "", fmt.Errorf("LLM error: %w", err)
+			return "", totalUsage, fmt.Errorf("LLM error: %w", err)
 		}
 
-		fmt.Printf("Tokens: %d in / %d out\n", response.Usage.InputTokens, response.Usage.OutputTokens)
-
-		// Print assistant content if any
-		if response.Content != "" {
-			fmt.Printf("\nAssistant: %s\n", response.Content)
-		}
+		// Accumulate token usage
+		totalUsage.InputTokens += response.Usage.InputTokens
+		totalUsage.OutputTokens += response.Usage.OutputTokens
 
 		// Check if we have tool calls
 		if len(response.ToolCalls) == 0 {
@@ -100,7 +105,7 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session) (string, error)
 			sess.AddAssistantMessage(response.Content, nil)
 			sess.SetStatus(session.StatusCompleted)
 			a.sessionManager.Save(sess)
-			return response.Content, nil
+			return response.Content, totalUsage, nil
 		}
 
 		// Convert tool calls for session storage
@@ -117,14 +122,9 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session) (string, error)
 		sess.AddAssistantMessage(response.Content, sessionToolCalls)
 
 		// Execute tools
-		fmt.Printf("\nExecuting %d tool(s)...\n", len(response.ToolCalls))
-		for _, tc := range response.ToolCalls {
-			fmt.Printf("  - %s\n", tc.Name)
-		}
-
 		toolResults := a.toolManager.ExecuteParallel(ctx, response.ToolCalls)
 
-		// Convert and print results
+		// Convert results
 		sessionResults := make([]session.ToolResult, len(toolResults))
 		for i, tr := range toolResults {
 			sessionResults[i] = session.ToolResult{
@@ -132,17 +132,6 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session) (string, error)
 				Content:    tr.Content,
 				IsError:    tr.IsError,
 			}
-
-			// Print abbreviated result
-			content := tr.Content
-			if len(content) > 500 {
-				content = content[:500] + "... (truncated)"
-			}
-			status := "ok"
-			if tr.IsError {
-				status = "error"
-			}
-			fmt.Printf("  [%s] %s: %s\n", response.ToolCalls[i].Name, status, content)
 		}
 
 		// Add tool results to session
@@ -150,7 +139,8 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session) (string, error)
 
 		// Save session after each step
 		if err := a.sessionManager.Save(sess); err != nil {
-			fmt.Printf("Warning: failed to save session: %v\n", err)
+			// Silently continue on save errors
+			_ = err
 		}
 	}
 }

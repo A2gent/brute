@@ -4,6 +4,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
@@ -143,6 +144,10 @@ type (
 		inputTokens  int
 		outputTokens int
 	}
+
+	memoryUpdateMsg struct {
+		memoryMB float64
+	}
 )
 
 // Model represents the TUI state
@@ -198,6 +203,9 @@ type Model struct {
 	showSessionsList  bool
 	sessionsListIndex int
 	availableSessions []*session.Session
+
+	// Memory tracking
+	memoryMB float64
 
 	// Error state
 	err error
@@ -267,6 +275,7 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		textarea.Blink,
 		tickCmd(),
+		updateMemoryCmd(),
 	)
 }
 
@@ -275,6 +284,17 @@ func tickCmd() tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
+}
+
+// updateMemoryCmd returns a command that reads current memory usage
+func updateMemoryCmd() tea.Cmd {
+	return func() tea.Msg {
+		var memStats runtime.MemStats
+		runtime.ReadMemStats(&memStats)
+		// Alloc is bytes of allocated heap objects
+		memoryMB := float64(memStats.Alloc) / 1024 / 1024
+		return memoryUpdateMsg{memoryMB: memoryMB}
+	}
 }
 
 // Update handles messages and updates the model
@@ -495,7 +515,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.processing {
 			m.loadingIndex = (m.loadingIndex + 1) % len(m.loadingFrames)
 		}
-		cmds = append(cmds, tickCmd())
+		cmds = append(cmds, tickCmd(), updateMemoryCmd())
+
+	case memoryUpdateMsg:
+		m.memoryMB = msg.memoryMB
 
 	case agentResponseMsg:
 		logging.Debug("TUI received agentResponseMsg: done=%v err=%v tokens=%d/%d", msg.done, msg.err != nil, msg.inputTokens, msg.outputTokens)
@@ -719,6 +742,9 @@ func (m Model) renderTopBar() string {
 		m.totalInputTokens, m.totalOutputTokens)
 	percentText := fmt.Sprintf("%.1f%%", contextPercent)
 
+	// Memory usage
+	memoryText := fmt.Sprintf("%.1fMB", m.memoryMB)
+
 	// Timer showing time since last user input
 	elapsed := time.Since(m.lastUserInputTime)
 	timer := m.formatDuration(elapsed)
@@ -726,10 +752,11 @@ func (m Model) renderTopBar() string {
 	// Session ID (truncated)
 	sessionID := m.session.ID[:8]
 
-	// Build right side: tokens | percent | time | session | status
-	rightSide := statsStyle.Render(fmt.Sprintf("%s │ %s │ ⏱%s │ %s ",
+	// Build right side: tokens | percent | memory | time | session | status
+	rightSide := statsStyle.Render(fmt.Sprintf("%s │ %s │ %s │ ⏱%s │ %s ",
 		tokenStyle.Render(tokenStats),
 		percentStyle.Render(percentText),
+		statsStyle.Render(memoryText),
 		timer,
 		sessionID,
 	)) + statusIcon

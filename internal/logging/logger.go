@@ -127,6 +127,11 @@ func logf(level Level, format string, args ...interface{}) {
 	timestamp := time.Now().Format("2006-01-02 15:04:05.000")
 	msg := fmt.Sprintf(format, args...)
 	defaultLogger.logger.Printf("[%s] [%s] %s", timestamp, level.String(), msg)
+
+	// Flush to disk immediately for real-time log viewing
+	if defaultLogger.file != nil {
+		defaultLogger.file.Sync()
+	}
 }
 
 // Debug logs a debug message

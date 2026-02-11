@@ -165,6 +165,10 @@ type Model struct {
 	loadingFrames     []string
 	loadingIndex      int
 
+	// Cancel support
+	cancelFunc    context.CancelFunc
+	cancelPending bool // true if user pressed Ctrl+C once while processing
+
 	// Error state
 	err error
 }
@@ -271,7 +275,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.Type {
-		case tea.KeyCtrlC, tea.KeyEsc:
+		case tea.KeyCtrlC:
+			if m.processing {
+				if m.cancelPending {
+					// Second Ctrl+C - force quit
+					if m.cancelFunc != nil {
+						m.cancelFunc()
+					}
+					if m.session != nil {
+						m.sessionManager.Save(m.session)
+					}
+					return m, tea.Quit
+				}
+				// First Ctrl+C while processing - cancel the agent
+				m.cancelPending = true
+				if m.cancelFunc != nil {
+					m.cancelFunc()
+					logging.Info("Agent cancelled by user")
+				}
+				// Show cancellation message
+				m.messages = append(m.messages, message{
+					role:      "error",
+					content:   "Cancelling... (press Ctrl+C again to force quit)",
+					timestamp: time.Now(),
+				})
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				return m, nil
+			}
+			// Not processing - quit immediately
+			if m.session != nil {
+				m.sessionManager.Save(m.session)
+			}
+			return m, tea.Quit
+
+		case tea.KeyEsc:
 			// Save session before quitting
 			if m.session != nil {
 				m.sessionManager.Save(m.session)
@@ -306,7 +344,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport.SetContent(m.renderMessages())
 				m.viewport.GotoBottom()
 				// Start the agent in background
-				return m, m.runAgent(input)
+				cmd, cancel := m.runAgent(input)
+				m.cancelFunc = cancel
+				m.cancelPending = false
+				return m, cmd
 			}
 			return m, nil
 		}
@@ -326,6 +367,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if msg.err != nil {
 			m.processing = false
+			m.cancelFunc = nil
+			m.cancelPending = false
 			m.messages = append(m.messages, message{
 				role:      "error",
 				content:   msg.err.Error(),
@@ -335,6 +378,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.GotoBottom()
 		} else if msg.done {
 			m.processing = false
+			m.cancelFunc = nil
+			m.cancelPending = false
 			logging.Debug("TUI: Agent done, processing=%v queuedMessages=%d", m.processing, len(m.queuedMessages))
 			// Add assistant response message
 			if msg.content != "" {
@@ -376,7 +421,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.processing = true
 				m.viewport.SetContent(m.renderMessages())
 				m.viewport.GotoBottom()
-				cmds = append(cmds, m.runAgent(nextInput))
+				cmd, cancel := m.runAgent(nextInput)
+				m.cancelFunc = cancel
+				m.cancelPending = false
+				cmds = append(cmds, cmd)
 			}
 		}
 
@@ -422,9 +470,15 @@ func (m Model) View() string {
 	inputView := m.textarea.View()
 
 	// Help text
+	var helpStr string
+	if m.processing {
+		helpStr = "ctrl+c: cancel • esc: quit • enter: queue message"
+	} else {
+		helpStr = "esc: quit • enter: send • alt+enter: new line"
+	}
 	helpText := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#666666")).
-		Render("esc: quit • enter: send • alt+enter: new line")
+		Render(helpStr)
 
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -683,11 +737,17 @@ func (m Model) handleUserInput(input string) Model {
 	return m
 }
 
-// runAgent starts the agent loop and returns a command
-func (m Model) runAgent(input string) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		result, usage, err := m.agent.Run(ctx, m.session, input)
+// runAgent starts the agent loop and returns a command along with the cancel function
+func (m Model) runAgent(input string) (tea.Cmd, context.CancelFunc) {
+	// Create a cancellable context
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Capture necessary fields for the goroutine
+	agent := m.agent
+	sess := m.session
+
+	cmd := func() tea.Msg {
+		result, usage, err := agent.Run(ctx, sess, input)
 		if err != nil {
 			return agentResponseMsg{err: err}
 		}
@@ -698,6 +758,8 @@ func (m Model) runAgent(input string) tea.Cmd {
 			outputTokens: usage.OutputTokens,
 		}
 	}
+
+	return cmd, cancel
 }
 
 // generateTitle generates a session title from the conversation

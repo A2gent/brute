@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/gratheon/aagent/internal/agent"
+	"github.com/gratheon/aagent/internal/commands"
 	"github.com/gratheon/aagent/internal/llm"
 	"github.com/gratheon/aagent/internal/logging"
 	"github.com/gratheon/aagent/internal/session"
@@ -101,6 +102,23 @@ var (
 				Background(lipgloss.Color("#2a2a2a")).
 				Foreground(lipgloss.Color("#888888")).
 				Padding(0, 1)
+
+	// Command menu styles
+	commandMenuStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("#7D56F4")).
+				Padding(0, 1)
+
+	commandItemStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#FFFFFF"))
+
+	commandSelectedStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color("#7D56F4")).
+				Foreground(lipgloss.Color("#FFFFFF")).
+				Bold(true)
+
+	commandDescStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#888888"))
 )
 
 // Message types for the tea program
@@ -139,6 +157,7 @@ type Model struct {
 	agent          *agent.Agent
 	toolManager    *tools.Manager
 	llmClient      llm.Client
+	agentConfig    agent.Config
 
 	// Display state
 	messages    []message
@@ -169,6 +188,17 @@ type Model struct {
 	cancelFunc    context.CancelFunc
 	cancelPending bool // true if user pressed Ctrl+C once while processing
 
+	// Command menu state
+	commandRegistry  *commands.Registry
+	showCommandMenu  bool
+	commandMenuIndex int
+	filteredCommands []commands.Command
+
+	// Sessions list view state
+	showSessionsList  bool
+	sessionsListIndex int
+	availableSessions []*session.Session
+
 	// Error state
 	err error
 }
@@ -191,12 +221,14 @@ func New(
 	initialTask string,
 ) Model {
 	ta := textarea.New()
-	ta.Placeholder = "Enter your task or message..."
+	ta.Placeholder = "Enter your task or message (type / for commands)..."
 	ta.SetWidth(80)
 	ta.SetHeight(3)
 	ta.Focus()
 	ta.CharLimit = 0 // Unlimited
 	ta.ShowLineNumbers = false
+
+	cmdRegistry := commands.NewRegistry()
 
 	m := Model{
 		textarea:          ta,
@@ -205,12 +237,15 @@ func New(
 		agent:             agent.New(agentConfig, llmClient, toolManager, sessionManager),
 		toolManager:       toolManager,
 		llmClient:         llmClient,
+		agentConfig:       agentConfig,
 		messages:          make([]message, 0),
 		taskSummary:       initialTask,
 		lastUserInputTime: time.Now(),
 		loadingFrames:     []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
 		loadingIndex:      0,
 		contextWindow:     128000, // kimi-k2.5 context window
+		commandRegistry:   cmdRegistry,
+		filteredCommands:  cmdRegistry.GetCommands(),
 	}
 
 	// Load existing messages from session
@@ -274,6 +309,92 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.SetContent(m.renderMessages())
 
 	case tea.KeyMsg:
+		// Handle sessions list view first
+		if m.showSessionsList {
+			switch msg.Type {
+			case tea.KeyEsc:
+				m.showSessionsList = false
+				m.viewport.SetContent(m.renderMessages())
+				return m, nil
+			case tea.KeyUp:
+				if m.sessionsListIndex > 0 {
+					m.sessionsListIndex--
+				}
+				return m, nil
+			case tea.KeyDown:
+				if m.sessionsListIndex < len(m.availableSessions)-1 {
+					m.sessionsListIndex++
+				}
+				return m, nil
+			case tea.KeyEnter:
+				if len(m.availableSessions) > 0 {
+					selectedSession := m.availableSessions[m.sessionsListIndex]
+					m = m.switchToSession(selectedSession.ID)
+					m.showSessionsList = false
+					m.viewport.SetContent(m.renderMessages())
+					m.viewport.GotoBottom()
+				}
+				return m, nil
+			}
+			return m, nil
+		}
+
+		// Handle command menu
+		if m.showCommandMenu {
+			switch msg.Type {
+			case tea.KeyEsc:
+				m.showCommandMenu = false
+				m.textarea.Reset()
+				return m, nil
+			case tea.KeyUp:
+				if m.commandMenuIndex > 0 {
+					m.commandMenuIndex--
+				}
+				return m, nil
+			case tea.KeyDown:
+				if m.commandMenuIndex < len(m.filteredCommands)-1 {
+					m.commandMenuIndex++
+				}
+				return m, nil
+			case tea.KeyEnter, tea.KeyTab:
+				if len(m.filteredCommands) > 0 {
+					selectedCmd := m.filteredCommands[m.commandMenuIndex]
+					m.showCommandMenu = false
+					m.textarea.Reset()
+					return m.executeCommand(selectedCmd.Name)
+				}
+				return m, nil
+			case tea.KeyBackspace:
+				input := m.textarea.Value()
+				if input == "/" || input == "" {
+					m.showCommandMenu = false
+					m.textarea.Reset()
+					return m, nil
+				}
+				// Let textarea handle backspace, then update filter
+				m.textarea, taCmd = m.textarea.Update(msg)
+				newInput := m.textarea.Value()
+				if strings.HasPrefix(newInput, "/") {
+					m.filteredCommands = m.commandRegistry.FilterCommands(newInput[1:])
+					m.commandMenuIndex = 0
+				} else {
+					m.showCommandMenu = false
+				}
+				return m, taCmd
+			default:
+				// Update textarea and filter commands
+				m.textarea, taCmd = m.textarea.Update(msg)
+				input := m.textarea.Value()
+				if strings.HasPrefix(input, "/") {
+					m.filteredCommands = m.commandRegistry.FilterCommands(input[1:])
+					m.commandMenuIndex = 0
+				} else {
+					m.showCommandMenu = false
+				}
+				return m, taCmd
+			}
+		}
+
 		switch msg.Type {
 		case tea.KeyCtrlC:
 			if m.processing {
@@ -324,6 +445,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			input := m.textarea.Value()
 			if strings.TrimSpace(input) != "" {
+				// Check if it's a command
+				if strings.HasPrefix(input, "/") {
+					cmdName := strings.TrimPrefix(input, "/")
+					cmdName = strings.TrimSpace(cmdName)
+					if cmd := m.commandRegistry.FindCommand(cmdName); cmd != nil {
+						m.textarea.Reset()
+						return m.executeCommand(cmd.Name)
+					}
+				}
+
 				m.textarea.Reset()
 
 				if m.processing {
@@ -350,6 +481,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 			return m, nil
+
+		case tea.KeyRunes:
+			// Check if user is typing a slash to show command menu
+			if len(msg.Runes) > 0 && msg.Runes[0] == '/' && m.textarea.Value() == "" {
+				m.showCommandMenu = true
+				m.commandMenuIndex = 0
+				m.filteredCommands = m.commandRegistry.GetCommands()
+			}
 		}
 
 	case tickMsg:
@@ -463,18 +602,37 @@ func (m Model) View() string {
 	// Messages viewport
 	messagesView := m.viewport.View()
 
+	// Check if we should show sessions list overlay
+	if m.showSessionsList {
+		sessionsView := m.renderSessionsList()
+		// Center the sessions list
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
+			topBar,
+			sessionsView,
+		)
+	}
+
 	// Separator line above input
 	separator := m.renderSeparator()
+
+	// Command menu (rendered above input if active)
+	var commandMenu string
+	if m.showCommandMenu {
+		commandMenu = m.renderCommandMenu() + "\n"
+	}
 
 	// Input area
 	inputView := m.textarea.View()
 
 	// Help text
 	var helpStr string
-	if m.processing {
-		helpStr = "ctrl+c: cancel • esc: quit • enter: queue message"
+	if m.showCommandMenu {
+		helpStr = "↑↓: navigate • enter/tab: select • esc: cancel"
+	} else if m.processing {
+		helpStr = "ctrl+c: cancel • esc: quit • enter: queue message • /: commands"
 	} else {
-		helpStr = "esc: quit • enter: send • alt+enter: new line"
+		helpStr = "esc: quit • enter: send • alt+enter: new line • /: commands"
 	}
 	helpText := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#666666")).
@@ -485,7 +643,7 @@ func (m Model) View() string {
 		topBar,
 		messagesView,
 		separator,
-		inputView,
+		commandMenu+inputView,
 		helpText,
 	)
 }
@@ -714,6 +872,15 @@ func (m Model) renderMessage(msg message) string {
 		wrapped := wrapText(msg.content, wrapWidth-2)
 		content := queuedContentStyle.Width(wrapWidth).Render(wrapped)
 		sb.WriteString(content)
+
+	case "system":
+		header := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#7D56F4")).
+			Render("System")
+		sb.WriteString(fmt.Sprintf("%s %s\n", timestamp, header))
+		wrapped := wrapText(msg.content, wrapWidth)
+		sb.WriteString(wrapped)
 	}
 
 	return sb.String()
@@ -826,4 +993,254 @@ func (m *Model) SetSize(width, height int) {
 		}
 		m.viewport.Height = viewportHeight
 	}
+}
+
+// executeCommand executes a slash command and returns the updated model
+func (m Model) executeCommand(cmdName string) (tea.Model, tea.Cmd) {
+	switch cmdName {
+	case "new":
+		return m.createNewSession()
+	case "sessions":
+		return m.showSessions()
+	case "clear":
+		return m.clearConversation()
+	case "help":
+		return m.showHelp()
+	default:
+		m.messages = append(m.messages, message{
+			role:      "error",
+			content:   fmt.Sprintf("Unknown command: /%s", cmdName),
+			timestamp: time.Now(),
+		})
+		m.viewport.SetContent(m.renderMessages())
+		return m, nil
+	}
+}
+
+// createNewSession creates a new session
+func (m Model) createNewSession() (tea.Model, tea.Cmd) {
+	// Save current session
+	if m.session != nil {
+		m.sessionManager.Save(m.session)
+	}
+
+	// Create new session
+	newSess, err := m.sessionManager.Create(m.agentConfig.Name)
+	if err != nil {
+		m.messages = append(m.messages, message{
+			role:      "error",
+			content:   fmt.Sprintf("Failed to create new session: %v", err),
+			timestamp: time.Now(),
+		})
+		m.viewport.SetContent(m.renderMessages())
+		return m, nil
+	}
+
+	// Reset model state for new session
+	m.session = newSess
+	m.agent = agent.New(m.agentConfig, m.llmClient, m.toolManager, m.sessionManager)
+	m.messages = make([]message, 0)
+	m.taskSummary = ""
+	m.totalInputTokens = 0
+	m.totalOutputTokens = 0
+	m.interactionCount = 0
+	m.titleGenerated = false
+	m.queuedMessages = nil
+	m.lastUserInputTime = time.Now()
+
+	// Show confirmation
+	m.messages = append(m.messages, message{
+		role:      "system",
+		content:   fmt.Sprintf("Started new session: %s", newSess.ID[:8]),
+		timestamp: time.Now(),
+	})
+	m.viewport.SetContent(m.renderMessages())
+	m.viewport.GotoBottom()
+
+	logging.Info("Created new session: %s", newSess.ID)
+	return m, nil
+}
+
+// showSessions shows the sessions list
+func (m Model) showSessions() (tea.Model, tea.Cmd) {
+	sessions, err := m.sessionManager.List()
+	if err != nil {
+		m.messages = append(m.messages, message{
+			role:      "error",
+			content:   fmt.Sprintf("Failed to list sessions: %v", err),
+			timestamp: time.Now(),
+		})
+		m.viewport.SetContent(m.renderMessages())
+		return m, nil
+	}
+
+	m.availableSessions = sessions
+	m.sessionsListIndex = 0
+	m.showSessionsList = true
+
+	// Find current session in list
+	for i, s := range sessions {
+		if s.ID == m.session.ID {
+			m.sessionsListIndex = i
+			break
+		}
+	}
+
+	return m, nil
+}
+
+// switchToSession switches to a different session
+func (m Model) switchToSession(sessionID string) Model {
+	// Save current session
+	if m.session != nil {
+		m.sessionManager.Save(m.session)
+	}
+
+	// Load the new session
+	newSess, err := m.sessionManager.Get(sessionID)
+	if err != nil {
+		m.messages = append(m.messages, message{
+			role:      "error",
+			content:   fmt.Sprintf("Failed to load session: %v", err),
+			timestamp: time.Now(),
+		})
+		return m
+	}
+
+	// Update model with new session
+	m.session = newSess
+	m.agent = agent.New(m.agentConfig, m.llmClient, m.toolManager, m.sessionManager)
+	m.taskSummary = newSess.Title
+	m.totalInputTokens = 0
+	m.totalOutputTokens = 0
+	m.interactionCount = len(newSess.Messages) / 2 // Rough estimate
+	m.titleGenerated = newSess.Title != ""
+	m.queuedMessages = nil
+	m.lastUserInputTime = time.Now()
+
+	// Load messages from session
+	m.messages = make([]message, 0, len(newSess.Messages))
+	for _, msg := range newSess.Messages {
+		m.messages = append(m.messages, message{
+			role:        msg.Role,
+			content:     msg.Content,
+			timestamp:   msg.Timestamp,
+			toolCalls:   msg.ToolCalls,
+			toolResults: msg.ToolResults,
+		})
+	}
+
+	logging.Info("Switched to session: %s", sessionID)
+	return m
+}
+
+// clearConversation clears the current conversation
+func (m Model) clearConversation() (tea.Model, tea.Cmd) {
+	m.messages = make([]message, 0)
+	m.session.Messages = nil
+	m.totalInputTokens = 0
+	m.totalOutputTokens = 0
+	m.interactionCount = 0
+	m.titleGenerated = false
+	m.queuedMessages = nil
+	m.sessionManager.Save(m.session)
+
+	m.messages = append(m.messages, message{
+		role:      "system",
+		content:   "Conversation cleared",
+		timestamp: time.Now(),
+	})
+	m.viewport.SetContent(m.renderMessages())
+	m.viewport.GotoBottom()
+
+	return m, nil
+}
+
+// showHelp shows available commands
+func (m Model) showHelp() (tea.Model, tea.Cmd) {
+	var helpText strings.Builder
+	helpText.WriteString("Available commands:\n")
+	for _, cmd := range m.commandRegistry.GetCommands() {
+		aliases := ""
+		if len(cmd.Aliases) > 0 {
+			aliases = fmt.Sprintf(" (aliases: /%s)", strings.Join(cmd.Aliases, ", /"))
+		}
+		helpText.WriteString(fmt.Sprintf("  /%s - %s%s\n", cmd.Name, cmd.Description, aliases))
+	}
+
+	m.messages = append(m.messages, message{
+		role:      "system",
+		content:   helpText.String(),
+		timestamp: time.Now(),
+	})
+	m.viewport.SetContent(m.renderMessages())
+	m.viewport.GotoBottom()
+
+	return m, nil
+}
+
+// renderCommandMenu renders the command menu popup
+func (m Model) renderCommandMenu() string {
+	if !m.showCommandMenu || len(m.filteredCommands) == 0 {
+		return ""
+	}
+
+	var items []string
+	for i, cmd := range m.filteredCommands {
+		item := fmt.Sprintf("/%s", cmd.Name)
+		desc := commandDescStyle.Render(fmt.Sprintf(" - %s", cmd.Description))
+
+		if i == m.commandMenuIndex {
+			item = commandSelectedStyle.Render(item)
+		} else {
+			item = commandItemStyle.Render(item)
+		}
+		items = append(items, item+desc)
+	}
+
+	content := strings.Join(items, "\n")
+	return commandMenuStyle.Render(content)
+}
+
+// renderSessionsList renders the sessions list popup
+func (m Model) renderSessionsList() string {
+	if !m.showSessionsList || len(m.availableSessions) == 0 {
+		return ""
+	}
+
+	var items []string
+	items = append(items, lipgloss.NewStyle().Bold(true).Render("Sessions (Enter to switch, Esc to cancel):"))
+	items = append(items, "")
+
+	for i, sess := range m.availableSessions {
+		title := sess.Title
+		if title == "" {
+			title = "(no title)"
+		}
+		if len(title) > 40 {
+			title = title[:37] + "..."
+		}
+
+		current := ""
+		if sess.ID == m.session.ID {
+			current = " (current)"
+		}
+
+		item := fmt.Sprintf("%s  %s  %s%s",
+			sess.ID[:8],
+			sess.CreatedAt.Format("01/02 15:04"),
+			title,
+			current,
+		)
+
+		if i == m.sessionsListIndex {
+			item = commandSelectedStyle.Render(item)
+		} else {
+			item = commandItemStyle.Render(item)
+		}
+		items = append(items, item)
+	}
+
+	content := strings.Join(items, "\n")
+	return commandMenuStyle.Width(m.width - 4).Render(content)
 }

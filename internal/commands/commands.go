@@ -28,6 +28,16 @@ func NewRegistry() *Registry {
 				Aliases:     []string{"s", "list"},
 			},
 			{
+				Name:        "provider",
+				Description: "Switch LLM provider",
+				Aliases:     []string{"p"},
+			},
+			{
+				Name:        "models",
+				Description: "Select model for current provider",
+				Aliases:     []string{"m"},
+			},
+			{
 				Name:        "clear",
 				Description: "Clear current conversation",
 				Aliases:     []string{"c"},

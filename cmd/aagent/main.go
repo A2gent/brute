@@ -16,6 +16,7 @@ import (
 	httpserver "github.com/gratheon/aagent/internal/http"
 	"github.com/gratheon/aagent/internal/llm"
 	"github.com/gratheon/aagent/internal/llm/anthropic"
+	"github.com/gratheon/aagent/internal/llm/lmstudio"
 	"github.com/gratheon/aagent/internal/logging"
 	"github.com/gratheon/aagent/internal/session"
 	"github.com/gratheon/aagent/internal/storage"
@@ -106,16 +107,6 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 		cfg.DefaultModel = modelFlag
 	}
 
-	// Get API key (support both KIMI_API_KEY and ANTHROPIC_API_KEY)
-	apiKey := os.Getenv("KIMI_API_KEY")
-	if apiKey == "" {
-		apiKey = os.Getenv("ANTHROPIC_API_KEY")
-	}
-	if apiKey == "" {
-		logging.Error("KIMI_API_KEY or ANTHROPIC_API_KEY not set")
-		return fmt.Errorf("KIMI_API_KEY or ANTHROPIC_API_KEY environment variable is required")
-	}
-
 	// Initialize storage
 	store, err := storage.NewSQLiteStore(cfg.DataPath)
 	if err != nil {
@@ -123,14 +114,14 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 	}
 	defer store.Close()
 
-	// Initialize LLM client
-	var llmClient llm.Client
-	baseURL := os.Getenv("ANTHROPIC_BASE_URL")
-	if baseURL == "" {
-		baseURL = "https://api.kimi.com/coding/v1" // Default to Kimi Code API
+	// Initialize LLM client based on config
+	llmClient, err := initLLMClient(cfg)
+	if err != nil {
+		// Don't fail - allow user to configure provider via /provider command
+		logging.Warn("LLM client initialization failed: %v (use /provider to configure)", err)
+		// Create a placeholder client that will be replaced when provider is configured
+		llmClient = anthropic.NewClientWithBaseURL("", cfg.DefaultModel, "https://api.kimi.com/coding/v1")
 	}
-	logging.Info("Using LLM API: %s model=%s", baseURL, cfg.DefaultModel)
-	llmClient = anthropic.NewClientWithBaseURL(apiKey, cfg.DefaultModel, baseURL)
 
 	// Initialize tool manager
 	toolManager := tools.NewManager(cfg.WorkDir)
@@ -184,18 +175,19 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create TUI model
-	model := tui.New(
+	tuiModel := tui.New(
 		sess,
 		sessionManager,
 		agentConfig,
 		llmClient,
 		toolManager,
 		initialTask,
+		cfg,
 	)
 
 	// Run the TUI
 	p := tea.NewProgram(
-		model,
+		tuiModel,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)
@@ -304,18 +296,19 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create TUI model
-	model := tui.New(
+	tuiModel := tui.New(
 		sess,
 		sessionManager,
 		agentConfig,
 		llmClient,
 		toolManager,
 		initialTask,
+		cfg,
 	)
 
 	// Run the TUI
 	p := tea.NewProgram(
-		model,
+		tuiModel,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)
@@ -496,4 +489,64 @@ func listSessions(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// initLLMClient initializes the LLM client based on config and environment
+func initLLMClient(cfg *config.Config) (llm.Client, error) {
+	providerType := config.ProviderType(cfg.ActiveProvider)
+	providerDef := config.GetProviderDefinition(providerType)
+	if providerDef == nil {
+		providerDef = config.GetProviderDefinition(config.ProviderKimi) // Default to Kimi
+	}
+
+	// Check for saved provider config
+	provider := cfg.GetActiveProvider()
+
+	// Get API key from config or environment
+	apiKey := ""
+	if provider != nil && provider.APIKey != "" {
+		apiKey = provider.APIKey
+	} else {
+		// Fall back to environment variables
+		switch providerType {
+		case config.ProviderKimi:
+			apiKey = os.Getenv("KIMI_API_KEY")
+		case config.ProviderAnthropic:
+			apiKey = os.Getenv("ANTHROPIC_API_KEY")
+		default:
+			apiKey = os.Getenv("KIMI_API_KEY")
+			if apiKey == "" {
+				apiKey = os.Getenv("ANTHROPIC_API_KEY")
+			}
+		}
+	}
+
+	// Get base URL
+	baseURL := providerDef.DefaultURL
+	if provider != nil && provider.BaseURL != "" {
+		baseURL = provider.BaseURL
+	}
+	if envURL := os.Getenv("ANTHROPIC_BASE_URL"); envURL != "" {
+		baseURL = envURL
+	}
+
+	// Get model
+	model := cfg.DefaultModel
+	if provider != nil && provider.Model != "" {
+		model = provider.Model
+	}
+
+	logging.Info("Using LLM provider: %s API: %s model=%s", cfg.ActiveProvider, baseURL, model)
+
+	// Create appropriate client
+	switch providerType {
+	case config.ProviderLMStudio:
+		return lmstudio.NewClient(apiKey, model, baseURL), nil
+	default:
+		// Anthropic-compatible providers (Kimi, Anthropic)
+		if providerDef.RequiresKey && apiKey == "" {
+			return nil, fmt.Errorf("API key required for %s (set %s_API_KEY or use /provider)", providerDef.DisplayName, strings.ToUpper(string(providerType)))
+		}
+		return anthropic.NewClientWithBaseURL(apiKey, model, baseURL), nil
+	}
 }

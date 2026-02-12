@@ -8,20 +8,82 @@ import (
 
 // Config holds the application configuration
 type Config struct {
-	DefaultModel string              `json:"default_model"`
-	MaxSteps     int                 `json:"max_steps"`
-	Temperature  float64             `json:"temperature"`
-	DataPath     string              `json:"data_path"`
-	WorkDir      string              `json:"work_dir"`
-	Providers    map[string]Provider `json:"providers"`
-	Tools        ToolsConfig         `json:"tools"`
+	DefaultModel   string              `json:"default_model"`
+	ActiveProvider string              `json:"active_provider"` // Provider type: "kimi", "lmstudio", "anthropic"
+	MaxSteps       int                 `json:"max_steps"`
+	Temperature    float64             `json:"temperature"`
+	DataPath       string              `json:"data_path"`
+	WorkDir        string              `json:"work_dir"`
+	Providers      map[string]Provider `json:"providers"`
+	Tools          ToolsConfig         `json:"tools"`
 }
 
 // Provider configuration for LLM providers
 type Provider struct {
-	APIKey  string `json:"api_key"`
-	BaseURL string `json:"base_url"`
-	Model   string `json:"model"`
+	Name          string `json:"name"`
+	APIKey        string `json:"api_key"`
+	BaseURL       string `json:"base_url"`
+	Model         string `json:"model"`
+	ContextWindow int    `json:"context_window,omitempty"` // in tokens
+}
+
+// ProviderType identifies the type of provider
+type ProviderType string
+
+const (
+	ProviderKimi      ProviderType = "kimi"
+	ProviderLMStudio  ProviderType = "lmstudio"
+	ProviderAnthropic ProviderType = "anthropic"
+)
+
+// ProviderDefinition describes a supported provider
+type ProviderDefinition struct {
+	Type          ProviderType
+	DisplayName   string
+	DefaultURL    string
+	RequiresKey   bool
+	DefaultModel  string
+	ContextWindow int
+}
+
+// SupportedProviders returns all supported provider definitions
+func SupportedProviders() []ProviderDefinition {
+	return []ProviderDefinition{
+		{
+			Type:          ProviderKimi,
+			DisplayName:   "Kimi (Moonshot AI)",
+			DefaultURL:    "https://api.kimi.com/coding/v1",
+			RequiresKey:   true,
+			DefaultModel:  "kimi-k2.5",
+			ContextWindow: 131072,
+		},
+		{
+			Type:          ProviderLMStudio,
+			DisplayName:   "LM Studio (Local)",
+			DefaultURL:    "http://localhost:1234/v1",
+			RequiresKey:   false,
+			DefaultModel:  "",
+			ContextWindow: 32768,
+		},
+		{
+			Type:          ProviderAnthropic,
+			DisplayName:   "Anthropic Claude",
+			DefaultURL:    "https://api.anthropic.com/v1",
+			RequiresKey:   true,
+			DefaultModel:  "claude-sonnet-4-20250514",
+			ContextWindow: 200000,
+		},
+	}
+}
+
+// GetProviderDefinition returns the definition for a provider type
+func GetProviderDefinition(ptype ProviderType) *ProviderDefinition {
+	for _, p := range SupportedProviders() {
+		if p.Type == ptype {
+			return &p
+		}
+	}
+	return nil
 }
 
 // ToolsConfig configures tool permissions
@@ -41,12 +103,13 @@ func DefaultConfig() *Config {
 	workDir, _ := os.Getwd()
 
 	return &Config{
-		DefaultModel: "kimi-for-coding",
-		MaxSteps:     50,
-		Temperature:  0.0,
-		DataPath:     filepath.Join(homeDir, ".local", "share", "aagent"),
-		WorkDir:      workDir,
-		Providers:    make(map[string]Provider),
+		DefaultModel:   "kimi-k2.5",
+		ActiveProvider: string(ProviderKimi),
+		MaxSteps:       50,
+		Temperature:    0.0,
+		DataPath:       filepath.Join(homeDir, ".local", "share", "aagent"),
+		WorkDir:        workDir,
+		Providers:      make(map[string]Provider),
 		Tools: ToolsConfig{
 			Bash:  "allow",
 			Read:  "allow",
@@ -57,6 +120,26 @@ func DefaultConfig() *Config {
 			Task:  "allow",
 		},
 	}
+}
+
+// GetActiveProvider returns the configuration for the currently active provider
+func (c *Config) GetActiveProvider() *Provider {
+	if p, ok := c.Providers[c.ActiveProvider]; ok {
+		return &p
+	}
+	return nil
+}
+
+// SetProvider sets or updates a provider configuration
+func (c *Config) SetProvider(ptype ProviderType, provider Provider) {
+	provider.Name = string(ptype)
+	c.Providers[string(ptype)] = provider
+}
+
+// GetConfigPath returns the path where config should be saved
+func GetConfigPath() string {
+	homeDir, _ := os.UserHomeDir()
+	return filepath.Join(homeDir, ".config", "aagent", "config.json")
 }
 
 // Load loads configuration from file and environment

@@ -16,7 +16,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/gratheon/aagent/internal/agent"
 	"github.com/gratheon/aagent/internal/commands"
+	"github.com/gratheon/aagent/internal/config"
 	"github.com/gratheon/aagent/internal/llm"
+	"github.com/gratheon/aagent/internal/llm/anthropic"
+	"github.com/gratheon/aagent/internal/llm/lmstudio"
 	"github.com/gratheon/aagent/internal/logging"
 	"github.com/gratheon/aagent/internal/session"
 	"github.com/gratheon/aagent/internal/tools"
@@ -461,6 +464,21 @@ type Model struct {
 	sessionsListIndex int
 	availableSessions []*session.Session
 
+	// Provider selection state
+	showProviderMenu     bool
+	providerMenuIndex    int
+	providerMenuStep     int    // 0=select provider, 1=enter API key, 2=enter URL
+	providerInput        string // For API key or URL input
+	selectedProviderType string
+
+	// Models selection state
+	showModelsMenu  bool
+	modelsMenuIndex int
+	availableModels []string
+
+	// Config reference for persistence
+	appConfig *config.Config
+
 	// Memory tracking
 	memoryMB float64
 
@@ -487,6 +505,7 @@ func New(
 	llmClient llm.Client,
 	toolManager *tools.Manager,
 	initialTask string,
+	appConfig *config.Config,
 ) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Enter your task or message (type / for commands)..."
@@ -497,6 +516,14 @@ func New(
 	ta.ShowLineNumbers = false
 
 	cmdRegistry := commands.NewRegistry()
+
+	// Determine context window from config
+	contextWindow := 128000 // default
+	if appConfig != nil {
+		if def := config.GetProviderDefinition(config.ProviderType(appConfig.ActiveProvider)); def != nil {
+			contextWindow = def.ContextWindow
+		}
+	}
 
 	m := Model{
 		textarea:          ta,
@@ -511,9 +538,10 @@ func New(
 		lastUserInputTime: time.Now(),
 		loadingFrames:     []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
 		loadingIndex:      0,
-		contextWindow:     128000, // kimi-k2.5 context window
+		contextWindow:     contextWindow,
 		commandRegistry:   cmdRegistry,
 		filteredCommands:  cmdRegistry.GetCommands(),
+		appConfig:         appConfig,
 	}
 
 	// Load existing messages from session
@@ -625,6 +653,94 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.showSessionsList = false
 					m.viewport.SetContent(m.renderMessages())
 					m.viewport.GotoBottom()
+				}
+				return m, nil
+			}
+			return m, nil
+		}
+
+		// Handle provider menu
+		if m.showProviderMenu {
+			switch m.providerMenuStep {
+			case 0:
+				// Provider selection
+				switch msg.Type {
+				case tea.KeyEsc:
+					m.showProviderMenu = false
+					m.viewport.SetContent(m.renderMessages())
+					return m, nil
+				case tea.KeyUp:
+					if m.providerMenuIndex > 0 {
+						m.providerMenuIndex--
+					}
+					return m, nil
+				case tea.KeyDown:
+					providers := config.SupportedProviders()
+					if m.providerMenuIndex < len(providers)-1 {
+						m.providerMenuIndex++
+					}
+					return m, nil
+				case tea.KeyEnter:
+					providers := config.SupportedProviders()
+					if m.providerMenuIndex < len(providers) {
+						selectedProvider := providers[m.providerMenuIndex]
+						return m.selectProvider(selectedProvider.Type)
+					}
+					return m, nil
+				}
+			case 1, 2:
+				// API key or URL input
+				switch msg.Type {
+				case tea.KeyEsc:
+					m.showProviderMenu = false
+					m.providerMenuStep = 0
+					m.providerInput = ""
+					m.viewport.SetContent(m.renderMessages())
+					return m, nil
+				case tea.KeyEnter:
+					if m.providerInput != "" {
+						return m.saveProviderCredentials()
+					}
+					return m, nil
+				case tea.KeyBackspace:
+					if len(m.providerInput) > 0 {
+						m.providerInput = m.providerInput[:len(m.providerInput)-1]
+					}
+					return m, nil
+				case tea.KeyRunes:
+					// Handle character input
+					m.providerInput += string(msg.Runes)
+					return m, nil
+				case tea.KeySpace:
+					// Handle space character
+					m.providerInput += " "
+					return m, nil
+				}
+				return m, nil
+			}
+			return m, nil
+		}
+
+		// Handle models menu
+		if m.showModelsMenu {
+			switch msg.Type {
+			case tea.KeyEsc:
+				m.showModelsMenu = false
+				m.viewport.SetContent(m.renderMessages())
+				return m, nil
+			case tea.KeyUp:
+				if m.modelsMenuIndex > 0 {
+					m.modelsMenuIndex--
+				}
+				return m, nil
+			case tea.KeyDown:
+				if m.modelsMenuIndex < len(m.availableModels)-1 {
+					m.modelsMenuIndex++
+				}
+				return m, nil
+			case tea.KeyEnter:
+				if len(m.availableModels) > 0 && m.modelsMenuIndex < len(m.availableModels) {
+					return m.selectModel(m.availableModels[m.modelsMenuIndex])
 				}
 				return m, nil
 			}
@@ -935,6 +1051,26 @@ func (m Model) View() string {
 		)
 	}
 
+	// Check if we should show provider menu overlay
+	if m.showProviderMenu {
+		providerView := m.renderProviderMenu()
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
+			topBar,
+			providerView,
+		)
+	}
+
+	// Check if we should show models menu overlay
+	if m.showModelsMenu {
+		modelsView := m.renderModelsMenu()
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
+			topBar,
+			modelsView,
+		)
+	}
+
 	// Separator line above input
 	separator := m.renderSeparator()
 
@@ -1008,7 +1144,9 @@ func (m Model) renderTopBar() string {
 	if len(summary) > maxSummaryLen {
 		summary = summary[:maxSummaryLen-3] + "..."
 	}
-	taskText := taskStyle.Render(summary)
+	// Session ID (truncated) shown next to session name
+	sessionID := m.session.ID[:8]
+	taskText := taskStyle.Render(summary) + statsStyle.Render(" ["+sessionID+"]")
 
 	// Status indicator
 	var statusIcon string
@@ -1048,16 +1186,12 @@ func (m Model) renderTopBar() string {
 	elapsed := time.Since(m.lastUserInputTime)
 	timer := m.formatDuration(elapsed)
 
-	// Session ID (truncated)
-	sessionID := m.session.ID[:8]
-
-	// Build right side: tokens | percent | memory | time | session | status
-	rightSide := statsStyle.Render(fmt.Sprintf("%s │ %s │ %s │ ⏱%s │ %s ",
+	// Build right side: tokens | percent | memory | time | status
+	rightSide := statsStyle.Render(fmt.Sprintf("%s │ %s │ %s │ ⏱ %s ",
 		tokenStyle.Render(tokenStats),
 		percentStyle.Render(percentText),
 		statsStyle.Render(memoryText),
 		timer,
-		sessionID,
 	)) + statusIcon
 
 	// Calculate space between
@@ -1392,6 +1526,10 @@ func (m Model) executeCommand(cmdName string) (tea.Model, tea.Cmd) {
 		return m.createNewSession()
 	case "sessions":
 		return m.showSessions()
+	case "provider":
+		return m.showProviderSelection()
+	case "models":
+		return m.showModelsSelection()
 	case "clear":
 		return m.clearConversation()
 	case "help":
@@ -1624,6 +1762,403 @@ func (m Model) renderSessionsList() string {
 		)
 
 		if i == m.sessionsListIndex {
+			item = commandSelectedStyle.Render(item)
+		} else {
+			item = commandItemStyle.Render(item)
+		}
+		items = append(items, item)
+	}
+
+	content := strings.Join(items, "\n")
+	return commandMenuStyle.Width(m.width - 4).Render(content)
+}
+
+// showProviderSelection shows the provider selection menu
+func (m Model) showProviderSelection() (tea.Model, tea.Cmd) {
+	m.showProviderMenu = true
+	m.providerMenuIndex = 0
+	m.providerMenuStep = 0
+	m.providerInput = ""
+
+	// Find current provider in list
+	providers := config.SupportedProviders()
+	for i, p := range providers {
+		if string(p.Type) == m.appConfig.ActiveProvider {
+			m.providerMenuIndex = i
+			break
+		}
+	}
+
+	return m, nil
+}
+
+// showModelsSelection shows the models selection menu
+func (m Model) showModelsSelection() (tea.Model, tea.Cmd) {
+	// Check if we have a valid provider configured
+	if m.appConfig == nil || m.appConfig.ActiveProvider == "" {
+		m.messages = append(m.messages, message{
+			role:      "error",
+			content:   "No provider configured. Use /provider first.",
+			timestamp: time.Now(),
+		})
+		m.viewport.SetContent(m.renderMessages())
+		return m, nil
+	}
+
+	// For LM Studio, fetch models from the API
+	if m.appConfig.ActiveProvider == string(config.ProviderLMStudio) {
+		return m.fetchLMStudioModels()
+	}
+
+	// For other providers, show known models
+	return m.showStaticModels()
+}
+
+// fetchLMStudioModels fetches models from LM Studio API
+func (m Model) fetchLMStudioModels() (tea.Model, tea.Cmd) {
+	provider := m.appConfig.GetActiveProvider()
+	baseURL := "http://localhost:1234/v1"
+	if provider != nil && provider.BaseURL != "" {
+		baseURL = provider.BaseURL
+	}
+
+	client := lmstudio.NewClient("", "", baseURL)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	models, err := client.ListModels(ctx)
+	if err != nil {
+		m.messages = append(m.messages, message{
+			role:      "error",
+			content:   fmt.Sprintf("Failed to fetch models from LM Studio: %v", err),
+			timestamp: time.Now(),
+		})
+		m.viewport.SetContent(m.renderMessages())
+		return m, nil
+	}
+
+	m.availableModels = make([]string, len(models))
+	for i, model := range models {
+		m.availableModels[i] = model.ID
+	}
+
+	if len(m.availableModels) == 0 {
+		m.messages = append(m.messages, message{
+			role:      "error",
+			content:   "No models loaded in LM Studio. Please load a model first.",
+			timestamp: time.Now(),
+		})
+		m.viewport.SetContent(m.renderMessages())
+		return m, nil
+	}
+
+	m.showModelsMenu = true
+	m.modelsMenuIndex = 0
+
+	// Find current model in list
+	currentModel := m.appConfig.DefaultModel
+	for i, model := range m.availableModels {
+		if model == currentModel {
+			m.modelsMenuIndex = i
+			break
+		}
+	}
+
+	return m, nil
+}
+
+// showStaticModels shows models for providers with known model lists
+func (m Model) showStaticModels() (tea.Model, tea.Cmd) {
+	providerDef := config.GetProviderDefinition(config.ProviderType(m.appConfig.ActiveProvider))
+	if providerDef == nil {
+		m.messages = append(m.messages, message{
+			role:      "error",
+			content:   "Unknown provider",
+			timestamp: time.Now(),
+		})
+		m.viewport.SetContent(m.renderMessages())
+		return m, nil
+	}
+
+	// Define known models for each provider
+	switch config.ProviderType(m.appConfig.ActiveProvider) {
+	case config.ProviderKimi:
+		m.availableModels = []string{"kimi-k2.5", "kimi-k2", "kimi-for-coding"}
+	case config.ProviderAnthropic:
+		m.availableModels = []string{"claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"}
+	default:
+		m.availableModels = []string{providerDef.DefaultModel}
+	}
+
+	m.showModelsMenu = true
+	m.modelsMenuIndex = 0
+
+	// Find current model
+	for i, model := range m.availableModels {
+		if model == m.appConfig.DefaultModel {
+			m.modelsMenuIndex = i
+			break
+		}
+	}
+
+	return m, nil
+}
+
+// selectProvider handles provider selection and triggers credential prompts if needed
+func (m Model) selectProvider(providerType config.ProviderType) (tea.Model, tea.Cmd) {
+	providerDef := config.GetProviderDefinition(providerType)
+	if providerDef == nil {
+		return m, nil
+	}
+
+	m.selectedProviderType = string(providerType)
+
+	// Check if provider is already configured with credentials
+	existingProvider := m.appConfig.Providers[string(providerType)]
+
+	// For LM Studio, prompt for URL
+	if providerType == config.ProviderLMStudio {
+		if existingProvider.BaseURL == "" {
+			m.providerMenuStep = 2 // Go to URL input
+			m.providerInput = providerDef.DefaultURL
+			return m, nil
+		}
+	}
+
+	// For providers requiring API key
+	if providerDef.RequiresKey && existingProvider.APIKey == "" {
+		m.providerMenuStep = 1 // Go to API key input
+		return m, nil
+	}
+
+	// Provider is ready, activate it
+	return m.activateProvider(providerType)
+}
+
+// activateProvider activates the selected provider
+func (m Model) activateProvider(providerType config.ProviderType) (tea.Model, tea.Cmd) {
+	providerDef := config.GetProviderDefinition(providerType)
+	if providerDef == nil {
+		return m, nil
+	}
+
+	m.appConfig.ActiveProvider = string(providerType)
+	m.appConfig.DefaultModel = providerDef.DefaultModel
+	m.contextWindow = providerDef.ContextWindow
+
+	// Save config
+	if err := m.appConfig.Save(config.GetConfigPath()); err != nil {
+		logging.Error("Failed to save config: %v", err)
+	}
+
+	// Create new LLM client for this provider
+	m.llmClient = m.createLLMClient(providerType)
+
+	// Update agent with new client
+	m.agent = agent.New(m.agentConfig, m.llmClient, m.toolManager, m.sessionManager)
+
+	m.showProviderMenu = false
+	m.providerMenuStep = 0
+
+	m.messages = append(m.messages, message{
+		role:      "system",
+		content:   fmt.Sprintf("Switched to %s (model: %s)", providerDef.DisplayName, m.appConfig.DefaultModel),
+		timestamp: time.Now(),
+	})
+	m.viewport.SetContent(m.renderMessages())
+
+	return m, nil
+}
+
+// createLLMClient creates an LLM client for the given provider type
+func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
+	provider := m.appConfig.Providers[string(providerType)]
+	providerDef := config.GetProviderDefinition(providerType)
+
+	switch providerType {
+	case config.ProviderLMStudio:
+		baseURL := provider.BaseURL
+		if baseURL == "" {
+			baseURL = providerDef.DefaultURL
+		}
+		return lmstudio.NewClient(provider.APIKey, provider.Model, baseURL)
+	default:
+		// For Anthropic-compatible providers (Kimi, Anthropic)
+		baseURL := provider.BaseURL
+		if baseURL == "" {
+			baseURL = providerDef.DefaultURL
+		}
+		// Import and use anthropic client
+		return anthropic.NewClientWithBaseURL(provider.APIKey, provider.Model, baseURL)
+	}
+}
+
+// saveProviderCredentials saves the API key or URL for a provider
+func (m Model) saveProviderCredentials() (tea.Model, tea.Cmd) {
+	providerType := config.ProviderType(m.selectedProviderType)
+	providerDef := config.GetProviderDefinition(providerType)
+
+	provider := m.appConfig.Providers[m.selectedProviderType]
+	if provider.Name == "" {
+		provider.Name = m.selectedProviderType
+	}
+
+	if m.providerMenuStep == 1 {
+		// Saving API key
+		provider.APIKey = m.providerInput
+	} else if m.providerMenuStep == 2 {
+		// Saving URL
+		provider.BaseURL = m.providerInput
+	}
+
+	if provider.Model == "" && providerDef != nil {
+		provider.Model = providerDef.DefaultModel
+	}
+
+	m.appConfig.SetProvider(providerType, provider)
+
+	// Check if we need more credentials
+	if providerType == config.ProviderLMStudio {
+		// LM Studio doesn't require API key, URL is enough
+		return m.activateProvider(providerType)
+	}
+
+	if providerDef.RequiresKey && provider.APIKey == "" {
+		m.providerMenuStep = 1
+		m.providerInput = ""
+		return m, nil
+	}
+
+	// All credentials gathered, activate provider
+	return m.activateProvider(providerType)
+}
+
+// selectModel selects a model for the current provider
+func (m Model) selectModel(modelName string) (tea.Model, tea.Cmd) {
+	m.appConfig.DefaultModel = modelName
+
+	// Update provider config
+	provider := m.appConfig.Providers[m.appConfig.ActiveProvider]
+	provider.Model = modelName
+	m.appConfig.SetProvider(config.ProviderType(m.appConfig.ActiveProvider), provider)
+
+	// Update context window based on model (rough estimates)
+	switch {
+	case strings.Contains(modelName, "kimi"):
+		m.contextWindow = 131072
+	case strings.Contains(modelName, "claude-3"):
+		m.contextWindow = 200000
+	default:
+		m.contextWindow = 32768
+	}
+
+	// Save config
+	if err := m.appConfig.Save(config.GetConfigPath()); err != nil {
+		logging.Error("Failed to save config: %v", err)
+	}
+
+	// Recreate LLM client with new model
+	m.llmClient = m.createLLMClient(config.ProviderType(m.appConfig.ActiveProvider))
+	m.agent = agent.New(m.agentConfig, m.llmClient, m.toolManager, m.sessionManager)
+
+	m.showModelsMenu = false
+
+	m.messages = append(m.messages, message{
+		role:      "system",
+		content:   fmt.Sprintf("Model switched to: %s", modelName),
+		timestamp: time.Now(),
+	})
+	m.viewport.SetContent(m.renderMessages())
+
+	return m, nil
+}
+
+// renderProviderMenu renders the provider selection menu
+func (m Model) renderProviderMenu() string {
+	if !m.showProviderMenu {
+		return ""
+	}
+
+	var items []string
+
+	switch m.providerMenuStep {
+	case 0:
+		// Provider selection
+		items = append(items, lipgloss.NewStyle().Bold(true).Render("Select Provider (Enter to select, Esc to cancel):"))
+		items = append(items, "")
+
+		providers := config.SupportedProviders()
+		for i, p := range providers {
+			current := ""
+			if string(p.Type) == m.appConfig.ActiveProvider {
+				current = " (active)"
+			}
+
+			item := fmt.Sprintf("%s%s", p.DisplayName, current)
+
+			if i == m.providerMenuIndex {
+				item = commandSelectedStyle.Render(item)
+			} else {
+				item = commandItemStyle.Render(item)
+			}
+			items = append(items, item)
+		}
+
+	case 1:
+		// API key input
+		providerDef := config.GetProviderDefinition(config.ProviderType(m.selectedProviderType))
+		name := m.selectedProviderType
+		if providerDef != nil {
+			name = providerDef.DisplayName
+		}
+		items = append(items, lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("Enter API key for %s:", name)))
+		items = append(items, "")
+		// Show input with cursor (mask API key with asterisks for security)
+		maskedInput := strings.Repeat("*", len(m.providerInput))
+		cursor := lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4")).Blink(true).Render("█")
+		items = append(items, fmt.Sprintf("> %s%s", maskedInput, cursor))
+		items = append(items, "")
+		items = append(items, statsStyle.Render("(Press Enter to confirm, Esc to cancel)"))
+
+	case 2:
+		// URL input
+		providerDef := config.GetProviderDefinition(config.ProviderType(m.selectedProviderType))
+		name := m.selectedProviderType
+		if providerDef != nil {
+			name = providerDef.DisplayName
+		}
+		items = append(items, lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("Enter URL for %s:", name)))
+		items = append(items, "")
+		// Show input with cursor
+		cursor := lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4")).Blink(true).Render("█")
+		items = append(items, fmt.Sprintf("> %s%s", m.providerInput, cursor))
+		items = append(items, "")
+		items = append(items, statsStyle.Render("(Press Enter to confirm, Esc to cancel)"))
+	}
+
+	content := strings.Join(items, "\n")
+	return commandMenuStyle.Width(m.width - 4).Render(content)
+}
+
+// renderModelsMenu renders the model selection menu
+func (m Model) renderModelsMenu() string {
+	if !m.showModelsMenu || len(m.availableModels) == 0 {
+		return ""
+	}
+
+	var items []string
+	items = append(items, lipgloss.NewStyle().Bold(true).Render("Select Model (Enter to select, Esc to cancel):"))
+	items = append(items, "")
+
+	for i, model := range m.availableModels {
+		current := ""
+		if model == m.appConfig.DefaultModel {
+			current = " (current)"
+		}
+
+		item := fmt.Sprintf("%s%s", model, current)
+
+		if i == m.modelsMenuIndex {
 			item = commandSelectedStyle.Render(item)
 		} else {
 			item = commandItemStyle.Render(item)

@@ -38,6 +38,7 @@ type RecurringJob struct {
 	ScheduleHuman string // Human-readable schedule (e.g., "every Monday at 9am")
 	ScheduleCron  string // Parsed cron expression (e.g., "0 9 * * 1")
 	TaskPrompt    string // The actual task instructions for the agent
+	LLMProvider   string // Optional provider override for this job
 	Enabled       bool
 	LastRunAt     *time.Time
 	NextRunAt     *time.Time

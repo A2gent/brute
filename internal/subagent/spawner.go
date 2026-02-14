@@ -61,6 +61,8 @@ func (s *Spawner) Spawn(ctx context.Context, agentType string, prompt string, pa
 	// Create sub-agent
 	subAgent := agent.New(config, s.llmClient, s.toolManager, s.sessionManager)
 
+	subSession.AddUserMessage(prompt)
+
 	// Run sub-agent (we ignore token usage from sub-agents for now)
 	result, _, err := subAgent.Run(ctx, subSession, prompt)
 	if err != nil {

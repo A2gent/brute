@@ -580,6 +580,17 @@ func (m Model) Init() tea.Cmd {
 	)
 }
 
+// saveSessionIfNotEmpty persists the active session only after the conversation started.
+func (m *Model) saveSessionIfNotEmpty() {
+	if m.session == nil {
+		return
+	}
+	if len(m.session.Messages) == 0 {
+		return
+	}
+	_ = m.sessionManager.Save(m.session)
+}
+
 // tickCmd creates a command that sends a tick message every second
 func tickCmd() tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
@@ -824,7 +835,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.cancelFunc()
 					}
 					if m.session != nil {
-						m.sessionManager.Save(m.session)
+						m.saveSessionIfNotEmpty()
 					}
 					return m, tea.Quit
 				}
@@ -846,14 +857,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Not processing - quit immediately
 			if m.session != nil {
-				m.sessionManager.Save(m.session)
+				m.saveSessionIfNotEmpty()
 			}
 			return m, tea.Quit
 
 		case tea.KeyEsc:
 			// Save session before quitting
 			if m.session != nil {
-				m.sessionManager.Save(m.session)
+				m.saveSessionIfNotEmpty()
 			}
 			return m, tea.Quit
 
@@ -1015,7 +1026,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update session title
 		m.session.SetTitle(msg.title)
 		m.taskSummary = msg.title
-		m.sessionManager.Save(m.session)
+		m.saveSessionIfNotEmpty()
 		// Update token counts from title generation
 		m.totalInputTokens += msg.inputTokens
 		m.totalOutputTokens += msg.outputTokens
@@ -1637,7 +1648,7 @@ func (m Model) executeCommand(cmdName string) (tea.Model, tea.Cmd) {
 func (m Model) createNewSession() (tea.Model, tea.Cmd) {
 	// Save current session
 	if m.session != nil {
-		m.sessionManager.Save(m.session)
+		m.saveSessionIfNotEmpty()
 	}
 
 	// Create new session
@@ -1707,7 +1718,7 @@ func (m Model) showSessions() (tea.Model, tea.Cmd) {
 func (m Model) switchToSession(sessionID string) Model {
 	// Save current session
 	if m.session != nil {
-		m.sessionManager.Save(m.session)
+		m.saveSessionIfNotEmpty()
 	}
 
 	// Load the new session
@@ -1974,6 +1985,8 @@ func (m Model) showStaticModels() (tea.Model, tea.Cmd) {
 		m.availableModels = []string{"claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"}
 	case config.ProviderGoogle:
 		m.availableModels = []string{"gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.0-pro"}
+	case config.ProviderOpenAI:
+		m.availableModels = []string{"gpt-4.1", "gpt-4.1-mini", "gpt-4o-mini"}
 	default:
 		m.availableModels = []string{providerDef.DefaultModel}
 	}
@@ -2062,6 +2075,10 @@ func (m Model) activateProvider(providerType config.ProviderType) (tea.Model, te
 
 // createLLMClient creates an LLM client for the given provider type
 func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
+	if providerType == config.ProviderAutoRouter {
+		// Automatic router is resolved per-request in the HTTP API.
+		return anthropic.NewClientWithBaseURL("", "kimi-k2.5", "https://api.kimi.com/coding/v1")
+	}
 	if providerType == config.ProviderFallback {
 		fallbackProvider := m.appConfig.Providers[string(config.ProviderFallback)]
 		seen := map[string]struct{}{}
@@ -2094,7 +2111,7 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 			}
 			var client llm.Client
 			switch nodeType {
-			case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle:
+			case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle, config.ProviderOpenAI:
 				client = lmstudio.NewClient(apiKey, model, baseURL)
 			default:
 				client = anthropic.NewClientWithBaseURL(apiKey, model, baseURL)
@@ -2120,7 +2137,7 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 	}
 
 	switch providerType {
-	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle:
+	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle, config.ProviderOpenAI:
 		baseURL := provider.BaseURL
 		if baseURL == "" {
 			baseURL = providerDef.DefaultURL
@@ -2153,6 +2170,9 @@ func (m Model) validateActiveProviderConfig() error {
 		}
 		return nil
 	}
+	if providerType == config.ProviderAutoRouter {
+		return fmt.Errorf("automatic_router is supported in HTTP sessions; choose a concrete provider for TUI")
+	}
 	if !def.RequiresKey {
 		return nil
 	}
@@ -2174,10 +2194,15 @@ func (m Model) validateActiveProviderConfig() error {
 
 func providerAPIKeyFromEnv(providerType config.ProviderType) string {
 	envName := providerAPIKeyEnvName(providerType)
-	if envName == "" {
-		return ""
+	if envName != "" {
+		if value := strings.TrimSpace(os.Getenv(envName)); value != "" {
+			return value
+		}
 	}
-	return strings.TrimSpace(os.Getenv(envName))
+	if providerType == config.ProviderGoogle {
+		return strings.TrimSpace(os.Getenv("GEMINI_API_KEY"))
+	}
+	return ""
 }
 
 func providerAPIKeyEnvName(providerType config.ProviderType) string {
@@ -2190,6 +2215,8 @@ func providerAPIKeyEnvName(providerType config.ProviderType) string {
 		return "OPENROUTER_API_KEY"
 	case config.ProviderGoogle:
 		return "GOOGLE_API_KEY"
+	case config.ProviderOpenAI:
+		return "OPENAI_API_KEY"
 	default:
 		return ""
 	}

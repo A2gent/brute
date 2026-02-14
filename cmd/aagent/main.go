@@ -163,12 +163,10 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 		}
 		logging.LogSession("resumed", sess.ID, fmt.Sprintf("agent=%s messages=%d", sess.AgentID, len(sess.Messages)))
 	} else {
-		sess, err = sessionManager.Create(agentFlag)
-		if err != nil {
-			logging.Error("Failed to create session: %v", err)
-			return fmt.Errorf("failed to create session: %w", err)
-		}
-		logging.LogSession("created", sess.ID, fmt.Sprintf("agent=%s", agentFlag))
+		// Start with an in-memory session to avoid polluting the sessions list
+		// before the user actually sends a message in TUI.
+		sess = session.New(agentFlag)
+		logging.LogSession("initialized", sess.ID, fmt.Sprintf("agent=%s in-memory", agentFlag))
 	}
 
 	// Get initial task from args if provided
@@ -176,6 +174,15 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		initialTask = args[0]
 		sess.AddUserMessage(initialTask)
+
+		// CLI task counts as first user input, so persist the session now.
+		if continueFlag == "" {
+			if err := sessionManager.Save(sess); err != nil {
+				logging.Error("Failed to persist initial session: %v", err)
+				return fmt.Errorf("failed to persist initial session: %w", err)
+			}
+			logging.LogSession("created", sess.ID, fmt.Sprintf("agent=%s from-cli-task", agentFlag))
+		}
 	}
 
 	// Create agent config
@@ -552,6 +559,8 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 			return []string{"OPENROUTER_API_KEY"}
 		case config.ProviderGoogle:
 			return []string{"GOOGLE_API_KEY", "GEMINI_API_KEY"}
+		case config.ProviderOpenAI:
+			return []string{"OPENAI_API_KEY"}
 		default:
 			return nil
 		}
@@ -559,7 +568,7 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 
 	createDirectClient := func(providerType config.ProviderType, modelOverride string) (llm.Client, string, error) {
 		providerDef := config.GetProviderDefinition(providerType)
-		if providerDef == nil || providerType == config.ProviderFallback {
+		if providerDef == nil || providerType == config.ProviderFallback || providerType == config.ProviderAutoRouter {
 			return nil, "", fmt.Errorf("unsupported provider: %s", providerType)
 		}
 
@@ -605,30 +614,70 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 
 		logging.Info("Using LLM provider: %s API: %s model=%s", providerType, baseURL, model)
 		switch providerType {
-		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle:
+		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle, config.ProviderOpenAI:
 			return lmstudio.NewClient(apiKey, model, baseURL), model, nil
 		default:
 			return anthropic.NewClientWithBaseURL(apiKey, model, baseURL), model, nil
 		}
 	}
 
-	providerType := config.ProviderType(strings.TrimSpace(cfg.ActiveProvider))
-	if providerType == config.ProviderFallback {
-		fallbackCfg := cfg.Providers[string(config.ProviderFallback)]
-		nodes := make([]fallback.Node, 0, len(fallbackCfg.FallbackChain))
-		seen := make(map[string]struct{}, len(fallbackCfg.FallbackChain))
-		for _, raw := range fallbackCfg.FallbackChain {
-			nodeType := config.ProviderType(strings.ToLower(strings.TrimSpace(raw)))
-			if nodeType == "" || nodeType == config.ProviderFallback {
+	providerType := config.ProviderType(config.NormalizeProviderRef(cfg.ActiveProvider))
+	providerRef := config.NormalizeProviderRef(string(providerType))
+	if providerRef == string(config.ProviderAutoRouter) {
+		return nil, fmt.Errorf("automatic_router is supported in HTTP sessions; select a concrete provider for CLI runs")
+	}
+	if providerRef == string(config.ProviderFallback) || config.IsFallbackAggregateRef(providerRef) {
+		var chain []config.FallbackChainNode
+		if providerRef == string(config.ProviderFallback) {
+			fallbackCfg := cfg.Providers[string(config.ProviderFallback)]
+			chain = fallbackCfg.FallbackChainNodes
+			if len(chain) == 0 {
+				for _, raw := range fallbackCfg.FallbackChain {
+					nodeType := config.ProviderType(config.NormalizeProviderRef(raw))
+					if nodeType == "" || nodeType == config.ProviderFallback {
+						continue
+					}
+					model := strings.TrimSpace(cfg.Providers[string(nodeType)].Model)
+					if model == "" {
+						if def := config.GetProviderDefinition(nodeType); def != nil {
+							model = strings.TrimSpace(def.DefaultModel)
+						}
+					}
+					if model == "" {
+						model = strings.TrimSpace(cfg.DefaultModel)
+					}
+					if model == "" {
+						continue
+					}
+					chain = append(chain, config.FallbackChainNode{Provider: string(nodeType), Model: model})
+				}
+			}
+		} else {
+			id := config.FallbackAggregateIDFromRef(providerRef)
+			for _, aggregate := range cfg.FallbackAggregates {
+				if config.NormalizeToken(aggregate.ID) == id {
+					chain = aggregate.Chain
+					break
+				}
+			}
+		}
+
+		nodes := make([]fallback.Node, 0, len(chain))
+		seen := make(map[string]struct{}, len(chain))
+		for _, rawNode := range chain {
+			nodeType := config.ProviderType(config.NormalizeProviderRef(rawNode.Provider))
+			model := strings.TrimSpace(rawNode.Model)
+			if nodeType == "" || nodeType == config.ProviderFallback || model == "" {
 				continue
 			}
-			if _, exists := seen[string(nodeType)]; exists {
+			seenKey := string(nodeType) + "::" + model
+			if _, exists := seen[seenKey]; exists {
 				continue
 			}
-			seen[string(nodeType)] = struct{}{}
-			client, model, err := createDirectClient(nodeType, "")
+			seen[seenKey] = struct{}{}
+			client, _, err := createDirectClient(nodeType, model)
 			if err != nil {
-				return nil, fmt.Errorf("fallback node %s is not available: %w", nodeType, err)
+				return nil, fmt.Errorf("fallback node %s/%s is not available: %w", nodeType, model, err)
 			}
 			nodes = append(nodes, fallback.Node{
 				Name:   string(nodeType),
@@ -637,7 +686,7 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 			})
 		}
 		if len(nodes) < 2 {
-			return nil, fmt.Errorf("fallback_chain requires at least two valid providers")
+			return nil, fmt.Errorf("%s requires at least two valid fallback model nodes", providerRef)
 		}
 		return fallback.NewClient(nodes), nil
 	}

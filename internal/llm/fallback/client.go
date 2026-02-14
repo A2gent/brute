@@ -101,6 +101,11 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 			return resp, nil
 		}
 		if emitted {
+			if isFallbackableError(ctx, err) {
+				failures = append(failures, fmt.Sprintf("%s (partial stream): %v", node.Name, err))
+				logging.Warn("Fallback chain provider %s failed after partial stream, trying next: %v", node.Name, err)
+				continue
+			}
 			return nil, fmt.Errorf("%s failed after streaming partial output: %w", node.Name, err)
 		}
 		if !isFallbackableError(ctx, err) {

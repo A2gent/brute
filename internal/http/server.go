@@ -93,16 +93,20 @@ func (s *Server) setupRoutes() {
 	r.Route("/providers", func(r chi.Router) {
 		r.Get("/", s.handleListProviders)
 		r.Put("/active", s.handleSetActiveProvider)
+		r.Post("/fallback-aggregates", s.handleCreateFallbackAggregate)
 		r.Get("/lmstudio/models", s.handleListLMStudioModels)
 		r.Get("/kimi/models", s.handleListKimiModels)
 		r.Get("/google/models", s.handleListGoogleModels)
+		r.Get("/openai/models", s.handleListOpenAIModels)
 		r.Put("/{providerType}", s.handleUpdateProvider)
+		r.Delete("/{providerType}", s.handleDeleteProvider)
 	})
 
 	// External channel integrations
 	r.Route("/integrations", func(r chi.Router) {
 		r.Get("/", s.handleListIntegrations)
 		r.Post("/", s.handleCreateIntegration)
+		r.Post("/telegram/chat-ids", s.handleDiscoverTelegramChats)
 		r.Get("/{integrationID}", s.handleGetIntegration)
 		r.Put("/{integrationID}", s.handleUpdateIntegration)
 		r.Delete("/{integrationID}", s.handleDeleteIntegration)
@@ -166,6 +170,8 @@ func (s *Server) Run(ctx context.Context) error {
 	addr := fmt.Sprintf("0.0.0.0:%d", s.port)
 	logging.Info("Starting HTTP server on %s", addr)
 	fmt.Printf("HTTP API server running on http://0.0.0.0:%d (accessible from any host)\n", s.port)
+
+	go s.runTelegramDuplexLoop(ctx)
 
 	server := &http.Server{
 		Addr:    addr,
@@ -296,15 +302,17 @@ type CreateJobRequest struct {
 	Name         string `json:"name"`
 	ScheduleText string `json:"schedule_text"` // Natural language schedule
 	TaskPrompt   string `json:"task_prompt"`
+	LLMProvider  string `json:"llm_provider,omitempty"`
 	Enabled      bool   `json:"enabled"`
 }
 
 // UpdateJobRequest represents a request to update a recurring job
 type UpdateJobRequest struct {
-	Name         string `json:"name"`
-	ScheduleText string `json:"schedule_text"`
-	TaskPrompt   string `json:"task_prompt"`
-	Enabled      *bool  `json:"enabled,omitempty"`
+	Name         string  `json:"name"`
+	ScheduleText string  `json:"schedule_text"`
+	TaskPrompt   string  `json:"task_prompt"`
+	LLMProvider  *string `json:"llm_provider,omitempty"`
+	Enabled      *bool   `json:"enabled,omitempty"`
 }
 
 // JobResponse represents a recurring job response
@@ -314,6 +322,7 @@ type JobResponse struct {
 	ScheduleHuman string     `json:"schedule_human"`
 	ScheduleCron  string     `json:"schedule_cron"`
 	TaskPrompt    string     `json:"task_prompt"`
+	LLMProvider   string     `json:"llm_provider,omitempty"`
 	Enabled       bool       `json:"enabled"`
 	LastRunAt     *time.Time `json:"last_run_at,omitempty"`
 	NextRunAt     *time.Time `json:"next_run_at,omitempty"`
@@ -342,30 +351,43 @@ type UpdateSettingsRequest struct {
 }
 
 type ProviderConfigResponse struct {
-	Type          string   `json:"type"`
-	DisplayName   string   `json:"display_name"`
-	DefaultURL    string   `json:"default_url"`
-	RequiresKey   bool     `json:"requires_key"`
-	DefaultModel  string   `json:"default_model"`
-	ContextWindow int      `json:"context_window"`
-	IsActive      bool     `json:"is_active"`
-	Configured    bool     `json:"configured"`
-	HasAPIKey     bool     `json:"has_api_key"`
-	BaseURL       string   `json:"base_url"`
-	Model         string   `json:"model"`
-	FallbackChain []string `json:"fallback_chain,omitempty"`
+	Type           string                     `json:"type"`
+	DisplayName    string                     `json:"display_name"`
+	DefaultURL     string                     `json:"default_url"`
+	RequiresKey    bool                       `json:"requires_key"`
+	DefaultModel   string                     `json:"default_model"`
+	ContextWindow  int                        `json:"context_window"`
+	IsActive       bool                       `json:"is_active"`
+	Configured     bool                       `json:"configured"`
+	HasAPIKey      bool                       `json:"has_api_key"`
+	BaseURL        string                     `json:"base_url"`
+	Model          string                     `json:"model"`
+	FallbackChain  []config.FallbackChainNode `json:"fallback_chain,omitempty"`
+	RouterProvider string                     `json:"router_provider,omitempty"`
+	RouterModel    string                     `json:"router_model,omitempty"`
+	RouterRules    []config.RouterRule        `json:"router_rules,omitempty"`
 }
 
 type UpdateProviderRequest struct {
-	APIKey        *string   `json:"api_key,omitempty"`
-	BaseURL       *string   `json:"base_url,omitempty"`
-	Model         *string   `json:"model,omitempty"`
-	FallbackChain *[]string `json:"fallback_chain,omitempty"`
-	Active        *bool     `json:"active,omitempty"`
+	Name           *string                     `json:"name,omitempty"`
+	APIKey         *string                     `json:"api_key,omitempty"`
+	BaseURL        *string                     `json:"base_url,omitempty"`
+	Model          *string                     `json:"model,omitempty"`
+	FallbackChain  *[]config.FallbackChainNode `json:"fallback_chain,omitempty"`
+	RouterProvider *string                     `json:"router_provider,omitempty"`
+	RouterModel    *string                     `json:"router_model,omitempty"`
+	RouterRules    *[]config.RouterRule        `json:"router_rules,omitempty"`
+	Active         *bool                       `json:"active,omitempty"`
 }
 
 type SetActiveProviderRequest struct {
 	Provider string `json:"provider"`
+}
+
+type CreateFallbackAggregateRequest struct {
+	Name          string                     `json:"name"`
+	FallbackChain []config.FallbackChainNode `json:"fallback_chain"`
+	Active        bool                       `json:"active,omitempty"`
 }
 
 type ListProviderModelsResponse struct {
@@ -437,12 +459,20 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 	definitions := config.SupportedProviders()
-	resp := make([]ProviderConfigResponse, 0, len(definitions))
+	resp := make([]ProviderConfigResponse, 0, len(definitions)+len(s.config.FallbackAggregates))
 
 	for _, def := range definitions {
 		existing := s.config.Providers[string(def.Type)]
 		if def.Type == config.ProviderFallback {
-			chain := normalizeFallbackChain(existing.FallbackChain)
+			chain := normalizeFallbackChainNodes(existing.FallbackChainNodes)
+			if len(chain) == 0 && len(existing.FallbackChain) > 0 {
+				chain = legacyProvidersToFallbackNodes(existing.FallbackChain, s.resolveModelForProvider)
+			}
+			isActive := config.NormalizeProviderRef(s.config.ActiveProvider) == string(def.Type)
+			if !isActive && len(chain) == 0 {
+				// Legacy built-in fallback aggregate is hidden unless it is actively used.
+				continue
+			}
 			resp = append(resp, ProviderConfigResponse{
 				Type:          string(def.Type),
 				DisplayName:   def.DisplayName,
@@ -450,12 +480,33 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 				RequiresKey:   def.RequiresKey,
 				DefaultModel:  def.DefaultModel,
 				ContextWindow: s.resolveContextWindowForProvider(def.Type),
-				IsActive:      s.config.ActiveProvider == string(def.Type),
+				IsActive:      isActive,
 				Configured:    s.fallbackChainIsConfigured(chain),
 				HasAPIKey:     false,
 				BaseURL:       "",
 				Model:         "",
 				FallbackChain: chain,
+			})
+			continue
+		}
+		if def.Type == config.ProviderAutoRouter {
+			rules := normalizeRouterRules(existing.RouterRules)
+			resp = append(resp, ProviderConfigResponse{
+				Type:           string(def.Type),
+				DisplayName:    def.DisplayName,
+				DefaultURL:     def.DefaultURL,
+				RequiresKey:    def.RequiresKey,
+				DefaultModel:   def.DefaultModel,
+				ContextWindow:  s.resolveContextWindowForProvider(def.Type),
+				IsActive:       config.NormalizeProviderRef(s.config.ActiveProvider) == string(def.Type),
+				Configured:     s.autoRouterConfigured(existing),
+				HasAPIKey:      false,
+				BaseURL:        "",
+				Model:          "",
+				FallbackChain:  nil,
+				RouterProvider: config.NormalizeProviderRef(existing.RouterProvider),
+				RouterModel:    strings.TrimSpace(existing.RouterModel),
+				RouterRules:    rules,
 			})
 			continue
 		}
@@ -491,20 +542,74 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	for _, aggregate := range s.config.FallbackAggregates {
+		providerRef := config.FallbackAggregateRefFromID(aggregate.ID)
+		chain := normalizeFallbackChainNodes(aggregate.Chain)
+		resp = append(resp, ProviderConfigResponse{
+			Type:          providerRef,
+			DisplayName:   strings.TrimSpace(aggregate.Name),
+			DefaultURL:    "",
+			RequiresKey:   false,
+			DefaultModel:  "",
+			ContextWindow: s.resolveContextWindowForProvider(config.ProviderType(providerRef)),
+			IsActive:      config.NormalizeProviderRef(s.config.ActiveProvider) == providerRef,
+			Configured:    s.fallbackChainIsConfigured(chain),
+			HasAPIKey:     false,
+			BaseURL:       "",
+			Model:         "",
+			FallbackChain: chain,
+		})
+	}
+
 	s.jsonResponse(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
-	providerType := config.ProviderType(strings.ToLower(strings.TrimSpace(chi.URLParam(r, "providerType"))))
-	def := config.GetProviderDefinition(providerType)
-	if def == nil {
-		s.errorResponse(w, http.StatusBadRequest, "Unsupported provider: "+string(providerType))
-		return
-	}
+	providerType := config.ProviderType(config.NormalizeProviderRef(chi.URLParam(r, "providerType")))
 
 	var req UpdateProviderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	if config.IsFallbackAggregateRef(string(providerType)) {
+		aggregate, _ := s.findFallbackAggregateByRef(string(providerType))
+		if aggregate == nil {
+			s.errorResponse(w, http.StatusNotFound, "Fallback aggregate not found: "+string(providerType))
+			return
+		}
+
+		if req.Name != nil {
+			name := strings.TrimSpace(*req.Name)
+			if name == "" {
+				s.errorResponse(w, http.StatusBadRequest, "Name cannot be empty")
+				return
+			}
+			aggregate.Name = name
+		}
+		if req.FallbackChain != nil {
+			chain, err := s.normalizeAndValidateFallbackChain(*req.FallbackChain)
+			if err != nil {
+				s.errorResponse(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			aggregate.Chain = chain
+		}
+		if req.Active != nil && *req.Active {
+			s.config.ActiveProvider = string(providerType)
+		}
+		if err := s.config.Save(config.GetConfigPath()); err != nil {
+			s.errorResponse(w, http.StatusInternalServerError, "Failed to save provider config: "+err.Error())
+			return
+		}
+		s.handleListProviders(w, r)
+		return
+	}
+
+	def := config.GetProviderDefinition(providerType)
+	if def == nil {
+		s.errorResponse(w, http.StatusBadRequest, "Unsupported provider: "+string(providerType))
 		return
 	}
 
@@ -517,18 +622,46 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 				s.errorResponse(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			provider.FallbackChain = chain
+			provider.FallbackChainNodes = chain
+			provider.FallbackChain = nil
 		}
 		provider.APIKey = ""
 		provider.BaseURL = ""
 		provider.Model = ""
+		provider.RouterProvider = ""
+		provider.RouterModel = ""
+		provider.RouterRules = nil
+	} else if providerType == config.ProviderAutoRouter {
+		if req.RouterProvider != nil {
+			provider.RouterProvider = config.NormalizeProviderRef(*req.RouterProvider)
+		}
+		if req.RouterModel != nil {
+			provider.RouterModel = strings.TrimSpace(*req.RouterModel)
+		}
+		if req.RouterRules != nil {
+			rules, err := s.normalizeAndValidateRouterRules(*req.RouterRules)
+			if err != nil {
+				s.errorResponse(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			provider.RouterRules = rules
+		}
+		if err := s.validateAutoRouterProvider(provider); err != nil {
+			s.errorResponse(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		provider.APIKey = ""
+		provider.BaseURL = ""
+		provider.Model = ""
+		provider.FallbackChain = nil
+		provider.FallbackChainNodes = nil
 	} else {
 		if req.APIKey != nil {
 			provider.APIKey = strings.TrimSpace(*req.APIKey)
 		}
 		if req.BaseURL != nil {
 			baseURL := strings.TrimSpace(*req.BaseURL)
-			if providerType == config.ProviderLMStudio || providerType == config.ProviderOpenRouter || providerType == config.ProviderGoogle {
+			if providerType == config.ProviderLMStudio || providerType == config.ProviderOpenRouter || providerType == config.ProviderGoogle || providerType == config.ProviderOpenAI {
 				baseURL = normalizeOpenAIBaseURL(baseURL)
 			}
 			provider.BaseURL = baseURL
@@ -543,13 +676,16 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		if provider.Model == "" {
 			provider.Model = def.DefaultModel
 		}
+		provider.RouterProvider = ""
+		provider.RouterModel = ""
+		provider.RouterRules = nil
 	}
 
 	s.config.SetProvider(providerType, provider)
 
 	if req.Active != nil && *req.Active {
 		s.config.ActiveProvider = string(providerType)
-		if provider.Model != "" {
+		if providerType != config.ProviderAutoRouter && provider.Model != "" {
 			s.config.DefaultModel = provider.Model
 		}
 	}
@@ -569,18 +705,18 @@ func (s *Server) handleSetActiveProvider(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	providerType := config.ProviderType(strings.ToLower(strings.TrimSpace(req.Provider)))
+	providerType := config.ProviderType(config.NormalizeProviderRef(req.Provider))
 	def := config.GetProviderDefinition(providerType)
-	if def == nil {
+	if def == nil && !s.providerRefExists(string(providerType)) {
 		s.errorResponse(w, http.StatusBadRequest, "Unsupported provider: "+req.Provider)
 		return
 	}
 
 	s.config.ActiveProvider = string(providerType)
 	provider := s.config.Providers[string(providerType)]
-	if provider.Model != "" {
+	if def != nil && providerType != config.ProviderAutoRouter && provider.Model != "" {
 		s.config.DefaultModel = provider.Model
-	} else if def.DefaultModel != "" {
+	} else if def != nil && providerType != config.ProviderAutoRouter && def.DefaultModel != "" {
 		s.config.DefaultModel = def.DefaultModel
 	}
 
@@ -590,6 +726,99 @@ func (s *Server) handleSetActiveProvider(w http.ResponseWriter, r *http.Request)
 	}
 
 	s.handleListProviders(w, r)
+}
+
+func (s *Server) handleCreateFallbackAggregate(w http.ResponseWriter, r *http.Request) {
+	var req CreateFallbackAggregateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Name is required")
+		return
+	}
+
+	chain, err := s.normalizeAndValidateFallbackChain(req.FallbackChain)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	id := config.NormalizeToken(name)
+	if id == "" {
+		id = "aggregate"
+	}
+	baseID := id
+	suffix := 2
+	for s.findFallbackAggregateByID(id) != nil {
+		id = fmt.Sprintf("%s-%d", baseID, suffix)
+		suffix++
+	}
+
+	aggregate := config.FallbackAggregate{
+		ID:    id,
+		Name:  name,
+		Chain: chain,
+	}
+	s.config.FallbackAggregates = append(s.config.FallbackAggregates, aggregate)
+	if req.Active {
+		s.config.ActiveProvider = config.FallbackAggregateRefFromID(id)
+	}
+
+	if err := s.config.Save(config.GetConfigPath()); err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to save provider config: "+err.Error())
+		return
+	}
+
+	s.handleListProviders(w, r)
+}
+
+func (s *Server) handleDeleteProvider(w http.ResponseWriter, r *http.Request) {
+	providerRef := config.NormalizeProviderRef(chi.URLParam(r, "providerType"))
+	if providerRef != string(config.ProviderFallback) && !config.IsFallbackAggregateRef(providerRef) {
+		s.errorResponse(w, http.StatusBadRequest, "Only fallback aggregates can be deleted")
+		return
+	}
+
+	if config.NormalizeProviderRef(s.config.ActiveProvider) == providerRef {
+		s.errorResponse(w, http.StatusBadRequest, "Cannot delete active provider. Set another provider active first.")
+		return
+	}
+
+	jobs, err := s.store.ListJobs()
+	if err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to check jobs: "+err.Error())
+		return
+	}
+	for _, job := range jobs {
+		if config.NormalizeProviderRef(job.LLMProvider) == providerRef {
+			s.errorResponse(w, http.StatusConflict, fmt.Sprintf("Cannot delete provider: recurring job %q (%s) uses it", job.Name, job.ID))
+			return
+		}
+	}
+
+	if providerRef == string(config.ProviderFallback) {
+		provider := s.config.Providers[string(config.ProviderFallback)]
+		provider.FallbackChain = nil
+		provider.FallbackChainNodes = nil
+		s.config.SetProvider(config.ProviderFallback, provider)
+	} else {
+		aggregate, index := s.findFallbackAggregateByRef(providerRef)
+		if aggregate == nil || index < 0 {
+			s.errorResponse(w, http.StatusNotFound, "Fallback aggregate not found: "+providerRef)
+			return
+		}
+		s.config.FallbackAggregates = append(s.config.FallbackAggregates[:index], s.config.FallbackAggregates[index+1:]...)
+	}
+
+	if err := s.config.Save(config.GetConfigPath()); err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to save provider config: "+err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleListLMStudioModels(w http.ResponseWriter, r *http.Request) {
@@ -602,6 +831,10 @@ func (s *Server) handleListKimiModels(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListGoogleModels(w http.ResponseWriter, r *http.Request) {
 	s.handleListOpenAICompatibleModels(w, r, config.ProviderGoogle, "Google Gemini")
+}
+
+func (s *Server) handleListOpenAIModels(w http.ResponseWriter, r *http.Request) {
+	s.handleListOpenAICompatibleModels(w, r, config.ProviderOpenAI, "OpenAI")
 }
 
 func (s *Server) handleListOpenAICompatibleModels(w http.ResponseWriter, r *http.Request, providerType config.ProviderType, providerName string) {
@@ -714,9 +947,14 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	providerType := strings.TrimSpace(req.Provider)
+	providerType := config.NormalizeProviderRef(req.Provider)
 	if providerType == "" {
-		providerType = s.config.ActiveProvider
+		autoCfg := s.config.Providers[string(config.ProviderAutoRouter)]
+		if s.autoRouterConfigured(autoCfg) {
+			providerType = string(config.ProviderAutoRouter)
+		} else {
+			providerType = config.NormalizeProviderRef(s.config.ActiveProvider)
+		}
 	}
 	model := strings.TrimSpace(req.Model)
 	if model == "" {
@@ -837,7 +1075,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	providerType := s.resolveSessionProviderType(sess)
 	model := s.resolveSessionModel(sess, providerType)
-	llmClient, err := s.createLLMClient(providerType, model)
+	target, err := s.resolveExecutionTarget(r.Context(), providerType, model, req.Message)
 	if err != nil {
 		sess.AddAssistantMessage(fmt.Sprintf("Unable to start request: %s", err.Error()), nil)
 		sess.SetStatus(session.StatusFailed)
@@ -849,14 +1087,14 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	// Create agent config
 	agentConfig := agent.Config{
 		Name:          sess.AgentID,
-		Model:         model,
+		Model:         target.Model,
 		MaxSteps:      s.config.MaxSteps,
 		Temperature:   s.config.Temperature,
-		ContextWindow: s.resolveContextWindowForProvider(providerType),
+		ContextWindow: target.ContextWindow,
 	}
 
 	// Create agent instance
-	ag := agent.New(agentConfig, llmClient, s.toolManager, s.sessionManager)
+	ag := agent.New(agentConfig, target.Client, s.toolManager, s.sessionManager)
 
 	// Run the agent (this is synchronous for now)
 	ctx := r.Context()
@@ -909,7 +1147,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	providerType := s.resolveSessionProviderType(sess)
 	model := s.resolveSessionModel(sess, providerType)
-	llmClient, err := s.createLLMClient(providerType, model)
+	target, err := s.resolveExecutionTarget(r.Context(), providerType, model, req.Message)
 	if err != nil {
 		sess.AddAssistantMessage(fmt.Sprintf("Unable to start request: %s", err.Error()), nil)
 		sess.SetStatus(session.StatusFailed)
@@ -942,12 +1180,12 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	agentConfig := agent.Config{
 		Name:          sess.AgentID,
-		Model:         model,
+		Model:         target.Model,
 		MaxSteps:      s.config.MaxSteps,
 		Temperature:   s.config.Temperature,
-		ContextWindow: s.resolveContextWindowForProvider(providerType),
+		ContextWindow: target.ContextWindow,
 	}
-	ag := agent.New(agentConfig, llmClient, s.toolManager, s.sessionManager)
+	ag := agent.New(agentConfig, target.Client, s.toolManager, s.sessionManager)
 
 	ctx := r.Context()
 	content, usage, err := ag.RunWithEvents(ctx, sess, req.Message, func(ev agent.Event) {
@@ -1019,6 +1257,13 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusBadRequest, "Task prompt is required")
 		return
 	}
+	llmProvider := normalizeJobLLMProvider(req.LLMProvider)
+	if llmProvider != "" {
+		if err := s.validateProviderRefForExecution(llmProvider); err != nil {
+			s.errorResponse(w, http.StatusBadRequest, "Unsupported LLM provider: "+llmProvider+" ("+err.Error()+")")
+			return
+		}
+	}
 
 	// Parse natural language schedule to cron using the agent
 	cronExpr, err := s.parseScheduleToCron(r.Context(), req.ScheduleText)
@@ -1034,6 +1279,7 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		ScheduleHuman: req.ScheduleText,
 		ScheduleCron:  cronExpr,
 		TaskPrompt:    req.TaskPrompt,
+		LLMProvider:   llmProvider,
 		Enabled:       req.Enabled,
 		CreatedAt:     now,
 		UpdatedAt:     now,
@@ -1090,6 +1336,16 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Enabled != nil {
 		job.Enabled = *req.Enabled
+	}
+	if req.LLMProvider != nil {
+		llmProvider := normalizeJobLLMProvider(*req.LLMProvider)
+		if llmProvider != "" {
+			if err := s.validateProviderRefForExecution(llmProvider); err != nil {
+				s.errorResponse(w, http.StatusBadRequest, "Unsupported LLM provider: "+llmProvider+" ("+err.Error()+")")
+				return
+			}
+		}
+		job.LLMProvider = llmProvider
 	}
 
 	// Re-parse schedule if changed
@@ -1264,24 +1520,23 @@ Cron expression:`, scheduleText)
 
 	sess.AddUserMessage(prompt)
 
-	providerType := config.ProviderType(strings.TrimSpace(s.config.ActiveProvider))
+	providerType := config.ProviderType(config.NormalizeProviderRef(s.config.ActiveProvider))
 	model := s.resolveModelForProvider(providerType)
-
-	// Create agent config for parsing
-	agentConfig := agent.Config{
-		Name:          "scheduler",
-		Model:         model,
-		MaxSteps:      1, // Only need one response
-		Temperature:   0, // Deterministic output
-		ContextWindow: s.resolveContextWindowForProvider(providerType),
-	}
-
-	client, err := s.createLLMClient(providerType, model)
+	target, err := s.resolveExecutionTarget(ctx, providerType, model, prompt)
 	if err != nil {
 		return "", fmt.Errorf("failed to initialize provider %s: %w", providerType, err)
 	}
 
-	ag := agent.New(agentConfig, client, s.toolManager, s.sessionManager)
+	// Create agent config for parsing
+	agentConfig := agent.Config{
+		Name:          "scheduler",
+		Model:         target.Model,
+		MaxSteps:      1, // Only need one response
+		Temperature:   0, // Deterministic output
+		ContextWindow: target.ContextWindow,
+	}
+
+	ag := agent.New(agentConfig, target.Client, s.toolManager, s.sessionManager)
 	cronExpr, _, err := ag.Run(ctx, sess, prompt)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse schedule: %w", err)
@@ -1345,19 +1600,15 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 
 	exec.SessionID = sess.ID
 
-	providerType := config.ProviderType(strings.TrimSpace(s.config.ActiveProvider))
+	providerType := s.resolveJobProviderType(job)
 	model := s.resolveModelForProvider(providerType)
-
-	// Run the agent with the job's task prompt
-	agentConfig := agent.Config{
-		Name:          "job-runner",
-		Model:         model,
-		MaxSteps:      s.config.MaxSteps,
-		Temperature:   s.config.Temperature,
-		ContextWindow: s.resolveContextWindowForProvider(providerType),
+	sess.Metadata["provider"] = string(providerType)
+	sess.Metadata["model"] = model
+	if err := s.sessionManager.Save(sess); err != nil {
+		logging.Warn("Failed to persist job session provider metadata: %v", err)
 	}
 
-	client, clientErr := s.createLLMClient(providerType, model)
+	target, clientErr := s.resolveExecutionTarget(ctx, providerType, model, job.TaskPrompt)
 	if clientErr != nil {
 		exec.Status = "failed"
 		exec.Error = "Failed to initialize provider: " + clientErr.Error()
@@ -1366,7 +1617,17 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 		s.store.SaveJobExecution(exec)
 		return exec, nil
 	}
-	ag := agent.New(agentConfig, client, s.toolManager, s.sessionManager)
+
+	// Run the agent with the job's task prompt
+	agentConfig := agent.Config{
+		Name:          "job-runner",
+		Model:         target.Model,
+		MaxSteps:      s.config.MaxSteps,
+		Temperature:   s.config.Temperature,
+		ContextWindow: target.ContextWindow,
+	}
+	ag := agent.New(agentConfig, target.Client, s.toolManager, s.sessionManager)
+	sess.AddUserMessage(job.TaskPrompt)
 	output, _, err := ag.Run(ctx, sess, job.TaskPrompt)
 
 	finishedAt := time.Now()
@@ -1424,6 +1685,7 @@ func (s *Server) jobToResponse(job *storage.RecurringJob) JobResponse {
 		ScheduleHuman: job.ScheduleHuman,
 		ScheduleCron:  job.ScheduleCron,
 		TaskPrompt:    job.TaskPrompt,
+		LLMProvider:   job.LLMProvider,
 		Enabled:       job.Enabled,
 		LastRunAt:     job.LastRunAt,
 		NextRunAt:     job.NextRunAt,
@@ -1802,7 +2064,24 @@ func normalizeFolders(folders []string) []string {
 	return normalized
 }
 
+func normalizeJobLLMProvider(raw string) string {
+	return config.NormalizeProviderRef(raw)
+}
+
+func (s *Server) resolveJobProviderType(job *storage.RecurringJob) config.ProviderType {
+	if job != nil {
+		provider := normalizeJobLLMProvider(job.LLMProvider)
+		if provider != "" {
+			return config.ProviderType(provider)
+		}
+	}
+	return config.ProviderType(config.NormalizeProviderRef(s.config.ActiveProvider))
+}
+
 func (s *Server) resolveModelForProvider(providerType config.ProviderType) string {
+	if config.IsFallbackAggregateRef(string(providerType)) || providerType == config.ProviderFallback || providerType == config.ProviderAutoRouter {
+		return ""
+	}
 	provider := s.config.Providers[string(providerType)]
 	if strings.TrimSpace(provider.Model) != "" {
 		return strings.TrimSpace(provider.Model)
@@ -1819,11 +2098,11 @@ func (s *Server) resolveSessionProviderType(sess *session.Session) config.Provid
 	if sess != nil && sess.Metadata != nil {
 		if raw, ok := sess.Metadata["provider"]; ok {
 			if provider, ok := raw.(string); ok && strings.TrimSpace(provider) != "" {
-				return config.ProviderType(strings.TrimSpace(provider))
+				return config.ProviderType(config.NormalizeProviderRef(provider))
 			}
 		}
 	}
-	return config.ProviderType(strings.TrimSpace(s.config.ActiveProvider))
+	return config.ProviderType(config.NormalizeProviderRef(s.config.ActiveProvider))
 }
 
 func (s *Server) resolveSessionModel(sess *session.Session, providerType config.ProviderType) string {
@@ -1838,11 +2117,17 @@ func (s *Server) resolveSessionModel(sess *session.Session, providerType config.
 }
 
 func (s *Server) resolveContextWindowForProvider(providerType config.ProviderType) int {
-	if providerType == config.ProviderFallback {
-		chain := normalizeFallbackChain(s.config.Providers[string(config.ProviderFallback)].FallbackChain)
+	if providerType == config.ProviderAutoRouter {
+		return 0
+	}
+	if config.IsFallbackAggregateRef(string(providerType)) || providerType == config.ProviderFallback {
+		chain, err := s.fallbackNodesForProvider(providerType)
+		if err != nil {
+			return 0
+		}
 		minContext := 0
-		for _, raw := range chain {
-			def := config.GetProviderDefinition(config.ProviderType(raw))
+		for _, node := range chain {
+			def := config.GetProviderDefinition(config.ProviderType(node.Provider))
 			if def == nil || def.ContextWindow <= 0 {
 				continue
 			}
@@ -1859,8 +2144,11 @@ func (s *Server) resolveContextWindowForProvider(providerType config.ProviderTyp
 }
 
 func (s *Server) createLLMClient(providerType config.ProviderType, model string) (llm.Client, error) {
-	if providerType == config.ProviderFallback {
-		return s.createFallbackChainClient()
+	if providerType == config.ProviderAutoRouter {
+		return nil, fmt.Errorf("automatic router requires dynamic prompt routing")
+	}
+	if config.IsFallbackAggregateRef(string(providerType)) || providerType == config.ProviderFallback {
+		return s.createFallbackChainClient(providerType)
 	}
 	return s.createBaseLLMClient(providerType, model)
 }
@@ -1893,7 +2181,7 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 	}
 
 	switch providerType {
-	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle:
+	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle, config.ProviderOpenAI:
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return lmstudio.NewClient(apiKey, modelName, baseURL), nil
 	default:
@@ -1901,23 +2189,22 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 	}
 }
 
-func (s *Server) createFallbackChainClient() (llm.Client, error) {
-	provider := s.config.Providers[string(config.ProviderFallback)]
-	chain, err := s.normalizeAndValidateFallbackChain(provider.FallbackChain)
+func (s *Server) createFallbackChainClient(providerRef config.ProviderType) (llm.Client, error) {
+	chain, err := s.fallbackNodesForProvider(providerRef)
 	if err != nil {
 		return nil, err
 	}
 
 	nodes := make([]fallback.Node, 0, len(chain))
-	for _, name := range chain {
-		ptype := config.ProviderType(name)
-		model := s.resolveModelForProvider(ptype)
+	for _, node := range chain {
+		ptype := config.ProviderType(node.Provider)
+		model := strings.TrimSpace(node.Model)
 		client, err := s.createBaseLLMClient(ptype, model)
 		if err != nil {
-			return nil, fmt.Errorf("fallback node %s is not available: %w", name, err)
+			return nil, fmt.Errorf("fallback node %s/%s is not available: %w", node.Provider, model, err)
 		}
 		nodes = append(nodes, fallback.Node{
-			Name:   name,
+			Name:   node.Provider,
 			Model:  model,
 			Client: client,
 		})
@@ -1959,52 +2246,72 @@ func (s *Server) apiKeyEnvName(providerType config.ProviderType) string {
 		return "OPENROUTER_API_KEY"
 	case config.ProviderGoogle:
 		return "GOOGLE_API_KEY"
+	case config.ProviderOpenAI:
+		return "OPENAI_API_KEY"
 	default:
 		return ""
 	}
 }
 
-func normalizeFallbackChain(raw []string) []string {
-	chain := make([]string, 0, len(raw))
+func normalizeFallbackChainNodes(raw []config.FallbackChainNode) []config.FallbackChainNode {
+	chain := make([]config.FallbackChainNode, 0, len(raw))
 	for _, item := range raw {
-		trimmed := strings.ToLower(strings.TrimSpace(item))
-		if trimmed == "" {
+		provider := config.NormalizeProviderRef(item.Provider)
+		model := strings.TrimSpace(item.Model)
+		if provider == "" || model == "" {
 			continue
 		}
-		chain = append(chain, trimmed)
+		chain = append(chain, config.FallbackChainNode{Provider: provider, Model: model})
 	}
 	return chain
 }
 
-func (s *Server) normalizeAndValidateFallbackChain(raw []string) ([]string, error) {
-	chain := normalizeFallbackChain(raw)
+func legacyProvidersToFallbackNodes(raw []string, resolveModel func(config.ProviderType) string) []config.FallbackChainNode {
+	nodes := make([]config.FallbackChainNode, 0, len(raw))
+	for _, provider := range raw {
+		normalizedProvider := config.NormalizeProviderRef(provider)
+		if normalizedProvider == "" {
+			continue
+		}
+		model := strings.TrimSpace(resolveModel(config.ProviderType(normalizedProvider)))
+		if model == "" {
+			continue
+		}
+		nodes = append(nodes, config.FallbackChainNode{Provider: normalizedProvider, Model: model})
+	}
+	return nodes
+}
+
+func (s *Server) normalizeAndValidateFallbackChain(raw []config.FallbackChainNode) ([]config.FallbackChainNode, error) {
+	chain := normalizeFallbackChainNodes(raw)
 	if len(chain) < 2 {
-		return nil, fmt.Errorf("fallback chain must contain at least two providers")
+		return nil, fmt.Errorf("fallback chain must contain at least two model nodes")
 	}
 
 	seen := make(map[string]struct{}, len(chain))
-	for _, name := range chain {
-		if _, ok := seen[name]; ok {
-			return nil, fmt.Errorf("fallback chain nodes must not repeat: %s", name)
+	for _, node := range chain {
+		key := node.Provider + "::" + node.Model
+		if _, ok := seen[key]; ok {
+			return nil, fmt.Errorf("fallback chain nodes must not repeat: %s/%s", node.Provider, node.Model)
 		}
-		seen[name] = struct{}{}
+		seen[key] = struct{}{}
 
-		ptype := config.ProviderType(name)
+		ptype := config.ProviderType(node.Provider)
 		if ptype == config.ProviderFallback {
 			return nil, fmt.Errorf("fallback chain cannot include fallback_chain itself")
 		}
 		def := config.GetProviderDefinition(ptype)
 		if def == nil {
-			return nil, fmt.Errorf("unsupported provider in fallback chain: %s", name)
+			return nil, fmt.Errorf("unsupported provider in fallback chain: %s", node.Provider)
 		}
 		if !s.providerConfiguredForUse(ptype) {
-			return nil, fmt.Errorf("provider %s is not configured or missing required credentials", name)
+			return nil, fmt.Errorf("provider %s is not configured or missing required credentials", node.Provider)
 		}
 	}
 	return chain, nil
 }
 
-func (s *Server) fallbackChainIsConfigured(chain []string) bool {
+func (s *Server) fallbackChainIsConfigured(chain []config.FallbackChainNode) bool {
 	if len(chain) < 2 {
 		return false
 	}
@@ -2012,9 +2319,90 @@ func (s *Server) fallbackChainIsConfigured(chain []string) bool {
 	return err == nil && len(validated) >= 2
 }
 
+func (s *Server) fallbackNodesForProvider(providerRef config.ProviderType) ([]config.FallbackChainNode, error) {
+	ref := config.NormalizeProviderRef(string(providerRef))
+	if ref == string(config.ProviderFallback) {
+		provider := s.config.Providers[string(config.ProviderFallback)]
+		if len(provider.FallbackChainNodes) > 0 {
+			return s.normalizeAndValidateFallbackChain(provider.FallbackChainNodes)
+		}
+		return s.normalizeAndValidateFallbackChain(legacyProvidersToFallbackNodes(provider.FallbackChain, s.resolveModelForProvider))
+	}
+	if config.IsFallbackAggregateRef(ref) {
+		aggregate, _ := s.findFallbackAggregateByRef(ref)
+		if aggregate == nil {
+			return nil, fmt.Errorf("fallback aggregate not found: %s", ref)
+		}
+		return s.normalizeAndValidateFallbackChain(aggregate.Chain)
+	}
+	return nil, fmt.Errorf("provider is not fallback aggregate: %s", ref)
+}
+
+func (s *Server) findFallbackAggregateByID(id string) *config.FallbackAggregate {
+	normalizedID := config.NormalizeToken(id)
+	for i := range s.config.FallbackAggregates {
+		if config.NormalizeToken(s.config.FallbackAggregates[i].ID) == normalizedID {
+			return &s.config.FallbackAggregates[i]
+		}
+	}
+	return nil
+}
+
+func (s *Server) findFallbackAggregateByRef(ref string) (*config.FallbackAggregate, int) {
+	id := config.FallbackAggregateIDFromRef(ref)
+	if id == "" {
+		return nil, -1
+	}
+	for i := range s.config.FallbackAggregates {
+		if config.NormalizeToken(s.config.FallbackAggregates[i].ID) == id {
+			return &s.config.FallbackAggregates[i], i
+		}
+	}
+	return nil, -1
+}
+
+func (s *Server) providerRefExists(ref string) bool {
+	normalized := config.NormalizeProviderRef(ref)
+	if config.GetProviderDefinition(config.ProviderType(normalized)) != nil {
+		return true
+	}
+	if config.IsFallbackAggregateRef(normalized) {
+		aggregate, _ := s.findFallbackAggregateByRef(normalized)
+		return aggregate != nil
+	}
+	return false
+}
+
+func (s *Server) validateProviderRefForExecution(ref string) error {
+	normalized := config.NormalizeProviderRef(ref)
+	if normalized == "" {
+		return fmt.Errorf("provider is empty")
+	}
+	ptype := config.ProviderType(normalized)
+	if def := config.GetProviderDefinition(ptype); def != nil {
+		if ptype == config.ProviderFallback {
+			_, err := s.fallbackNodesForProvider(ptype)
+			return err
+		}
+		if ptype == config.ProviderAutoRouter {
+			provider := s.config.Providers[string(config.ProviderAutoRouter)]
+			return s.validateAutoRouterProvider(provider)
+		}
+		if !s.providerConfiguredForUse(ptype) {
+			return fmt.Errorf("provider is not configured")
+		}
+		return nil
+	}
+	if config.IsFallbackAggregateRef(normalized) {
+		_, err := s.fallbackNodesForProvider(ptype)
+		return err
+	}
+	return fmt.Errorf("provider not found")
+}
+
 func (s *Server) providerConfiguredForUse(providerType config.ProviderType) bool {
 	def := config.GetProviderDefinition(providerType)
-	if def == nil || providerType == config.ProviderFallback {
+	if def == nil || providerType == config.ProviderFallback || providerType == config.ProviderAutoRouter {
 		return false
 	}
 	provider := s.config.Providers[string(providerType)]

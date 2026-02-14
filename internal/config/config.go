@@ -8,24 +8,49 @@ import (
 
 // Config holds the application configuration
 type Config struct {
-	DefaultModel   string              `json:"default_model"`
-	ActiveProvider string              `json:"active_provider"` // Provider type: "kimi", "openrouter", "lmstudio", "anthropic", "google"
-	MaxSteps       int                 `json:"max_steps"`
-	Temperature    float64             `json:"temperature"`
-	DataPath       string              `json:"data_path"`
-	WorkDir        string              `json:"work_dir"`
-	Providers      map[string]Provider `json:"providers"`
-	Tools          ToolsConfig         `json:"tools"`
+	DefaultModel       string              `json:"default_model"`
+	ActiveProvider     string              `json:"active_provider"` // Provider reference: built-in provider or named fallback aggregate
+	MaxSteps           int                 `json:"max_steps"`
+	Temperature        float64             `json:"temperature"`
+	DataPath           string              `json:"data_path"`
+	WorkDir            string              `json:"work_dir"`
+	Providers          map[string]Provider `json:"providers"`
+	FallbackAggregates []FallbackAggregate `json:"fallback_aggregates,omitempty"`
+	Tools              ToolsConfig         `json:"tools"`
 }
 
 // Provider configuration for LLM providers
 type Provider struct {
-	Name          string   `json:"name"`
-	APIKey        string   `json:"api_key"`
-	BaseURL       string   `json:"base_url"`
-	Model         string   `json:"model"`
-	FallbackChain []string `json:"fallback_chain,omitempty"`
-	ContextWindow int      `json:"context_window,omitempty"` // in tokens
+	Name               string              `json:"name"`
+	APIKey             string              `json:"api_key"`
+	BaseURL            string              `json:"base_url"`
+	Model              string              `json:"model"`
+	FallbackChain      []string            `json:"fallback_chain,omitempty"` // Legacy provider-only fallback nodes.
+	FallbackChainNodes []FallbackChainNode `json:"fallback_chain_nodes,omitempty"`
+	RouterProvider     string              `json:"router_provider,omitempty"` // Provider reference used by automatic router (direct provider or fallback chain).
+	RouterModel        string              `json:"router_model,omitempty"`    // Optional model override for direct router provider.
+	RouterRules        []RouterRule        `json:"router_rules,omitempty"`
+	ContextWindow      int                 `json:"context_window,omitempty"` // in tokens
+}
+
+// FallbackChainNode stores a single fallback step with explicit provider+model.
+type FallbackChainNode struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+}
+
+// FallbackAggregate stores a named fallback chain that can be selected like a provider.
+type FallbackAggregate struct {
+	ID    string              `json:"id"`
+	Name  string              `json:"name"`
+	Chain []FallbackChainNode `json:"chain"`
+}
+
+// RouterRule maps a textual task context to a target model/provider.
+type RouterRule struct {
+	Match    string `json:"match"`
+	Provider string `json:"provider"`
+	Model    string `json:"model,omitempty"`
 }
 
 // ProviderType identifies the type of provider
@@ -37,7 +62,9 @@ const (
 	ProviderLMStudio   ProviderType = "lmstudio"
 	ProviderAnthropic  ProviderType = "anthropic"
 	ProviderGoogle     ProviderType = "google"
+	ProviderOpenAI     ProviderType = "openai"
 	ProviderFallback   ProviderType = "fallback_chain"
+	ProviderAutoRouter ProviderType = "automatic_router"
 )
 
 // ProviderDefinition describes a supported provider
@@ -53,6 +80,14 @@ type ProviderDefinition struct {
 // SupportedProviders returns all supported provider definitions
 func SupportedProviders() []ProviderDefinition {
 	return []ProviderDefinition{
+		{
+			Type:          ProviderAutoRouter,
+			DisplayName:   "Automatic Router",
+			DefaultURL:    "",
+			RequiresKey:   false,
+			DefaultModel:  "",
+			ContextWindow: 0,
+		},
 		{
 			Type:          ProviderFallback,
 			DisplayName:   "Fallback-chain aggregate",
@@ -100,6 +135,14 @@ func SupportedProviders() []ProviderDefinition {
 			RequiresKey:   true,
 			DefaultModel:  "gemini-2.0-flash",
 			ContextWindow: 1048576,
+		},
+		{
+			Type:          ProviderOpenAI,
+			DisplayName:   "OpenAI",
+			DefaultURL:    "https://api.openai.com/v1",
+			RequiresKey:   true,
+			DefaultModel:  "gpt-4.1-mini",
+			ContextWindow: 128000,
 		},
 	}
 }

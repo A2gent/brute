@@ -235,6 +235,13 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 }
 
 func (a *Agent) callLLM(ctx context.Context, request *llm.ChatRequest, step int, onEvent func(Event)) (*llm.ChatResponse, error) {
+	// When no event sink is provided, use non-streaming Chat.
+	// This avoids "partial stream emitted" fallback lock-in and lets fallback chains
+	// seamlessly move to the next provider on retryable failures.
+	if onEvent == nil {
+		return a.llmClient.Chat(ctx, request)
+	}
+
 	streamClient, ok := a.llmClient.(llm.StreamingClient)
 	if !ok {
 		return a.llmClient.Chat(ctx, request)

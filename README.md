@@ -87,6 +87,7 @@ Environment variables are loaded from `.env` files in:
 Environment variables:
 - `KIMI_API_KEY` - Kimi Code API key (required)
 - `ANTHROPIC_API_KEY` - Alternative to KIMI_API_KEY
+- `OPENAI_API_KEY` - OpenAI API key (for `openai` provider)
 - `ANTHROPIC_BASE_URL` - Override API endpoint (default: `https://api.kimi.com/coding/v1`)
 - `AAGENT_MODEL` - Override default model (default: `kimi-for-coding`)
 - `AAGENT_DATA_PATH` - Data storage directory

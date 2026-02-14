@@ -9,7 +9,7 @@ import (
 // Config holds the application configuration
 type Config struct {
 	DefaultModel   string              `json:"default_model"`
-	ActiveProvider string              `json:"active_provider"` // Provider type: "kimi", "lmstudio", "anthropic"
+	ActiveProvider string              `json:"active_provider"` // Provider type: "kimi", "openrouter", "lmstudio", "anthropic", "google"
 	MaxSteps       int                 `json:"max_steps"`
 	Temperature    float64             `json:"temperature"`
 	DataPath       string              `json:"data_path"`
@@ -20,20 +20,24 @@ type Config struct {
 
 // Provider configuration for LLM providers
 type Provider struct {
-	Name          string `json:"name"`
-	APIKey        string `json:"api_key"`
-	BaseURL       string `json:"base_url"`
-	Model         string `json:"model"`
-	ContextWindow int    `json:"context_window,omitempty"` // in tokens
+	Name          string   `json:"name"`
+	APIKey        string   `json:"api_key"`
+	BaseURL       string   `json:"base_url"`
+	Model         string   `json:"model"`
+	FallbackChain []string `json:"fallback_chain,omitempty"`
+	ContextWindow int      `json:"context_window,omitempty"` // in tokens
 }
 
 // ProviderType identifies the type of provider
 type ProviderType string
 
 const (
-	ProviderKimi      ProviderType = "kimi"
-	ProviderLMStudio  ProviderType = "lmstudio"
-	ProviderAnthropic ProviderType = "anthropic"
+	ProviderKimi       ProviderType = "kimi"
+	ProviderOpenRouter ProviderType = "openrouter"
+	ProviderLMStudio   ProviderType = "lmstudio"
+	ProviderAnthropic  ProviderType = "anthropic"
+	ProviderGoogle     ProviderType = "google"
+	ProviderFallback   ProviderType = "fallback_chain"
 )
 
 // ProviderDefinition describes a supported provider
@@ -50,12 +54,28 @@ type ProviderDefinition struct {
 func SupportedProviders() []ProviderDefinition {
 	return []ProviderDefinition{
 		{
+			Type:          ProviderFallback,
+			DisplayName:   "Fallback-chain aggregate",
+			DefaultURL:    "",
+			RequiresKey:   false,
+			DefaultModel:  "",
+			ContextWindow: 0,
+		},
+		{
 			Type:          ProviderKimi,
 			DisplayName:   "Kimi (Moonshot AI)",
 			DefaultURL:    "https://api.kimi.com/coding/v1",
 			RequiresKey:   true,
 			DefaultModel:  "kimi-k2.5",
 			ContextWindow: 131072,
+		},
+		{
+			Type:          ProviderOpenRouter,
+			DisplayName:   "OpenRouter",
+			DefaultURL:    "https://openrouter.ai/api/v1",
+			RequiresKey:   true,
+			DefaultModel:  "openrouter/auto",
+			ContextWindow: 128000,
 		},
 		{
 			Type:          ProviderLMStudio,
@@ -72,6 +92,14 @@ func SupportedProviders() []ProviderDefinition {
 			RequiresKey:   true,
 			DefaultModel:  "claude-sonnet-4-20250514",
 			ContextWindow: 200000,
+		},
+		{
+			Type:          ProviderGoogle,
+			DisplayName:   "Google Gemini",
+			DefaultURL:    "https://generativelanguage.googleapis.com/v1beta/openai",
+			RequiresKey:   true,
+			DefaultModel:  "gemini-2.0-flash",
+			ContextWindow: 1048576,
 		},
 	}
 }

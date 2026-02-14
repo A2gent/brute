@@ -18,6 +18,7 @@ import (
 	"github.com/gratheon/aagent/internal/config"
 	"github.com/gratheon/aagent/internal/llm"
 	"github.com/gratheon/aagent/internal/llm/anthropic"
+	"github.com/gratheon/aagent/internal/llm/fallback"
 	"github.com/gratheon/aagent/internal/llm/lmstudio"
 	"github.com/gratheon/aagent/internal/logging"
 	"github.com/gratheon/aagent/internal/session"
@@ -36,6 +37,10 @@ type Server struct {
 	router         chi.Router
 	port           int
 }
+
+const thinkingJobIDSettingKey = "A2GENT_THINKING_JOB_ID"
+const thinkingProjectID = "project-thinking"
+const thinkingProjectName = "Thinking"
 
 // NewServer creates a new HTTP server instance
 func NewServer(
@@ -88,6 +93,9 @@ func (s *Server) setupRoutes() {
 	r.Route("/providers", func(r chi.Router) {
 		r.Get("/", s.handleListProviders)
 		r.Put("/active", s.handleSetActiveProvider)
+		r.Get("/lmstudio/models", s.handleListLMStudioModels)
+		r.Get("/kimi/models", s.handleListKimiModels)
+		r.Get("/google/models", s.handleListGoogleModels)
 		r.Put("/{providerType}", s.handleUpdateProvider)
 	})
 
@@ -146,6 +154,8 @@ func (s *Server) setupRoutes() {
 		r.Get("/browse", s.handleBrowseMindDirectories)
 		r.Get("/tree", s.handleListMindTree)
 		r.Get("/file", s.handleGetMindFile)
+		r.Post("/file", s.handleUpsertMindFile)
+		r.Put("/file", s.handleUpsertMindFile)
 	})
 
 	s.router = r
@@ -213,11 +223,12 @@ type SessionResponse struct {
 
 // MessageResponse represents a message in a session
 type MessageResponse struct {
-	Role        string               `json:"role"`
-	Content     string               `json:"content"`
-	ToolCalls   []ToolCallResponse   `json:"tool_calls,omitempty"`
-	ToolResults []ToolResultResponse `json:"tool_results,omitempty"`
-	Timestamp   time.Time            `json:"timestamp"`
+	Role        string                 `json:"role"`
+	Content     string                 `json:"content"`
+	ToolCalls   []ToolCallResponse     `json:"tool_calls,omitempty"`
+	ToolResults []ToolResultResponse   `json:"tool_results,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	Timestamp   time.Time              `json:"timestamp"`
 }
 
 // ToolCallResponse represents a tool call
@@ -265,15 +276,17 @@ type UsageResponse struct {
 
 // SessionListItem represents a session in the list
 type SessionListItem struct {
-	ID        string    `json:"id"`
-	AgentID   string    `json:"agent_id"`
-	ProjectID string    `json:"project_id,omitempty"`
-	Provider  string    `json:"provider,omitempty"`
-	Model     string    `json:"model,omitempty"`
-	Title     string    `json:"title"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID                 string    `json:"id"`
+	AgentID            string    `json:"agent_id"`
+	ProjectID          string    `json:"project_id,omitempty"`
+	Provider           string    `json:"provider,omitempty"`
+	Model              string    `json:"model,omitempty"`
+	Title              string    `json:"title"`
+	Status             string    `json:"status"`
+	TotalTokens        int       `json:"total_tokens"`
+	RunDurationSeconds int64     `json:"run_duration_seconds"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // --- Recurring Jobs Request/Response types ---
@@ -329,28 +342,34 @@ type UpdateSettingsRequest struct {
 }
 
 type ProviderConfigResponse struct {
-	Type          string `json:"type"`
-	DisplayName   string `json:"display_name"`
-	DefaultURL    string `json:"default_url"`
-	RequiresKey   bool   `json:"requires_key"`
-	DefaultModel  string `json:"default_model"`
-	ContextWindow int    `json:"context_window"`
-	IsActive      bool   `json:"is_active"`
-	Configured    bool   `json:"configured"`
-	HasAPIKey     bool   `json:"has_api_key"`
-	BaseURL       string `json:"base_url"`
-	Model         string `json:"model"`
+	Type          string   `json:"type"`
+	DisplayName   string   `json:"display_name"`
+	DefaultURL    string   `json:"default_url"`
+	RequiresKey   bool     `json:"requires_key"`
+	DefaultModel  string   `json:"default_model"`
+	ContextWindow int      `json:"context_window"`
+	IsActive      bool     `json:"is_active"`
+	Configured    bool     `json:"configured"`
+	HasAPIKey     bool     `json:"has_api_key"`
+	BaseURL       string   `json:"base_url"`
+	Model         string   `json:"model"`
+	FallbackChain []string `json:"fallback_chain,omitempty"`
 }
 
 type UpdateProviderRequest struct {
-	APIKey  *string `json:"api_key,omitempty"`
-	BaseURL *string `json:"base_url,omitempty"`
-	Model   *string `json:"model,omitempty"`
-	Active  *bool   `json:"active,omitempty"`
+	APIKey        *string   `json:"api_key,omitempty"`
+	BaseURL       *string   `json:"base_url,omitempty"`
+	Model         *string   `json:"model,omitempty"`
+	FallbackChain *[]string `json:"fallback_chain,omitempty"`
+	Active        *bool     `json:"active,omitempty"`
 }
 
 type SetActiveProviderRequest struct {
 	Provider string `json:"provider"`
+}
+
+type ListProviderModelsResponse struct {
+	Models []string `json:"models"`
 }
 
 type UpdateSessionProjectRequest struct {
@@ -422,6 +441,25 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 
 	for _, def := range definitions {
 		existing := s.config.Providers[string(def.Type)]
+		if def.Type == config.ProviderFallback {
+			chain := normalizeFallbackChain(existing.FallbackChain)
+			resp = append(resp, ProviderConfigResponse{
+				Type:          string(def.Type),
+				DisplayName:   def.DisplayName,
+				DefaultURL:    def.DefaultURL,
+				RequiresKey:   def.RequiresKey,
+				DefaultModel:  def.DefaultModel,
+				ContextWindow: s.resolveContextWindowForProvider(def.Type),
+				IsActive:      s.config.ActiveProvider == string(def.Type),
+				Configured:    s.fallbackChainIsConfigured(chain),
+				HasAPIKey:     false,
+				BaseURL:       "",
+				Model:         "",
+				FallbackChain: chain,
+			})
+			continue
+		}
+
 		baseURL := strings.TrimSpace(existing.BaseURL)
 		if baseURL == "" {
 			baseURL = def.DefaultURL
@@ -449,6 +487,7 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 			HasAPIKey:     hasAPIKey,
 			BaseURL:       baseURL,
 			Model:         model,
+			FallbackChain: nil,
 		})
 	}
 
@@ -471,21 +510,39 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 
 	provider := s.config.Providers[string(providerType)]
 	provider.Name = string(providerType)
-	if req.APIKey != nil {
-		provider.APIKey = strings.TrimSpace(*req.APIKey)
-	}
-	if req.BaseURL != nil {
-		provider.BaseURL = strings.TrimSpace(*req.BaseURL)
-	}
-	if req.Model != nil {
-		provider.Model = strings.TrimSpace(*req.Model)
-	}
+	if providerType == config.ProviderFallback {
+		if req.FallbackChain != nil {
+			chain, err := s.normalizeAndValidateFallbackChain(*req.FallbackChain)
+			if err != nil {
+				s.errorResponse(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			provider.FallbackChain = chain
+		}
+		provider.APIKey = ""
+		provider.BaseURL = ""
+		provider.Model = ""
+	} else {
+		if req.APIKey != nil {
+			provider.APIKey = strings.TrimSpace(*req.APIKey)
+		}
+		if req.BaseURL != nil {
+			baseURL := strings.TrimSpace(*req.BaseURL)
+			if providerType == config.ProviderLMStudio || providerType == config.ProviderOpenRouter || providerType == config.ProviderGoogle {
+				baseURL = normalizeOpenAIBaseURL(baseURL)
+			}
+			provider.BaseURL = baseURL
+		}
+		if req.Model != nil {
+			provider.Model = strings.TrimSpace(*req.Model)
+		}
 
-	if provider.BaseURL == "" {
-		provider.BaseURL = def.DefaultURL
-	}
-	if provider.Model == "" {
-		provider.Model = def.DefaultModel
+		if provider.BaseURL == "" {
+			provider.BaseURL = def.DefaultURL
+		}
+		if provider.Model == "" {
+			provider.Model = def.DefaultModel
+		}
 	}
 
 	s.config.SetProvider(providerType, provider)
@@ -535,6 +592,64 @@ func (s *Server) handleSetActiveProvider(w http.ResponseWriter, r *http.Request)
 	s.handleListProviders(w, r)
 }
 
+func (s *Server) handleListLMStudioModels(w http.ResponseWriter, r *http.Request) {
+	s.handleListOpenAICompatibleModels(w, r, config.ProviderLMStudio, "LM Studio")
+}
+
+func (s *Server) handleListKimiModels(w http.ResponseWriter, r *http.Request) {
+	s.handleListOpenAICompatibleModels(w, r, config.ProviderKimi, "Kimi")
+}
+
+func (s *Server) handleListGoogleModels(w http.ResponseWriter, r *http.Request) {
+	s.handleListOpenAICompatibleModels(w, r, config.ProviderGoogle, "Google Gemini")
+}
+
+func (s *Server) handleListOpenAICompatibleModels(w http.ResponseWriter, r *http.Request, providerType config.ProviderType, providerName string) {
+	def := config.GetProviderDefinition(providerType)
+	baseURL := normalizeOpenAIBaseURL(r.URL.Query().Get("base_url"))
+	if baseURL == "" {
+		provider := s.config.Providers[string(providerType)]
+		baseURL = normalizeOpenAIBaseURL(provider.BaseURL)
+	}
+	if baseURL == "" && def != nil {
+		baseURL = normalizeOpenAIBaseURL(def.DefaultURL)
+	}
+	if baseURL == "" {
+		s.errorResponse(w, http.StatusBadRequest, providerName+" base URL is not configured")
+		return
+	}
+
+	provider := s.config.Providers[string(providerType)]
+	apiKey := strings.TrimSpace(provider.APIKey)
+	if apiKey == "" {
+		apiKey = s.apiKeyFromEnv(providerType)
+	}
+	if def != nil && def.RequiresKey && apiKey == "" {
+		s.errorResponse(w, http.StatusBadRequest, providerName+" API key is not configured")
+		return
+	}
+
+	client := lmstudio.NewClient(apiKey, "", baseURL)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	models, err := client.ListModels(ctx)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadGateway, "Failed to fetch models from "+providerName+": "+err.Error())
+		return
+	}
+
+	modelIDs := make([]string, 0, len(models))
+	for _, model := range models {
+		modelID := strings.TrimSpace(model.ID)
+		if modelID != "" {
+			modelIDs = append(modelIDs, modelID)
+		}
+	}
+
+	s.jsonResponse(w, http.StatusOK, ListProviderModelsResponse{Models: modelIDs})
+}
+
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	sessions, err := s.sessionManager.List()
 	if err != nil {
@@ -550,15 +665,17 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			projectID = *sess.ProjectID
 		}
 		items[i] = SessionListItem{
-			ID:        sess.ID,
-			AgentID:   sess.AgentID,
-			ProjectID: projectID,
-			Provider:  provider,
-			Model:     model,
-			Title:     sess.Title,
-			Status:    string(sess.Status),
-			CreatedAt: sess.CreatedAt,
-			UpdatedAt: sess.UpdatedAt,
+			ID:                 sess.ID,
+			AgentID:            sess.AgentID,
+			ProjectID:          projectID,
+			Provider:           provider,
+			Model:              model,
+			Title:              sess.Title,
+			Status:             string(sess.Status),
+			TotalTokens:        sessionTotalTokens(sess),
+			RunDurationSeconds: sessionRunDurationSeconds(sess.CreatedAt, sess.UpdatedAt, string(sess.Status)),
+			CreatedAt:          sess.CreatedAt,
+			UpdatedAt:          sess.UpdatedAt,
 		}
 	}
 
@@ -731,10 +848,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// Create agent config
 	agentConfig := agent.Config{
-		Name:        sess.AgentID,
-		Model:       model,
-		MaxSteps:    s.config.MaxSteps,
-		Temperature: s.config.Temperature,
+		Name:          sess.AgentID,
+		Model:         model,
+		MaxSteps:      s.config.MaxSteps,
+		Temperature:   s.config.Temperature,
+		ContextWindow: s.resolveContextWindowForProvider(providerType),
 	}
 
 	// Create agent instance
@@ -823,10 +941,11 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agentConfig := agent.Config{
-		Name:        sess.AgentID,
-		Model:       model,
-		MaxSteps:    s.config.MaxSteps,
-		Temperature: s.config.Temperature,
+		Name:          sess.AgentID,
+		Model:         model,
+		MaxSteps:      s.config.MaxSteps,
+		Temperature:   s.config.Temperature,
+		ContextWindow: s.resolveContextWindowForProvider(providerType),
 	}
 	ag := agent.New(agentConfig, llmClient, s.toolManager, s.sessionManager)
 
@@ -1004,6 +1123,16 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteJob(w http.ResponseWriter, r *http.Request) {
 	jobID := chi.URLParam(r, "jobID")
 
+	protected, err := s.isProtectedThinkingJob(jobID)
+	if err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to check protected jobs: "+err.Error())
+		return
+	}
+	if protected {
+		s.errorResponse(w, http.StatusForbidden, "This job is managed by Thinking settings and cannot be deleted directly.")
+		return
+	}
+
 	if err := s.store.DeleteJob(jobID); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete job: "+err.Error())
 		return
@@ -1011,6 +1140,18 @@ func (s *Server) handleDeleteJob(w http.ResponseWriter, r *http.Request) {
 
 	logging.Info("Deleted recurring job: %s", jobID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) isProtectedThinkingJob(jobID string) (bool, error) {
+	settings, err := s.store.GetSettings()
+	if err != nil {
+		return false, err
+	}
+	thinkingJobID := strings.TrimSpace(settings[thinkingJobIDSettingKey])
+	if thinkingJobID == "" {
+		return false, nil
+	}
+	return thinkingJobID == strings.TrimSpace(jobID), nil
 }
 
 func (s *Server) handleRunJobNow(w http.ResponseWriter, r *http.Request) {
@@ -1081,15 +1222,17 @@ func (s *Server) handleListJobSessions(w http.ResponseWriter, r *http.Request) {
 			projectID = *sess.ProjectID
 		}
 		resp[i] = SessionListItem{
-			ID:        sess.ID,
-			AgentID:   sess.AgentID,
-			ProjectID: projectID,
-			Provider:  provider,
-			Model:     model,
-			Title:     sess.Title,
-			Status:    sess.Status,
-			CreatedAt: sess.CreatedAt,
-			UpdatedAt: sess.UpdatedAt,
+			ID:                 sess.ID,
+			AgentID:            sess.AgentID,
+			ProjectID:          projectID,
+			Provider:           provider,
+			Model:              model,
+			Title:              sess.Title,
+			Status:             sess.Status,
+			TotalTokens:        storageSessionTotalTokens(sess),
+			RunDurationSeconds: sessionRunDurationSeconds(sess.CreatedAt, sess.UpdatedAt, sess.Status),
+			CreatedAt:          sess.CreatedAt,
+			UpdatedAt:          sess.UpdatedAt,
 		}
 	}
 
@@ -1121,21 +1264,22 @@ Cron expression:`, scheduleText)
 
 	sess.AddUserMessage(prompt)
 
-	// Create agent config for parsing
-	agentConfig := agent.Config{
-		Name:        "scheduler",
-		Model:       s.config.DefaultModel,
-		MaxSteps:    1, // Only need one response
-		Temperature: 0, // Deterministic output
-	}
-
 	providerType := config.ProviderType(strings.TrimSpace(s.config.ActiveProvider))
 	model := s.resolveModelForProvider(providerType)
+
+	// Create agent config for parsing
+	agentConfig := agent.Config{
+		Name:          "scheduler",
+		Model:         model,
+		MaxSteps:      1, // Only need one response
+		Temperature:   0, // Deterministic output
+		ContextWindow: s.resolveContextWindowForProvider(providerType),
+	}
+
 	client, err := s.createLLMClient(providerType, model)
 	if err != nil {
 		return "", fmt.Errorf("failed to initialize provider %s: %w", providerType, err)
 	}
-	agentConfig.Model = model
 
 	ag := agent.New(agentConfig, client, s.toolManager, s.sessionManager)
 	cronExpr, _, err := ag.Run(ctx, sess, prompt)
@@ -1182,7 +1326,7 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 	}
 
 	// Create a session for this job execution
-	sess, err := s.sessionManager.Create("job-runner")
+	sess, err := s.sessionManager.CreateWithJob("job-runner", job.ID)
 	if err != nil {
 		exec.Status = "failed"
 		exec.Error = "Failed to create session: " + err.Error()
@@ -1191,19 +1335,28 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 		s.store.SaveJobExecution(exec)
 		return exec, nil
 	}
+	if thinking, thinkErr := s.isProtectedThinkingJob(job.ID); thinkErr != nil {
+		logging.Warn("Failed to check thinking job for project assignment: %v", thinkErr)
+	} else if thinking {
+		if assignErr := s.assignSessionToThinkingProject(sess); assignErr != nil {
+			logging.Warn("Failed to assign Thinking project for session %s: %v", sess.ID, assignErr)
+		}
+	}
 
 	exec.SessionID = sess.ID
 
-	// Run the agent with the job's task prompt
-	agentConfig := agent.Config{
-		Name:        "job-runner",
-		Model:       s.config.DefaultModel,
-		MaxSteps:    s.config.MaxSteps,
-		Temperature: s.config.Temperature,
-	}
-
 	providerType := config.ProviderType(strings.TrimSpace(s.config.ActiveProvider))
 	model := s.resolveModelForProvider(providerType)
+
+	// Run the agent with the job's task prompt
+	agentConfig := agent.Config{
+		Name:          "job-runner",
+		Model:         model,
+		MaxSteps:      s.config.MaxSteps,
+		Temperature:   s.config.Temperature,
+		ContextWindow: s.resolveContextWindowForProvider(providerType),
+	}
+
 	client, clientErr := s.createLLMClient(providerType, model)
 	if clientErr != nil {
 		exec.Status = "failed"
@@ -1213,8 +1366,6 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 		s.store.SaveJobExecution(exec)
 		return exec, nil
 	}
-	agentConfig.Model = model
-
 	ag := agent.New(agentConfig, client, s.toolManager, s.sessionManager)
 	output, _, err := ag.Run(ctx, sess, job.TaskPrompt)
 
@@ -1247,6 +1398,22 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 	}
 
 	return exec, nil
+}
+
+func (s *Server) assignSessionToThinkingProject(sess *session.Session) error {
+	now := time.Now()
+	project := &storage.Project{
+		ID:        thinkingProjectID,
+		Name:      thinkingProjectName,
+		Folders:   []string{},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.store.SaveProject(project); err != nil {
+		return err
+	}
+	sess.ProjectID = &project.ID
+	return s.sessionManager.Save(sess)
 }
 
 // jobToResponse converts a storage job to API response
@@ -1312,6 +1479,7 @@ func (s *Server) messagesToResponse(messages []session.Message) []MessageRespons
 		msg := MessageResponse{
 			Role:      m.Role,
 			Content:   m.Content,
+			Metadata:  m.Metadata,
 			Timestamp: m.Timestamp,
 		}
 
@@ -1525,6 +1693,74 @@ func storageSessionProviderAndModel(sess *storage.Session) (string, string) {
 	return provider, model
 }
 
+func sessionTotalTokens(sess *session.Session) int {
+	if sess == nil || sess.Metadata == nil {
+		return 0
+	}
+	input := metadataNumber(sess.Metadata, "total_input_tokens")
+	output := metadataNumber(sess.Metadata, "total_output_tokens")
+	total := int(input + output)
+	if total < 0 {
+		return 0
+	}
+	return total
+}
+
+func storageSessionTotalTokens(sess *storage.Session) int {
+	if sess == nil || sess.Metadata == nil {
+		return 0
+	}
+	input := metadataNumber(sess.Metadata, "total_input_tokens")
+	output := metadataNumber(sess.Metadata, "total_output_tokens")
+	total := int(input + output)
+	if total < 0 {
+		return 0
+	}
+	return total
+}
+
+func sessionRunDurationSeconds(createdAt time.Time, updatedAt time.Time, status string) int64 {
+	end := updatedAt
+	if strings.EqualFold(strings.TrimSpace(status), string(session.StatusRunning)) {
+		end = time.Now()
+	}
+	if end.Before(createdAt) {
+		return 0
+	}
+	return int64(end.Sub(createdAt).Seconds())
+}
+
+func metadataNumber(metadata map[string]interface{}, key string) float64 {
+	if metadata == nil {
+		return 0
+	}
+	raw, ok := metadata[key]
+	if !ok || raw == nil {
+		return 0
+	}
+
+	switch v := raw.(type) {
+	case float64:
+		return v
+	case float32:
+		return float64(v)
+	case int:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case int32:
+		return float64(v)
+	case uint:
+		return float64(v)
+	case uint64:
+		return float64(v)
+	case uint32:
+		return float64(v)
+	default:
+		return 0
+	}
+}
+
 func projectToResponse(project *storage.Project) ProjectResponse {
 	if project == nil {
 		return ProjectResponse{}
@@ -1601,10 +1837,41 @@ func (s *Server) resolveSessionModel(sess *session.Session, providerType config.
 	return s.resolveModelForProvider(providerType)
 }
 
+func (s *Server) resolveContextWindowForProvider(providerType config.ProviderType) int {
+	if providerType == config.ProviderFallback {
+		chain := normalizeFallbackChain(s.config.Providers[string(config.ProviderFallback)].FallbackChain)
+		minContext := 0
+		for _, raw := range chain {
+			def := config.GetProviderDefinition(config.ProviderType(raw))
+			if def == nil || def.ContextWindow <= 0 {
+				continue
+			}
+			if minContext == 0 || def.ContextWindow < minContext {
+				minContext = def.ContextWindow
+			}
+		}
+		return minContext
+	}
+	if def := config.GetProviderDefinition(providerType); def != nil && def.ContextWindow > 0 {
+		return def.ContextWindow
+	}
+	return 0
+}
+
 func (s *Server) createLLMClient(providerType config.ProviderType, model string) (llm.Client, error) {
+	if providerType == config.ProviderFallback {
+		return s.createFallbackChainClient()
+	}
+	return s.createBaseLLMClient(providerType, model)
+}
+
+func (s *Server) createBaseLLMClient(providerType config.ProviderType, model string) (llm.Client, error) {
 	def := config.GetProviderDefinition(providerType)
 	if def == nil {
 		return nil, fmt.Errorf("unknown provider: %s", providerType)
+	}
+	if providerType == config.ProviderFallback {
+		return nil, fmt.Errorf("fallback aggregate is not a direct provider")
 	}
 
 	provider := s.config.Providers[string(providerType)]
@@ -1626,19 +1893,60 @@ func (s *Server) createLLMClient(providerType config.ProviderType, model string)
 	}
 
 	switch providerType {
-	case config.ProviderLMStudio:
+	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle:
+		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return lmstudio.NewClient(apiKey, modelName, baseURL), nil
 	default:
 		return anthropic.NewClientWithBaseURL(apiKey, modelName, baseURL), nil
 	}
 }
 
+func (s *Server) createFallbackChainClient() (llm.Client, error) {
+	provider := s.config.Providers[string(config.ProviderFallback)]
+	chain, err := s.normalizeAndValidateFallbackChain(provider.FallbackChain)
+	if err != nil {
+		return nil, err
+	}
+
+	nodes := make([]fallback.Node, 0, len(chain))
+	for _, name := range chain {
+		ptype := config.ProviderType(name)
+		model := s.resolveModelForProvider(ptype)
+		client, err := s.createBaseLLMClient(ptype, model)
+		if err != nil {
+			return nil, fmt.Errorf("fallback node %s is not available: %w", name, err)
+		}
+		nodes = append(nodes, fallback.Node{
+			Name:   name,
+			Model:  model,
+			Client: client,
+		})
+	}
+	return fallback.NewClient(nodes), nil
+}
+
+func normalizeOpenAIBaseURL(raw string) string {
+	baseURL := strings.TrimRight(strings.TrimSpace(raw), "/")
+	switch {
+	case strings.HasSuffix(baseURL, "/models"):
+		baseURL = strings.TrimSuffix(baseURL, "/models")
+	case strings.HasSuffix(baseURL, "/chat/completions"):
+		baseURL = strings.TrimSuffix(baseURL, "/chat/completions")
+	}
+	return strings.TrimSpace(baseURL)
+}
+
 func (s *Server) apiKeyFromEnv(providerType config.ProviderType) string {
 	envKey := s.apiKeyEnvName(providerType)
-	if envKey == "" {
-		return ""
+	if envKey != "" {
+		if value := strings.TrimSpace(os.Getenv(envKey)); value != "" {
+			return value
+		}
 	}
-	return strings.TrimSpace(os.Getenv(envKey))
+	if providerType == config.ProviderGoogle {
+		return strings.TrimSpace(os.Getenv("GEMINI_API_KEY"))
+	}
+	return ""
 }
 
 func (s *Server) apiKeyEnvName(providerType config.ProviderType) string {
@@ -1647,7 +1955,82 @@ func (s *Server) apiKeyEnvName(providerType config.ProviderType) string {
 		return "ANTHROPIC_API_KEY"
 	case config.ProviderKimi:
 		return "KIMI_API_KEY"
+	case config.ProviderOpenRouter:
+		return "OPENROUTER_API_KEY"
+	case config.ProviderGoogle:
+		return "GOOGLE_API_KEY"
 	default:
 		return ""
 	}
+}
+
+func normalizeFallbackChain(raw []string) []string {
+	chain := make([]string, 0, len(raw))
+	for _, item := range raw {
+		trimmed := strings.ToLower(strings.TrimSpace(item))
+		if trimmed == "" {
+			continue
+		}
+		chain = append(chain, trimmed)
+	}
+	return chain
+}
+
+func (s *Server) normalizeAndValidateFallbackChain(raw []string) ([]string, error) {
+	chain := normalizeFallbackChain(raw)
+	if len(chain) < 2 {
+		return nil, fmt.Errorf("fallback chain must contain at least two providers")
+	}
+
+	seen := make(map[string]struct{}, len(chain))
+	for _, name := range chain {
+		if _, ok := seen[name]; ok {
+			return nil, fmt.Errorf("fallback chain nodes must not repeat: %s", name)
+		}
+		seen[name] = struct{}{}
+
+		ptype := config.ProviderType(name)
+		if ptype == config.ProviderFallback {
+			return nil, fmt.Errorf("fallback chain cannot include fallback_chain itself")
+		}
+		def := config.GetProviderDefinition(ptype)
+		if def == nil {
+			return nil, fmt.Errorf("unsupported provider in fallback chain: %s", name)
+		}
+		if !s.providerConfiguredForUse(ptype) {
+			return nil, fmt.Errorf("provider %s is not configured or missing required credentials", name)
+		}
+	}
+	return chain, nil
+}
+
+func (s *Server) fallbackChainIsConfigured(chain []string) bool {
+	if len(chain) < 2 {
+		return false
+	}
+	validated, err := s.normalizeAndValidateFallbackChain(chain)
+	return err == nil && len(validated) >= 2
+}
+
+func (s *Server) providerConfiguredForUse(providerType config.ProviderType) bool {
+	def := config.GetProviderDefinition(providerType)
+	if def == nil || providerType == config.ProviderFallback {
+		return false
+	}
+	provider := s.config.Providers[string(providerType)]
+	baseURL := strings.TrimSpace(provider.BaseURL)
+	if baseURL == "" {
+		baseURL = strings.TrimSpace(def.DefaultURL)
+	}
+	if baseURL == "" {
+		return false
+	}
+	if !def.RequiresKey {
+		return true
+	}
+	apiKey := strings.TrimSpace(provider.APIKey)
+	if apiKey == "" {
+		apiKey = s.apiKeyFromEnv(providerType)
+	}
+	return apiKey != ""
 }

@@ -36,12 +36,13 @@ type Session struct {
 
 // Message represents a conversation message
 type Message struct {
-	ID          string       `json:"id"`
-	Role        string       `json:"role"` // "user", "assistant", "tool"
-	Content     string       `json:"content"`
-	ToolCalls   []ToolCall   `json:"tool_calls,omitempty"`
-	ToolResults []ToolResult `json:"tool_results,omitempty"`
-	Timestamp   time.Time    `json:"timestamp"`
+	ID          string                 `json:"id"`
+	Role        string                 `json:"role"` // "user", "assistant", "tool"
+	Content     string                 `json:"content"`
+	ToolCalls   []ToolCall             `json:"tool_calls,omitempty"`
+	ToolResults []ToolResult           `json:"tool_results,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	Timestamp   time.Time              `json:"timestamp"`
 }
 
 // ToolCall represents a tool invocation request
@@ -127,10 +128,16 @@ func titleFromFirstPrompt(prompt string) string {
 
 // AddAssistantMessage adds an assistant message
 func (s *Session) AddAssistantMessage(content string, toolCalls []ToolCall) {
+	s.AddAssistantMessageWithMetadata(content, toolCalls, nil)
+}
+
+// AddAssistantMessageWithMetadata adds an assistant message with optional metadata.
+func (s *Session) AddAssistantMessageWithMetadata(content string, toolCalls []ToolCall, metadata map[string]interface{}) {
 	s.AddMessage(Message{
 		Role:      "assistant",
 		Content:   content,
 		ToolCalls: toolCalls,
+		Metadata:  metadata,
 	})
 }
 
@@ -174,6 +181,7 @@ func (s *Session) ToStorage() *storage.Session {
 			Content:     m.Content,
 			ToolCalls:   toolCalls,
 			ToolResults: toolResults,
+			Metadata:    m.Metadata,
 			Timestamp:   m.Timestamp,
 		}
 	}
@@ -208,6 +216,7 @@ func FromStorage(ss *storage.Session) *Session {
 			Content:     m.Content,
 			ToolCalls:   toolCalls,
 			ToolResults: toolResults,
+			Metadata:    m.Metadata,
 			Timestamp:   m.Timestamp,
 		}
 	}

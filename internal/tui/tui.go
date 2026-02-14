@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/gratheon/aagent/internal/config"
 	"github.com/gratheon/aagent/internal/llm"
 	"github.com/gratheon/aagent/internal/llm/anthropic"
+	"github.com/gratheon/aagent/internal/llm/fallback"
 	"github.com/gratheon/aagent/internal/llm/lmstudio"
 	"github.com/gratheon/aagent/internal/logging"
 	"github.com/gratheon/aagent/internal/session"
@@ -46,6 +48,9 @@ var (
 
 	contextWarningStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#FFFF00"))
+
+	compactionStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFD166"))
 
 	contextDangerStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#FF0000"))
@@ -496,6 +501,7 @@ type message struct {
 	timestamp   time.Time
 	toolCalls   []session.ToolCall
 	toolResults []session.ToolResult
+	metadata    map[string]interface{}
 }
 
 // New creates a new TUI model
@@ -525,6 +531,9 @@ func New(
 			contextWindow = def.ContextWindow
 		}
 	}
+	if agentConfig.ContextWindow <= 0 {
+		agentConfig.ContextWindow = contextWindow
+	}
 
 	m := Model{
 		textarea:          ta,
@@ -553,8 +562,10 @@ func New(
 			timestamp:   msg.Timestamp,
 			toolCalls:   msg.ToolCalls,
 			toolResults: msg.ToolResults,
+			metadata:    msg.Metadata,
 		})
 	}
+	m.applySessionTokenMetadata(sess)
 
 	return m
 }
@@ -923,10 +934,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						timestamp:   sessionMsg.Timestamp,
 						toolCalls:   sessionMsg.ToolCalls,
 						toolResults: sessionMsg.ToolResults,
+						metadata:    sessionMsg.Metadata,
 					})
 				}
 				m.lastSyncedMessageCount = len(msg.session.Messages)
 				m.taskSummary = msg.session.Title
+				m.applySessionTokenMetadata(msg.session)
 				m.viewport.SetContent(m.renderMessages())
 				m.viewport.GotoBottom()
 			}
@@ -1155,8 +1168,8 @@ func (m Model) renderTopBar() string {
 	}
 
 	// Token stats
-	totalTokens := m.totalInputTokens + m.totalOutputTokens
-	contextPercent := float64(totalTokens) / float64(m.contextWindow) * 100
+	currentContextTokens := m.currentContextTokenCount()
+	contextPercent := float64(currentContextTokens) / float64(m.contextWindow) * 100
 
 	var percentStyle lipgloss.Style
 	switch {
@@ -1248,6 +1261,56 @@ func (m Model) formatDuration(d time.Duration) string {
 	}
 }
 
+func sessionMetadataFloat(sess *session.Session, key string) float64 {
+	if sess == nil || sess.Metadata == nil {
+		return 0
+	}
+	raw, ok := sess.Metadata[key]
+	if !ok || raw == nil {
+		return 0
+	}
+	switch v := raw.(type) {
+	case float64:
+		return v
+	case float32:
+		return float64(v)
+	case int:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case int32:
+		return float64(v)
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err != nil {
+			return 0
+		}
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func (m *Model) applySessionTokenMetadata(sess *session.Session) {
+	if sess == nil {
+		return
+	}
+	totalIn := int(sessionMetadataFloat(sess, "total_input_tokens"))
+	totalOut := int(sessionMetadataFloat(sess, "total_output_tokens"))
+	if totalIn > 0 || totalOut > 0 {
+		m.totalInputTokens = totalIn
+		m.totalOutputTokens = totalOut
+	}
+}
+
+func (m Model) currentContextTokenCount() int {
+	current := int(sessionMetadataFloat(m.session, "current_context_tokens"))
+	if current > 0 {
+		return current
+	}
+	return m.totalInputTokens + m.totalOutputTokens
+}
+
 // renderMessages renders all messages as a string
 func (m Model) renderMessages() string {
 	var sb strings.Builder
@@ -1267,6 +1330,25 @@ func (m Model) renderMessages() string {
 // renderMessage renders a single message with optional previous message context
 func (m Model) renderMessage(msg message) string {
 	return m.renderMessageWithContext(msg, nil)
+}
+
+func isCompactionMetadata(metadata map[string]interface{}) bool {
+	if metadata == nil {
+		return false
+	}
+	raw, ok := metadata["context_compaction"]
+	if !ok {
+		return false
+	}
+	switch v := raw.(type) {
+	case bool:
+		return v
+	case string:
+		normalized := strings.TrimSpace(strings.ToLower(v))
+		return normalized == "true" || normalized == "1" || normalized == "yes"
+	default:
+		return false
+	}
 }
 
 // renderMessageWithContext renders a message with context from previous message
@@ -1295,10 +1377,16 @@ func (m Model) renderMessageWithContext(msg message, prevMsg *message) string {
 	case "assistant":
 		header := assistantStyle.Render("Assistant")
 		indicator := receivedStyle.Render(" ⬇")
+		contentStyle := assistantContentStyle
+		if isCompactionMetadata(msg.metadata) {
+			header = compactionStyle.Render("Compaction")
+			indicator = ""
+			contentStyle = compactionStyle
+		}
 		sb.WriteString(fmt.Sprintf("%s %s%s\n", timestamp, header, indicator))
 		// Wrap assistant content
 		wrapped := wrapText(msg.content, wrapWidth)
-		sb.WriteString(wrapped)
+		sb.WriteString(contentStyle.Render(wrapped))
 
 		// Render tool calls with icons and details
 		for _, tc := range msg.toolCalls {
@@ -1651,8 +1739,10 @@ func (m Model) switchToSession(sessionID string) Model {
 			timestamp:   msg.Timestamp,
 			toolCalls:   msg.ToolCalls,
 			toolResults: msg.ToolResults,
+			metadata:    msg.Metadata,
 		})
 	}
+	m.applySessionTokenMetadata(newSess)
 
 	logging.Info("Switched to session: %s", sessionID)
 	return m
@@ -1878,8 +1968,12 @@ func (m Model) showStaticModels() (tea.Model, tea.Cmd) {
 	switch config.ProviderType(m.appConfig.ActiveProvider) {
 	case config.ProviderKimi:
 		m.availableModels = []string{"kimi-k2.5", "kimi-k2", "kimi-for-coding"}
+	case config.ProviderOpenRouter:
+		m.availableModels = []string{"openrouter/auto", "anthropic/claude-sonnet-4", "openai/gpt-4.1-mini"}
 	case config.ProviderAnthropic:
 		m.availableModels = []string{"claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"}
+	case config.ProviderGoogle:
+		m.availableModels = []string{"gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.0-pro"}
 	default:
 		m.availableModels = []string{providerDef.DefaultModel}
 	}
@@ -1939,6 +2033,8 @@ func (m Model) activateProvider(providerType config.ProviderType) (tea.Model, te
 	m.appConfig.ActiveProvider = string(providerType)
 	m.appConfig.DefaultModel = providerDef.DefaultModel
 	m.contextWindow = providerDef.ContextWindow
+	m.agentConfig.Model = providerDef.DefaultModel
+	m.agentConfig.ContextWindow = providerDef.ContextWindow
 
 	// Save config
 	if err := m.appConfig.Save(config.GetConfigPath()); err != nil {
@@ -1966,6 +2062,56 @@ func (m Model) activateProvider(providerType config.ProviderType) (tea.Model, te
 
 // createLLMClient creates an LLM client for the given provider type
 func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
+	if providerType == config.ProviderFallback {
+		fallbackProvider := m.appConfig.Providers[string(config.ProviderFallback)]
+		seen := map[string]struct{}{}
+		nodes := make([]fallback.Node, 0, len(fallbackProvider.FallbackChain))
+		for _, raw := range fallbackProvider.FallbackChain {
+			nodeType := config.ProviderType(strings.ToLower(strings.TrimSpace(raw)))
+			if nodeType == "" || nodeType == config.ProviderFallback {
+				continue
+			}
+			if _, exists := seen[string(nodeType)]; exists {
+				continue
+			}
+			seen[string(nodeType)] = struct{}{}
+			nodeProvider := m.appConfig.Providers[string(nodeType)]
+			nodeDef := config.GetProviderDefinition(nodeType)
+			if nodeDef == nil {
+				continue
+			}
+			apiKey := strings.TrimSpace(nodeProvider.APIKey)
+			if apiKey == "" {
+				apiKey = providerAPIKeyFromEnv(nodeType)
+			}
+			baseURL := strings.TrimSpace(nodeProvider.BaseURL)
+			if baseURL == "" {
+				baseURL = strings.TrimSpace(nodeDef.DefaultURL)
+			}
+			model := strings.TrimSpace(nodeProvider.Model)
+			if model == "" {
+				model = strings.TrimSpace(nodeDef.DefaultModel)
+			}
+			var client llm.Client
+			switch nodeType {
+			case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle:
+				client = lmstudio.NewClient(apiKey, model, baseURL)
+			default:
+				client = anthropic.NewClientWithBaseURL(apiKey, model, baseURL)
+			}
+			nodes = append(nodes, fallback.Node{
+				Name:   string(nodeType),
+				Model:  model,
+				Client: client,
+			})
+		}
+		if len(nodes) >= 2 {
+			return fallback.NewClient(nodes)
+		}
+		// Fall back to default provider if chain is invalid.
+		return anthropic.NewClientWithBaseURL("", "kimi-k2.5", "https://api.kimi.com/coding/v1")
+	}
+
 	provider := m.appConfig.Providers[string(providerType)]
 	providerDef := config.GetProviderDefinition(providerType)
 	apiKey := strings.TrimSpace(provider.APIKey)
@@ -1974,7 +2120,7 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 	}
 
 	switch providerType {
-	case config.ProviderLMStudio:
+	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle:
 		baseURL := provider.BaseURL
 		if baseURL == "" {
 			baseURL = providerDef.DefaultURL
@@ -1999,6 +2145,13 @@ func (m Model) validateActiveProviderConfig() error {
 	def := config.GetProviderDefinition(providerType)
 	if def == nil {
 		return fmt.Errorf("unknown active provider: %s", providerType)
+	}
+	if providerType == config.ProviderFallback {
+		fallbackProvider := m.appConfig.Providers[string(config.ProviderFallback)]
+		if len(fallbackProvider.FallbackChain) < 2 {
+			return fmt.Errorf("fallback chain requires at least two providers")
+		}
+		return nil
 	}
 	if !def.RequiresKey {
 		return nil
@@ -2033,6 +2186,10 @@ func providerAPIKeyEnvName(providerType config.ProviderType) string {
 		return "KIMI_API_KEY"
 	case config.ProviderAnthropic:
 		return "ANTHROPIC_API_KEY"
+	case config.ProviderOpenRouter:
+		return "OPENROUTER_API_KEY"
+	case config.ProviderGoogle:
+		return "GOOGLE_API_KEY"
 	default:
 		return ""
 	}
@@ -2091,11 +2248,15 @@ func (m Model) selectModel(modelName string) (tea.Model, tea.Cmd) {
 	switch {
 	case strings.Contains(modelName, "kimi"):
 		m.contextWindow = 131072
-	case strings.Contains(modelName, "claude-3"):
+	case strings.Contains(modelName, "claude"):
 		m.contextWindow = 200000
+	case strings.Contains(modelName, "gemini"):
+		m.contextWindow = 1048576
 	default:
 		m.contextWindow = 32768
 	}
+	m.agentConfig.Model = modelName
+	m.agentConfig.ContextWindow = m.contextWindow
 
 	// Save config
 	if err := m.appConfig.Save(config.GetConfigPath()); err != nil {

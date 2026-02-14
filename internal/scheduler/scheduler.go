@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +16,10 @@ import (
 	"github.com/gratheon/aagent/internal/tools"
 	"github.com/robfig/cron/v3"
 )
+
+const thinkingJobIDSettingKey = "A2GENT_THINKING_JOB_ID"
+const thinkingProjectID = "project-thinking"
+const thinkingProjectName = "Thinking"
 
 // Scheduler manages recurring job execution
 type Scheduler struct {
@@ -155,13 +160,27 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 	}
 
 	exec.SessionID = sess.ID
+	if thinking, thinkErr := s.isThinkingJob(job.ID); thinkErr != nil {
+		logging.Warn("Failed to check thinking job for project assignment: %v", thinkErr)
+	} else if thinking {
+		if assignErr := s.assignSessionToThinkingProject(sess); assignErr != nil {
+			logging.Warn("Failed to assign Thinking project for session %s: %v", sess.ID, assignErr)
+		}
+	}
 
 	// Run the agent with the job's task prompt
+	providerType := config.ProviderType(strings.TrimSpace(s.config.ActiveProvider))
+	contextWindow := 0
+	if def := config.GetProviderDefinition(providerType); def != nil {
+		contextWindow = def.ContextWindow
+	}
+
 	agentConfig := agent.Config{
-		Name:        "job-runner",
-		Model:       s.config.DefaultModel,
-		MaxSteps:    s.config.MaxSteps,
-		Temperature: s.config.Temperature,
+		Name:          "job-runner",
+		Model:         s.config.DefaultModel,
+		MaxSteps:      s.config.MaxSteps,
+		Temperature:   s.config.Temperature,
+		ContextWindow: contextWindow,
 	}
 
 	ag := agent.New(agentConfig, s.llmClient, s.toolManager, s.sessionManager)
@@ -207,6 +226,34 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 	if err := s.store.SaveJob(job); err != nil {
 		logging.Error("Failed to update job %s after execution: %v", job.ID, err)
 	}
+}
+
+func (s *Scheduler) isThinkingJob(jobID string) (bool, error) {
+	settings, err := s.store.GetSettings()
+	if err != nil {
+		return false, err
+	}
+	thinkingJobID := strings.TrimSpace(settings[thinkingJobIDSettingKey])
+	if thinkingJobID == "" {
+		return false, nil
+	}
+	return thinkingJobID == strings.TrimSpace(jobID), nil
+}
+
+func (s *Scheduler) assignSessionToThinkingProject(sess *session.Session) error {
+	now := time.Now()
+	project := &storage.Project{
+		ID:        thinkingProjectID,
+		Name:      thinkingProjectName,
+		Folders:   []string{},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.store.SaveProject(project); err != nil {
+		return err
+	}
+	sess.ProjectID = &project.ID
+	return s.sessionManager.Save(sess)
 }
 
 // calculateNextRun calculates the next run time based on cron expression

@@ -16,6 +16,7 @@ import (
 	httpserver "github.com/gratheon/aagent/internal/http"
 	"github.com/gratheon/aagent/internal/llm"
 	"github.com/gratheon/aagent/internal/llm/anthropic"
+	"github.com/gratheon/aagent/internal/llm/fallback"
 	"github.com/gratheon/aagent/internal/llm/lmstudio"
 	"github.com/gratheon/aagent/internal/logging"
 	"github.com/gratheon/aagent/internal/scheduler"
@@ -178,11 +179,16 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create agent config
+	contextWindow := 0
+	if def := config.GetProviderDefinition(config.ProviderType(cfg.ActiveProvider)); def != nil {
+		contextWindow = def.ContextWindow
+	}
 	agentConfig := agent.Config{
-		Name:        agentFlag,
-		Model:       cfg.DefaultModel,
-		MaxSteps:    cfg.MaxSteps,
-		Temperature: cfg.Temperature,
+		Name:          agentFlag,
+		Model:         cfg.DefaultModel,
+		MaxSteps:      cfg.MaxSteps,
+		Temperature:   cfg.Temperature,
+		ContextWindow: contextWindow,
 	}
 
 	// Create TUI model
@@ -304,11 +310,16 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create agent config
+	contextWindow := 0
+	if def := config.GetProviderDefinition(config.ProviderType(cfg.ActiveProvider)); def != nil {
+		contextWindow = def.ContextWindow
+	}
 	agentConfig := agent.Config{
-		Name:        agentFlag,
-		Model:       cfg.DefaultModel,
-		MaxSteps:    cfg.MaxSteps,
-		Temperature: cfg.Temperature,
+		Name:          agentFlag,
+		Model:         cfg.DefaultModel,
+		MaxSteps:      cfg.MaxSteps,
+		Temperature:   cfg.Temperature,
+		ContextWindow: contextWindow,
 	}
 
 	// Create TUI model
@@ -531,60 +542,106 @@ func listSessions(cmd *cobra.Command, args []string) error {
 
 // initLLMClient initializes the LLM client based on config and environment
 func initLLMClient(cfg *config.Config) (llm.Client, error) {
-	providerType := config.ProviderType(cfg.ActiveProvider)
-	providerDef := config.GetProviderDefinition(providerType)
-	if providerDef == nil {
-		providerDef = config.GetProviderDefinition(config.ProviderKimi) // Default to Kimi
-	}
-
-	// Check for saved provider config
-	provider := cfg.GetActiveProvider()
-
-	// Get API key from config or environment
-	apiKey := ""
-	if provider != nil && provider.APIKey != "" {
-		apiKey = provider.APIKey
-	} else {
-		// Fall back to environment variables
+	resolveEnvKeys := func(providerType config.ProviderType) []string {
 		switch providerType {
 		case config.ProviderKimi:
-			apiKey = os.Getenv("KIMI_API_KEY")
+			return []string{"KIMI_API_KEY"}
 		case config.ProviderAnthropic:
-			apiKey = os.Getenv("ANTHROPIC_API_KEY")
+			return []string{"ANTHROPIC_API_KEY"}
+		case config.ProviderOpenRouter:
+			return []string{"OPENROUTER_API_KEY"}
+		case config.ProviderGoogle:
+			return []string{"GOOGLE_API_KEY", "GEMINI_API_KEY"}
 		default:
-			apiKey = os.Getenv("KIMI_API_KEY")
-			if apiKey == "" {
-				apiKey = os.Getenv("ANTHROPIC_API_KEY")
+			return nil
+		}
+	}
+
+	createDirectClient := func(providerType config.ProviderType, modelOverride string) (llm.Client, string, error) {
+		providerDef := config.GetProviderDefinition(providerType)
+		if providerDef == nil || providerType == config.ProviderFallback {
+			return nil, "", fmt.Errorf("unsupported provider: %s", providerType)
+		}
+
+		provider := cfg.Providers[string(providerType)]
+		apiKey := strings.TrimSpace(provider.APIKey)
+		if apiKey == "" {
+			for _, envKey := range resolveEnvKeys(providerType) {
+				apiKey = strings.TrimSpace(os.Getenv(envKey))
+				if apiKey != "" {
+					break
+				}
 			}
 		}
-	}
 
-	// Get base URL
-	baseURL := providerDef.DefaultURL
-	if provider != nil && provider.BaseURL != "" {
-		baseURL = provider.BaseURL
-	}
-	if envURL := os.Getenv("ANTHROPIC_BASE_URL"); envURL != "" {
-		baseURL = envURL
-	}
-
-	// Get model
-	model := cfg.DefaultModel
-	if provider != nil && provider.Model != "" {
-		model = provider.Model
-	}
-
-	logging.Info("Using LLM provider: %s API: %s model=%s", cfg.ActiveProvider, baseURL, model)
-
-	// Create appropriate client
-	switch providerType {
-	case config.ProviderLMStudio:
-		return lmstudio.NewClient(apiKey, model, baseURL), nil
-	default:
-		// Anthropic-compatible providers (Kimi, Anthropic)
-		if providerDef.RequiresKey && apiKey == "" {
-			return nil, fmt.Errorf("API key required for %s (set %s_API_KEY or use /provider)", providerDef.DisplayName, strings.ToUpper(string(providerType)))
+		baseURL := strings.TrimSpace(provider.BaseURL)
+		if baseURL == "" {
+			baseURL = strings.TrimSpace(providerDef.DefaultURL)
 		}
-		return anthropic.NewClientWithBaseURL(apiKey, model, baseURL), nil
+		if envURL := strings.TrimSpace(os.Getenv(strings.ToUpper(string(providerType)) + "_BASE_URL")); envURL != "" {
+			baseURL = envURL
+		} else if envURL := strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL")); envURL != "" && (providerType == config.ProviderKimi || providerType == config.ProviderAnthropic) {
+			baseURL = envURL
+		}
+
+		model := strings.TrimSpace(modelOverride)
+		if model == "" {
+			model = strings.TrimSpace(provider.Model)
+		}
+		if model == "" {
+			model = strings.TrimSpace(providerDef.DefaultModel)
+		}
+		if model == "" {
+			model = strings.TrimSpace(cfg.DefaultModel)
+		}
+
+		if providerDef.RequiresKey && apiKey == "" {
+			envKeys := resolveEnvKeys(providerType)
+			if len(envKeys) == 0 {
+				return nil, "", fmt.Errorf("API key required for %s", providerDef.DisplayName)
+			}
+			return nil, "", fmt.Errorf("API key required for %s (set %s or use /provider)", providerDef.DisplayName, strings.Join(envKeys, " or "))
+		}
+
+		logging.Info("Using LLM provider: %s API: %s model=%s", providerType, baseURL, model)
+		switch providerType {
+		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle:
+			return lmstudio.NewClient(apiKey, model, baseURL), model, nil
+		default:
+			return anthropic.NewClientWithBaseURL(apiKey, model, baseURL), model, nil
+		}
 	}
+
+	providerType := config.ProviderType(strings.TrimSpace(cfg.ActiveProvider))
+	if providerType == config.ProviderFallback {
+		fallbackCfg := cfg.Providers[string(config.ProviderFallback)]
+		nodes := make([]fallback.Node, 0, len(fallbackCfg.FallbackChain))
+		seen := make(map[string]struct{}, len(fallbackCfg.FallbackChain))
+		for _, raw := range fallbackCfg.FallbackChain {
+			nodeType := config.ProviderType(strings.ToLower(strings.TrimSpace(raw)))
+			if nodeType == "" || nodeType == config.ProviderFallback {
+				continue
+			}
+			if _, exists := seen[string(nodeType)]; exists {
+				continue
+			}
+			seen[string(nodeType)] = struct{}{}
+			client, model, err := createDirectClient(nodeType, "")
+			if err != nil {
+				return nil, fmt.Errorf("fallback node %s is not available: %w", nodeType, err)
+			}
+			nodes = append(nodes, fallback.Node{
+				Name:   string(nodeType),
+				Model:  model,
+				Client: client,
+			})
+		}
+		if len(nodes) < 2 {
+			return nil, fmt.Errorf("fallback_chain requires at least two valid providers")
+		}
+		return fallback.NewClient(nodes), nil
+	}
+
+	client, _, err := createDirectClient(providerType, "")
+	return client, err
 }

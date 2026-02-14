@@ -54,6 +54,7 @@ func (s *SQLiteStore) migrate() error {
 			content TEXT,
 			tool_calls TEXT,
 			tool_results TEXT,
+			metadata TEXT,
 			timestamp TIMESTAMP NOT NULL,
 			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 		)`,
@@ -63,6 +64,8 @@ func (s *SQLiteStore) migrate() error {
 		`ALTER TABLE sessions ADD COLUMN title TEXT DEFAULT ''`,
 		// Migration to add project_id column to sessions
 		`ALTER TABLE sessions ADD COLUMN project_id TEXT`,
+		// Migration to add metadata column to messages
+		`ALTER TABLE messages ADD COLUMN metadata TEXT`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_project_id ON sessions(project_id)`,
 		// Recurring jobs table
 		`CREATE TABLE IF NOT EXISTS recurring_jobs (
@@ -171,10 +174,11 @@ func (s *SQLiteStore) SaveSession(sess *Session) error {
 
 	// Insert messages
 	for _, msg := range sess.Messages {
+		messageMetadata, _ := json.Marshal(msg.Metadata)
 		_, err = tx.Exec(`
-			INSERT INTO messages (id, session_id, role, content, tool_calls, tool_results, timestamp)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, msg.ID, sess.ID, msg.Role, msg.Content, msg.ToolCalls, msg.ToolResults, msg.Timestamp)
+			INSERT INTO messages (id, session_id, role, content, tool_calls, tool_results, metadata, timestamp)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, msg.ID, sess.ID, msg.Role, msg.Content, msg.ToolCalls, msg.ToolResults, messageMetadata, msg.Timestamp)
 		if err != nil {
 			return fmt.Errorf("failed to save message: %w", err)
 		}
@@ -221,7 +225,7 @@ func (s *SQLiteStore) GetSession(id string) (*Session, error) {
 
 	// Load messages
 	rows, err := s.db.Query(`
-		SELECT id, role, content, tool_calls, tool_results, timestamp
+		SELECT id, role, content, tool_calls, tool_results, metadata, timestamp
 		FROM messages WHERE session_id = ? ORDER BY timestamp
 	`, id)
 	if err != nil {
@@ -231,9 +235,9 @@ func (s *SQLiteStore) GetSession(id string) (*Session, error) {
 
 	for rows.Next() {
 		var msg Message
-		var toolCalls, toolResults sql.NullString
+		var toolCalls, toolResults, metadata sql.NullString
 
-		err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &toolCalls, &toolResults, &msg.Timestamp)
+		err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &toolCalls, &toolResults, &metadata, &msg.Timestamp)
 		if err != nil {
 			return nil, err
 		}
@@ -243,6 +247,9 @@ func (s *SQLiteStore) GetSession(id string) (*Session, error) {
 		}
 		if toolResults.Valid {
 			msg.ToolResults = json.RawMessage(toolResults.String)
+		}
+		if metadata.Valid && metadata.String != "" {
+			json.Unmarshal([]byte(metadata.String), &msg.Metadata)
 		}
 
 		sess.Messages = append(sess.Messages, msg)

@@ -27,6 +27,7 @@ type Message struct {
 	Content     string
 	ToolCalls   json.RawMessage
 	ToolResults json.RawMessage
+	Metadata    map[string]interface{}
 	Timestamp   time.Time
 }
 

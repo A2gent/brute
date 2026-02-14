@@ -39,6 +39,11 @@ type MindFileResponse struct {
 	Content    string `json:"content"`
 }
 
+type UpdateMindFileRequest struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
 func (s *Server) handleGetMindConfig(w http.ResponseWriter, r *http.Request) {
 	settings, err := s.store.GetSettings()
 	if err != nil {
@@ -257,6 +262,68 @@ func (s *Server) handleGetMindFile(w http.ResponseWriter, r *http.Request) {
 		RootFolder: rootFolder,
 		Path:       filepath.ToSlash(normalizedRelPath),
 		Content:    string(content),
+	})
+}
+
+func (s *Server) handleUpsertMindFile(w http.ResponseWriter, r *http.Request) {
+	rootFolder, err := s.loadMindRootFolder()
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var req UpdateMindFileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	resolvedPath, normalizedRelPath, err := resolveMindPath(rootFolder, req.Path)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if normalizedRelPath == "" {
+		s.errorResponse(w, http.StatusBadRequest, "File path is required")
+		return
+	}
+	if !isMarkdownFile(normalizedRelPath) {
+		s.errorResponse(w, http.StatusBadRequest, "Only markdown files can be created or edited")
+		return
+	}
+
+	parentDir := filepath.Dir(resolvedPath)
+	parentInfo, err := os.Stat(parentDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			s.errorResponse(w, http.StatusBadRequest, "Parent folder does not exist")
+			return
+		}
+		s.errorResponse(w, http.StatusBadRequest, "Failed to access parent folder: "+err.Error())
+		return
+	}
+	if !parentInfo.IsDir() {
+		s.errorResponse(w, http.StatusBadRequest, "Parent path is not a folder")
+		return
+	}
+
+	if info, statErr := os.Stat(resolvedPath); statErr == nil && info.IsDir() {
+		s.errorResponse(w, http.StatusBadRequest, "Path is a directory")
+		return
+	} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to access file: "+statErr.Error())
+		return
+	}
+
+	if err := os.WriteFile(resolvedPath, []byte(req.Content), 0o644); err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to write file: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, MindFileResponse{
+		RootFolder: rootFolder,
+		Path:       filepath.ToSlash(normalizedRelPath),
+		Content:    req.Content,
 	})
 }
 

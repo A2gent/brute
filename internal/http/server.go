@@ -506,7 +506,9 @@ type JobExecutionResponse struct {
 }
 
 type SettingsResponse struct {
-	Settings map[string]string `json:"settings"`
+	Settings                               map[string]string `json:"settings"`
+	DefaultSystemPrompt                    string            `json:"defaultSystemPrompt"`
+	DefaultSystemPromptWithoutBuiltInTools string            `json:"defaultSystemPromptWithoutBuiltInTools"`
 }
 
 type UpdateSettingsRequest struct {
@@ -592,7 +594,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to load settings: "+err.Error())
 		return
 	}
-	s.jsonResponse(w, http.StatusOK, SettingsResponse{Settings: settings})
+	s.jsonResponse(w, http.StatusOK, settingsResponse(settings))
 }
 
 func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
@@ -617,7 +619,15 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	syncSettingsToEnv(oldSettings, req.Settings)
-	s.jsonResponse(w, http.StatusOK, SettingsResponse{Settings: req.Settings})
+	s.jsonResponse(w, http.StatusOK, settingsResponse(req.Settings))
+}
+
+func settingsResponse(settings map[string]string) SettingsResponse {
+	return SettingsResponse{
+		Settings:                               settings,
+		DefaultSystemPrompt:                    agent.DefaultSystemPrompt(),
+		DefaultSystemPromptWithoutBuiltInTools: agent.DefaultSystemPromptWithoutBuiltInTools(),
+	}
 }
 
 func (s *Server) handleEstimateInstructionPrompt(w http.ResponseWriter, r *http.Request) {
@@ -1261,6 +1271,15 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionID")
 
 	s.cancelActiveSessionRuns(sessionID)
+
+	sess, err := s.sessionManager.Get(sessionID)
+	if err == nil {
+		cleanupCtx, cleanupCancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cleanupCancel()
+		if cleanupErr := s.deleteTelegramTopicForSession(cleanupCtx, sess); cleanupErr != nil {
+			logging.Warn("Telegram topic cleanup failed for session %s: %s", sessionID, sanitizeTelegramError(cleanupErr))
+		}
+	}
 
 	if err := s.sessionManager.Delete(sessionID); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete session: "+err.Error())

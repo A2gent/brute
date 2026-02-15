@@ -25,6 +25,7 @@ type whisperSTTParams struct {
 	AudioBytesBase64 string `json:"audio_bytes_base64,omitempty"`
 	AudioBase64      string `json:"audio_base64,omitempty"`
 	Language         string `json:"language,omitempty"`
+	TranslateToEN    *bool  `json:"translate_to_english,omitempty"`
 	OutputPath       string `json:"output_path,omitempty"`
 }
 
@@ -59,6 +60,10 @@ func (t *WhisperSTTTool) Schema() map[string]interface{} {
 			"language": map[string]interface{}{
 				"type":        "string",
 				"description": "Optional language hint (`auto`, `en`, `ru`, etc). Defaults to AAGENT_WHISPER_LANGUAGE or auto-detect.",
+			},
+			"translate_to_english": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Optional override. When true, translate transcript to English. When false, keep original language. Defaults to AAGENT_WHISPER_TRANSLATE (false).",
 			},
 			"output_path": map[string]interface{}{
 				"type":        "string",
@@ -127,7 +132,7 @@ func (t *WhisperSTTTool) Execute(ctx context.Context, params json.RawMessage) (*
 	}
 
 	start := time.Now()
-	transcript, err := whispercpp.Transcribe(ctx, audioPath, strings.TrimSpace(p.Language))
+	transcript, err := whispercpp.TranscribeWithOptions(ctx, audioPath, strings.TrimSpace(p.Language), p.TranslateToEN)
 	if err != nil {
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}
@@ -135,11 +140,12 @@ func (t *WhisperSTTTool) Execute(ctx context.Context, params json.RawMessage) (*
 
 	outputPath := strings.TrimSpace(p.OutputPath)
 	metadata := map[string]interface{}{
-		"language":       strings.TrimSpace(p.Language),
-		"audio_path":     audioPath,
-		"duration_ms":    durationMs,
-		"transcript":     transcript,
-		"transcript_len": len(transcript),
+		"language":             strings.TrimSpace(p.Language),
+		"translate_to_english": p.TranslateToEN,
+		"audio_path":           audioPath,
+		"duration_ms":          durationMs,
+		"transcript":           transcript,
+		"transcript_len":       len(transcript),
 	}
 	outputParts := []string{
 		"Transcribed audio with whisper.cpp.",

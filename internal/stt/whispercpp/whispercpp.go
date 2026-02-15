@@ -32,12 +32,17 @@ type Config struct {
 	BinaryPath      string
 	ModelPath       string
 	DefaultLanguage string
+	Translate       bool
 	Threads         int
 	AutoSetup       bool
 	AutoDownload    bool
 }
 
 func Transcribe(ctx context.Context, audioPath string, language string) (string, error) {
+	return TranscribeWithOptions(ctx, audioPath, language, nil)
+}
+
+func TranscribeWithOptions(ctx context.Context, audioPath string, language string, translateToEnglish *bool) (string, error) {
 	cfg, err := loadConfig(ctx)
 	if err != nil {
 		return "", err
@@ -49,6 +54,10 @@ func Transcribe(ctx context.Context, audioPath string, language string) (string,
 	}
 	if lang == "" {
 		lang = "auto"
+	}
+	translate := cfg.Translate
+	if translateToEnglish != nil {
+		translate = *translateToEnglish
 	}
 
 	outputDir, err := os.MkdirTemp("", "aagent-whisper-out-*")
@@ -70,6 +79,9 @@ func Transcribe(ctx context.Context, audioPath string, language string) (string,
 	}
 	if cfg.Threads > 0 {
 		args = append(args, "-t", strconv.Itoa(cfg.Threads))
+	}
+	if translate {
+		args = append(args, "-tr")
 	}
 
 	cmd := exec.CommandContext(ctx, cfg.BinaryPath, args...)
@@ -105,6 +117,7 @@ func loadConfig(ctx context.Context) (Config, error) {
 		BinaryPath:      resolveBinaryPath(),
 		ModelPath:       resolveModelPath(),
 		DefaultLanguage: strings.TrimSpace(os.Getenv("AAGENT_WHISPER_LANGUAGE")),
+		Translate:       resolveTranslate(),
 		Threads:         resolveThreads(),
 		AutoSetup:       resolveAutoSetup(),
 		AutoDownload:    resolveAutoDownload(),
@@ -601,6 +614,18 @@ func resolveAutoDownload() bool {
 		return false
 	default:
 		return true
+	}
+}
+
+func resolveTranslate() bool {
+	raw := strings.TrimSpace(strings.ToLower(os.Getenv("AAGENT_WHISPER_TRANSLATE")))
+	switch raw {
+	case "", "0", "false", "no", "off":
+		return false
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }
 

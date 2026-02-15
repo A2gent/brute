@@ -154,8 +154,7 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	}
 
 	for _, msg := range request.Messages {
-		kimiMsg := c.convertMessage(msg)
-		messages = append(messages, kimiMsg)
+		messages = append(messages, c.convertMessage(msg)...)
 	}
 
 	// Convert tools
@@ -272,7 +271,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		})
 	}
 	for _, msg := range request.Messages {
-		messages = append(messages, c.convertMessage(msg))
+		messages = append(messages, c.convertMessage(msg)...)
 	}
 
 	tools := make([]kimiTool, 0, len(request.Tools))
@@ -420,21 +419,26 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	return result, nil
 }
 
-// convertMessage converts an LLM message to Kimi format
-func (c *Client) convertMessage(msg llm.Message) kimiMessage {
+// convertMessage converts an LLM message to Kimi format.
+// For tool role messages, Kimi expects one message per tool result.
+func (c *Client) convertMessage(msg llm.Message) []kimiMessage {
 	if msg.Role == "tool" {
 		// Tool results - Kimi uses "tool" role for results
 		if len(msg.ToolResults) > 0 {
-			return kimiMessage{
-				Role:       "tool",
-				Content:    msg.ToolResults[0].Content,
-				ToolCallID: msg.ToolResults[0].ToolCallID,
+			out := make([]kimiMessage, 0, len(msg.ToolResults))
+			for _, result := range msg.ToolResults {
+				out = append(out, kimiMessage{
+					Role:       "tool",
+					Content:    result.Content,
+					ToolCallID: result.ToolCallID,
+				})
 			}
+			return out
 		}
-		return kimiMessage{
+		return []kimiMessage{{
 			Role:    "tool",
 			Content: msg.Content,
-		}
+		}}
 	}
 
 	if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
@@ -453,18 +457,18 @@ func (c *Client) convertMessage(msg llm.Message) kimiMessage {
 				},
 			})
 		}
-		return kimiMessage{
+		return []kimiMessage{{
 			Role:      "assistant",
 			Content:   msg.Content,
 			ToolCalls: toolCalls,
-		}
+		}}
 	}
 
 	// Simple text message
-	return kimiMessage{
+	return []kimiMessage{{
 		Role:    msg.Role,
 		Content: msg.Content,
-	}
+	}}
 }
 
 // Ensure Client implements llm.Client

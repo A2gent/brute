@@ -99,3 +99,18 @@ func TestResetBuildDirIfSourceMismatch(t *testing.T) {
 		t.Fatalf("expected build dir recreated: %v", err)
 	}
 }
+
+func TestResolveTranslate(t *testing.T) {
+	t.Setenv("AAGENT_WHISPER_TRANSLATE", "true")
+	if !resolveTranslate() {
+		t.Fatalf("expected resolveTranslate=true for true")
+	}
+	t.Setenv("AAGENT_WHISPER_TRANSLATE", "1")
+	if !resolveTranslate() {
+		t.Fatalf("expected resolveTranslate=true for 1")
+	}
+	t.Setenv("AAGENT_WHISPER_TRANSLATE", "false")
+	if resolveTranslate() {
+		t.Fatalf("expected resolveTranslate=false for false")
+	}
+}

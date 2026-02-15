@@ -312,7 +312,7 @@ func (s *Server) handleTranscribeSpeech(w http.ResponseWriter, r *http.Request) 
 	}
 	defer cleanup()
 
-	transcript, err := whispercpp.Transcribe(ctx, audioPath, r.FormValue("language"))
+	transcript, err := whispercpp.TranscribeWithOptions(ctx, audioPath, r.FormValue("language"), parseOptionalBool(r.FormValue("translate_to_english")))
 	if err != nil {
 		status := http.StatusBadGateway
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
@@ -323,6 +323,22 @@ func (s *Server) handleTranscribeSpeech(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.jsonResponse(w, http.StatusOK, speechTranscribeResponse{Text: transcript})
+}
+
+func parseOptionalBool(raw string) *bool {
+	value := strings.TrimSpace(strings.ToLower(raw))
+	switch value {
+	case "":
+		return nil
+	case "1", "true", "yes", "on":
+		b := true
+		return &b
+	case "0", "false", "no", "off":
+		b := false
+		return &b
+	default:
+		return nil
+	}
 }
 
 func writeTempWAV(payload []byte) (string, func(), error) {

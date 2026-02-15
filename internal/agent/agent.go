@@ -611,6 +611,7 @@ Guidelines:
 - Use tools to explore and modify the codebase
 - Read files before editing to understand context
 - Make minimal, targeted changes
+- When tasks are independent, issue multiple tool calls in one response so they can run in parallel
 - Explain your reasoning before making changes
 - If a task is unclear, ask for clarification
 - If you encounter errors, try to understand and fix them
@@ -633,6 +634,7 @@ Guidelines:
 - Explore and modify the codebase as needed
 - Read files before editing to understand context
 - Make minimal, targeted changes
+- When tasks are independent, issue multiple tool calls in one response so they can run in parallel
 - Explain your reasoning before making changes
 - If a task is unclear, ask for clarification
 - If you encounter errors, try to understand and fix them

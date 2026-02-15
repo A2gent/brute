@@ -28,6 +28,7 @@ var supportedIntegrationProviders = map[string]struct{}{
 	"discord":         {},
 	"whatsapp":        {},
 	"webhook":         {},
+	"x":               {},
 	"elevenlabs":      {},
 	"google_calendar": {},
 	"perplexity":      {},
@@ -45,6 +46,7 @@ var requiredConfigFields = map[string][]string{
 	"discord":         {"bot_token", "channel_id"},
 	"whatsapp":        {"access_token", "phone_number_id", "recipient"},
 	"webhook":         {"url"},
+	"x":               {"api_key", "api_secret", "access_token", "access_token_secret"},
 	"elevenlabs":      {"api_key"},
 	"google_calendar": {"client_id", "client_secret", "refresh_token"},
 	"perplexity":      {"api_key"},
@@ -165,6 +167,11 @@ type telegramCreateForumTopicPayload struct {
 	Result      struct {
 		MessageThreadID int64 `json:"message_thread_id"`
 	} `json:"result"`
+}
+
+type telegramBasicResponsePayload struct {
+	OK          bool   `json:"ok"`
+	Description string `json:"description"`
 }
 
 func (s *Server) handleListIntegrations(w http.ResponseWriter, r *http.Request) {
@@ -1101,6 +1108,89 @@ func (s *Server) createTelegramForumTopic(ctx context.Context, botToken string, 
 	return result.Result.MessageThreadID, nil
 }
 
+func (s *Server) deleteTelegramForumTopic(ctx context.Context, botToken string, chatID string, threadID int64) error {
+	payload := map[string]interface{}{
+		"chat_id":           chatID,
+		"message_thread_id": threadID,
+	}
+	jsonBody, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to encode deleteForumTopic payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		fmt.Sprintf("https://api.telegram.org/bot%s/deleteForumTopic", botToken),
+		bytes.NewReader(jsonBody),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to build deleteForumTopic request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("deleteForumTopic request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result telegramBasicResponsePayload
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("failed to decode deleteForumTopic response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK || !result.OK {
+		msg := strings.TrimSpace(result.Description)
+		if msg == "" {
+			msg = resp.Status
+		}
+		return fmt.Errorf("telegram deleteForumTopic failed: %s", msg)
+	}
+
+	return nil
+}
+
+func (s *Server) deleteTelegramTopicForSession(ctx context.Context, sess *session.Session) error {
+	if sess == nil || sess.Metadata == nil {
+		return nil
+	}
+	if metadataString(sess.Metadata["integration_provider"]) != "telegram" {
+		return nil
+	}
+
+	chatID := metadataString(sess.Metadata["telegram_chat_id"])
+	if chatID == "" {
+		return nil
+	}
+
+	threadID := telegramThreadIDFromSession(sess)
+	if threadID <= 0 {
+		return nil
+	}
+
+	integrationID := metadataString(sess.Metadata["integration_id"])
+	if integrationID == "" {
+		return fmt.Errorf("missing telegram integration_id in session metadata")
+	}
+
+	integration, err := s.store.GetIntegration(integrationID)
+	if err != nil {
+		return fmt.Errorf("failed to load integration %s: %w", integrationID, err)
+	}
+	if integration == nil || integration.Provider != "telegram" {
+		return fmt.Errorf("integration %s is not a telegram integration", integrationID)
+	}
+
+	botToken := strings.TrimSpace(integration.Config["bot_token"])
+	if botToken == "" {
+		return fmt.Errorf("telegram integration %s missing bot_token", integrationID)
+	}
+
+	return s.deleteTelegramForumTopic(ctx, botToken, chatID, threadID)
+}
+
 func (s *Server) syncHTTPCreatedSessionToTelegram(ctx context.Context, sessionID string, initialTask string) {
 	sess, err := s.sessionManager.Get(sessionID)
 	if err != nil {
@@ -1636,6 +1726,9 @@ func validateIntegration(integration storage.Integration) error {
 	if integration.Provider == "webhook" && integration.Mode == "duplex" {
 		return fmt.Errorf("webhook currently supports notify_only mode")
 	}
+	if integration.Provider == "x" && integration.Mode == "duplex" {
+		return fmt.Errorf("x currently supports notify_only mode")
+	}
 
 	requiredFields := requiredConfigFields[integration.Provider]
 	for _, field := range requiredFields {
@@ -1695,6 +1788,8 @@ func defaultIntegrationName(provider string) string {
 		return "WhatsApp"
 	case "webhook":
 		return "Webhook"
+	case "x":
+		return "X"
 	case "google_calendar":
 		return "Google Calendar"
 	case "elevenlabs":

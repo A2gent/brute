@@ -22,9 +22,10 @@ type Tool interface {
 
 // Result represents a tool execution result
 type Result struct {
-	Success bool   `json:"success"`
-	Output  string `json:"output"`
-	Error   string `json:"error,omitempty"`
+	Success  bool                   `json:"success"`
+	Output   string                 `json:"output"`
+	Error    string                 `json:"error,omitempty"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // Manager manages available tools
@@ -32,6 +33,14 @@ type Manager struct {
 	tools   map[string]Tool
 	workDir string
 	mu      sync.RWMutex
+}
+
+// WorkDir returns manager work directory.
+func (m *Manager) WorkDir() string {
+	if m == nil {
+		return ""
+	}
+	return m.workDir
 }
 
 // NewManager creates a new tool manager
@@ -117,6 +126,7 @@ func (m *Manager) ExecuteParallel(ctx context.Context, calls []llm.ToolCall) []l
 				logging.Debug("Tool %s failed: %s", tc.Name, result.Error)
 			} else {
 				tr.Content = result.Output
+				tr.Metadata = result.Metadata
 				logging.LogToolExecution(tc.Name, true, duration)
 			}
 

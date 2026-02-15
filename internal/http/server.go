@@ -122,6 +122,7 @@ const agentInstructionBlocksSettingKey = "A2GENT_AGENT_INSTRUCTION_BLOCKS"
 const builtInToolsInstructionBlockType = "builtin_tools"
 const integrationSkillsInstructionBlockType = "integration_skills"
 const externalMarkdownSkillsInstructionBlockType = "external_markdown_skills"
+const mcpServersInstructionBlockType = "mcp_servers"
 const skillsFolderSettingKey = "AAGENT_SKILLS_FOLDER"
 const defaultDynamicInstructionFile = "AGENTS.md"
 const maxDynamicInstructionBytes = 32 * 1024
@@ -221,6 +222,11 @@ func (s *Server) setupRoutes() {
 		r.Get("/voices", s.handleListSpeechVoices)
 		r.Post("/completion", s.handleCompletionSpeech)
 		r.Get("/clips/{clipID}", s.handleGetSpeechClip)
+	})
+
+	// Local assets exposed for session UI rendering.
+	r.Route("/assets", func(r chi.Router) {
+		r.Get("/images", s.handleGetImageAsset)
 	})
 
 	// Session endpoints
@@ -381,9 +387,10 @@ type ToolCallResponse struct {
 
 // ToolResultResponse represents a tool result
 type ToolResultResponse struct {
-	ToolCallID string `json:"tool_call_id"`
-	Content    string `json:"content"`
-	IsError    bool   `json:"is_error"`
+	ToolCallID string                 `json:"tool_call_id"`
+	Content    string                 `json:"content"`
+	IsError    bool                   `json:"is_error"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // ChatRequest represents a chat message request
@@ -2184,6 +2191,7 @@ func (s *Server) messagesToResponse(messages []session.Message) []MessageRespons
 					ToolCallID: tr.ToolCallID,
 					Content:    tr.Content,
 					IsError:    tr.IsError,
+					Metadata:   tr.Metadata,
 				}
 			}
 		}
@@ -2415,6 +2423,7 @@ func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, 
 	hasBuiltInBlock := false
 	hasIntegrationBlock := false
 	hasExternalMarkdownBlock := false
+	hasMCPServersBlock := false
 	for _, block := range blocks {
 		switch strings.TrimSpace(block.Type) {
 		case builtInToolsInstructionBlockType:
@@ -2423,9 +2432,11 @@ func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, 
 			hasIntegrationBlock = true
 		case externalMarkdownSkillsInstructionBlockType:
 			hasExternalMarkdownBlock = true
+		case mcpServersInstructionBlockType:
+			hasMCPServersBlock = true
 		}
 	}
-	prefixedBlocks := make([]configuredInstructionBlock, 0, 3+len(blocks))
+	prefixedBlocks := make([]configuredInstructionBlock, 0, 4+len(blocks))
 	if !hasBuiltInBlock {
 		prefixedBlocks = append(prefixedBlocks, configuredInstructionBlock{Type: builtInToolsInstructionBlockType, Value: ""})
 	}
@@ -2434,6 +2445,9 @@ func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, 
 	}
 	if !hasExternalMarkdownBlock {
 		prefixedBlocks = append(prefixedBlocks, configuredInstructionBlock{Type: externalMarkdownSkillsInstructionBlockType, Value: ""})
+	}
+	if !hasMCPServersBlock {
+		prefixedBlocks = append(prefixedBlocks, configuredInstructionBlock{Type: mcpServersInstructionBlockType, Value: ""})
 	}
 	blocks = append(prefixedBlocks, blocks...)
 
@@ -2500,6 +2514,16 @@ func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, 
 			appendSections = append(appendSections, section)
 		case externalMarkdownSkillsInstructionBlockType:
 			section, estimatedTokens, resolveErr := s.resolveExternalMarkdownSkillsSection(settings, sectionNumber)
+			blockSnapshot.ResolvedContent = section
+			blockSnapshot.Error = resolveErr
+			if section == "" {
+				resolvedBlocks = append(resolvedBlocks, blockSnapshot)
+				continue
+			}
+			blockSnapshot.EstimatedTokens = estimatedTokens
+			appendSections = append(appendSections, section)
+		case mcpServersInstructionBlockType:
+			section, estimatedTokens, resolveErr := s.resolveMCPServersSection(sectionNumber)
 			blockSnapshot.ResolvedContent = section
 			blockSnapshot.Error = resolveErr
 			if section == "" {
@@ -2748,6 +2772,71 @@ func (s *Server) resolveIntegrationSkillsSection(blockNumber int) (string, strin
 	}
 
 	return strings.Join(lines, "\n"), ""
+}
+
+func (s *Server) resolveMCPServersSection(blockNumber int) (string, int, string) {
+	servers, err := s.store.ListMCPServers()
+	if err != nil {
+		return "", 0, "Failed to list MCP servers: " + err.Error()
+	}
+
+	type mcpEntry struct {
+		name      string
+		transport string
+		tools     int
+		tokens    int
+	}
+	entries := make([]mcpEntry, 0, len(servers))
+	totalTokens := 0
+	for _, server := range servers {
+		if server == nil || !server.Enabled {
+			continue
+		}
+
+		tokenEstimate := 0
+		if server.LastEstimatedTokens != nil && *server.LastEstimatedTokens > 0 {
+			tokenEstimate = *server.LastEstimatedTokens
+		}
+		toolCount := 0
+		if server.LastToolCount != nil && *server.LastToolCount > 0 {
+			toolCount = *server.LastToolCount
+		}
+		totalTokens += tokenEstimate
+		entries = append(entries, mcpEntry{
+			name:      strings.TrimSpace(server.Name),
+			transport: strings.TrimSpace(server.Transport),
+			tools:     toolCount,
+			tokens:    tokenEstimate,
+		})
+	}
+
+	if len(entries) == 0 {
+		return "", 0, "No enabled MCP servers are configured."
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		left := strings.ToLower(entries[i].name + "|" + entries[i].transport)
+		right := strings.ToLower(entries[j].name + "|" + entries[j].transport)
+		return left < right
+	})
+
+	lines := make([]string, 0, len(entries)+4)
+	lines = append(lines, fmt.Sprintf("Instruction block %d (MCP servers):", blockNumber))
+	lines = append(lines, "Enabled MCP servers available to the agent. Manage these in MCP section: /mcp")
+	for _, entry := range entries {
+		label := entry.name
+		if label == "" {
+			label = "Unnamed MCP server"
+		}
+		transport := entry.transport
+		if transport == "" {
+			transport = "unknown"
+		}
+		lines = append(lines, fmt.Sprintf("- %s (%s, %d tools, %d tokens)", label, transport, entry.tools, entry.tokens))
+	}
+	lines = append(lines, fmt.Sprintf("Total MCP servers estimated tokens: %d", totalTokens))
+
+	return strings.Join(lines, "\n"), totalTokens, ""
 }
 
 func (s *Server) resolveExternalMarkdownSkillsSection(settings map[string]string, blockNumber int) (string, int, string) {

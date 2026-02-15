@@ -41,9 +41,10 @@ type ToolCall struct {
 
 // ToolResult represents a tool result
 type ToolResult struct {
-	ToolCallID string `json:"tool_call_id"`
-	Content    string `json:"content"`
-	IsError    bool   `json:"is_error,omitempty"`
+	ToolCallID string                 `json:"tool_call_id"`
+	Content    string                 `json:"content"`
+	IsError    bool                   `json:"is_error,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // ToolDefinition defines a tool for the LLM

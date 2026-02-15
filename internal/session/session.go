@@ -54,9 +54,10 @@ type ToolCall struct {
 
 // ToolResult represents the result of a tool execution
 type ToolResult struct {
-	ToolCallID string `json:"tool_call_id"`
-	Content    string `json:"content"`
-	IsError    bool   `json:"is_error,omitempty"`
+	ToolCallID string                 `json:"tool_call_id"`
+	Content    string                 `json:"content"`
+	IsError    bool                   `json:"is_error,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // New creates a new session

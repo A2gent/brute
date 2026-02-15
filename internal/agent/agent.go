@@ -226,6 +226,7 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 				ToolCallID: tr.ToolCallID,
 				Content:    tr.Content,
 				IsError:    tr.IsError,
+				Metadata:   tr.Metadata,
 			}
 		}
 
@@ -304,6 +305,7 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 					ToolCallID: tr.ToolCallID,
 					Content:    tr.Content,
 					IsError:    tr.IsError,
+					Metadata:   tr.Metadata,
 				}
 			}
 		}
@@ -348,6 +350,7 @@ func (a *Agent) buildCompactionRequest(sess *session.Session, prompt string) *ll
 					ToolCallID: tr.ToolCallID,
 					Content:    tr.Content,
 					IsError:    tr.IsError,
+					Metadata:   tr.Metadata,
 				}
 			}
 		}

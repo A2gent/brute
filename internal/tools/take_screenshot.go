@@ -180,7 +180,18 @@ func (t *TakeScreenshotTool) Execute(ctx context.Context, params json.RawMessage
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode result: %w", err)
 	}
-	return &Result{Success: true, Output: string(out)}, nil
+	return &Result{
+		Success: true,
+		Output:  string(out),
+		Metadata: map[string]interface{}{
+			"image_file": map[string]interface{}{
+				"path":        absPath,
+				"format":      format,
+				"bytes":       info.Size(),
+				"source_tool": t.Name(),
+			},
+		},
+	}, nil
 }
 
 func normalizeScreenshotFormat(raw string, filename string, outputPath string) (string, error) {

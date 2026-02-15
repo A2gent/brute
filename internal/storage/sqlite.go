@@ -23,6 +23,11 @@ func NewSQLiteStore(dataPath string) (*SQLiteStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
+	// SQLite supports one writer at a time. Keep pool size constrained to
+	// reduce lock contention ("SQLITE_BUSY") under concurrent goroutines.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
 
 	store := &SQLiteStore{db: db}
 	if err := store.migrate(); err != nil {

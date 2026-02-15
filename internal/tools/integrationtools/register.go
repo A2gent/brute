@@ -14,7 +14,6 @@ func Register(manager *tools.Manager, store storage.Store, clipStore *speechcach
 	manager.Register(NewGoogleCalendarQueryTool(store))
 	manager.Register(NewBraveSearchQueryTool(store))
 	manager.Register(NewElevenLabsTTSTool(store, clipStore))
-	manager.Register(NewMossRealtimeTTSTool(manager.WorkDir(), clipStore))
 	manager.Register(NewMacOSSayTTSTool(manager.WorkDir(), clipStore))
 	manager.Register(NewPiperTTSTool(manager.WorkDir(), clipStore))
 	manager.Register(NewNotifyWebAppTool())

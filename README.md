@@ -1,4 +1,4 @@
-# A² Brute
+# A² Brute terminal agent
 
 [![Go Version](https://img.shields.io/badge/go-1.21+-00ADD8.svg)](https://golang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -14,7 +14,7 @@ Recommended to use [web-app](https://github.com/A2gent/web-app) for full experie
 
 
 ## Features
-
+- **Exposes HTTP API** for web-app to interact with
 - **TUI Interface**: Beautiful terminal UI with scrollable history, multi-line input, and real-time status
 - **Agentic Loop**: Receive task → call LLM with tools → execute tool calls → return results → repeat until complete
 - **Session Persistence**: SQLite-based session storage with resumption support

@@ -100,7 +100,15 @@ func (s *Server) toolManagerForSession(sess *session.Session) *tools.Manager {
 
 	manager := tools.NewManager(workDir)
 	integrationtools.Register(manager, s.store, s.speechClips)
+	s.registerServerBackedTools(manager)
 	return manager
+}
+
+func (s *Server) registerServerBackedTools(manager *tools.Manager) {
+	if manager == nil {
+		return
+	}
+	manager.Register(newRecurringJobsTool(s))
 }
 
 const thinkingJobIDSettingKey = "A2GENT_THINKING_JOB_ID"
@@ -138,6 +146,7 @@ func NewServer(
 		speechClips:    speechClips,
 	}
 
+	s.registerServerBackedTools(s.toolManager)
 	s.setupRoutes()
 	return s
 }

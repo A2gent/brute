@@ -1,4 +1,4 @@
-# aa (aagent)
+# A² Brute / aagent
 
 A Go-based autonomous AI coding agent that executes tasks in sessions.
 

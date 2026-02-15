@@ -230,6 +230,11 @@ func (s *Server) setupRoutes() {
 		r.Get("/images", s.handleGetImageAsset)
 	})
 
+	// Local device helpers.
+	r.Route("/devices", func(r chi.Router) {
+		r.Get("/cameras", s.handleListCameraDevices)
+	})
+
 	// Session endpoints
 	r.Route("/sessions", func(r chi.Router) {
 		r.Get("/", s.handleListSessions)
@@ -1363,6 +1368,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
 		return
 	}
+	defer s.queueTelegramSessionMessageSync(sess.ID)
 
 	// Add user message to session
 	sess.AddUserMessage(req.Message)
@@ -1458,6 +1464,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
 		return
 	}
+	defer s.queueTelegramSessionMessageSync(sess.ID)
 
 	// Add user message before streaming begins.
 	sess.AddUserMessage(req.Message)

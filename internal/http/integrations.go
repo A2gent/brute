@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -94,7 +95,9 @@ type TelegramChatCandidate struct {
 
 const telegramLastUpdateIDConfigKey = "last_update_id"
 const telegramNextPollAtConfigKey = "next_poll_at_unix"
+const telegramSyncedMessageCountMetadataKey = "telegram_synced_message_count"
 const myMindProjectName = "My Mind"
+const telegramMaxMessageRunes = 3900
 
 var telegramBotTokenPattern = regexp.MustCompile(`bot[0-9]{5,}:[A-Za-z0-9_-]{20,}`)
 
@@ -1150,7 +1153,8 @@ func (s *Server) syncHTTPCreatedSessionToTelegram(ctx context.Context, sessionID
 		}
 	}
 
-	announce := telegramSessionAnnouncement(sess, initialTask, threadID > 0)
+	sessionURL := s.telegramSessionURL(selected, sessionID)
+	announce := telegramSessionAnnouncement(sess, initialTask, threadID > 0, sessionURL)
 	sendErr := s.sendTelegramMessage(ctx, botToken, chatID, threadID, announce)
 	if sendErr != nil && threadID > 0 {
 		logging.Warn("Telegram topic send failed for session %s (thread=%d): %s", sessionID, threadID, sanitizeTelegramError(sendErr))
@@ -1177,6 +1181,10 @@ func (s *Server) syncHTTPCreatedSessionToTelegram(ctx context.Context, sessionID
 	}
 	if err := s.sessionManager.Save(sess); err != nil {
 		logging.Warn("Failed to persist Telegram outbound metadata for session %s: %v", sessionID, err)
+	}
+
+	if err := s.syncSessionMessagesToTelegram(ctx, sess, botToken, chatID, threadID); err != nil {
+		logging.Warn("Telegram outbound message sync failed for session %s: %s", sessionID, sanitizeTelegramError(err))
 	}
 }
 
@@ -1243,7 +1251,7 @@ func telegramTopicNameForSession(sess *session.Session, initialTask string) stri
 	return base
 }
 
-func telegramSessionAnnouncement(sess *session.Session, initialTask string, inTopic bool) string {
+func telegramSessionAnnouncement(sess *session.Session, initialTask string, inTopic bool, sessionURL string) string {
 	title := ""
 	if sess != nil {
 		title = strings.TrimSpace(sess.Title)
@@ -1259,17 +1267,286 @@ func telegramSessionAnnouncement(sess *session.Session, initialTask string, inTo
 		title = strings.TrimSpace(string(runes[:180])) + "..."
 	}
 
+	lines := []string{fmt.Sprintf("New Web App session: %s", title)}
+
 	sessionID := ""
 	if sess != nil {
 		sessionID = strings.TrimSpace(sess.ID)
 	}
-	if sessionID == "" {
-		return fmt.Sprintf("Web App started: %s", title)
+	if link := strings.TrimSpace(sessionURL); link != "" {
+		lines = append(lines, "Open: "+link)
+	} else if sessionID != "" {
+		lines = append(lines, "Session ID: "+sessionID)
 	}
+
 	if inTopic {
-		return fmt.Sprintf("Web App started: %s\nSession ID: %s\nReply in this topic to continue.", title, sessionID)
+		lines = append(lines, "Reply in this topic to continue.")
+	} else {
+		lines = append(lines, "Reply here to continue.")
 	}
-	return fmt.Sprintf("Web App started: %s\nSession ID: %s\nReply here to continue.", title, sessionID)
+	return strings.Join(lines, "\n")
+}
+
+func (s *Server) telegramSessionURL(integration *storage.Integration, sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return ""
+	}
+
+	base := ""
+	if integration != nil {
+		base = strings.TrimSpace(integration.Config["web_app_base_url"])
+	}
+	if base == "" {
+		base = strings.TrimSpace(os.Getenv("A2GENT_WEBAPP_BASE_URL"))
+	}
+	if base == "" {
+		return fmt.Sprintf("http://localhost:%d/chat/%s", s.port, sessionID)
+	}
+
+	if strings.Contains(base, "{session_id}") {
+		return strings.ReplaceAll(base, "{session_id}", sessionID)
+	}
+
+	base = strings.TrimRight(base, "/")
+	if strings.HasSuffix(base, "/chat") {
+		return base + "/" + sessionID
+	}
+	return base + "/chat/" + sessionID
+}
+
+func (s *Server) queueTelegramSessionMessageSync(sessionID string) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return
+	}
+	go func(id string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		s.syncSessionMessagesToTelegramBySessionID(ctx, id)
+	}(sessionID)
+}
+
+func (s *Server) syncSessionMessagesToTelegramBySessionID(ctx context.Context, sessionID string) {
+	sess, err := s.sessionManager.Get(sessionID)
+	if err != nil || sess == nil || sess.Metadata == nil {
+		return
+	}
+	if metadataString(sess.Metadata["integration_provider"]) != "telegram" {
+		return
+	}
+
+	integrationID := metadataString(sess.Metadata["integration_id"])
+	if integrationID == "" {
+		return
+	}
+	integration, err := s.store.GetIntegration(integrationID)
+	if err != nil || integration == nil {
+		return
+	}
+	if !integration.Enabled || integration.Provider != "telegram" || integration.Mode != "duplex" {
+		return
+	}
+
+	botToken := strings.TrimSpace(integration.Config["bot_token"])
+	if botToken == "" {
+		return
+	}
+
+	chatID := metadataString(sess.Metadata["telegram_chat_id"])
+	if chatID == "" {
+		return
+	}
+	threadID := telegramThreadIDFromSession(sess)
+
+	if err := s.syncSessionMessagesToTelegram(ctx, sess, botToken, chatID, threadID); err != nil {
+		logging.Warn("Telegram session message sync failed for session %s: %s", sessionID, sanitizeTelegramError(err))
+	}
+}
+
+func (s *Server) syncSessionMessagesToTelegram(
+	ctx context.Context,
+	sess *session.Session,
+	botToken string,
+	chatID string,
+	threadID int64,
+) error {
+	if sess == nil {
+		return nil
+	}
+	if sess.Metadata == nil {
+		sess.Metadata = map[string]interface{}{}
+	}
+
+	syncedCount := metadataInt(sess.Metadata[telegramSyncedMessageCountMetadataKey])
+	if syncedCount < 0 {
+		syncedCount = 0
+	}
+	if syncedCount > len(sess.Messages) {
+		syncedCount = len(sess.Messages)
+	}
+
+	for i := syncedCount; i < len(sess.Messages); i++ {
+		parts := telegramPartsForSessionMessage(sess.Messages[i])
+		for _, part := range parts {
+			chunks := splitTelegramText(part, telegramMaxMessageRunes)
+			for _, chunk := range chunks {
+				if err := s.sendTelegramMessage(ctx, botToken, chatID, threadID, chunk); err != nil {
+					return err
+				}
+			}
+		}
+		syncedCount = i + 1
+		sess.Metadata[telegramSyncedMessageCountMetadataKey] = syncedCount
+		if err := s.sessionManager.Save(sess); err != nil {
+			logging.Warn("Failed to persist Telegram synced message count for session %s: %v", sess.ID, err)
+		}
+	}
+
+	return nil
+}
+
+func telegramPartsForSessionMessage(msg session.Message) []string {
+	parts := make([]string, 0, 3)
+	content := strings.TrimSpace(msg.Content)
+
+	switch strings.ToLower(strings.TrimSpace(msg.Role)) {
+	case "user":
+		if content != "" {
+			parts = append(parts, "You: "+content)
+		}
+	case "assistant":
+		if content != "" {
+			parts = append(parts, "Agent: "+content)
+		}
+		if len(msg.ToolCalls) > 0 {
+			lines := make([]string, 0, len(msg.ToolCalls)+1)
+			lines = append(lines, "Agent tool calls:")
+			for _, tc := range msg.ToolCalls {
+				name := strings.TrimSpace(tc.Name)
+				if name == "" {
+					name = "tool"
+				}
+				input := compactTelegramJSON(tc.Input)
+				if input != "" {
+					lines = append(lines, fmt.Sprintf("- %s %s", name, truncateRunes(input, 500)))
+				} else {
+					lines = append(lines, "- "+name)
+				}
+			}
+			parts = append(parts, strings.Join(lines, "\n"))
+		}
+	case "tool":
+		if content != "" {
+			parts = append(parts, "Tool: "+content)
+		}
+	}
+
+	if len(msg.ToolResults) > 0 {
+		lines := make([]string, 0, len(msg.ToolResults)+1)
+		lines = append(lines, "Tool results:")
+		for _, tr := range msg.ToolResults {
+			status := "ok"
+			if tr.IsError {
+				status = "error"
+			}
+			body := truncateRunes(strings.TrimSpace(tr.Content), 1200)
+			if body == "" {
+				lines = append(lines, fmt.Sprintf("- [%s]", status))
+				continue
+			}
+			lines = append(lines, fmt.Sprintf("- [%s] %s", status, body))
+		}
+		parts = append(parts, strings.Join(lines, "\n"))
+	}
+
+	return parts
+}
+
+func compactTelegramJSON(raw json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" {
+		return ""
+	}
+	var out bytes.Buffer
+	if err := json.Compact(&out, []byte(trimmed)); err == nil {
+		return out.String()
+	}
+	return trimmed
+}
+
+func truncateRunes(text string, limit int) string {
+	text = strings.TrimSpace(text)
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	if limit <= 3 {
+		return string(runes[:limit])
+	}
+	return string(runes[:limit-3]) + "..."
+}
+
+func splitTelegramText(text string, maxRunes int) []string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	if maxRunes <= 0 {
+		return []string{text}
+	}
+
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return []string{text}
+	}
+
+	parts := make([]string, 0, (len(runes)/maxRunes)+1)
+	for start := 0; start < len(runes); start += maxRunes {
+		end := start + maxRunes
+		if end > len(runes) {
+			end = len(runes)
+		}
+		parts = append(parts, strings.TrimSpace(string(runes[start:end])))
+	}
+	return parts
+}
+
+func metadataInt(value interface{}) int {
+	switch v := value.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case string:
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err == nil {
+			return n
+		}
+		return 0
+	default:
+		return 0
+	}
+}
+
+func telegramThreadIDFromSession(sess *session.Session) int64 {
+	if sess == nil || sess.Metadata == nil {
+		return 0
+	}
+	raw := metadataString(sess.Metadata["telegram_thread_id"])
+	if raw == "" {
+		return 0
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id <= 0 {
+		return 0
+	}
+	return id
 }
 
 func telegramInboundFailureReply(err error) string {

@@ -4,35 +4,125 @@ package tools
 
 /*
 #cgo CFLAGS: -x objective-c -fobjc-arc
-#cgo LDFLAGS: -framework Foundation -framework AVFoundation -framework AppKit
+#cgo LDFLAGS: -framework Foundation -framework AVFoundation -framework AppKit -framework CoreMedia -framework CoreVideo -framework CoreImage
 
 #import <Foundation/Foundation.h>
 #import <AVFoundation/AVFoundation.h>
 #import <AppKit/AppKit.h>
+#import <CoreMedia/CoreMedia.h>
+#import <CoreVideo/CoreVideo.h>
+#import <CoreImage/CoreImage.h>
 #import <dispatch/dispatch.h>
 #include <stdlib.h>
 #include <string.h>
 
-@interface AAgentPhotoCaptureDelegate : NSObject <AVCapturePhotoCaptureDelegate>
+@interface AAgentFrameCaptureDelegate : NSObject <AVCaptureVideoDataOutputSampleBufferDelegate>
 @property (atomic, strong) NSData *capturedData;
 @property (atomic, strong) NSError *capturedError;
+@property (atomic) BOOL didCapture;
+@property (atomic) int frameCount;
+@property (atomic) int minWarmupFrames;
 @property (nonatomic) dispatch_semaphore_t semaphore;
+@property (nonatomic) BOOL outputPNG;
 @end
 
-@implementation AAgentPhotoCaptureDelegate
-- (void)photoOutput:(AVCapturePhotoOutput *)output
-didFinishProcessingPhoto:(AVCapturePhoto *)photo
-              error:(NSError *)error {
-    if (error != nil) {
-        self.capturedError = error;
-    } else {
-        self.capturedData = [photo fileDataRepresentation];
-        if (self.capturedData == nil) {
-            self.capturedError = [NSError errorWithDomain:@"aagent.camera"
-                                                     code:500
-                                                 userInfo:@{NSLocalizedDescriptionKey: @"failed to encode photo data"}];
+@implementation AAgentFrameCaptureDelegate
+- (void)captureOutput:(AVCaptureOutput *)output
+didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
+       fromConnection:(AVCaptureConnection *)connection {
+    (void)output;
+    (void)connection;
+    if (self.didCapture) {
+        return;
+    }
+
+    self.frameCount += 1;
+    if (self.frameCount < self.minWarmupFrames) {
+        return;
+    }
+    self.didCapture = YES;
+
+    CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
+    if (imageBuffer == NULL) {
+        self.capturedError = [NSError errorWithDomain:@"aagent.camera"
+                                                 code:500
+                                             userInfo:@{NSLocalizedDescriptionKey: @"failed to get image buffer"}];
+        dispatch_semaphore_signal(self.semaphore);
+        return;
+    }
+
+    size_t width = CVPixelBufferGetWidth(imageBuffer);
+    size_t height = CVPixelBufferGetHeight(imageBuffer);
+    CIImage *ciImage = [CIImage imageWithCVImageBuffer:imageBuffer];
+    if (ciImage == nil) {
+        self.capturedError = [NSError errorWithDomain:@"aagent.camera"
+                                                 code:500
+                                             userInfo:@{NSLocalizedDescriptionKey: @"failed to create CIImage"}];
+        dispatch_semaphore_signal(self.semaphore);
+        return;
+    }
+
+    CIContext *ciContext = [CIContext contextWithOptions:nil];
+    CGImageRef cgImage = [ciContext createCGImage:ciImage fromRect:CGRectMake(0, 0, width, height)];
+    if (cgImage == NULL) {
+        self.capturedError = [NSError errorWithDomain:@"aagent.camera"
+                                                 code:500
+                                             userInfo:@{NSLocalizedDescriptionKey: @"failed to create CGImage"}];
+        dispatch_semaphore_signal(self.semaphore);
+        return;
+    }
+
+    NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] initWithCGImage:cgImage];
+    CGImageRelease(cgImage);
+    if (bitmap == nil) {
+        self.capturedError = [NSError errorWithDomain:@"aagent.camera"
+                                                 code:500
+                                             userInfo:@{NSLocalizedDescriptionKey: @"failed to create bitmap image"}];
+        dispatch_semaphore_signal(self.semaphore);
+        return;
+    }
+
+    // Some webcams output near-black warm-up frames; skip them and keep waiting.
+    unsigned char *pixels = [bitmap bitmapData];
+    NSInteger bytesPerRow = [bitmap bytesPerRow];
+    NSInteger widthPx = [bitmap pixelsWide];
+    NSInteger heightPx = [bitmap pixelsHigh];
+    if (pixels != NULL && bytesPerRow > 0 && widthPx > 0 && heightPx > 0) {
+        const int samplesX = 6;
+        const int samplesY = 4;
+        double lumaSum = 0.0;
+        int sampleCount = 0;
+        for (int yi = 0; yi < samplesY; yi++) {
+            NSInteger y = (NSInteger)((double)yi / (samplesY - 1) * (heightPx - 1));
+            unsigned char *row = pixels + (y * bytesPerRow);
+            for (int xi = 0; xi < samplesX; xi++) {
+                NSInteger x = (NSInteger)((double)xi / (samplesX - 1) * (widthPx - 1));
+                unsigned char *px = row + (x * 4); // BGRA
+                double b = (double)px[0];
+                double g = (double)px[1];
+                double r = (double)px[2];
+                lumaSum += (0.2126 * r) + (0.7152 * g) + (0.0722 * b);
+                sampleCount += 1;
+            }
+        }
+        double meanLuma = sampleCount > 0 ? (lumaSum / sampleCount) : 0.0;
+        if (meanLuma < 8.0 && self.frameCount < 180) {
+            return;
         }
     }
+
+    NSBitmapImageFileType fileType = self.outputPNG ? NSBitmapImageFileTypePNG : NSBitmapImageFileTypeJPEG;
+    NSDictionary *props = self.outputPNG ? @{} : @{NSImageCompressionFactor: @0.92};
+    NSData *data = [bitmap representationUsingType:fileType properties:props];
+    if (data == nil || data.length == 0) {
+        self.capturedError = [NSError errorWithDomain:@"aagent.camera"
+                                                 code:500
+                                             userInfo:@{NSLocalizedDescriptionKey: @"failed to encode captured frame"}];
+        dispatch_semaphore_signal(self.semaphore);
+        return;
+    }
+
+    self.capturedData = data;
     dispatch_semaphore_signal(self.semaphore);
 }
 @end
@@ -64,9 +154,8 @@ int aagent_capture_photo_darwin(int camera_index, const char *output_path, const
             set_error(err_out, @"invalid capture arguments encoding");
             return 1;
         }
-        if (![formatStr isEqualToString:@"jpg"] &&
-            ![formatStr isEqualToString:@"jpeg"] &&
-            ![formatStr isEqualToString:@"png"]) {
+        BOOL outputPNG = [formatStr isEqualToString:@"png"];
+        if (!outputPNG && ![formatStr isEqualToString:@"jpg"] && ![formatStr isEqualToString:@"jpeg"]) {
             set_error(err_out, [NSString stringWithFormat:@"unsupported format: %@", formatStr]);
             return 1;
         }
@@ -91,14 +180,20 @@ int aagent_capture_photo_darwin(int camera_index, const char *output_path, const
             return 1;
         }
 
-        AVCaptureDeviceDiscoverySession *discovery =
-            [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:@[
-                AVCaptureDeviceTypeBuiltInWideAngleCamera,
-                AVCaptureDeviceTypeExternalUnknown
-            ]
-            mediaType:AVMediaTypeVideo
-            position:AVCaptureDevicePositionUnspecified];
+        NSMutableArray<AVCaptureDeviceType> *deviceTypes = [NSMutableArray arrayWithObject:AVCaptureDeviceTypeBuiltInWideAngleCamera];
+#ifdef AVCaptureDeviceTypeContinuityCamera
+        if (@available(macOS 14.0, *)) {
+            [deviceTypes addObject:AVCaptureDeviceTypeContinuityCamera];
+        }
+#endif
+#ifdef AVCaptureDeviceTypeExternal
+        [deviceTypes addObject:AVCaptureDeviceTypeExternal];
+#endif
 
+        AVCaptureDeviceDiscoverySession *discovery =
+            [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:deviceTypes
+                                                                   mediaType:AVMediaTypeVideo
+                                                                    position:AVCaptureDevicePositionUnspecified];
         NSArray<AVCaptureDevice *> *devices = [discovery devices];
         if (devices.count == 0) {
             set_error(err_out, @"no camera devices found");
@@ -121,6 +216,9 @@ int aagent_capture_photo_darwin(int camera_index, const char *output_path, const
 
         AVCaptureSession *session = [[AVCaptureSession alloc] init];
         [session beginConfiguration];
+        if ([session canSetSessionPreset:AVCaptureSessionPresetPhoto]) {
+            [session setSessionPreset:AVCaptureSessionPresetPhoto];
+        }
         if (![session canAddInput:input]) {
             [session commitConfiguration];
             set_error(err_out, @"unable to add camera input");
@@ -128,25 +226,33 @@ int aagent_capture_photo_darwin(int camera_index, const char *output_path, const
         }
         [session addInput:input];
 
-        AVCapturePhotoOutput *photoOutput = [[AVCapturePhotoOutput alloc] init];
-        if (![session canAddOutput:photoOutput]) {
+        AVCaptureVideoDataOutput *videoOutput = [[AVCaptureVideoDataOutput alloc] init];
+        videoOutput.alwaysDiscardsLateVideoFrames = YES;
+        NSDictionary *videoSettings = @{
+            (id)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_32BGRA)
+        };
+        videoOutput.videoSettings = videoSettings;
+
+        if (![session canAddOutput:videoOutput]) {
             [session commitConfiguration];
-            set_error(err_out, @"unable to add photo output");
+            set_error(err_out, @"unable to add video output");
             return 1;
         }
-        [session addOutput:photoOutput];
+        [session addOutput:videoOutput];
         [session commitConfiguration];
 
-        AAgentPhotoCaptureDelegate *delegate = [[AAgentPhotoCaptureDelegate alloc] init];
+        AAgentFrameCaptureDelegate *delegate = [[AAgentFrameCaptureDelegate alloc] init];
         delegate.semaphore = dispatch_semaphore_create(0);
+        delegate.outputPNG = outputPNG;
+        delegate.minWarmupFrames = 20;
+        dispatch_queue_t captureQueue = dispatch_queue_create("com.gratheon.aagent.camera.capture", DISPATCH_QUEUE_SERIAL);
+        [videoOutput setSampleBufferDelegate:delegate queue:captureQueue];
 
-        AVCapturePhotoSettings *settings = [AVCapturePhotoSettings photoSettings];
         [session startRunning];
-        [NSThread sleepForTimeInterval:0.3];
-        [photoOutput capturePhotoWithSettings:settings delegate:delegate];
 
         long semResult = dispatch_semaphore_wait(delegate.semaphore, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(12 * NSEC_PER_SEC)));
         [session stopRunning];
+        [videoOutput setSampleBufferDelegate:nil queue:NULL];
 
         if (semResult != 0) {
             set_error(err_out, @"camera capture timed out");
@@ -161,22 +267,9 @@ int aagent_capture_photo_darwin(int camera_index, const char *output_path, const
             return 1;
         }
 
-        NSData *finalData = delegate.capturedData;
-        if ([formatStr isEqualToString:@"png"]) {
-            NSImage *image = [[NSImage alloc] initWithData:delegate.capturedData];
-            NSData *tiffData = [image TIFFRepresentation];
-            NSBitmapImageRep *rep = [NSBitmapImageRep imageRepWithData:tiffData];
-            NSData *pngData = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
-            if (pngData == nil || pngData.length == 0) {
-                set_error(err_out, @"failed to convert captured image to png");
-                return 1;
-            }
-            finalData = pngData;
-        }
-
         NSURL *url = [NSURL fileURLWithPath:outputPath];
         NSError *writeErr = nil;
-        BOOL ok = [finalData writeToURL:url options:NSDataWritingAtomic error:&writeErr];
+        BOOL ok = [delegate.capturedData writeToURL:url options:NSDataWritingAtomic error:&writeErr];
         if (!ok) {
             NSString *msg = writeErr != nil ? writeErr.localizedDescription : @"failed to write output image";
             set_error(err_out, msg);

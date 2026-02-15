@@ -4,6 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A Go-based autonomous AI coding agent that executes tasks in sessions with a beautiful TUI interface.
+
 Recommended to use [web-app](https://github.com/A2gent/web-app) for full experience.
 
 > **Note:** This project uses the Kimi Code API (Anthropic-compatible) as its LLM backend. You will need an API key to use it.

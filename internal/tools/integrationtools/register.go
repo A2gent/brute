@@ -15,6 +15,8 @@ func Register(manager *tools.Manager, store storage.Store, clipStore *speechcach
 	manager.Register(NewBraveSearchQueryTool(store))
 	manager.Register(NewElevenLabsTTSTool(store, clipStore))
 	manager.Register(NewMacOSSayTTSTool(manager.WorkDir(), clipStore))
+	manager.Register(NewPiperTTSTool(manager.WorkDir(), clipStore))
+	manager.Register(NewPiperListModelsTool(manager.WorkDir()))
 	manager.Register(NewNotifyWebAppTool())
 	manager.Register(NewTelegramSendMessageTool(store))
 }

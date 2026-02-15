@@ -113,11 +113,16 @@ func (s *Server) registerServerBackedTools(manager *tools.Manager) {
 		return
 	}
 	manager.Register(newRecurringJobsTool(s))
+	manager.Register(newMCPManageTool(s))
 }
 
 const thinkingJobIDSettingKey = "A2GENT_THINKING_JOB_ID"
 const thinkingProjectID = "project-thinking"
 const thinkingProjectName = "Thinking"
+const thinkingSourceSettingKey = "A2GENT_THINKING_SOURCE"
+const thinkingTextSettingKey = "A2GENT_THINKING_TEXT"
+const thinkingFilePathSettingKey = "A2GENT_THINKING_FILE_PATH"
+const thinkingInstructionBlocksSettingKey = "A2GENT_THINKING_INSTRUCTION_BLOCKS"
 const agentInstructionBlocksSettingKey = "A2GENT_AGENT_INSTRUCTION_BLOCKS"
 const builtInToolsInstructionBlockType = "builtin_tools"
 const integrationSkillsInstructionBlockType = "integration_skills"
@@ -127,6 +132,7 @@ const skillsFolderSettingKey = "AAGENT_SKILLS_FOLDER"
 const defaultDynamicInstructionFile = "AGENTS.md"
 const maxDynamicInstructionBytes = 32 * 1024
 const sessionSystemPromptSnapshotMetadataKey = "system_prompt_snapshot"
+const thinkingRunTaskPrompt = "Run the Thinking routine.\n\nReview the current project state, execute the most valuable next step, and summarize outcomes."
 
 // NewServer creates a new HTTP server instance
 func NewServer(
@@ -222,6 +228,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/voices", s.handleListSpeechVoices)
 		r.Get("/piper/voices", s.handleListPiperVoices)
 		r.Post("/completion", s.handleCompletionSpeech)
+		r.Post("/transcribe", s.handleTranscribeSpeech)
 		r.Get("/clips/{clipID}", s.handleGetSpeechClip)
 	})
 
@@ -1245,6 +1252,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_ = s.ensureSessionSystemPromptSnapshot(sess)
 	resp := s.sessionToResponse(sess)
 	s.jsonResponse(w, http.StatusOK, resp)
 }
@@ -1980,9 +1988,11 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 		s.store.SaveJobExecution(exec)
 		return exec, nil
 	}
+	isThinkingJob := false
 	if thinking, thinkErr := s.isProtectedThinkingJob(job.ID); thinkErr != nil {
 		logging.Warn("Failed to check thinking job for project assignment: %v", thinkErr)
 	} else if thinking {
+		isThinkingJob = true
 		if assignErr := s.assignSessionToThinkingProject(sess); assignErr != nil {
 			logging.Warn("Failed to assign Thinking project for session %s: %v", sess.ID, assignErr)
 		}
@@ -2007,6 +2017,9 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 		exec.FinishedAt = &finishedAt
 		s.store.SaveJobExecution(exec)
 		return exec, nil
+	}
+	if isThinkingJob {
+		effectiveTaskPrompt = thinkingRunTaskPrompt
 	}
 
 	target, clientErr := s.resolveExecutionTarget(ctx, providerType, model, effectiveTaskPrompt)
@@ -2361,11 +2374,20 @@ func (s *Server) ensureSessionSystemPromptSnapshot(sess *session.Session) *syste
 		return nil
 	}
 
+	settings, err := s.store.GetSettings()
+	if err != nil {
+		logging.Warn("Failed to load settings for system prompt composition: %v", err)
+		settings = map[string]string{}
+	}
+	thinkingBlocks := resolveThinkingInstructionBlocksFromSettings(settings)
+
 	if snapshot := sessionSystemPromptSnapshot(sess); snapshot != nil {
-		return snapshot
+		if !isThinkingSessionWithSettings(sess, settings) || len(thinkingBlocks) == 0 || snapshotHasThinkingBlocks(snapshot) {
+			return snapshot
+		}
 	}
 
-	snapshot := s.composeSystemPromptSnapshot(sess)
+	snapshot := s.composeSystemPromptSnapshotWithSettings(sess, settings)
 	if snapshot == nil {
 		return nil
 	}
@@ -2590,6 +2612,67 @@ func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, 
 		}
 		resolvedBlocks = append(resolvedBlocks, blockSnapshot)
 	}
+	if isThinkingSessionWithSettings(sess, settings) {
+		thinkingBlocks := resolveThinkingInstructionBlocksFromSettings(settings)
+		for _, block := range thinkingBlocks {
+			blockType := strings.TrimSpace(block.Type)
+			enabled := block.Enabled == nil || *block.Enabled
+			blockSnapshot := systemPromptBlockSnapshot{
+				Type:    "thinking_" + blockType,
+				Value:   strings.TrimSpace(block.Value),
+				Enabled: enabled,
+			}
+			sectionNumber++
+			if !enabled {
+				resolvedBlocks = append(resolvedBlocks, blockSnapshot)
+				continue
+			}
+
+			value := blockSnapshot.Value
+			switch blockType {
+			case "text":
+				blockSnapshot.ResolvedContent = value
+				rendered := fmt.Sprintf("Thinking instruction block %d (text):\n%s", sectionNumber, value)
+				blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
+				appendSections = append(appendSections, rendered)
+			case "file":
+				blockSnapshot.SourcePath = value
+				content, readErr := s.readInstructionFileBlock(value)
+				if readErr != nil {
+					blockSnapshot.Error = readErr.Error()
+					rendered := fmt.Sprintf("Thinking instruction block %d (file):\nUnable to load file %s: %s", sectionNumber, value, readErr.Error())
+					blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
+					appendSections = append(appendSections, rendered)
+				} else {
+					blockSnapshot.ResolvedContent = content
+					rendered := fmt.Sprintf("Thinking instruction block %d (file):\n%s", sectionNumber, content)
+					blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
+					appendSections = append(appendSections, rendered)
+				}
+			case "project_agents_md":
+				section := s.resolveProjectAgentsMDSection(sess, settings, value, sectionNumber)
+				blockSnapshot.ResolvedContent = section
+				if section == "" {
+					blockSnapshot.Error = "No project/My Mind instruction file content found."
+					resolvedBlocks = append(resolvedBlocks, blockSnapshot)
+					continue
+				}
+				blockSnapshot.EstimatedTokens = estimateTokensApprox(section)
+				appendSections = append(appendSections, section)
+			default:
+				if value == "" {
+					resolvedBlocks = append(resolvedBlocks, blockSnapshot)
+					continue
+				}
+				blockSnapshot.Type = "thinking_text"
+				blockSnapshot.ResolvedContent = value
+				rendered := fmt.Sprintf("Thinking instruction block %d (text):\n%s", sectionNumber, value)
+				blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
+				appendSections = append(appendSections, rendered)
+			}
+			resolvedBlocks = append(resolvedBlocks, blockSnapshot)
+		}
+	}
 
 	if len(appendSections) == 0 {
 		if appendPrompt := strings.TrimSpace(os.Getenv("AAGENT_SYSTEM_PROMPT_APPEND")); appendPrompt != "" {
@@ -2618,6 +2701,94 @@ func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, 
 		CombinedEstimated: estimateTokensApprox(combinedPrompt),
 		Blocks:            resolvedBlocks,
 	}
+}
+
+func resolveThinkingInstructionBlocksFromSettings(settings map[string]string) []configuredInstructionBlock {
+	if settings == nil {
+		return []configuredInstructionBlock{}
+	}
+
+	rawBlocks := strings.TrimSpace(settings[thinkingInstructionBlocksSettingKey])
+	if rawBlocks != "" {
+		parsed := []configuredInstructionBlock{}
+		if err := json.Unmarshal([]byte(rawBlocks), &parsed); err != nil {
+			logging.Warn("Failed to parse %s: %v", thinkingInstructionBlocksSettingKey, err)
+			return []configuredInstructionBlock{}
+		}
+		normalized := make([]configuredInstructionBlock, 0, len(parsed))
+		for _, block := range parsed {
+			blockType := strings.TrimSpace(block.Type)
+			value := strings.TrimSpace(block.Value)
+			enabled := block.Enabled == nil || *block.Enabled
+			if !enabled {
+				continue
+			}
+			if blockType == "project_agents_md" || value != "" {
+				enabledCopy := true
+				normalized = append(normalized, configuredInstructionBlock{
+					Type:    blockType,
+					Value:   value,
+					Enabled: &enabledCopy,
+				})
+			}
+		}
+		return normalized
+	}
+
+	source := strings.TrimSpace(strings.ToLower(settings[thinkingSourceSettingKey]))
+	textValue := strings.TrimSpace(settings[thinkingTextSettingKey])
+	fileValue := strings.TrimSpace(settings[thinkingFilePathSettingKey])
+	switch source {
+	case "file":
+		if fileValue != "" {
+			enabled := true
+			return []configuredInstructionBlock{{Type: "file", Value: fileValue, Enabled: &enabled}}
+		}
+	case "text":
+		if textValue != "" {
+			enabled := true
+			return []configuredInstructionBlock{{Type: "text", Value: textValue, Enabled: &enabled}}
+		}
+	}
+
+	if fileValue != "" {
+		enabled := true
+		return []configuredInstructionBlock{{Type: "file", Value: fileValue, Enabled: &enabled}}
+	}
+	if textValue != "" {
+		enabled := true
+		return []configuredInstructionBlock{{Type: "text", Value: textValue, Enabled: &enabled}}
+	}
+	return []configuredInstructionBlock{}
+}
+
+func isThinkingSessionWithSettings(sess *session.Session, settings map[string]string) bool {
+	if sess == nil {
+		return false
+	}
+	if sess.ProjectID != nil && strings.TrimSpace(*sess.ProjectID) == thinkingProjectID {
+		return true
+	}
+	if sess.JobID == nil {
+		return false
+	}
+	thinkingJobID := strings.TrimSpace(settings[thinkingJobIDSettingKey])
+	if thinkingJobID == "" {
+		return false
+	}
+	return strings.TrimSpace(*sess.JobID) == thinkingJobID
+}
+
+func snapshotHasThinkingBlocks(snapshot *systemPromptSnapshot) bool {
+	if snapshot == nil {
+		return false
+	}
+	for _, block := range snapshot.Blocks {
+		if strings.HasPrefix(strings.TrimSpace(block.Type), "thinking_") {
+			return true
+		}
+	}
+	return false
 }
 
 func builtInToolsEstimatedTokens(basePrompt string, enabled bool) int {

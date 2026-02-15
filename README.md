@@ -91,6 +91,13 @@ Environment variables:
 - `ANTHROPIC_BASE_URL` - Override API endpoint (default: `https://api.kimi.com/coding/v1`)
 - `AAGENT_MODEL` - Override default model (default: `kimi-for-coding`)
 - `AAGENT_DATA_PATH` - Data storage directory
+- `AAGENT_WHISPER_BIN` - Optional path to `whisper-cli` binary for speech-to-text (if omitted, backend can auto-build it on first STT request)
+- `AAGENT_WHISPER_MODEL` - Path to Whisper model file (for example `ggml-base.bin` or faster `ggml-tiny.bin`)
+- `AAGENT_WHISPER_LANGUAGE` - Optional default STT language (`auto`, `en`, `ru`, etc.)
+- `AAGENT_WHISPER_THREADS` - Optional thread count for whisper transcription
+- `AAGENT_WHISPER_AUTO_SETUP` - Enable/disable automatic `whisper-cli` build on demand (default: enabled)
+- `AAGENT_WHISPER_AUTO_DOWNLOAD` - Enable/disable automatic Whisper model download on demand (default: enabled)
+- `AAGENT_WHISPER_SOURCE` - Optional local path to whisper.cpp source root (contains `CMakeLists.txt`)
 
 ## Tools
 

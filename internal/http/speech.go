@@ -2,7 +2,9 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,10 +17,13 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/gratheon/aagent/internal/stt/whispercpp"
 )
 
 const (
-	elevenLabsVoicesURL = "https://api.elevenlabs.io/v1/voices"
+	elevenLabsVoicesURL      = "https://api.elevenlabs.io/v1/voices"
+	maxTranscribeAudioBytes  = 25 * 1024 * 1024
+	defaultTranscribeTimeout = 20 * time.Minute
 )
 
 var recommendedPiperVoices = []string{
@@ -37,6 +42,10 @@ var recommendedPiperVoices = []string{
 }
 
 type speechCompletionRequest struct {
+	Text string `json:"text"`
+}
+
+type speechTranscribeResponse struct {
 	Text string `json:"text"`
 }
 
@@ -263,6 +272,77 @@ func (s *Server) handleGetSpeechClip(w http.ResponseWriter, r *http.Request) {
 	if _, err := w.Write(payload); err != nil {
 		return
 	}
+}
+
+func (s *Server) handleTranscribeSpeech(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), defaultTranscribeTimeout)
+	defer cancel()
+
+	if err := r.ParseMultipartForm(maxTranscribeAudioBytes); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid multipart request: "+err.Error())
+		return
+	}
+
+	audioFile, _, err := r.FormFile("audio")
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "audio form field is required")
+		return
+	}
+	defer audioFile.Close()
+
+	limited := io.LimitReader(audioFile, maxTranscribeAudioBytes+1)
+	audioPayload, err := io.ReadAll(limited)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to read audio payload: "+err.Error())
+		return
+	}
+	if len(audioPayload) == 0 {
+		s.errorResponse(w, http.StatusBadRequest, "audio payload is empty")
+		return
+	}
+	if len(audioPayload) > maxTranscribeAudioBytes {
+		s.errorResponse(w, http.StatusRequestEntityTooLarge, "audio payload exceeds 25MB limit")
+		return
+	}
+
+	audioPath, cleanup, err := writeTempWAV(audioPayload)
+	if err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to persist audio payload: "+err.Error())
+		return
+	}
+	defer cleanup()
+
+	transcript, err := whispercpp.Transcribe(ctx, audioPath, r.FormValue("language"))
+	if err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			status = http.StatusGatewayTimeout
+		}
+		s.errorResponse(w, status, err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, speechTranscribeResponse{Text: transcript})
+}
+
+func writeTempWAV(payload []byte) (string, func(), error) {
+	tmp, err := os.CreateTemp("", "aagent-stt-*.wav")
+	if err != nil {
+		return "", func() {}, err
+	}
+	cleanup := func() {
+		_ = os.Remove(tmp.Name())
+	}
+	if _, err := tmp.Write(payload); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return "", func() {}, err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return tmp.Name(), cleanup, nil
 }
 
 func (s *Server) resolveElevenLabsAPIKey() string {

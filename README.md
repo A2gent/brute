@@ -1,14 +1,20 @@
-# A² Brute / aagent
+# A² Brute terminal agent
 
 [![Go Version](https://img.shields.io/badge/go-1.21+-00ADD8.svg)](https://golang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A Go-based autonomous AI coding agent that executes tasks in sessions with a beautiful TUI interface.
+As opposed to [OpenCode](https://github.com/anomalyco/opencode), it does not consume hundreds MB of RAM.
+
+Recommended to use [web-app](https://github.com/A2gent/web-app) for full experience (with voice and notifications).
 
 > **Note:** This project uses the Kimi Code API (Anthropic-compatible) as its LLM backend. You will need an API key to use it.
 
-## Features
+<img width="1415" height="483" alt="Screenshot 2026-02-16 at 01 01 04" src="https://github.com/user-attachments/assets/0b472db5-8a78-4f39-8e28-65d50211cc68" />
 
+
+## Features
+- **Exposes HTTP API** for web-app to interact with
 - **TUI Interface**: Beautiful terminal UI with scrollable history, multi-line input, and real-time status
 - **Agentic Loop**: Receive task → call LLM with tools → execute tool calls → return results → repeat until complete
 - **Session Persistence**: SQLite-based session storage with resumption support

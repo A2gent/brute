@@ -90,10 +90,13 @@ func TestMaybeCompactContext(t *testing.T) {
 		t.Fatal("Expected LLM request")
 	}
 
-	// Check that we sent fewer messages than total (because we should be summarizing)
-	// We have 4 messages. We keep 2. So we send 2 to summarizer.
-	if len(mockLLM.CapturedRequest.Messages) != 2 {
-		t.Errorf("Expected 2 messages to be sent for compaction, got %d", len(mockLLM.CapturedRequest.Messages))
+	// Check that we sent a single aggregated message for compaction
+	// (conversation history is flattened into one user message for the summarizer)
+	if len(mockLLM.CapturedRequest.Messages) != 1 {
+		t.Errorf("Expected 1 aggregated message to be sent for compaction, got %d", len(mockLLM.CapturedRequest.Messages))
+	}
+	if mockLLM.CapturedRequest.Messages[0].Role != "user" {
+		t.Errorf("Expected aggregated message to have role 'user', got %s", mockLLM.CapturedRequest.Messages[0].Role)
 	}
 
 	// Check final session state

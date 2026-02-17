@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/input"
 	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/proto"
 	"github.com/gratheon/aagent/internal/logging"
 	"github.com/gratheon/aagent/internal/tools"
 )
@@ -78,12 +80,15 @@ Actions:
 - get_interactive_elements: List all clickable/typeable elements with CSS selectors - USE THIS FIRST to find selectors
 - get_text: Get page text content (simplified, no HTML)
 - click: Click an element (requires 'selector')
+- click_at: Click at specific pixel coordinates (requires 'x' and 'y')
 - type: Type text into an input (requires 'selector' and 'text')
+- press_key: Press a keyboard key (requires 'key', e.g. 'Enter', 'Escape', 'Tab')
+- scroll: Scroll page or element (optional 'x', 'y' in pixels, optional 'selector' for element)
 - screenshot: Take a screenshot
 - read_content: Get full HTML (verbose)
 - eval: Run JavaScript (requires 'script')
 
-Workflow: navigate -> get_interactive_elements -> click/type using returned selectors`
+Workflow: navigate -> get_interactive_elements -> click/type -> press_key Enter to submit`
 }
 
 func (t *BrowserChromeTool) Schema() map[string]interface{} {
@@ -93,7 +98,7 @@ func (t *BrowserChromeTool) Schema() map[string]interface{} {
 			"action": map[string]interface{}{
 				"type":        "string",
 				"description": "Action to perform",
-				"enum":        []string{"navigate", "click", "type", "scroll", "screenshot", "read_content", "get_interactive_elements", "get_text", "eval"},
+				"enum":        []string{"navigate", "click", "click_at", "type", "press_key", "scroll", "screenshot", "read_content", "get_interactive_elements", "get_text", "eval"},
 			},
 			"url": map[string]interface{}{
 				"type":        "string",
@@ -110,6 +115,18 @@ func (t *BrowserChromeTool) Schema() map[string]interface{} {
 			"text": map[string]interface{}{
 				"type":        "string",
 				"description": "Text to type (required for 'type')",
+			},
+			"key": map[string]interface{}{
+				"type":        "string",
+				"description": "Key to press (required for 'press_key'). Examples: 'Enter', 'Escape', 'Tab', 'Backspace', 'ArrowDown'",
+			},
+			"x": map[string]interface{}{
+				"type":        "number",
+				"description": "X coordinate in pixels (required for 'click_at')",
+			},
+			"y": map[string]interface{}{
+				"type":        "number",
+				"description": "Y coordinate in pixels (required for 'click_at')",
 			},
 			"script": map[string]interface{}{
 				"type":        "string",
@@ -155,7 +172,9 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 		if !ok || selector == "" {
 			return &tools.Result{Success: false, Error: "selector is required for click"}, nil
 		}
-		el, err := page.Element(selector)
+		// Wait for page to be stable before interacting
+		page.MustWaitStable()
+		el, err := page.Element(escapeCSSSelector(selector))
 		if err != nil {
 			return &tools.Result{Success: false, Error: fmt.Sprintf("failed to find element: %v", err)}, nil
 		}
@@ -170,7 +189,9 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 		if selector == "" || text == "" {
 			return &tools.Result{Success: false, Error: "selector and text are required for type"}, nil
 		}
-		el, err := page.Element(selector)
+		// Wait for page to be stable before interacting
+		page.MustWaitStable()
+		el, err := page.Element(escapeCSSSelector(selector))
 		if err != nil {
 			return &tools.Result{Success: false, Error: fmt.Sprintf("failed to find element: %v", err)}, nil
 		}
@@ -178,6 +199,77 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 			return &tools.Result{Success: false, Error: fmt.Sprintf("failed to type: %v", err)}, nil
 		}
 		return &tools.Result{Success: true, Output: "Typed text"}, nil
+
+	case "press_key":
+		key, _ := input["key"].(string)
+		if key == "" {
+			return &tools.Result{Success: false, Error: "key is required for press_key"}, nil
+		}
+		// Wait for page to be stable before pressing key
+		page.MustWaitStable()
+		// Map common key names to input.Key constants
+		inputKey := keyFromString(key)
+		if inputKey == 0 {
+			return &tools.Result{Success: false, Error: fmt.Sprintf("unknown key: %s. Supported: Enter, Escape, Tab, Backspace, Delete, ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown, Space", key)}, nil
+		}
+		if err := page.Keyboard.Press(inputKey); err != nil {
+			return &tools.Result{Success: false, Error: fmt.Sprintf("failed to press key: %v", err)}, nil
+		}
+		return &tools.Result{Success: true, Output: fmt.Sprintf("Pressed key: %s", key)}, nil
+
+	case "click_at":
+		x, xOk := input["x"].(float64)
+		y, yOk := input["y"].(float64)
+		if !xOk || !yOk {
+			return &tools.Result{Success: false, Error: "x and y coordinates are required for click_at"}, nil
+		}
+		// Wait for page to be stable before clicking
+		page.MustWaitStable()
+		// Move mouse to coordinates and click
+		page.Mouse.MustMoveTo(x, y)
+		if err := page.Mouse.Click(proto.InputMouseButtonLeft, 1); err != nil {
+			return &tools.Result{Success: false, Error: fmt.Sprintf("failed to click: %v", err)}, nil
+		}
+		return &tools.Result{Success: true, Output: fmt.Sprintf("Clicked at (%d, %d)", int(x), int(y))}, nil
+
+	case "scroll":
+		// Scroll by pixel amount. Positive y = scroll down, negative y = scroll up
+		// Positive x = scroll right, negative x = scroll left
+		// Optional selector to scroll within a specific element
+		scrollX := 0.0
+		scrollY := 0.0
+		if x, ok := input["x"].(float64); ok {
+			scrollX = x
+		}
+		if y, ok := input["y"].(float64); ok {
+			scrollY = y
+		}
+		if scrollX == 0 && scrollY == 0 {
+			// Default: scroll down by 500px
+			scrollY = 500
+		}
+		page.MustWaitStable()
+
+		selector, hasSelector := input["selector"].(string)
+		if hasSelector && selector != "" {
+			// Scroll within a specific element
+			el, err := page.Element(escapeCSSSelector(selector))
+			if err != nil {
+				return &tools.Result{Success: false, Error: fmt.Sprintf("failed to find element: %v", err)}, nil
+			}
+			// Use JavaScript to scroll the element
+			_, err = el.Eval(fmt.Sprintf(`(el) => { el.scrollBy(%f, %f); }`, scrollX, scrollY))
+			if err != nil {
+				return &tools.Result{Success: false, Error: fmt.Sprintf("failed to scroll element: %v", err)}, nil
+			}
+			return &tools.Result{Success: true, Output: fmt.Sprintf("Scrolled element %s by (%d, %d)", selector, int(scrollX), int(scrollY))}, nil
+		}
+
+		// Scroll the page
+		if err := page.Mouse.Scroll(scrollX, scrollY, 1); err != nil {
+			return &tools.Result{Success: false, Error: fmt.Sprintf("failed to scroll: %v", err)}, nil
+		}
+		return &tools.Result{Success: true, Output: fmt.Sprintf("Scrolled page by (%d, %d)", int(scrollX), int(scrollY))}, nil
 
 	case "screenshot":
 		screenshotPath := filepath.Join(t.workDir, fmt.Sprintf("screenshot_%d.png", time.Now().Unix()))
@@ -219,6 +311,7 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 		offset := (pageNum - 1) * perPage
 
 		// Get all interactive elements (inputs, buttons, links) with unique selectors
+		// Returns data in TOON format (Token-Oriented Object Notation) for compact LLM output
 		result := page.MustEval(fmt.Sprintf(`(offset, perPage) => {
 			const elements = [];
 			const seen = new Set();
@@ -283,26 +376,192 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 			return { elements: paged, total: total, page: %d, perPage: %d, hasMore: total > %d };
 		}`, offset, offset+perPage, pageNum, perPage, offset+perPage))
 
-		// Format output nicely
-		elementsJSON, err := json.MarshalIndent(result, "", "  ")
-		if err != nil {
-			return &tools.Result{Success: true, Output: fmt.Sprintf("%v", result)}, nil
-		}
-		return &tools.Result{Success: true, Output: string(elementsJSON)}, nil
+		// Format output in TOON format (Token-Oriented Object Notation)
+		// TOON is ~40%% more token-efficient than JSON for structured data
+		return &tools.Result{Success: true, Output: formatElementsAsTOON(result)}, nil
 
 	case "eval":
 		script, _ := input["script"].(string)
 		if script == "" {
 			return &tools.Result{Success: false, Error: "script is required for eval"}, nil
 		}
-		result, err := page.Eval(script)
+		// Wait for page to be stable before evaluating
+		page.MustWaitStable()
+		// Wrap script to handle both expressions and statements
+		// This prevents "apply is not a function" errors for assignment statements
+		wrappedScript := fmt.Sprintf(`() => { %s }`, script)
+		result, err := page.Eval(wrappedScript)
 		if err != nil {
 			return &tools.Result{Success: false, Error: fmt.Sprintf("failed to eval: %v", err)}, nil
 		}
-		return &tools.Result{Success: true, Output: fmt.Sprintf("%v", result)}, nil
+		// Handle undefined/null results
+		if result.Value.Nil() {
+			return &tools.Result{Success: true, Output: "OK"}, nil
+		}
+		return &tools.Result{Success: true, Output: fmt.Sprintf("%v", result.Value)}, nil
 
 	default:
 		return &tools.Result{Success: false, Error: fmt.Sprintf("unknown action: %s", action)}, nil
+	}
+}
+
+// formatElementsAsTOON formats the interactive elements result in TOON format
+// TOON (Token-Oriented Object Notation) is a compact, LLM-friendly format
+// that reduces token usage by ~40% compared to JSON
+// See: https://github.com/toon-format/toon
+func formatElementsAsTOON(result interface{}) string {
+	data, ok := result.(map[string]interface{})
+	if !ok {
+		return fmt.Sprintf("%v", result)
+	}
+
+	elements, ok := data["elements"].([]interface{})
+	if !ok {
+		return fmt.Sprintf("%v", result)
+	}
+
+	total := int(data["total"].(float64))
+	pageNum := int(data["page"].(float64))
+	perPage := int(data["perPage"].(float64))
+	hasMore := data["hasMore"].(bool)
+
+	var sb strings.Builder
+
+	// TOON header with metadata
+	sb.WriteString(fmt.Sprintf("total: %d\n", total))
+	sb.WriteString(fmt.Sprintf("page: %d\n", pageNum))
+	sb.WriteString(fmt.Sprintf("perPage: %d\n", perPage))
+	sb.WriteString(fmt.Sprintf("hasMore: %v\n", hasMore))
+
+	// TOON tabular array format: key[N]{field1,field2,...}:
+	sb.WriteString(fmt.Sprintf("elements[%d]{selector,tag,type,text,href}:\n", len(elements)))
+
+	for _, elem := range elements {
+		el, ok := elem.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		selector := escapeField(getString(el, "selector"))
+		tag := getString(el, "tag")
+		typ := getString(el, "type")
+		text := escapeField(getString(el, "text"))
+		href := getString(el, "href")
+
+		// TOON row format: value1,value2,value3,...
+		sb.WriteString(fmt.Sprintf("  %s,%s,%s,%s,%s\n", selector, tag, typ, text, href))
+	}
+
+	return sb.String()
+}
+
+// getString safely extracts a string from a map
+func getString(m map[string]interface{}, key string) string {
+	if v, ok := m[key]; ok && v != nil {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// escapeField escapes a TOON field value if it contains special characters
+// Per TOON spec: quote with " if value contains , or newline; escape " as ""
+func escapeField(s string) string {
+	if s == "" {
+		return s
+	}
+	needsQuoting := strings.ContainsAny(s, ",\n\r\"")
+	if !needsQuoting {
+		return s
+	}
+	// Escape internal quotes by doubling them
+	escaped := strings.ReplaceAll(s, "\"", "\"\"")
+	return "\"" + escaped + "\""
+}
+
+// escapeCSSSelector escapes special characters in CSS selectors
+// React generates IDs like ":r1:" which need escaping as CSS doesn't allow unescaped colons in IDs
+func escapeCSSSelector(selector string) string {
+	// If selector starts with # (ID selector), escape special chars in the ID part
+	if strings.HasPrefix(selector, "#") {
+		id := selector[1:]
+		// Escape colons and other special CSS characters in the ID
+		var escaped strings.Builder
+		escaped.WriteByte('#')
+		for _, c := range id {
+			// CSS special characters that need escaping: : . [ ] ( ) # > + ~ = ^ $ * | ! @ % &
+			if c == ':' || c == '.' || c == '[' || c == ']' || c == '(' || c == ')' ||
+				c == '#' || c == '>' || c == '+' || c == '~' || c == '=' || c == '^' ||
+				c == '$' || c == '*' || c == '|' || c == '!' || c == '@' || c == '%' ||
+				c == '&' || c == '/' || c == '\\' {
+				escaped.WriteByte('\\')
+			}
+			escaped.WriteRune(c)
+		}
+		return escaped.String()
+	}
+	return selector
+}
+
+// keyFromString converts a key name string to input.Key
+// Supports common key names like Enter, Escape, Tab, etc.
+func keyFromString(key string) input.Key {
+	switch strings.ToLower(key) {
+	case "enter", "return":
+		return input.Enter
+	case "escape", "esc":
+		return input.Escape
+	case "tab":
+		return input.Tab
+	case "backspace":
+		return input.Backspace
+	case "delete":
+		return input.Delete
+	case "space":
+		return input.Space
+	case "arrowup", "up":
+		return input.ArrowUp
+	case "arrowdown", "down":
+		return input.ArrowDown
+	case "arrowleft", "left":
+		return input.ArrowLeft
+	case "arrowright", "right":
+		return input.ArrowRight
+	case "home":
+		return input.Home
+	case "end":
+		return input.End
+	case "pageup":
+		return input.PageUp
+	case "pagedown":
+		return input.PageDown
+	case "f1":
+		return input.F1
+	case "f2":
+		return input.F2
+	case "f3":
+		return input.F3
+	case "f4":
+		return input.F4
+	case "f5":
+		return input.F5
+	case "f6":
+		return input.F6
+	case "f7":
+		return input.F7
+	case "f8":
+		return input.F8
+	case "f9":
+		return input.F9
+	case "f10":
+		return input.F10
+	case "f11":
+		return input.F11
+	case "f12":
+		return input.F12
+	default:
+		return 0
 	}
 }
 

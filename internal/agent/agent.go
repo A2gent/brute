@@ -467,22 +467,20 @@ func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, 
 		return llm.TokenUsage{}, false, nil
 	}
 
+	logging.Info("Context compaction starting: session=%s messages_to_summarize=%d", sess.ID, len(messagesToSummarize))
+
 	response, err := a.llmClient.Chat(ctx, request)
 	if err != nil {
-		// Restore pending user on error
+		logging.Warn("Context compaction LLM error: %v", err)
 		if pendingUser != nil {
 			sess.AddMessage(*pendingUser)
 		}
 		return llm.TokenUsage{}, false, fmt.Errorf("compaction LLM error: %w", err)
 	}
 
+	logging.Info("Context compaction LLM response: content_len=%d usage=%+v", len(response.Content), response.Usage)
+
 	a.addTokenUsageMetadata(sess, response.Usage)
-	// We reset current tokens, but we should add back the tokens of the KEPT messages if we could calculate them.
-	// For now, resetting to 0 is "okay" because the next step will add the *response* tokens,
-	// but the *input* context (the kept messages) are "free" in this accounting until next turn.
-	// To be accurate, we should count tokens of [Summary + Kept].
-	// But we don't have a tokenizer here easily.
-	// Let's stick to 0 for now as it matches previous behavior (reset on compaction).
 	metadataSetFloat(sess, metadataCurrentContextTokens, 0)
 
 	compactionCount := int(metadataFloat(sess.Metadata, metadataCompactionCount)) + 1
@@ -491,6 +489,7 @@ func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, 
 
 	summary := strings.TrimSpace(response.Content)
 	if summary == "" {
+		logging.Warn("Context compaction returned empty content, using fallback")
 		summary = "Context was compacted to continue in a fresh window."
 	}
 
@@ -548,6 +547,18 @@ func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, 
 
 	if pendingUser != nil {
 		sess.AddMessage(*pendingUser)
+	} else {
+		// Add a synthetic user message to prompt the agent to continue working.
+		// Without this, the LLM may interpret the compaction summary as a final response
+		// and return without tool calls, causing premature completion.
+		sess.AddMessage(session.Message{
+			Role:      "user",
+			Content:   "Continue with the task based on the summary above.",
+			Timestamp: time.Now(),
+			Metadata: map[string]interface{}{
+				"synthetic_continuation": true,
+			},
+		})
 	}
 
 	if err := a.sessionManager.Save(sess); err != nil {
@@ -635,7 +646,10 @@ func (a *Agent) addTokenUsageMetadata(sess *session.Session, usage llm.TokenUsag
 	}
 	metadataSetFloat(sess, metadataTotalInputTokens, metadataFloat(sess.Metadata, metadataTotalInputTokens)+float64(usage.InputTokens))
 	metadataSetFloat(sess, metadataTotalOutputTokens, metadataFloat(sess.Metadata, metadataTotalOutputTokens)+float64(usage.OutputTokens))
-	metadataSetFloat(sess, metadataCurrentContextTokens, metadataFloat(sess.Metadata, metadataCurrentContextTokens)+float64(usage.InputTokens+usage.OutputTokens))
+	// Current context size is the input tokens of the last request (full conversation sent to LLM)
+	// plus the output tokens from the response (which will be added to next request).
+	// We use InputTokens as the base since it represents the actual context sent to LLM.
+	metadataSetFloat(sess, metadataCurrentContextTokens, float64(usage.InputTokens+usage.OutputTokens))
 }
 
 func metadataFloat(metadata map[string]interface{}, key string) float64 {
@@ -730,45 +744,55 @@ Guidelines:
 Be concise but thorough. Complete the user's task step by step.`
 
 func (a *Agent) buildCompactionRequestFromMessages(messagesToSummarize []session.Message, prompt string) *llm.ChatRequest {
-	messages := make([]llm.Message, 0, len(messagesToSummarize))
+	var sb strings.Builder
+	sb.WriteString("Here is the conversation history to summarize:\n\n")
 
 	for _, m := range messagesToSummarize {
-		msg := llm.Message{
-			Role:    m.Role,
-			Content: m.Content,
-		}
-
-		if len(m.ToolCalls) > 0 {
-			msg.ToolCalls = make([]llm.ToolCall, len(m.ToolCalls))
-			for i, tc := range m.ToolCalls {
-				msg.ToolCalls[i] = llm.ToolCall{
-					ID:    tc.ID,
-					Name:  tc.Name,
-					Input: string(tc.Input),
+		switch m.Role {
+		case "user":
+			sb.WriteString("USER:\n")
+			if m.Content != "" {
+				sb.WriteString(m.Content)
+				sb.WriteString("\n")
+			}
+		case "assistant":
+			sb.WriteString("ASSISTANT:\n")
+			if m.Content != "" {
+				sb.WriteString(m.Content)
+				sb.WriteString("\n")
+			}
+			for _, tc := range m.ToolCalls {
+				sb.WriteString(fmt.Sprintf("[Called tool: %s]\n", tc.Name))
+			}
+		case "tool":
+			for _, tr := range m.ToolResults {
+				if tr.IsError {
+					sb.WriteString(fmt.Sprintf("[Tool error: %s]\n", truncateForCompaction(tr.Content, 500)))
+				} else {
+					sb.WriteString(fmt.Sprintf("[Tool result: %s]\n", truncateForCompaction(tr.Content, 500)))
 				}
 			}
 		}
+		sb.WriteString("\n")
+	}
 
-		if len(m.ToolResults) > 0 {
-			msg.ToolResults = make([]llm.ToolResult, len(m.ToolResults))
-			for i, tr := range m.ToolResults {
-				msg.ToolResults[i] = llm.ToolResult{
-					ToolCallID: tr.ToolCallID,
-					Content:    tr.Content,
-					IsError:    tr.IsError,
-					Metadata:   tr.Metadata,
-				}
-			}
-		}
-
-		messages = append(messages, msg)
+	userMessage := llm.Message{
+		Role:    "user",
+		Content: sb.String(),
 	}
 
 	return &llm.ChatRequest{
 		Model:        a.config.Model,
-		Messages:     messages,
+		Messages:     []llm.Message{userMessage},
 		Temperature:  0.2,
 		MaxTokens:    4096,
 		SystemPrompt: prompt,
 	}
+}
+
+func truncateForCompaction(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }

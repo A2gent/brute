@@ -8,11 +8,13 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -240,6 +242,13 @@ func (s *Server) setupRoutes() {
 	// Local device helpers.
 	r.Route("/devices", func(r chi.Router) {
 		r.Get("/cameras", s.handleListCameraDevices)
+	})
+
+	// Browser Chrome tool management
+	r.Route("/browser-chrome", func(r chi.Router) {
+		r.Get("/profile-status", s.handleBrowserChromeProfileStatus)
+		r.Post("/create-profile", s.handleBrowserChromeCreateProfile)
+		r.Post("/launch", s.handleBrowserChromeLaunch)
 	})
 
 	// Session endpoints
@@ -3797,4 +3806,197 @@ func (s *Server) providerConfiguredForUse(providerType config.ProviderType) bool
 		apiKey = s.apiKeyFromEnv(providerType)
 	}
 	return apiKey != ""
+}
+
+// handleBrowserChromeProfileStatus returns the status of the browser_chrome agent profile
+func (s *Server) handleBrowserChromeProfileStatus(w http.ResponseWriter, r *http.Request) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, `{"error": "failed to get home directory"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Use the same path as browser_chrome.go tool and handleBrowserChromeLaunch
+	chromeAgentPath := filepath.Join(home, "Library", "Application Support", "Google", "ChromeAgent")
+
+	info, err := os.Stat(chromeAgentPath)
+	exists := err == nil && info.IsDir()
+
+	var lastUsed string
+	if exists {
+		lastUsed = info.ModTime().Format(time.RFC3339)
+	}
+
+	response := map[string]interface{}{
+		"exists": exists,
+		"path":   chromeAgentPath,
+	}
+	if exists {
+		response["lastUsed"] = lastUsed
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, `{"error": "failed to encode response"}`, http.StatusInternalServerError)
+	}
+}
+
+// handleBrowserChromeCreateProfile creates the agent profile by copying essential files from main profile
+func (s *Server) handleBrowserChromeCreateProfile(w http.ResponseWriter, r *http.Request) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, `{"error": "failed to get home directory"}`, http.StatusInternalServerError)
+		return
+	}
+
+	mainProfile := filepath.Join(home, "Library", "Application Support", "Google", "Chrome")
+	agentProfile := filepath.Join(mainProfile, "AgentProfile")
+
+	// Check if agent profile already exists
+	if info, err := os.Stat(agentProfile); err == nil && info.IsDir() {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "Agent profile already exists. Delete it first if you want to recreate.",
+			"path":    agentProfile,
+		})
+		return
+	}
+
+	// Create agent profile directory structure
+	agentDefaultDir := filepath.Join(agentProfile, "Default")
+	if err := os.MkdirAll(agentDefaultDir, 0755); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error": "failed to create agent profile: %s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	mainDefaultDir := filepath.Join(mainProfile, "Default")
+
+	// Copy essential files
+	filesToCopy := []string{
+		"Cookies",
+		"Login Data",
+		"Preferences",
+		"Network Persistent State",
+		"Secure Preferences",
+		"Web Data",
+		"History",
+		"Favicons",
+		"Bookmarks",
+	}
+
+	copied := 0
+	var failedFiles []string
+	for _, file := range filesToCopy {
+		src := filepath.Join(mainDefaultDir, file)
+		dst := filepath.Join(agentDefaultDir, file)
+
+		if _, err := os.Stat(src); os.IsNotExist(err) {
+			continue
+		}
+
+		// Use cp -c for APFS clone (fast, copy-on-write)
+		cmd := exec.Command("cp", "-c", src, dst)
+		if err := cmd.Run(); err != nil {
+			failedFiles = append(failedFiles, file)
+			continue
+		}
+		copied++
+	}
+
+	// Also copy Local State from profile root
+	localStateSrc := filepath.Join(mainProfile, "Local State")
+	localStateDst := filepath.Join(agentProfile, "Local State")
+	if _, err := os.Stat(localStateSrc); err == nil {
+		cmd := exec.Command("cp", "-c", localStateSrc, localStateDst)
+		if err := cmd.Run(); err != nil {
+			failedFiles = append(failedFiles, "Local State")
+		} else {
+			copied++
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":     true,
+		"message":     fmt.Sprintf("Agent profile created with %d files", copied),
+		"path":        agentProfile,
+		"filesCopied": copied,
+		"failedFiles": failedFiles,
+	})
+}
+
+// handleBrowserChromeLaunch launches Chrome with a dedicated user-data-dir for the agent.
+// This directory is SEPARATE from the default Chrome directory, which:
+// 1. Allows remote debugging (Chrome blocks it on default directory)
+// 2. Preserves encrypted credentials (logins persist between sessions)
+// 3. Both UI button and agent tool use the SAME directory
+func (s *Server) handleBrowserChromeLaunch(w http.ResponseWriter, r *http.Request) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, `{"error": "failed to get home directory"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Use a SEPARATE Chrome user-data directory (not inside default Chrome)
+	// This is the same path used by browser_chrome.go tool
+	chromeAgentDir := filepath.Join(home, "Library", "Application Support", "Google", "ChromeAgent")
+
+	logging.Info("Using ChromeAgent directory: %s", chromeAgentDir)
+
+	// Create directory if it doesn't exist
+	profileExists := false
+	if _, err := os.Stat(chromeAgentDir); err == nil {
+		profileExists = true
+		logging.Info("ChromeAgent directory already exists")
+	} else {
+		logging.Info("Creating ChromeAgent directory: %s", chromeAgentDir)
+		if err := os.MkdirAll(chromeAgentDir, 0755); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error": "failed to create ChromeAgent directory: %s"}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Launch Chrome with dedicated user-data-dir and remote debugging
+	chromePath := "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+	args := []string{
+		"--user-data-dir=" + chromeAgentDir,
+		"--remote-debugging-port=9223",
+		"--no-first-run",
+		"--no-default-browser-check",
+	}
+
+	logging.Info("Launching Chrome with user-data-dir: %s", chromeAgentDir)
+
+	cmd := exec.Command(chromePath, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	if err := cmd.Start(); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error": "failed to launch Chrome: %s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	logging.Info("Chrome launched with ChromeAgent profile, PID: %d", cmd.Process.Pid)
+
+	message := "Chrome opened with agent profile. Log in to websites here - the agent will use these sessions."
+	if !profileExists {
+		message = "Chrome opened with NEW agent profile. Please log in to websites you want the agent to access."
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":       true,
+		"message":       message,
+		"pid":           cmd.Process.Pid,
+		"profile":       chromeAgentDir,
+		"profileExists": profileExists,
+	})
+}
+
+// isChromeRunning checks if Chrome is currently running
+func isChromeRunning() bool {
+	cmd := exec.Command("pgrep", "-x", "Google Chrome")
+	err := cmd.Run()
+	return err == nil
 }

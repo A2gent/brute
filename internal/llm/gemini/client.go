@@ -59,6 +59,7 @@ type geminiMessage struct {
 	Content    string           `json:"content,omitempty"`
 	ToolCalls  []geminiToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string           `json:"tool_call_id,omitempty"`
+	Name       string           `json:"name,omitempty"` // Function name for tool results
 }
 
 type geminiToolCall struct {
@@ -221,6 +222,9 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
+
+	// Debug: log full request
+	logging.Debug("Gemini Chat request: %s", string(jsonBody))
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/chat/completions", bytes.NewReader(jsonBody))
 	if err != nil {
@@ -477,6 +481,7 @@ func (c *Client) convertMessage(msg llm.Message) []geminiMessage {
 				Role:       "tool",
 				Content:    result.Content,
 				ToolCallID: result.ToolCallID,
+				Name:       result.Name, // Required by Gemini
 			})
 		}
 		return messages

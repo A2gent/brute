@@ -238,6 +238,7 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 				Content:    tr.Content,
 				IsError:    tr.IsError,
 				Metadata:   tr.Metadata,
+				Name:       tr.Name,
 			}
 		}
 
@@ -318,6 +319,7 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 					Content:    tr.Content,
 					IsError:    tr.IsError,
 					Metadata:   tr.Metadata,
+					Name:       tr.Name,
 				}
 			}
 		}
@@ -364,6 +366,7 @@ func (a *Agent) buildCompactionRequest(sess *session.Session, prompt string) *ll
 					Content:    tr.Content,
 					IsError:    tr.IsError,
 					Metadata:   tr.Metadata,
+					Name:       tr.Name,
 				}
 			}
 		}

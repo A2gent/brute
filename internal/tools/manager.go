@@ -114,6 +114,7 @@ func (m *Manager) ExecuteParallel(ctx context.Context, calls []llm.ToolCall) []l
 
 			tr := llm.ToolResult{
 				ToolCallID: tc.ID,
+				Name:       tc.Name,
 			}
 
 			if err != nil {

@@ -482,19 +482,12 @@ func (c *Client) convertMessage(msg llm.Message) []geminiMessage {
 		// Assistant with tool calls - add thought_signature for Gemini
 		var toolCalls []geminiToolCall
 		for _, tc := range msg.ToolCalls {
-			toolCall := geminiToolCall{
-				ID:   tc.ID,
-				Type: "function",
-				Function: struct {
-					Name             string `json:"name"`
-					Arguments        string `json:"arguments"`
-					ThoughtSignature string `json:"thought_signature"`
-				}{
-					Name:             tc.Name,
-					Arguments:        tc.Input,
-					ThoughtSignature: "Calling tool: " + tc.Name, // Gemini requirement
-				},
-			}
+			var toolCall geminiToolCall
+			toolCall.ID = tc.ID
+			toolCall.Type = "function"
+			toolCall.Function.Name = tc.Name
+			toolCall.Function.Arguments = tc.Input
+			toolCall.Function.ThoughtSignature = "Calling tool: " + tc.Name // Gemini requirement
 			toolCalls = append(toolCalls, toolCall)
 		}
 		return []geminiMessage{{

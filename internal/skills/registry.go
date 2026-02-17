@@ -199,6 +199,16 @@ func (c *RegistryClient) DownloadSkill(slug, targetDir string) error {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+
+		// Special handling for rate limit
+		if resp.StatusCode == http.StatusTooManyRequests {
+			retryAfter := resp.Header.Get("Retry-After")
+			if retryAfter != "" {
+				return fmt.Errorf("rate limit exceeded - please try again in %s seconds", retryAfter)
+			}
+			return fmt.Errorf("rate limit exceeded - please wait a moment and try again")
+		}
+
 		return fmt.Errorf("download failed: %s (status %d)", string(body), resp.StatusCode)
 	}
 

@@ -32,6 +32,7 @@ import (
 	"github.com/gratheon/aagent/internal/llm/lmstudio"
 	"github.com/gratheon/aagent/internal/logging"
 	"github.com/gratheon/aagent/internal/session"
+	skillsLoader "github.com/gratheon/aagent/internal/skills"
 	"github.com/gratheon/aagent/internal/speechcache"
 	"github.com/gratheon/aagent/internal/storage"
 	"github.com/gratheon/aagent/internal/tools"
@@ -315,6 +316,8 @@ func (s *Server) setupRoutes() {
 		r.Get("/integration-backed", s.handleListIntegrationBackedSkills)
 		r.Get("/browse", s.handleBrowseSkillDirectories)
 		r.Get("/discover", s.handleDiscoverSkills)
+		r.Get("/registry/search", s.handleSearchRegistry)
+		r.Post("/registry/install", s.handleInstallSkill)
 	})
 
 	s.router = r
@@ -379,6 +382,11 @@ type SessionResponse struct {
 	RoutedModel          string                       `json:"routed_model,omitempty"`
 	Title                string                       `json:"title"`
 	Status               string                       `json:"status"`
+	TotalTokens          int                          `json:"total_tokens"`
+	InputTokens          int                          `json:"input_tokens"`
+	OutputTokens         int                          `json:"output_tokens"`
+	CurrentContextTokens int                          `json:"current_context_tokens"`
+	ModelContextWindow   int                          `json:"model_context_window"`
 	CreatedAt            time.Time                    `json:"created_at"`
 	UpdatedAt            time.Time                    `json:"updated_at"`
 	Messages             []MessageResponse            `json:"messages"`
@@ -405,19 +413,23 @@ type SystemPromptBlockSnapshotPayload struct {
 
 // MessageResponse represents a message in a session
 type MessageResponse struct {
-	Role        string                 `json:"role"`
-	Content     string                 `json:"content"`
-	ToolCalls   []ToolCallResponse     `json:"tool_calls,omitempty"`
-	ToolResults []ToolResultResponse   `json:"tool_results,omitempty"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
-	Timestamp   time.Time              `json:"timestamp"`
+	Role         string                 `json:"role"`
+	Content      string                 `json:"content"`
+	ToolCalls    []ToolCallResponse     `json:"tool_calls,omitempty"`
+	ToolResults  []ToolResultResponse   `json:"tool_results,omitempty"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	Timestamp    time.Time              `json:"timestamp"`
+	InputTokens  int                    `json:"input_tokens,omitempty"`
+	OutputTokens int                    `json:"output_tokens,omitempty"`
 }
 
 // ToolCallResponse represents a tool call
 type ToolCallResponse struct {
-	ID    string          `json:"id"`
-	Name  string          `json:"name"`
-	Input json.RawMessage `json:"input"`
+	ID           string          `json:"id"`
+	Name         string          `json:"name"`
+	Input        json.RawMessage `json:"input"`
+	InputTokens  int             `json:"input_tokens,omitempty"`
+	OutputTokens int             `json:"output_tokens,omitempty"`
 }
 
 // ToolResultResponse represents a tool result
@@ -469,6 +481,8 @@ type SessionListItem struct {
 	Title              string    `json:"title"`
 	Status             string    `json:"status"`
 	TotalTokens        int       `json:"total_tokens"`
+	InputTokens        int       `json:"input_tokens"`
+	OutputTokens       int       `json:"output_tokens"`
 	RunDurationSeconds int64     `json:"run_duration_seconds"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
@@ -1166,6 +1180,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		if sess.ProjectID != nil {
 			projectID = *sess.ProjectID
 		}
+		inputTokens, outputTokens := sessionInputOutputTokens(sess)
 		items[i] = SessionListItem{
 			ID:                 sess.ID,
 			AgentID:            sess.AgentID,
@@ -1176,7 +1191,9 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			RoutedModel:        routedModel,
 			Title:              sess.Title,
 			Status:             string(sess.Status),
-			TotalTokens:        sessionTotalTokens(sess),
+			TotalTokens:        inputTokens + outputTokens,
+			InputTokens:        inputTokens,
+			OutputTokens:       outputTokens,
 			RunDurationSeconds: sessionRunDurationSeconds(sess.CreatedAt, sess.UpdatedAt, string(sess.Status)),
 			CreatedAt:          sess.CreatedAt,
 			UpdatedAt:          sess.UpdatedAt,
@@ -2233,6 +2250,11 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 			Blocks:            blocks,
 		}
 	}
+	inputTokens, outputTokens := sessionInputOutputTokens(sess)
+	totalTokens := inputTokens + outputTokens
+	currentContextTokens := int(metadataNumber(sess.Metadata, "current_context_tokens"))
+	modelContextWindow := int(metadataNumber(sess.Metadata, "context_window"))
+
 	return SessionResponse{
 		ID:                   sess.ID,
 		AgentID:              sess.AgentID,
@@ -2244,6 +2266,11 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		RoutedModel:          routedModel,
 		Title:                sess.Title,
 		Status:               string(sess.Status),
+		TotalTokens:          totalTokens,
+		InputTokens:          inputTokens,
+		OutputTokens:         outputTokens,
+		CurrentContextTokens: currentContextTokens,
+		ModelContextWindow:   modelContextWindow,
 		CreatedAt:            sess.CreatedAt,
 		UpdatedAt:            sess.UpdatedAt,
 		Messages:             s.messagesToResponse(sess.Messages),
@@ -3143,81 +3170,96 @@ func (s *Server) resolveExternalMarkdownSkillsSection(settings map[string]string
 		return "", 0, "Skills folder path is not a directory."
 	}
 
-	skills := make([]SkillFile, 0, 32)
-	walkErr := filepath.WalkDir(resolvedFolder, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.IsDir() {
-			if path != resolvedFolder && strings.HasPrefix(d.Name(), ".") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !isMarkdownFile(d.Name()) {
-			return nil
-		}
-		relPath, err := filepath.Rel(resolvedFolder, path)
-		if err != nil {
-			return nil
-		}
-		skills = append(skills, SkillFile{
-			Name:         deriveSkillName(path, d.Name()),
-			Path:         path,
-			RelativePath: filepath.ToSlash(relPath),
-		})
-		return nil
-	})
-	if walkErr != nil {
-		return "", 0, "Failed to scan skills folder: " + walkErr.Error()
+	// Load configuration
+	config, configErr := skillsLoader.LoadConfig(resolvedFolder)
+	if configErr != nil {
+		// Use default config on error
+		config = skillsLoader.DefaultConfig()
 	}
 
-	if len(skills) == 0 {
+	// Load all skills with configuration
+	allSkills, loadErr := skillsLoader.LoadSkillsFromDirectory(resolvedFolder, config)
+	if loadErr != nil {
+		return "", 0, "Failed to load skills: " + loadErr.Error()
+	}
+
+	if len(allSkills) == 0 {
 		return "", 0, "No markdown skills discovered in configured skills folder."
 	}
 
-	sort.Slice(skills, func(i, j int) bool {
-		return strings.ToLower(skills[i].RelativePath) < strings.ToLower(skills[j].RelativePath)
+	// Separate skills by strategy
+	alwaysSkills := make([]*skillsLoader.Skill, 0)
+	onDemandSkills := make([]*skillsLoader.Skill, 0)
+
+	for _, skill := range allSkills {
+		if skill.Strategy == skillsLoader.StrategyDisabled {
+			continue
+		}
+		if skill.Strategy == skillsLoader.StrategyAlways {
+			alwaysSkills = append(alwaysSkills, skill)
+		} else {
+			onDemandSkills = append(onDemandSkills, skill)
+		}
+	}
+
+	// Sort by priority (lower = higher priority)
+	sort.Slice(alwaysSkills, func(i, j int) bool {
+		return alwaysSkills[i].Priority < alwaysSkills[j].Priority
+	})
+	sort.Slice(onDemandSkills, func(i, j int) bool {
+		return strings.ToLower(onDemandSkills[i].Name) < strings.ToLower(onDemandSkills[j].Name)
 	})
 
-	const maxListedSkills = 100
-	displaySkills := skills
-	truncated := false
-	if len(displaySkills) > maxListedSkills {
-		displaySkills = displaySkills[:maxListedSkills]
-		truncated = true
-	}
-
-	lines := make([]string, 0, len(displaySkills)+4)
-	lines = append(lines, fmt.Sprintf("Instruction block %d (external markdown skills):", blockNumber))
-	lines = append(lines, fmt.Sprintf("Connected skills folder: %s", resolvedFolder))
-	lines = append(lines, "Discovered markdown skills available to the agent:")
-	for _, skill := range displaySkills {
-		lines = append(lines, fmt.Sprintf("- %s [%s]", skill.Name, skill.RelativePath))
-	}
-	if truncated {
-		lines = append(lines, fmt.Sprintf("(showing %d of %d skills)", len(displaySkills), len(skills)))
-	}
-
+	// Build prompt sections
+	var builder strings.Builder
 	totalEstimatedTokens := 0
-	for _, skill := range skills {
-		data, readErr := os.ReadFile(skill.Path)
-		if readErr != nil {
-			continue
-		}
-		content := strings.TrimSpace(string(data))
-		if content == "" {
-			continue
-		}
-		if len(content) > maxDynamicInstructionBytes {
-			content = content[:maxDynamicInstructionBytes] + "\n\n[truncated]"
-		}
-		totalEstimatedTokens += estimateTokensApprox(content)
-	}
-	// Include the overhead from the generated instruction wrapper/list itself.
-	totalEstimatedTokens += estimateTokensApprox(strings.Join(lines, "\n"))
 
-	return strings.Join(lines, "\n"), totalEstimatedTokens, ""
+	builder.WriteString(fmt.Sprintf("Instruction block %d (external markdown skills):\n", blockNumber))
+	builder.WriteString(fmt.Sprintf("Connected skills folder: %s\n\n", resolvedFolder))
+
+	// 1. Always-loaded skills (full content)
+	if len(alwaysSkills) > 0 {
+		builder.WriteString("Loaded skills (always available):\n\n")
+		for _, skill := range alwaysSkills {
+			content := skill.Body
+			if len(content) > maxDynamicInstructionBytes {
+				content = content[:maxDynamicInstructionBytes] + "\n\n[truncated]"
+			}
+
+			section := fmt.Sprintf("Instructions from: %s\n%s\n\n", skill.RelativePath, content)
+			tokens := estimateTokensApprox(section)
+			totalEstimatedTokens += tokens
+			builder.WriteString(section)
+		}
+	}
+
+	// 2. On-demand skills (name + description only)
+	if len(onDemandSkills) > 0 {
+		builder.WriteString("Available skills (use Read tool to load):\n\n")
+		for _, skill := range onDemandSkills {
+			var line string
+			if skill.Description != "" {
+				line = fmt.Sprintf("- %s: %s [%s]\n", skill.Name, skill.Description, skill.RelativePath)
+			} else {
+				line = fmt.Sprintf("- %s [%s]\n", skill.Name, skill.RelativePath)
+			}
+			tokens := estimateTokensApprox(line)
+			totalEstimatedTokens += tokens
+			builder.WriteString(line)
+		}
+	}
+
+	// 3. Token budget warning
+	if config.MaxAutoLoadTokens > 0 && totalEstimatedTokens > config.MaxAutoLoadTokens {
+		warningMsg := fmt.Sprintf(
+			"\n⚠️  Warning: Auto-loaded skills exceed token budget (%d > %d)\n",
+			totalEstimatedTokens, config.MaxAutoLoadTokens,
+		)
+		builder.WriteString(warningMsg)
+		totalEstimatedTokens += estimateTokensApprox(warningMsg)
+	}
+
+	return builder.String(), totalEstimatedTokens, ""
 }
 
 func syncSettingsToEnv(previous map[string]string, next map[string]string) {

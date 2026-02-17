@@ -15,6 +15,7 @@ import (
 	"github.com/gratheon/aagent/internal/llm"
 	"github.com/gratheon/aagent/internal/llm/anthropic"
 	"github.com/gratheon/aagent/internal/llm/fallback"
+	"github.com/gratheon/aagent/internal/llm/gemini"
 	"github.com/gratheon/aagent/internal/llm/lmstudio"
 	"github.com/gratheon/aagent/internal/logging"
 	"github.com/gratheon/aagent/internal/session"
@@ -376,7 +377,12 @@ func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model 
 	}
 
 	switch providerType {
-	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle, config.ProviderOpenAI:
+	case config.ProviderGoogle:
+		// Google Gemini uses a dedicated client with OpenAI-compatible API + Gemini extensions
+		baseURL = normalizeOpenAIBaseURL(baseURL)
+		return gemini.NewClient(apiKey, modelName, baseURL), nil
+	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenAI:
+		// Other OpenAI-compatible providers
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return lmstudio.NewClient(apiKey, modelName, baseURL), nil
 	default:

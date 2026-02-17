@@ -1,5 +1,5 @@
-// Package lmstudio provides an LLM client for LM Studio local server
-package lmstudio
+// Package gemini provides an LLM client for Google Gemini API
+package gemini
 
 import (
 	"bufio"
@@ -17,73 +17,61 @@ import (
 )
 
 const (
-	defaultBaseURL   = "http://localhost:1234/v1"
+	defaultBaseURL   = "https://generativelanguage.googleapis.com/v1beta/openai"
 	defaultMaxTokens = 4096
 )
 
-// Client implements the LLM client for LM Studio (OpenAI-compatible API)
+// Client implements the LLM client for Google Gemini (OpenAI-compatible API with Gemini extensions)
 type Client struct {
 	apiKey     string
 	baseURL    string
 	model      string
 	httpClient *http.Client
-	isGemini   bool // Flag to enable Gemini-specific handling
 }
 
-// providerName returns the display name for the provider (used in error messages)
-func (c *Client) providerName() string {
-	if c.isGemini {
-		return "Gemini"
-	}
-	return "LM Studio"
-}
-
-// NewClient creates a new LM Studio client
+// NewClient creates a new Gemini client
 func NewClient(apiKey, model, baseURL string) *Client {
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
-	// Detect if this is Gemini based on the base URL
-	isGemini := strings.Contains(baseURL, "generativelanguage.googleapis.com")
 	return &Client{
-		apiKey:   apiKey,
-		baseURL:  baseURL,
-		model:    model,
-		isGemini: isGemini,
+		apiKey:  apiKey,
+		baseURL: baseURL,
+		model:   model,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Minute, // Local models can be slower
+			Timeout: 10 * time.Minute,
 		},
 	}
 }
 
-// openAIRequest is the request format for OpenAI-compatible API
-type openAIRequest struct {
+// geminiRequest is the request format for Gemini's OpenAI-compatible API
+type geminiRequest struct {
 	Model       string          `json:"model"`
-	Messages    []openAIMessage `json:"messages"`
+	Messages    []geminiMessage `json:"messages"`
 	MaxTokens   int             `json:"max_tokens,omitempty"`
 	Temperature float64         `json:"temperature,omitempty"`
-	Tools       []openAITool    `json:"tools,omitempty"`
+	Tools       []geminiTool    `json:"tools,omitempty"`
 	Stream      bool            `json:"stream,omitempty"`
 }
 
-type openAIMessage struct {
+type geminiMessage struct {
 	Role       string           `json:"role"`
 	Content    string           `json:"content,omitempty"`
-	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
+	ToolCalls  []geminiToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
 
-type openAIToolCall struct {
+type geminiToolCall struct {
 	ID       string `json:"id"`
 	Type     string `json:"type"`
 	Function struct {
 		Name             string `json:"name"`
 		Arguments        string `json:"arguments"`
-		ThoughtSignature string `json:"thought_signature,omitempty"` // Required by Gemini
+		ThoughtSignature string `json:"thought_signature"` // Required by Gemini
 	} `json:"function"`
 }
 
-type openAITool struct {
+type geminiTool struct {
 	Type     string `json:"type"`
 	Function struct {
 		Name        string                 `json:"name"`
@@ -92,14 +80,14 @@ type openAITool struct {
 	} `json:"function"`
 }
 
-type openAIResponse struct {
+type geminiResponse struct {
 	ID      string `json:"id"`
 	Object  string `json:"object"`
 	Created int64  `json:"created"`
 	Model   string `json:"model"`
 	Choices []struct {
 		Index        int           `json:"index"`
-		Message      openAIMessage `json:"message"`
+		Message      geminiMessage `json:"message"`
 		FinishReason string        `json:"finish_reason"`
 	} `json:"choices"`
 	Usage struct {
@@ -109,7 +97,7 @@ type openAIResponse struct {
 	} `json:"usage"`
 }
 
-type openAIStreamResponse struct {
+type geminiStreamResponse struct {
 	Choices []struct {
 		Index int `json:"index"`
 		Delta struct {
@@ -133,38 +121,41 @@ type openAIStreamResponse struct {
 	} `json:"usage"`
 }
 
-// ModelsResponse represents the response from /v1/models
-type ModelsResponse struct {
-	Data []ModelInfo `json:"data"`
-}
-
-// ModelInfo represents a single model from LM Studio
+// ModelInfo represents a single model from Gemini
 type ModelInfo struct {
 	ID      string `json:"id"`
 	Object  string `json:"object"`
+	Created int64  `json:"created"`
 	OwnedBy string `json:"owned_by"`
 }
 
-// ListModels fetches available models from the LM Studio server
+// ModelsResponse represents the response from /v1/models
+type ModelsResponse struct {
+	Object string      `json:"object"`
+	Data   []ModelInfo `json:"data"`
+}
+
+// ListModels fetches available models from the Gemini server
 func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/models", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
+	httpReq.Header.Set("Content-Type", "application/json")
 	if c.apiKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to %s: %w", c.providerName(), err)
+		return nil, fmt.Errorf("failed to connect to Gemini: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("%s returned error (%d): %s", c.providerName(), resp.StatusCode, string(body))
+		return nil, fmt.Errorf("Gemini returned error (%d): %s", resp.StatusCode, string(body))
 	}
 
 	var modelsResp ModelsResponse
@@ -175,45 +166,36 @@ func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	return modelsResp.Data, nil
 }
 
-// Chat sends a chat request to LM Studio
+// Chat sends a chat request to Gemini
 func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatResponse, error) {
-	model := request.Model
-	if model == "" {
-		model = c.model
+	model := c.model
+	if request.Model != "" {
+		model = request.Model
 	}
 
-	maxTokens := request.MaxTokens
-	if maxTokens == 0 {
-		maxTokens = defaultMaxTokens
+	maxTokens := defaultMaxTokens
+	if request.MaxTokens > 0 {
+		maxTokens = request.MaxTokens
 	}
 
-	// Log request
-	lastMsg := ""
-	if len(request.Messages) > 0 {
-		lastMsg = request.Messages[len(request.Messages)-1].Content
-	}
-	logging.LogRequestWithContent(model, len(request.Messages), len(request.Tools) > 0, lastMsg)
-
-	// Convert messages
-	messages := make([]openAIMessage, 0, len(request.Messages)+1)
-
-	// Add system message if present
+	// Build messages
+	var messages []geminiMessage
 	if request.SystemPrompt != "" {
-		messages = append(messages, openAIMessage{
+		messages = append(messages, geminiMessage{
 			Role:    "system",
 			Content: request.SystemPrompt,
 		})
 	}
 
 	for _, msg := range request.Messages {
-		oaiMsg := c.convertMessage(msg)
-		messages = append(messages, oaiMsg...)
+		geminiMsg := c.convertMessage(msg)
+		messages = append(messages, geminiMsg...)
 	}
 
 	// Convert tools
-	var tools []openAITool
+	var tools []geminiTool
 	for _, t := range request.Tools {
-		tools = append(tools, openAITool{
+		tools = append(tools, geminiTool{
 			Type: "function",
 			Function: struct {
 				Name        string                 `json:"name"`
@@ -227,7 +209,7 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 		})
 	}
 
-	reqBody := openAIRequest{
+	reqBody := geminiRequest{
 		Model:       model,
 		Messages:    messages,
 		MaxTokens:   maxTokens,
@@ -262,27 +244,27 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		err := fmt.Errorf("%s error (%d): %s", c.providerName(), resp.StatusCode, string(body))
+		err := fmt.Errorf("Gemini error (%d): %s", resp.StatusCode, string(body))
 		logging.LogResponse(0, 0, 0, err)
 		return nil, err
 	}
 
-	var oaiResp openAIResponse
-	if err := json.Unmarshal(body, &oaiResp); err != nil {
+	var geminiResp geminiResponse
+	if err := json.Unmarshal(body, &geminiResp); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	if len(oaiResp.Choices) == 0 {
-		return nil, fmt.Errorf("no response from %s", c.providerName())
+	if len(geminiResp.Choices) == 0 {
+		return nil, fmt.Errorf("no response from Gemini")
 	}
 
-	choice := oaiResp.Choices[0]
+	choice := geminiResp.Choices[0]
 	response := &llm.ChatResponse{
 		Content:    choice.Message.Content,
 		StopReason: choice.FinishReason,
 		Usage: llm.TokenUsage{
-			InputTokens:  oaiResp.Usage.PromptTokens,
-			OutputTokens: oaiResp.Usage.CompletionTokens,
+			InputTokens:  geminiResp.Usage.PromptTokens,
+			OutputTokens: geminiResp.Usage.CompletionTokens,
 		},
 	}
 
@@ -305,35 +287,36 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	return response, nil
 }
 
-// ChatStream sends a streaming chat request to LM Studio.
+// ChatStream sends a streaming chat request to Gemini.
 func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEvent func(llm.StreamEvent) error) (*llm.ChatResponse, error) {
-	model := request.Model
-	if model == "" {
-		model = c.model
+	model := c.model
+	if request.Model != "" {
+		model = request.Model
 	}
 
-	maxTokens := request.MaxTokens
-	if maxTokens == 0 {
-		maxTokens = defaultMaxTokens
+	maxTokens := defaultMaxTokens
+	if request.MaxTokens > 0 {
+		maxTokens = request.MaxTokens
 	}
 
-	lastMsg := ""
-	if len(request.Messages) > 0 {
-		lastMsg = request.Messages[len(request.Messages)-1].Content
-	}
-	logging.LogRequestWithContent(model, len(request.Messages), len(request.Tools) > 0, lastMsg)
-
-	messages := make([]openAIMessage, 0, len(request.Messages)+1)
+	// Build messages
+	var messages []geminiMessage
 	if request.SystemPrompt != "" {
-		messages = append(messages, openAIMessage{Role: "system", Content: request.SystemPrompt})
-	}
-	for _, msg := range request.Messages {
-		messages = append(messages, c.convertMessage(msg)...)
+		messages = append(messages, geminiMessage{
+			Role:    "system",
+			Content: request.SystemPrompt,
+		})
 	}
 
-	var tools []openAITool
+	for _, msg := range request.Messages {
+		geminiMsg := c.convertMessage(msg)
+		messages = append(messages, geminiMsg...)
+	}
+
+	// Convert tools
+	var tools []geminiTool
 	for _, t := range request.Tools {
-		tools = append(tools, openAITool{
+		tools = append(tools, geminiTool{
 			Type: "function",
 			Function: struct {
 				Name        string                 `json:"name"`
@@ -347,7 +330,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		})
 	}
 
-	reqBody := openAIRequest{
+	reqBody := geminiRequest{
 		Model:       model,
 		Messages:    messages,
 		MaxTokens:   maxTokens,
@@ -365,6 +348,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
+
 	httpReq.Header.Set("Content-Type", "application/json")
 	if c.apiKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
@@ -378,7 +362,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		err := fmt.Errorf("%s error (%d): %s", c.providerName(), resp.StatusCode, string(body))
+		err := fmt.Errorf("Gemini error (%d): %s", resp.StatusCode, string(body))
 		logging.LogResponse(0, 0, 0, err)
 		return nil, err
 	}
@@ -401,7 +385,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 			break
 		}
 
-		var chunk openAIStreamResponse
+		var chunk geminiStreamResponse
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
 			return nil, fmt.Errorf("failed to parse stream chunk: %w", err)
 		}
@@ -479,13 +463,13 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	return result, nil
 }
 
-// convertMessage converts an LLM message to OpenAI format
-func (c *Client) convertMessage(msg llm.Message) []openAIMessage {
+// convertMessage converts an LLM message to Gemini format
+func (c *Client) convertMessage(msg llm.Message) []geminiMessage {
 	if msg.Role == "tool" {
-		// Tool results in OpenAI format
-		var messages []openAIMessage
+		// Tool results in Gemini format
+		var messages []geminiMessage
 		for _, result := range msg.ToolResults {
-			messages = append(messages, openAIMessage{
+			messages = append(messages, geminiMessage{
 				Role:       "tool",
 				Content:    result.Content,
 				ToolCallID: result.ToolCallID,
@@ -495,28 +479,25 @@ func (c *Client) convertMessage(msg llm.Message) []openAIMessage {
 	}
 
 	if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
-		// Assistant with tool calls
-		var toolCalls []openAIToolCall
+		// Assistant with tool calls - add thought_signature for Gemini
+		var toolCalls []geminiToolCall
 		for _, tc := range msg.ToolCalls {
-			toolCall := openAIToolCall{
+			toolCall := geminiToolCall{
 				ID:   tc.ID,
 				Type: "function",
 				Function: struct {
 					Name             string `json:"name"`
 					Arguments        string `json:"arguments"`
-					ThoughtSignature string `json:"thought_signature,omitempty"`
+					ThoughtSignature string `json:"thought_signature"`
 				}{
-					Name:      tc.Name,
-					Arguments: tc.Input,
+					Name:             tc.Name,
+					Arguments:        tc.Input,
+					ThoughtSignature: "Calling tool: " + tc.Name, // Gemini requirement
 				},
-			}
-			// Add thought signature for Gemini
-			if c.isGemini {
-				toolCall.Function.ThoughtSignature = "Tool call: " + tc.Name
 			}
 			toolCalls = append(toolCalls, toolCall)
 		}
-		return []openAIMessage{{
+		return []geminiMessage{{
 			Role:      "assistant",
 			Content:   msg.Content,
 			ToolCalls: toolCalls,
@@ -524,7 +505,7 @@ func (c *Client) convertMessage(msg llm.Message) []openAIMessage {
 	}
 
 	// Simple text message
-	return []openAIMessage{{
+	return []geminiMessage{{
 		Role:    msg.Role,
 		Content: msg.Content,
 	}}

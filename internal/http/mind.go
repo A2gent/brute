@@ -459,3 +459,325 @@ func directoryHasChildren(path string) bool {
 	}
 	return false
 }
+
+// handleListProjectTree lists files and folders in a project's folder
+func (s *Server) handleListProjectTree(w http.ResponseWriter, r *http.Request) {
+	projectID := r.URL.Query().Get("projectID")
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusNotFound, "Project not found")
+		return
+	}
+
+	if project.Folder == nil || strings.TrimSpace(*project.Folder) == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Project folder is not configured")
+		return
+	}
+
+	rootFolder := strings.TrimSpace(*project.Folder)
+	if !filepath.IsAbs(rootFolder) {
+		rootFolder = filepath.Join(".", rootFolder)
+	}
+	resolvedRoot, err := filepath.Abs(rootFolder)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Project folder path is invalid")
+		return
+	}
+
+	info, err := os.Stat(resolvedRoot)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			s.errorResponse(w, http.StatusBadRequest, "Project folder does not exist")
+			return
+		}
+		s.errorResponse(w, http.StatusBadRequest, "Failed to access project folder: "+err.Error())
+		return
+	}
+	if !info.IsDir() {
+		s.errorResponse(w, http.StatusBadRequest, "Project folder path is not a directory")
+		return
+	}
+
+	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	resolvedPath, normalizedRelPath, err := resolveMindPath(resolvedRoot, relPath)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	entries, err := os.ReadDir(resolvedPath)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to list directory: "+err.Error())
+		return
+	}
+
+	respEntries := make([]MindTreeEntry, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		if !entry.IsDir() && !isMarkdownFile(name) {
+			continue
+		}
+
+		entryRelPath := name
+		if normalizedRelPath != "" {
+			entryRelPath = filepath.Join(normalizedRelPath, name)
+		}
+
+		if entry.IsDir() {
+			respEntries = append(respEntries, MindTreeEntry{
+				Name:     name,
+				Path:     filepath.ToSlash(entryRelPath),
+				Type:     "directory",
+				HasChild: directoryHasChildren(filepath.Join(resolvedPath, name)),
+			})
+			continue
+		}
+
+		respEntries = append(respEntries, MindTreeEntry{
+			Name: name,
+			Path: filepath.ToSlash(entryRelPath),
+			Type: "file",
+		})
+	}
+
+	sort.Slice(respEntries, func(i, j int) bool {
+		if respEntries[i].Type != respEntries[j].Type {
+			return respEntries[i].Type == "directory"
+		}
+		return strings.ToLower(respEntries[i].Name) < strings.ToLower(respEntries[j].Name)
+	})
+
+	s.jsonResponse(w, http.StatusOK, MindTreeResponse{
+		RootFolder: resolvedRoot,
+		Path:       filepath.ToSlash(normalizedRelPath),
+		Entries:    respEntries,
+	})
+}
+
+// handleGetProjectFile retrieves a file from a project's folder
+func (s *Server) handleGetProjectFile(w http.ResponseWriter, r *http.Request) {
+	projectID := r.URL.Query().Get("projectID")
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusNotFound, "Project not found")
+		return
+	}
+
+	if project.Folder == nil || strings.TrimSpace(*project.Folder) == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Project folder is not configured")
+		return
+	}
+
+	rootFolder := strings.TrimSpace(*project.Folder)
+	if !filepath.IsAbs(rootFolder) {
+		rootFolder = filepath.Join(".", rootFolder)
+	}
+	resolvedRoot, err := filepath.Abs(rootFolder)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Project folder path is invalid")
+		return
+	}
+
+	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	resolvedPath, normalizedRelPath, err := resolveMindPath(resolvedRoot, relPath)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if normalizedRelPath == "" {
+		s.errorResponse(w, http.StatusBadRequest, "File path is required")
+		return
+	}
+	if !isMarkdownFile(normalizedRelPath) {
+		s.errorResponse(w, http.StatusBadRequest, "Only markdown files can be opened")
+		return
+	}
+
+	info, err := os.Stat(resolvedPath)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to access file: "+err.Error())
+		return
+	}
+	if info.IsDir() {
+		s.errorResponse(w, http.StatusBadRequest, "Path is a directory")
+		return
+	}
+
+	content, err := os.ReadFile(resolvedPath)
+	if err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to read file: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, MindFileResponse{
+		RootFolder: resolvedRoot,
+		Path:       filepath.ToSlash(normalizedRelPath),
+		Content:    string(content),
+	})
+}
+
+// handleUpsertProjectFile creates or updates a file in a project's folder
+func (s *Server) handleUpsertProjectFile(w http.ResponseWriter, r *http.Request) {
+	projectID := r.URL.Query().Get("projectID")
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusNotFound, "Project not found")
+		return
+	}
+
+	if project.Folder == nil || strings.TrimSpace(*project.Folder) == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Project folder is not configured")
+		return
+	}
+
+	rootFolder := strings.TrimSpace(*project.Folder)
+	if !filepath.IsAbs(rootFolder) {
+		rootFolder = filepath.Join(".", rootFolder)
+	}
+	resolvedRoot, err := filepath.Abs(rootFolder)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Project folder path is invalid")
+		return
+	}
+
+	var req UpdateMindFileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	resolvedPath, normalizedRelPath, err := resolveMindPath(resolvedRoot, req.Path)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if normalizedRelPath == "" {
+		s.errorResponse(w, http.StatusBadRequest, "File path is required")
+		return
+	}
+	if !isMarkdownFile(normalizedRelPath) {
+		s.errorResponse(w, http.StatusBadRequest, "Only markdown files can be created or edited")
+		return
+	}
+
+	parentDir := filepath.Dir(resolvedPath)
+	parentInfo, err := os.Stat(parentDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			s.errorResponse(w, http.StatusBadRequest, "Parent folder does not exist")
+			return
+		}
+		s.errorResponse(w, http.StatusBadRequest, "Failed to access parent folder: "+err.Error())
+		return
+	}
+	if !parentInfo.IsDir() {
+		s.errorResponse(w, http.StatusBadRequest, "Parent path is not a folder")
+		return
+	}
+
+	if info, statErr := os.Stat(resolvedPath); statErr == nil && info.IsDir() {
+		s.errorResponse(w, http.StatusBadRequest, "Path is a directory")
+		return
+	} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to access file: "+statErr.Error())
+		return
+	}
+
+	if err := os.WriteFile(resolvedPath, []byte(req.Content), 0o644); err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to write file: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, MindFileResponse{
+		RootFolder: resolvedRoot,
+		Path:       filepath.ToSlash(normalizedRelPath),
+		Content:    req.Content,
+	})
+}
+
+// handleDeleteProjectFile deletes a file from a project's folder
+func (s *Server) handleDeleteProjectFile(w http.ResponseWriter, r *http.Request) {
+	projectID := r.URL.Query().Get("projectID")
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusNotFound, "Project not found")
+		return
+	}
+
+	if project.Folder == nil || strings.TrimSpace(*project.Folder) == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Project folder is not configured")
+		return
+	}
+
+	rootFolder := strings.TrimSpace(*project.Folder)
+	if !filepath.IsAbs(rootFolder) {
+		rootFolder = filepath.Join(".", rootFolder)
+	}
+	resolvedRoot, err := filepath.Abs(rootFolder)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Project folder path is invalid")
+		return
+	}
+
+	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	resolvedPath, normalizedRelPath, err := resolveMindPath(resolvedRoot, relPath)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if normalizedRelPath == "" {
+		s.errorResponse(w, http.StatusBadRequest, "File path is required")
+		return
+	}
+	if !isMarkdownFile(normalizedRelPath) {
+		s.errorResponse(w, http.StatusBadRequest, "Only markdown files can be deleted")
+		return
+	}
+
+	info, err := os.Stat(resolvedPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			s.errorResponse(w, http.StatusNotFound, "File does not exist")
+			return
+		}
+		s.errorResponse(w, http.StatusBadRequest, "Failed to access file: "+err.Error())
+		return
+	}
+	if info.IsDir() {
+		s.errorResponse(w, http.StatusBadRequest, "Path is a directory")
+		return
+	}
+
+	if err := os.Remove(resolvedPath); err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete file: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, MindFileDeleteResponse{
+		RootFolder: resolvedRoot,
+		Path:       filepath.ToSlash(normalizedRelPath),
+	})
+}

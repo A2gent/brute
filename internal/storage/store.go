@@ -88,11 +88,12 @@ type MCPServer struct {
 	UpdatedAt           time.Time
 }
 
-// Project represents a session grouping container optionally tied to one or more folders.
+// Project represents a session grouping container optionally tied to a folder.
 type Project struct {
 	ID        string
 	Name      string
-	Folders   []string
+	Folder    *string // Single optional folder path
+	IsSystem  bool    // System projects (Knowledge Base, Agent) cannot be deleted
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

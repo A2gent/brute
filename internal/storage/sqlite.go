@@ -158,6 +158,10 @@ func (s *SQLiteStore) migrate() error {
 			updated_at TIMESTAMP NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(name)`,
+		// Migration: Add is_system column to projects
+		`ALTER TABLE projects ADD COLUMN is_system INTEGER NOT NULL DEFAULT 0`,
+		// Migration: Change folders to folder (single folder, nullable)
+		`ALTER TABLE projects ADD COLUMN folder TEXT`,
 	}
 
 	for _, m := range migrations {
@@ -168,6 +172,41 @@ func (s *SQLiteStore) migrate() error {
 		}
 	}
 
+	// Seed system projects (idempotent - uses INSERT OR IGNORE)
+	if err := s.seedSystemProjects(); err != nil {
+		return fmt.Errorf("failed to seed system projects: %w", err)
+	}
+
+	return nil
+}
+
+// System project IDs - must match frontend constants in Sidebar.tsx
+const (
+	SystemProjectKBID    = "system-kb"
+	SystemProjectAgentID = "system-agent"
+)
+
+// seedSystemProjects creates the system projects if they don't exist.
+// These are required for the Knowledge Base and Agent session lists in the sidebar.
+func (s *SQLiteStore) seedSystemProjects() error {
+	systemProjects := []struct {
+		id   string
+		name string
+	}{
+		{SystemProjectKBID, "Knowledge Base"},
+		{SystemProjectAgentID, "Agent"},
+	}
+
+	now := time.Now()
+	for _, p := range systemProjects {
+		_, err := s.db.Exec(`
+			INSERT OR IGNORE INTO projects (id, name, folder, is_system, created_at, updated_at)
+			VALUES (?, ?, NULL, 1, ?, ?)
+		`, p.id, p.name, now, now)
+		if err != nil {
+			return fmt.Errorf("failed to seed system project %s: %w", p.id, err)
+		}
+	}
 	return nil
 }
 
@@ -392,23 +431,15 @@ func (s *SQLiteStore) DeleteSession(id string) error {
 
 // SaveProject saves a project to the database.
 func (s *SQLiteStore) SaveProject(project *Project) error {
-	if project.Folders == nil {
-		project.Folders = []string{}
-	}
-
-	foldersJSON, err := json.Marshal(project.Folders)
-	if err != nil {
-		return fmt.Errorf("failed to encode project folders: %w", err)
-	}
-
-	_, err = s.db.Exec(`
-		INSERT INTO projects (id, name, folders, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?)
+	_, err := s.db.Exec(`
+		INSERT INTO projects (id, name, folder, is_system, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
-			folders = excluded.folders,
+			folder = excluded.folder,
+			is_system = excluded.is_system,
 			updated_at = excluded.updated_at
-	`, project.ID, project.Name, string(foldersJSON), project.CreatedAt, project.UpdatedAt)
+	`, project.ID, project.Name, project.Folder, project.IsSystem, project.CreatedAt, project.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to save project: %w", err)
 	}
@@ -419,13 +450,13 @@ func (s *SQLiteStore) SaveProject(project *Project) error {
 // GetProject retrieves a project by ID.
 func (s *SQLiteStore) GetProject(id string) (*Project, error) {
 	var project Project
-	var foldersJSON string
+	var folder sql.NullString
 
 	err := s.db.QueryRow(`
-		SELECT id, name, folders, created_at, updated_at
+		SELECT id, name, folder, is_system, created_at, updated_at
 		FROM projects
 		WHERE id = ?
-	`, id).Scan(&project.ID, &project.Name, &foldersJSON, &project.CreatedAt, &project.UpdatedAt)
+	`, id).Scan(&project.ID, &project.Name, &folder, &project.IsSystem, &project.CreatedAt, &project.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("project not found: %s", id)
 	}
@@ -433,13 +464,8 @@ func (s *SQLiteStore) GetProject(id string) (*Project, error) {
 		return nil, err
 	}
 
-	if foldersJSON != "" {
-		if err := json.Unmarshal([]byte(foldersJSON), &project.Folders); err != nil {
-			return nil, fmt.Errorf("failed to decode project folders: %w", err)
-		}
-	}
-	if project.Folders == nil {
-		project.Folders = []string{}
+	if folder.Valid {
+		project.Folder = &folder.String
 	}
 
 	return &project, nil
@@ -448,7 +474,7 @@ func (s *SQLiteStore) GetProject(id string) (*Project, error) {
 // ListProjects returns all projects ordered by name.
 func (s *SQLiteStore) ListProjects() ([]*Project, error) {
 	rows, err := s.db.Query(`
-		SELECT id, name, folders, created_at, updated_at
+		SELECT id, name, folder, is_system, created_at, updated_at
 		FROM projects
 		ORDER BY name COLLATE NOCASE ASC
 	`)
@@ -460,18 +486,13 @@ func (s *SQLiteStore) ListProjects() ([]*Project, error) {
 	var projects []*Project
 	for rows.Next() {
 		var project Project
-		var foldersJSON string
-		if err := rows.Scan(&project.ID, &project.Name, &foldersJSON, &project.CreatedAt, &project.UpdatedAt); err != nil {
+		var folder sql.NullString
+		if err := rows.Scan(&project.ID, &project.Name, &folder, &project.IsSystem, &project.CreatedAt, &project.UpdatedAt); err != nil {
 			return nil, err
 		}
 
-		if foldersJSON != "" {
-			if err := json.Unmarshal([]byte(foldersJSON), &project.Folders); err != nil {
-				return nil, fmt.Errorf("failed to decode project folders: %w", err)
-			}
-		}
-		if project.Folders == nil {
-			project.Folders = []string{}
+		if folder.Valid {
+			project.Folder = &folder.String
 		}
 
 		projects = append(projects, &project)
@@ -480,16 +501,27 @@ func (s *SQLiteStore) ListProjects() ([]*Project, error) {
 	return projects, nil
 }
 
-// DeleteProject deletes a project and unassigns sessions that referenced it.
+// DeleteProject deletes a project and all associated sessions and their messages.
+// System projects cannot be deleted.
 func (s *SQLiteStore) DeleteProject(id string) error {
+	// Check if this is a system project
+	project, err := s.GetProject(id)
+	if err != nil {
+		return err
+	}
+	if project.IsSystem {
+		return fmt.Errorf("cannot delete system project: %s", id)
+	}
+
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(`UPDATE sessions SET project_id = NULL WHERE project_id = ?`, id); err != nil {
-		return fmt.Errorf("failed to unassign sessions from project: %w", err)
+	// Delete all sessions associated with this project (cascade deletes messages)
+	if _, err := tx.Exec(`DELETE FROM sessions WHERE project_id = ?`, id); err != nil {
+		return fmt.Errorf("failed to delete project sessions: %w", err)
 	}
 	if _, err := tx.Exec(`DELETE FROM projects WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("failed to delete project: %w", err)

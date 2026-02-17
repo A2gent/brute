@@ -73,22 +73,21 @@ func (s *Server) resolveSessionWorkDir(sess *session.Session) string {
 		return defaultDir
 	}
 
-	for _, folder := range project.Folders {
-		candidate := strings.TrimSpace(folder)
-		if candidate == "" {
-			continue
-		}
-		if !filepath.IsAbs(candidate) {
-			candidate = filepath.Join(defaultDir, candidate)
-		}
-		candidate = filepath.Clean(candidate)
+	if project.Folder != nil {
+		candidate := strings.TrimSpace(*project.Folder)
+		if candidate != "" {
+			if !filepath.IsAbs(candidate) {
+				candidate = filepath.Join(defaultDir, candidate)
+			}
+			candidate = filepath.Clean(candidate)
 
-		info, statErr := os.Stat(candidate)
-		if statErr != nil || !info.IsDir() {
-			logging.Warn("Skipping invalid project folder for session workdir: session=%s folder=%s", sess.ID, candidate)
-			return defaultDir
+			info, statErr := os.Stat(candidate)
+			if statErr != nil || !info.IsDir() {
+				logging.Warn("Skipping invalid project folder for session workdir: session=%s folder=%s", sess.ID, candidate)
+				return defaultDir
+			}
+			return candidate
 		}
-		return candidate
 	}
 
 	return defaultDir
@@ -576,19 +575,20 @@ type UpdateSessionProjectRequest struct {
 type ProjectResponse struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
-	Folders   []string  `json:"folders"`
+	Folder    *string   `json:"folder,omitempty"`
+	IsSystem  bool      `json:"is_system"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type CreateProjectRequest struct {
-	Name    string   `json:"name"`
-	Folders []string `json:"folders"`
+	Name   string  `json:"name"`
+	Folder *string `json:"folder,omitempty"`
 }
 
 type UpdateProjectRequest struct {
-	Name    *string   `json:"name,omitempty"`
-	Folders *[]string `json:"folders,omitempty"`
+	Name   *string `json:"name,omitempty"`
+	Folder *string `json:"folder,omitempty"`
 }
 
 // --- Handlers ---
@@ -2119,7 +2119,7 @@ func (s *Server) assignSessionToThinkingProject(sess *session.Session) error {
 	project := &storage.Project{
 		ID:        thinkingProjectID,
 		Name:      thinkingProjectName,
-		Folders:   []string{},
+		IsSystem:  true,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -2298,7 +2298,8 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	project := &storage.Project{
 		ID:        uuid.New().String(),
 		Name:      name,
-		Folders:   normalizeFolders(req.Folders),
+		Folder:    normalizeFolder(req.Folder),
+		IsSystem:  false,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -2346,8 +2347,8 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		}
 		project.Name = name
 	}
-	if req.Folders != nil {
-		project.Folders = normalizeFolders(*req.Folders)
+	if req.Folder != nil {
+		project.Folder = normalizeFolder(req.Folder)
 	}
 	project.UpdatedAt = time.Now()
 
@@ -2486,17 +2487,15 @@ func (s *Server) resolveProjectContextSection(sess *session.Session) (string, in
 	if err != nil || project == nil {
 		return "", 0
 	}
-	if len(project.Folders) == 0 {
+	if project.Folder == nil || *project.Folder == "" {
 		return "", 0
 	}
 	var sb strings.Builder
 	sb.WriteString("Project context:\n")
 	sb.WriteString(fmt.Sprintf("- Project: %s\n", project.Name))
-	sb.WriteString("- Associated folders:\n")
-	for _, folder := range project.Folders {
-		sb.WriteString(fmt.Sprintf("  - %s\n", folder))
-	}
-	sb.WriteString("\nWhen working on this project, prefer operating within the associated folders above.")
+	sb.WriteString("- Associated folder:\n")
+	sb.WriteString(fmt.Sprintf("  - %s\n", *project.Folder))
+	sb.WriteString("\nWhen working on this project, prefer operating within the associated folder above.")
 	content := sb.String()
 	return content, estimateTokensApprox(content)
 }
@@ -2916,8 +2915,8 @@ func (s *Server) resolveProjectAgentsMDSection(sess *session.Session, settings m
 	folders := make([]string, 0, 4)
 	if sess != nil && sess.ProjectID != nil && strings.TrimSpace(*sess.ProjectID) != "" {
 		project, err := s.store.GetProject(strings.TrimSpace(*sess.ProjectID))
-		if err == nil && project != nil {
-			folders = append(folders, project.Folders...)
+		if err == nil && project != nil && project.Folder != nil {
+			folders = append(folders, *project.Folder)
 		}
 	}
 	if len(folders) == 0 {
@@ -3433,18 +3432,25 @@ func projectToResponse(project *storage.Project) ProjectResponse {
 		return ProjectResponse{}
 	}
 
-	folders := project.Folders
-	if folders == nil {
-		folders = []string{}
-	}
-
 	return ProjectResponse{
 		ID:        project.ID,
 		Name:      project.Name,
-		Folders:   folders,
+		Folder:    project.Folder,
+		IsSystem:  project.IsSystem,
 		CreatedAt: project.CreatedAt,
 		UpdatedAt: project.UpdatedAt,
 	}
+}
+
+func normalizeFolder(folder *string) *string {
+	if folder == nil {
+		return nil
+	}
+	normalized := strings.TrimSpace(*folder)
+	if normalized == "" {
+		return nil
+	}
+	return &normalized
 }
 
 func normalizeFolders(folders []string) []string {

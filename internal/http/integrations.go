@@ -959,9 +959,9 @@ func (s *Server) ensureMyMindProject() (*storage.Project, error) {
 		return nil, err
 	}
 
-	expectedFolders := []string{}
+	expectedFolder := ""
 	if root := strings.TrimSpace(settings[mindRootFolderSettingKey]); root != "" {
-		expectedFolders = []string{root}
+		expectedFolder = root
 	}
 
 	projects, err := s.store.ListProjects()
@@ -975,8 +975,16 @@ func (s *Server) ensureMyMindProject() (*storage.Project, error) {
 		if !strings.EqualFold(strings.TrimSpace(project.Name), myMindProjectName) {
 			continue
 		}
-		if !sameStringSets(project.Folders, expectedFolders) {
-			project.Folders = expectedFolders
+		currentFolder := ""
+		if project.Folder != nil {
+			currentFolder = *project.Folder
+		}
+		if currentFolder != expectedFolder {
+			if expectedFolder == "" {
+				project.Folder = nil
+			} else {
+				project.Folder = &expectedFolder
+			}
 			project.UpdatedAt = time.Now()
 			if err := s.store.SaveProject(project); err != nil {
 				return nil, err
@@ -989,9 +997,11 @@ func (s *Server) ensureMyMindProject() (*storage.Project, error) {
 	project := &storage.Project{
 		ID:        uuid.New().String(),
 		Name:      myMindProjectName,
-		Folders:   expectedFolders,
 		CreatedAt: now,
 		UpdatedAt: now,
+	}
+	if expectedFolder != "" {
+		project.Folder = &expectedFolder
 	}
 	if err := s.store.SaveProject(project); err != nil {
 		return nil, err

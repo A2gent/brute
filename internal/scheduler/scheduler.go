@@ -278,7 +278,7 @@ func (s *Scheduler) assignSessionToThinkingProject(sess *session.Session) error 
 	project := &storage.Project{
 		ID:        thinkingProjectID,
 		Name:      thinkingProjectName,
-		Folders:   []string{},
+		IsSystem:  true,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}

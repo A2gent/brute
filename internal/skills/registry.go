@@ -21,6 +21,12 @@ type RegistrySkill struct {
 	Version     string  `json:"version"`
 	Score       float64 `json:"score"`
 	UpdatedAt   int64   `json:"updatedAt"`
+	Stats       *struct {
+		Downloads       int `json:"downloads"`
+		Stars           int `json:"stars"`
+		InstallsCurrent int `json:"installsCurrent"`
+		InstallsAllTime int `json:"installsAllTime"`
+	} `json:"stats,omitempty"`
 }
 
 // RegistrySkillDetails represents detailed skill info from /api/v1/skills/{slug}
@@ -89,6 +95,65 @@ func (c *RegistryClient) SearchSkills(query string, limit int) (*SearchResponse,
 	}
 
 	var result SearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// ListSkillsResponse represents the response from /api/v1/skills
+type ListSkillsResponse struct {
+	Items      []ListSkillItem `json:"items"`
+	NextCursor *string         `json:"nextCursor"`
+}
+
+// ListSkillItem represents a single skill in the list response
+type ListSkillItem struct {
+	Slug        string            `json:"slug"`
+	DisplayName string            `json:"displayName"`
+	Summary     string            `json:"summary"`
+	Tags        map[string]string `json:"tags"`
+	Stats       struct {
+		Downloads       int `json:"downloads"`
+		Stars           int `json:"stars"`
+		InstallsCurrent int `json:"installsCurrent"`
+		InstallsAllTime int `json:"installsAllTime"`
+	} `json:"stats"`
+	CreatedAt     int64 `json:"createdAt"`
+	UpdatedAt     int64 `json:"updatedAt"`
+	LatestVersion *struct {
+		Version string `json:"version"`
+	} `json:"latestVersion"`
+}
+
+// ListSkills lists skills with sorting and filtering using /api/v1/skills
+func (c *RegistryClient) ListSkills(limit int, sort string) (*ListSkillsResponse, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if sort == "" {
+		sort = "installsCurrent" // Default to most installed
+	}
+
+	params := url.Values{}
+	params.Add("limit", fmt.Sprintf("%d", limit))
+	params.Add("sort", sort)
+
+	listURL := fmt.Sprintf("%s/api/v1/skills?%s", c.baseURL, params.Encode())
+
+	resp, err := c.httpClient.Get(listURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list skills: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("list failed: %s (status %d)", string(body), resp.StatusCode)
+	}
+
+	var result ListSkillsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}

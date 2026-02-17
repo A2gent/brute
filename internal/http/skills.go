@@ -413,13 +413,9 @@ type SkillInstallResponse struct {
 	Path    string `json:"path"`
 }
 
-// handleSearchRegistry searches clawhub.ai for skills using real API
+// handleSearchRegistry searches/lists clawhub.ai skills using real API
 func (s *Server) handleSearchRegistry(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	if query == "" {
-		s.errorResponse(w, http.StatusBadRequest, "query parameter is required")
-		return
-	}
 
 	limit := 20
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
@@ -428,29 +424,66 @@ func (s *Server) handleSearchRegistry(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Use real ClawHub API v1
-	client := skills.NewRegistryClient("")
-	searchResp, err := client.SearchSkills(query, limit)
-	if err != nil {
-		s.errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Failed to search skills: %v", err))
-		return
+	sort := r.URL.Query().Get("sort")
+	if sort == "" {
+		sort = "installsCurrent" // Default to most installed
 	}
 
-	// Convert ClawHub API response to our format
-	skills := make([]RegistrySkill, len(searchResp.Results))
-	for i, result := range searchResp.Results {
-		skills[i] = RegistrySkill{
-			ID:          result.Slug,
-			Name:        result.DisplayName,
-			Description: result.Summary,
-			Version:     result.Version,
-			UpdatedAt:   fmt.Sprintf("%d", result.UpdatedAt),
+	client := skills.NewRegistryClient("")
+	var resultSkills []RegistrySkill
+
+	if query != "" {
+		// Use search API for queries
+		searchResp, err := client.SearchSkills(query, limit)
+		if err != nil {
+			s.errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Failed to search skills: %v", err))
+			return
+		}
+
+		resultSkills = make([]RegistrySkill, len(searchResp.Results))
+		for i, result := range searchResp.Results {
+			resultSkills[i] = RegistrySkill{
+				ID:          result.Slug,
+				Name:        result.DisplayName,
+				Description: result.Summary,
+				Version:     result.Version,
+				UpdatedAt:   fmt.Sprintf("%d", result.UpdatedAt),
+			}
+			if result.Stats != nil {
+				resultSkills[i].Downloads = result.Stats.Downloads
+				resultSkills[i].Rating = float64(result.Stats.Stars)
+			}
+		}
+	} else {
+		// Use list API with sorting when no query
+		listResp, err := client.ListSkills(limit, sort)
+		if err != nil {
+			s.errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Failed to list skills: %v", err))
+			return
+		}
+
+		resultSkills = make([]RegistrySkill, len(listResp.Items))
+		for i, item := range listResp.Items {
+			version := ""
+			if item.LatestVersion != nil {
+				version = item.LatestVersion.Version
+			}
+
+			resultSkills[i] = RegistrySkill{
+				ID:          item.Slug,
+				Name:        item.DisplayName,
+				Description: item.Summary,
+				Version:     version,
+				Downloads:   item.Stats.Downloads,
+				Rating:      float64(item.Stats.Stars),
+				UpdatedAt:   fmt.Sprintf("%d", item.UpdatedAt),
+			}
 		}
 	}
 
 	s.jsonResponse(w, http.StatusOK, SkillSearchResponse{
-		Skills: skills,
-		Total:  len(skills),
+		Skills: resultSkills,
+		Total:  len(resultSkills),
 		Page:   1,
 		Limit:  limit,
 	})

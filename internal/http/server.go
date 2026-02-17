@@ -3621,6 +3621,21 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 	if apiKey == "" {
 		apiKey = s.apiKeyFromEnv(providerType)
 	}
+
+	// Special handling for Anthropic: OAuth or API key
+	if providerType == config.ProviderAnthropic {
+		if provider.OAuth != nil && provider.OAuth.AccessToken != "" {
+			// Use OAuth
+			tokens := &anthropic.OAuthTokens{
+				AccessToken:  provider.OAuth.AccessToken,
+				RefreshToken: provider.OAuth.RefreshToken,
+				ExpiresIn:    int(provider.OAuth.ExpiresAt - time.Now().Unix()),
+			}
+			return anthropic.NewOAuthClient(tokens, modelName, s.refreshAnthropicOAuthToken), nil
+		}
+		// Fall through to API key check below
+	}
+
 	if def.RequiresKey && apiKey == "" {
 		return nil, fmt.Errorf("%s requires an API key (configure provider API key or set %s)", def.DisplayName, s.apiKeyEnvName(providerType))
 	}
@@ -3635,17 +3650,7 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return lmstudio.NewClient(apiKey, modelName, baseURL), nil
 	case config.ProviderAnthropic:
-		// Anthropic with OAuth or API key support
-		if provider.OAuth != nil && provider.OAuth.AccessToken != "" {
-			// Use OAuth
-			tokens := &anthropic.OAuthTokens{
-				AccessToken:  provider.OAuth.AccessToken,
-				RefreshToken: provider.OAuth.RefreshToken,
-				ExpiresIn:    int(provider.OAuth.ExpiresAt - time.Now().Unix()),
-			}
-			return anthropic.NewOAuthClient(tokens, modelName, s.refreshAnthropicOAuthToken), nil
-		}
-		// Use API key
+		// Use API key (OAuth case handled above)
 		return anthropic.NewClientWithBaseURL(apiKey, modelName, baseURL), nil
 	default:
 		return anthropic.NewClientWithBaseURL(apiKey, modelName, baseURL), nil

@@ -2,13 +2,20 @@ package http
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+
+	"github.com/gratheon/aagent/internal/skills"
+	"gopkg.in/yaml.v2"
 )
 
 var integrationToolsByProvider = map[string][]string{
@@ -31,6 +38,7 @@ var integrationToolNameSet = func() map[string]struct{} {
 
 type SkillFile struct {
 	Name         string `json:"name"`
+	Description  string `json:"description,omitempty"`
 	Path         string `json:"path"`
 	RelativePath string `json:"relative_path"`
 }
@@ -250,8 +258,15 @@ func (s *Server) handleDiscoverSkills(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 
+		// Parse skill metadata (name and description from frontmatter)
+		name, description := parseSkillMetadata(path)
+		if name == "" {
+			name = strings.TrimSuffix(d.Name(), filepath.Ext(d.Name()))
+		}
+
 		skills = append(skills, SkillFile{
-			Name:         deriveSkillName(path, d.Name()),
+			Name:         name,
+			Description:  description,
 			Path:         path,
 			RelativePath: filepath.ToSlash(relPath),
 		})
@@ -272,19 +287,60 @@ func (s *Server) handleDiscoverSkills(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func deriveSkillName(path, defaultName string) string {
-	name := strings.TrimSpace(strings.TrimSuffix(defaultName, filepath.Ext(defaultName)))
+// SkillMetadata represents the YAML frontmatter in SKILL.md files
+type SkillMetadata struct {
+	Name          string            `yaml:"name"`
+	Description   string            `yaml:"description"`
+	License       string            `yaml:"license,omitempty"`
+	Compatibility string            `yaml:"compatibility,omitempty"`
+	Metadata      map[string]string `yaml:"metadata,omitempty"`
+	AllowedTools  string            `yaml:"allowed-tools,omitempty"`
+}
 
-	file, err := os.Open(path)
+// parseSkillMetadata extracts YAML frontmatter and metadata from a SKILL.md file
+func parseSkillMetadata(path string) (name string, description string) {
+	content, err := os.ReadFile(path)
 	if err != nil {
-		if name == "" {
-			return "Skill"
-		}
-		return name
+		// Fallback to filename
+		base := filepath.Base(path)
+		return strings.TrimSuffix(base, filepath.Ext(base)), ""
 	}
-	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
+	// Check for YAML frontmatter (starts with ---)
+	if bytes.HasPrefix(content, []byte("---\n")) || bytes.HasPrefix(content, []byte("---\r\n")) {
+		// Find the closing ---
+		lines := bytes.Split(content, []byte("\n"))
+		endIdx := -1
+		for i := 1; i < len(lines); i++ {
+			trimmed := bytes.TrimSpace(lines[i])
+			if bytes.Equal(trimmed, []byte("---")) {
+				endIdx = i
+				break
+			}
+		}
+
+		if endIdx > 0 {
+			// Extract frontmatter
+			frontmatterBytes := bytes.Join(lines[1:endIdx], []byte("\n"))
+			var metadata SkillMetadata
+			if err := yaml.Unmarshal(frontmatterBytes, &metadata); err == nil {
+				if metadata.Name != "" {
+					return metadata.Name, metadata.Description
+				}
+			}
+		}
+	}
+
+	// Fallback: extract first heading (old format)
+	name = deriveSkillNameFromHeading(content, path)
+	return name, ""
+}
+
+// deriveSkillNameFromHeading extracts skill name from first markdown heading (legacy)
+func deriveSkillNameFromHeading(content []byte, path string) string {
+	defaultName := strings.TrimSuffix(filepath.Base(path), filepath.Ext(filepath.Base(path)))
+
+	scanner := bufio.NewScanner(bytes.NewReader(content))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -299,8 +355,150 @@ func deriveSkillName(path, defaultName string) string {
 		break
 	}
 
-	if name == "" {
+	if defaultName == "" {
 		return "Skill"
 	}
+	return defaultName
+}
+
+// deriveSkillName is the legacy function, kept for compatibility
+func deriveSkillName(path, defaultName string) string {
+	name, _ := parseSkillMetadata(path)
+	if name == "" {
+		return strings.TrimSpace(strings.TrimSuffix(defaultName, filepath.Ext(defaultName)))
+	}
 	return name
+}
+
+// RegistrySkill represents a skill from clawhub.ai (for API responses)
+type RegistrySkill struct {
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	Author      string            `json:"author"`
+	Version     string            `json:"version"`
+	Downloads   int               `json:"downloads"`
+	Rating      float64           `json:"rating"`
+	Tags        []string          `json:"tags"`
+	Metadata    map[string]string `json:"metadata"`
+	DownloadURL string            `json:"download_url"`
+	UpdatedAt   string            `json:"updated_at,omitempty"`
+}
+
+// SkillSearchRequest represents a search request
+type SkillSearchRequest struct {
+	Query string `json:"query"`
+	Page  int    `json:"page"`
+	Limit int    `json:"limit"`
+}
+
+// SkillSearchResponse represents search results
+type SkillSearchResponse struct {
+	Skills []RegistrySkill `json:"skills"`
+	Total  int             `json:"total"`
+	Page   int             `json:"page"`
+	Limit  int             `json:"limit"`
+}
+
+// SkillInstallRequest represents an install request
+type SkillInstallRequest struct {
+	SkillID string `json:"skill_id"`
+}
+
+// SkillInstallResponse represents install result
+type SkillInstallResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+}
+
+// handleSearchRegistry searches clawhub.ai for skills using real API
+func (s *Server) handleSearchRegistry(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if query == "" {
+		s.errorResponse(w, http.StatusBadRequest, "query parameter is required")
+		return
+	}
+
+	limit := 20
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
+			limit = l
+		}
+	}
+
+	// Use real ClawHub API v1
+	client := skills.NewRegistryClient("")
+	searchResp, err := client.SearchSkills(query, limit)
+	if err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Failed to search skills: %v", err))
+		return
+	}
+
+	// Convert ClawHub API response to our format
+	skills := make([]RegistrySkill, len(searchResp.Results))
+	for i, result := range searchResp.Results {
+		skills[i] = RegistrySkill{
+			ID:          result.Slug,
+			Name:        result.DisplayName,
+			Description: result.Summary,
+			Version:     result.Version,
+			UpdatedAt:   fmt.Sprintf("%d", result.UpdatedAt),
+		}
+	}
+
+	s.jsonResponse(w, http.StatusOK, SkillSearchResponse{
+		Skills: skills,
+		Total:  len(skills),
+		Page:   1,
+		Limit:  limit,
+	})
+}
+
+// handleInstallSkill installs a skill from clawhub.ai
+func (s *Server) handleInstallSkill(w http.ResponseWriter, r *http.Request) {
+	var req SkillInstallRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if req.SkillID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "skill_id is required")
+		return
+	}
+
+	// Get skills folder from settings
+	settings, err := s.store.GetSettings()
+	if err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to get settings")
+		return
+	}
+
+	folder := strings.TrimSpace(settings[skillsFolderSettingKey])
+	if folder == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Skills folder is not configured")
+		return
+	}
+
+	resolvedFolder, err := filepath.Abs(folder)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid skills folder path")
+		return
+	}
+
+	// Install skill using real ClawHub API v1
+	installedSkill, err := skills.InstallSkill("", req.SkillID, resolvedFolder)
+	if err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Failed to install skill: %v", err))
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, SkillInstallResponse{
+		Success: true,
+		Message: fmt.Sprintf("Skill %s installed successfully", installedSkill.Name),
+		Name:    installedSkill.Name,
+		Path:    filepath.Join(resolvedFolder, req.SkillID),
+	})
 }

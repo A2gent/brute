@@ -13,6 +13,7 @@ import (
 type Status string
 
 const (
+	StatusQueued        Status = "queued"         // Session created but not started
 	StatusRunning       Status = "running"
 	StatusPaused        Status = "paused"
 	StatusInputRequired Status = "input_required" // Agent is waiting for user input
@@ -65,16 +66,26 @@ type ToolResult struct {
 
 // New creates a new session
 func New(agentID string) *Session {
+	return NewWithStatus(agentID, StatusRunning)
+}
+
+// NewWithStatus creates a new session with a specific status
+func NewWithStatus(agentID string, status Status) *Session {
 	now := time.Now()
 	return &Session{
 		ID:        uuid.New().String(),
 		AgentID:   agentID,
-		Status:    StatusRunning,
+		Status:    status,
 		Messages:  make([]Message, 0),
 		Metadata:  make(map[string]interface{}),
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
+}
+
+// NewQueued creates a new queued session (not started)
+func NewQueued(agentID string) *Session {
+	return NewWithStatus(agentID, StatusQueued)
 }
 
 // NewWithParent creates a new sub-session with a parent

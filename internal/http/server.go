@@ -274,6 +274,7 @@ func (s *Server) setupRoutes() {
 		r.Post("/{sessionID}/chat/stream", s.handleChatStream)
 		r.Get("/{sessionID}/question", s.handleGetPendingQuestion)
 		r.Post("/{sessionID}/answer", s.handleAnswerQuestion)
+		r.Post("/{sessionID}/start", s.handleStartSession)
 	})
 
 	// Projects endpoints (optional grouping for sessions)
@@ -370,6 +371,7 @@ type CreateSessionRequest struct {
 	Provider  string `json:"provider,omitempty"`
 	Model     string `json:"model,omitempty"`
 	ProjectID string `json:"project_id,omitempty"`
+	Queued    bool   `json:"queued,omitempty"` // If true, create session without starting it
 }
 
 // CreateSessionResponse represents a response after creating a session
@@ -468,13 +470,31 @@ type ChatResponse struct {
 }
 
 type ChatStreamEvent struct {
-	Type     string            `json:"type"`
-	Delta    string            `json:"delta,omitempty"`
-	Content  string            `json:"content,omitempty"`
-	Messages []MessageResponse `json:"messages,omitempty"`
-	Status   string            `json:"status,omitempty"`
-	Usage    *UsageResponse    `json:"usage,omitempty"`
-	Error    string            `json:"error,omitempty"`
+	Type       string                 `json:"type"`
+	Delta      string                 `json:"delta,omitempty"`
+	Content    string                 `json:"content,omitempty"`
+	Messages   []MessageResponse      `json:"messages,omitempty"`
+	Status     string                 `json:"status,omitempty"`
+	Usage      *UsageResponse         `json:"usage,omitempty"`
+	Error      string                 `json:"error,omitempty"`
+	ToolCalls  []StreamToolCallEvent  `json:"tool_calls,omitempty"`
+	ToolResult *StreamToolResultEvent `json:"tool_result,omitempty"`
+	Step       int                    `json:"step,omitempty"`
+}
+
+// StreamToolCallEvent represents a tool call in a stream event.
+type StreamToolCallEvent struct {
+	ID    string          `json:"id"`
+	Name  string          `json:"name"`
+	Input json.RawMessage `json:"input"`
+}
+
+// StreamToolResultEvent represents a tool result in a stream event.
+type StreamToolResultEvent struct {
+	ToolCallID string `json:"tool_call_id"`
+	Name       string `json:"name"`
+	Content    string `json:"content"`
+	IsError    bool   `json:"is_error"`
 }
 
 // UsageResponse represents token usage
@@ -1235,7 +1255,14 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sess, err := s.sessionManager.Create(req.AgentID)
+	// Create session based on queued flag
+	var sess *session.Session
+	var err error
+	if req.Queued {
+		sess, err = s.sessionManager.CreateQueued(req.AgentID)
+	} else {
+		sess, err = s.sessionManager.Create(req.AgentID)
+	}
 	if err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to create session: "+err.Error())
 		return
@@ -1296,6 +1323,32 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Status:    string(sess.Status),
 		CreatedAt: sess.CreatedAt,
 	})
+}
+func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
+	sessionID := chi.URLParam(r, "sessionID")
+
+	sess, err := s.sessionManager.Get(sessionID)
+	if err != nil {
+		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
+		return
+	}
+
+	// Only queued sessions can be started
+	if sess.Status != session.StatusQueued {
+		s.errorResponse(w, http.StatusBadRequest, "Session is not in queued status")
+		return
+	}
+
+	// Update status to running
+	sess.SetStatus(session.StatusRunning)
+	if err := s.sessionManager.Save(sess); err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to start session: "+err.Error())
+		return
+	}
+
+	logging.LogSession("started", sess.ID, fmt.Sprintf("agent=%s via HTTP", sess.AgentID))
+
+	s.jsonResponse(w, http.StatusOK, s.sessionToResponse(sess))
 }
 
 func (s *Server) handleUpdateSessionProject(w http.ResponseWriter, r *http.Request) {
@@ -1609,8 +1662,17 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.queueTelegramSessionMessageSync(sess.ID)
 
-	// Add user message before streaming begins.
-	sess.AddUserMessage(req.Message)
+	// Add user message before streaming begins (skip if already exists as last message).
+	lastUserMsg := ""
+	for i := len(sess.Messages) - 1; i >= 0; i-- {
+		if sess.Messages[i].Role == "user" {
+			lastUserMsg = sess.Messages[i].Content
+			break
+		}
+	}
+	if lastUserMsg != req.Message {
+		sess.AddUserMessage(req.Message)
+	}
 	sess.SetStatus(session.StatusRunning)
 	if err := s.sessionManager.Save(sess); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to update session: "+err.Error())
@@ -1673,10 +1735,41 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	ag := agent.New(agentConfig, target.Client, s.toolManagerForSession(sess), s.sessionManager)
 
 	content, usage, err := ag.RunWithEvents(runCtx, sess, req.Message, func(ev agent.Event) {
-		if ev.Type == agent.EventAssistantDelta {
+		switch ev.Type {
+		case agent.EventAssistantDelta:
 			_ = writeEvent(ChatStreamEvent{
 				Type:  "assistant_delta",
 				Delta: ev.Delta,
+			})
+		case agent.EventToolExecuting:
+			toolCalls := make([]StreamToolCallEvent, len(ev.ToolCalls))
+			for i, tc := range ev.ToolCalls {
+				toolCalls[i] = StreamToolCallEvent{
+					ID:    tc.ID,
+					Name:  tc.Name,
+					Input: json.RawMessage(tc.Input),
+				}
+			}
+			_ = writeEvent(ChatStreamEvent{
+				Type:      "tool_executing",
+				Step:      ev.Step,
+				ToolCalls: toolCalls,
+			})
+		case agent.EventToolCompleted:
+			// Send updated messages after tool execution
+			freshSess, err := s.sessionManager.Get(sess.ID)
+			if err == nil {
+				_ = writeEvent(ChatStreamEvent{
+					Type:     "tool_completed",
+					Step:     ev.Step,
+					Messages: s.messagesToResponse(freshSess.Messages),
+					Status:   string(freshSess.Status),
+				})
+			}
+		case agent.EventStepCompleted:
+			_ = writeEvent(ChatStreamEvent{
+				Type: "step_completed",
+				Step: ev.Step,
 			})
 		}
 	})

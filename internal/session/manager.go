@@ -26,6 +26,15 @@ func (m *Manager) Create(agentID string) (*Session, error) {
 	return sess, nil
 }
 
+// CreateQueued creates a new queued session (not started)
+func (m *Manager) CreateQueued(agentID string) (*Session, error) {
+	sess := NewQueued(agentID)
+	if err := m.store.SaveSession(sess.ToStorage()); err != nil {
+		return nil, fmt.Errorf("failed to save session: %w", err)
+	}
+	return sess, nil
+}
+
 // CreateWithParent creates a new sub-session
 func (m *Manager) CreateWithParent(agentID, parentID string) (*Session, error) {
 	sess := NewWithParent(agentID, parentID)

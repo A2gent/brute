@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/skills"
 	"gopkg.in/yaml.v2"
 )
@@ -87,6 +88,7 @@ func (s *Server) handleListBuiltInSkills(w http.ResponseWriter, r *http.Request)
 	skills := make([]BuiltInSkill, 0, 16)
 
 	toolDefinitions := s.toolManager.GetDefinitions()
+	logging.Debug("handleListBuiltInSkills: Got %d tool definitions", len(toolDefinitions))
 	sort.Slice(toolDefinitions, func(i, j int) bool {
 		return strings.ToLower(toolDefinitions[i].Name) < strings.ToLower(toolDefinitions[j].Name)
 	})
@@ -101,6 +103,7 @@ func (s *Server) handleListBuiltInSkills(w http.ResponseWriter, r *http.Request)
 			Description: strings.TrimSpace(definition.Description),
 		})
 	}
+	logging.Debug("handleListBuiltInSkills: Returning %d built-in skills", len(skills))
 
 	s.jsonResponse(w, http.StatusOK, BuiltInSkillResponse{Skills: skills})
 }

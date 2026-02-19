@@ -34,34 +34,10 @@ func (t *SessionTaskProgressTool) Name() string {
 }
 
 func (t *SessionTaskProgressTool) Description() string {
-	return `Manage temporary task progress for the current session.
-
-Use this tool to keep track of subtasks, planning steps, and completion state during session execution.
-The task progress is session-scoped and automatically cleaned up when the session ends.
-
-**Format:** Use a compact text format to minimize tokens:
-- Each line represents a task or subtask
-- Indent with 2 spaces for nested tasks
-- Prefix: [ ] for pending, [x] for completed
-- Example:
-  [x] Step 1: Analyze requirements
-    [ ] Step 1.1: Read files
-    [x] Step 1.2: Identify patterns
-  [ ] Step 2: Implement solution
-  [ ] Step 3: Write tests
-
-**Actions:**
-- "get": Retrieve current task progress
-- "set": Replace entire task progress (overwrites existing)
-- "append": Add new tasks to existing progress
-
-**Best practices:**
-- Update progress after completing each subtask
-- Keep descriptions concise (one line per task)
-- Use nested tasks for complex workflows
-- Mark tasks as [x] when completed
-
-This replaces the need for temporary TODO files and provides visual progress tracking in the UI.`
+	return `Track task progress and planning for the current session. ` +
+		`Manage subtasks with completion state using [ ] for pending and [x] for done. ` +
+		`Actions: get (read), set (overwrite), append (add). ` +
+		`Supports nested tasks via 2-space indentation.`
 }
 
 func (t *SessionTaskProgressTool) Schema() map[string]interface{} {

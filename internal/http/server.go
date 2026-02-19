@@ -18,10 +18,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
-	"github.com/go-chi/cors"
-	"github.com/google/uuid"
 	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/jobs"
@@ -38,6 +34,10 @@ import (
 	"github.com/A2gent/brute/internal/storage"
 	"github.com/A2gent/brute/internal/tools"
 	"github.com/A2gent/brute/internal/tools/integrationtools"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
+	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
 )
 
@@ -114,12 +114,15 @@ func (s *Server) toolManagerForSession(sess *session.Session) *tools.Manager {
 
 func (s *Server) registerServerBackedTools(manager *tools.Manager) {
 	if manager == nil {
+		logging.Warn("registerServerBackedTools called with nil manager")
 		return
 	}
+	logging.Debug("Registering server-backed tools...")
 	manager.Register(newRecurringJobsTool(s))
 	manager.Register(newMCPManageTool(s))
 	manager.RegisterQuestionTool(s.sessionManager)
 	manager.RegisterSessionTaskProgressTool(s.sessionManager)
+	logging.Debug("Server-backed tools registered. Total tools: %d", len(manager.GetDefinitions()))
 }
 
 const thinkingJobIDSettingKey = "A2GENT_THINKING_JOB_ID"

@@ -661,7 +661,7 @@ func (s *Server) processTelegramDuplexIntegrations(ctx context.Context) {
 				len([]rune(text)),
 			)
 
-			reply, err := s.handleTelegramInboundMessage(
+			result, err := s.handleTelegramInboundMessage(
 				ctx,
 				integration,
 				message.Chat,
@@ -677,22 +677,46 @@ func (s *Server) processTelegramDuplexIntegrations(ctx context.Context) {
 				continue
 			}
 
-			reply = strings.TrimSpace(reply)
+			reply := strings.TrimSpace(result.reply)
 			if reply == "" {
 				logging.Debug("Telegram reply skipped for integration %s: empty reply", integration.ID)
 				continue
 			}
-			if err := s.sendTelegramMessage(ctx, botToken, messageChatID, message.MessageThreadID, reply); err != nil {
-				logging.Warn("Telegram reply send failed for integration %s: %s", integration.ID, sanitizeTelegramError(err))
-				continue
+			
+			// If we created a new topic from general chat, send link to general chat and reply to topic
+			if result.createdThread > 0 && message.MessageThreadID == 0 {
+				topicLink := fmt.Sprintf("https://t.me/c/%s/%d", strings.TrimPrefix(messageChatID, "-100"), result.createdThread)
+				generalChatReply := fmt.Sprintf("Moved to topic: %s", topicLink)
+				if sendErr := s.sendTelegramMessage(ctx, botToken, messageChatID, 0, generalChatReply); sendErr != nil {
+					logging.Warn("Telegram topic link reply to general chat failed for integration %s: %s", integration.ID, sanitizeTelegramError(sendErr))
+				}
+				
+				// Send actual reply to the new topic
+				if err := s.sendTelegramMessage(ctx, botToken, messageChatID, result.createdThread, reply); err != nil {
+					logging.Warn("Telegram reply send to new topic failed for integration %s: %s", integration.ID, sanitizeTelegramError(err))
+					continue
+				}
+				logging.Info(
+					"Telegram reply sent to new topic: integration=%s chat=%s thread=%d reply_len=%d",
+					integration.ID,
+					messageChatID,
+					result.createdThread,
+					len([]rune(reply)),
+				)
+			} else {
+				// Normal reply to same thread
+				if err := s.sendTelegramMessage(ctx, botToken, messageChatID, message.MessageThreadID, reply); err != nil {
+					logging.Warn("Telegram reply send failed for integration %s: %s", integration.ID, sanitizeTelegramError(err))
+					continue
+				}
+				logging.Info(
+					"Telegram reply sent: integration=%s chat=%s thread=%d reply_len=%d",
+					integration.ID,
+					messageChatID,
+					message.MessageThreadID,
+					len([]rune(reply)),
+				)
 			}
-			logging.Info(
-				"Telegram reply sent: integration=%s chat=%s thread=%d reply_len=%d",
-				integration.ID,
-				messageChatID,
-				message.MessageThreadID,
-				len([]rune(reply)),
-			)
 		}
 	}
 }
@@ -780,28 +804,37 @@ func telegramRetryAfterSeconds(err error) int {
 	return n
 }
 
+
+type telegramInboundResponse struct {
+	reply         string
+	createdThread int64 // if > 0, a new topic was created
+}
+
 func (s *Server) handleTelegramInboundMessage(
 	ctx context.Context,
 	integration *storage.Integration,
 	chat telegramChatPayload,
 	threadID int64,
 	userMessage string,
-) (string, error) {
+) (*telegramInboundResponse, error) {
 	if handled, reply := handleTelegramSlashCommand(userMessage); handled {
-		return reply, nil
+		return &telegramInboundResponse{reply: reply}, nil
 	}
 
 	chatID := strconv.FormatInt(chat.ID, 10)
 	scopeKey := telegramSessionScopeKey(integration, chatID, threadID)
 	sess, err := s.findTelegramSession(integration.ID, chatID, scopeKey, threadID)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
+	newSession := sess == nil
+	createdThreadID := int64(0)
+	
 	if sess == nil {
 		sess, err = s.sessionManager.Create("build")
 		if err != nil {
-			return "", fmt.Errorf("failed to create Telegram session: %w", err)
+			return nil, fmt.Errorf("failed to create Telegram session: %w", err)
 		}
 		if sess.Metadata == nil {
 			sess.Metadata = map[string]interface{}{}
@@ -817,6 +850,24 @@ func (s *Server) handleTelegramInboundMessage(
 		sess.Metadata["integration_provider"] = "telegram"
 		sess.Metadata["integration_id"] = integration.ID
 		sess.Metadata["telegram_chat_id"] = chatID
+		
+		// Create topic for new sessions from general chat
+		scope := strings.ToLower(strings.TrimSpace(integration.Config["session_scope"]))
+		if threadID == 0 && scope != "chat" {
+			botToken := strings.TrimSpace(integration.Config["bot_token"])
+			if botToken != "" {
+				topicName := telegramTopicNameForSession(sess, userMessage)
+				createdThreadID, err = s.createTelegramForumTopic(ctx, botToken, chatID, topicName)
+				if err != nil {
+					logging.Warn("Failed to create Telegram topic for new session from general chat: %s", sanitizeTelegramError(err))
+				} else {
+					threadID = createdThreadID
+					scopeKey = telegramSessionScopeKey(integration, chatID, threadID)
+					sess.Metadata["telegram_topic_name"] = topicName
+				}
+			}
+		}
+		
 		sess.Metadata["telegram_scope_key"] = scopeKey
 		if threadID > 0 {
 			sess.Metadata["telegram_thread_id"] = strconv.FormatInt(threadID, 10)
@@ -838,7 +889,7 @@ func (s *Server) handleTelegramInboundMessage(
 		sess.AddAssistantMessage(fmt.Sprintf("Unable to start request: %s", err.Error()), nil)
 		sess.SetStatus(session.StatusFailed)
 		_ = s.sessionManager.Save(sess)
-		return "", fmt.Errorf("provider configuration error: %w", err)
+		return nil, fmt.Errorf("provider configuration error: %w", err)
 	}
 
 	agentConfig := agent.Config{
@@ -856,10 +907,14 @@ func (s *Server) handleTelegramInboundMessage(
 		sess.AddAssistantMessage(fmt.Sprintf("Request failed: %s", err.Error()), nil)
 		sess.SetStatus(session.StatusFailed)
 		_ = s.sessionManager.Save(sess)
-		return "", fmt.Errorf("agent run failed: %w", err)
+		return nil, fmt.Errorf("agent run failed: %w", err)
 	}
 
-	return response, nil
+	result := &telegramInboundResponse{reply: response}
+	if newSession && createdThreadID > 0 {
+		result.createdThread = createdThreadID
+	}
+	return result, nil
 }
 
 func handleTelegramSlashCommand(text string) (bool, string) {

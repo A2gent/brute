@@ -1297,7 +1297,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			// Check if there are new messages from external sources (e.g., web app)
-			if !m.processing && len(msg.session.Messages) > m.lastSyncedMessageCount {
+			// Always sync if session has more messages than we've seen, even during processing.
+			// This ensures TUI stays in sync with changes from web-app or other sources.
+			if len(msg.session.Messages) > m.lastSyncedMessageCount {
 				// Reload messages from the synced session
 				m.session = msg.session
 				m.messages = make([]message, 0, len(msg.session.Messages))

@@ -2272,13 +2272,29 @@ func (m Model) showSessions() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	m.availableSessions = sessions
+	// Filter sessions by selected project
+	var filteredSessions []*session.Session
+	for _, s := range sessions {
+		if m.selectedProjectID == nil {
+			// No project selected - show sessions without project
+			if s.ProjectID == nil {
+				filteredSessions = append(filteredSessions, s)
+			}
+		} else {
+			// Project selected - show only sessions for this project
+			if s.ProjectID != nil && *s.ProjectID == *m.selectedProjectID {
+				filteredSessions = append(filteredSessions, s)
+			}
+		}
+	}
+
+	m.availableSessions = filteredSessions
 	m.sessionsListIndex = 0
 	m.sessionsListOffset = 0
 	m.showSessionsList = true
 
 	// Find current session in list
-	for i, s := range sessions {
+	for i, s := range filteredSessions {
 		if s.ID == m.session.ID {
 			m.sessionsListIndex = i
 			break
@@ -2709,7 +2725,13 @@ func (m Model) renderSessionsList() string {
 
 	// Render visible items
 	var rendered []string
-	rendered = append(rendered, lipgloss.NewStyle().Bold(true).Render("Sessions (Enter to switch, Esc to cancel):"))
+	var headerText string
+	if m.selectedProjectName != "" {
+		headerText = fmt.Sprintf("Sessions for '%s' (Enter to switch, Esc to cancel):", m.selectedProjectName)
+	} else {
+		headerText = "Sessions (ungrouped) (Enter to switch, Esc to cancel):"
+	}
+	rendered = append(rendered, lipgloss.NewStyle().Bold(true).Render(headerText))
 	rendered = append(rendered, "")
 
 	// Calculate end index

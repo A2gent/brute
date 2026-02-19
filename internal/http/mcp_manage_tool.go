@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/gratheon/aagent/internal/tools"
+	"github.com/A2gent/brute/internal/tools"
 )
 
 type mcpManageTool struct {

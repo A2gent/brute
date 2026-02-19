@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/gratheon/aagent/internal/stt/whispercpp"
+	"github.com/A2gent/brute/internal/stt/whispercpp"
 )
 
 const (

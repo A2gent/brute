@@ -3,7 +3,7 @@ package http
 import (
 	"net/http"
 
-	"github.com/gratheon/aagent/internal/tools"
+	"github.com/A2gent/brute/internal/tools"
 )
 
 type CameraDevicesResponse struct {

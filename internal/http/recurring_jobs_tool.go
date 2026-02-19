@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/gratheon/aagent/internal/jobs"
-	"github.com/gratheon/aagent/internal/storage"
-	"github.com/gratheon/aagent/internal/tools"
+	"github.com/A2gent/brute/internal/jobs"
+	"github.com/A2gent/brute/internal/storage"
+	"github.com/A2gent/brute/internal/tools"
 )
 
 type recurringJobsTool struct {

@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/gratheon/aagent/internal/llm"
-	"github.com/gratheon/aagent/internal/logging"
-	"github.com/gratheon/aagent/internal/session"
-	"github.com/gratheon/aagent/internal/tools"
+	"github.com/A2gent/brute/internal/llm"
+	"github.com/A2gent/brute/internal/logging"
+	"github.com/A2gent/brute/internal/session"
+	"github.com/A2gent/brute/internal/tools"
 )
 
 // Config holds agent configuration

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	md "github.com/JohannesKaufmann/html-to-markdown"
-	"github.com/gratheon/aagent/internal/tools"
+	"github.com/A2gent/brute/internal/tools"
 )
 
 // FetchURLTool fetches a URL and returns its content as markdown.

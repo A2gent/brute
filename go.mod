@@ -1,4 +1,4 @@
-module github.com/gratheon/aagent
+module github.com/A2gent/brute
 
 go 1.24.2
 

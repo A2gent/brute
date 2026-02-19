@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gratheon/aagent/internal/session"
+	"github.com/A2gent/brute/internal/session"
 )
 
 // QuestionTool allows agents to ask user for input when encountering ambiguous situations

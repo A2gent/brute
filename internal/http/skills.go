@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gratheon/aagent/internal/skills"
+	"github.com/A2gent/brute/internal/skills"
 	"gopkg.in/yaml.v2"
 )
 

@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/gratheon/aagent/internal/agent"
-	"github.com/gratheon/aagent/internal/llm"
-	"github.com/gratheon/aagent/internal/session"
-	"github.com/gratheon/aagent/internal/tools"
+	"github.com/A2gent/brute/internal/agent"
+	"github.com/A2gent/brute/internal/llm"
+	"github.com/A2gent/brute/internal/session"
+	"github.com/A2gent/brute/internal/tools"
 )
 
 // AgentType defines available sub-agent types

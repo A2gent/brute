@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gratheon/aagent/internal/stt/whispercpp"
-	"github.com/gratheon/aagent/internal/tools"
+	"github.com/A2gent/brute/internal/stt/whispercpp"
+	"github.com/A2gent/brute/internal/tools"
 )
 
 const whisperSTTDefaultExt = ".wav"

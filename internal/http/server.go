@@ -22,22 +22,22 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/google/uuid"
-	"github.com/gratheon/aagent/internal/agent"
-	"github.com/gratheon/aagent/internal/config"
-	"github.com/gratheon/aagent/internal/jobs"
-	"github.com/gratheon/aagent/internal/llm"
-	"github.com/gratheon/aagent/internal/llm/anthropic"
-	"github.com/gratheon/aagent/internal/llm/fallback"
-	"github.com/gratheon/aagent/internal/llm/gemini"
-	"github.com/gratheon/aagent/internal/llm/lmstudio"
-	"github.com/gratheon/aagent/internal/llm/retry"
-	"github.com/gratheon/aagent/internal/logging"
-	"github.com/gratheon/aagent/internal/session"
-	skillsLoader "github.com/gratheon/aagent/internal/skills"
-	"github.com/gratheon/aagent/internal/speechcache"
-	"github.com/gratheon/aagent/internal/storage"
-	"github.com/gratheon/aagent/internal/tools"
-	"github.com/gratheon/aagent/internal/tools/integrationtools"
+	"github.com/A2gent/brute/internal/agent"
+	"github.com/A2gent/brute/internal/config"
+	"github.com/A2gent/brute/internal/jobs"
+	"github.com/A2gent/brute/internal/llm"
+	"github.com/A2gent/brute/internal/llm/anthropic"
+	"github.com/A2gent/brute/internal/llm/fallback"
+	"github.com/A2gent/brute/internal/llm/gemini"
+	"github.com/A2gent/brute/internal/llm/lmstudio"
+	"github.com/A2gent/brute/internal/llm/retry"
+	"github.com/A2gent/brute/internal/logging"
+	"github.com/A2gent/brute/internal/session"
+	skillsLoader "github.com/A2gent/brute/internal/skills"
+	"github.com/A2gent/brute/internal/speechcache"
+	"github.com/A2gent/brute/internal/storage"
+	"github.com/A2gent/brute/internal/tools"
+	"github.com/A2gent/brute/internal/tools/integrationtools"
 	"github.com/robfig/cron/v3"
 )
 
@@ -404,6 +404,7 @@ type SessionResponse struct {
 	OutputTokens         int                          `json:"output_tokens"`
 	CurrentContextTokens int                          `json:"current_context_tokens"`
 	ModelContextWindow   int                          `json:"model_context_window"`
+	TaskProgress         string                       `json:"task_progress,omitempty"`
 	CreatedAt            time.Time                    `json:"created_at"`
 	UpdatedAt            time.Time                    `json:"updated_at"`
 	Messages             []MessageResponse            `json:"messages"`
@@ -520,6 +521,7 @@ type SessionListItem struct {
 	InputTokens        int       `json:"input_tokens"`
 	OutputTokens       int       `json:"output_tokens"`
 	RunDurationSeconds int64     `json:"run_duration_seconds"`
+	TaskProgress       string    `json:"task_progress,omitempty"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }
@@ -1250,6 +1252,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			InputTokens:        inputTokens,
 			OutputTokens:       outputTokens,
 			RunDurationSeconds: sessionRunDurationSeconds(sess.CreatedAt, sess.UpdatedAt, string(sess.Status)),
+			TaskProgress:       sess.TaskProgress,
 			CreatedAt:          sess.CreatedAt,
 			UpdatedAt:          sess.UpdatedAt,
 		}
@@ -2188,6 +2191,7 @@ func (s *Server) handleListJobSessions(w http.ResponseWriter, r *http.Request) {
 			Status:             sess.Status,
 			TotalTokens:        storageSessionTotalTokens(sess),
 			RunDurationSeconds: sessionRunDurationSeconds(sess.CreatedAt, sess.UpdatedAt, sess.Status),
+			TaskProgress:       sess.TaskProgress,
 			CreatedAt:          sess.CreatedAt,
 			UpdatedAt:          sess.UpdatedAt,
 		}
@@ -2491,6 +2495,7 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		OutputTokens:         outputTokens,
 		CurrentContextTokens: currentContextTokens,
 		ModelContextWindow:   modelContextWindow,
+		TaskProgress:         sess.TaskProgress,
 		CreatedAt:            sess.CreatedAt,
 		UpdatedAt:            sess.UpdatedAt,
 		Messages:             s.messagesToResponse(sess.Messages),

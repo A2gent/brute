@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gratheon/aagent/internal/speechcache"
-	"github.com/gratheon/aagent/internal/storage"
-	"github.com/gratheon/aagent/internal/tools"
+	"github.com/A2gent/brute/internal/speechcache"
+	"github.com/A2gent/brute/internal/storage"
+	"github.com/A2gent/brute/internal/tools"
 )
 
 const (

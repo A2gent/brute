@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gratheon/aagent/internal/llm"
-	"github.com/gratheon/aagent/internal/logging"
-	"github.com/gratheon/aagent/internal/storage"
+	"github.com/A2gent/brute/internal/llm"
+	"github.com/A2gent/brute/internal/logging"
+	"github.com/A2gent/brute/internal/storage"
 )
 
 // Tool defines the interface for executable tools
@@ -75,6 +75,11 @@ func NewManagerWithStore(workDir string, store storage.Store) *Manager {
 // RegisterQuestionTool registers the question tool with a session metadata store
 func (m *Manager) RegisterQuestionTool(store QuestionSessionStore) {
 	m.Register(NewQuestionTool(store))
+}
+
+// RegisterSessionTaskProgressTool registers the session task progress tool
+func (m *Manager) RegisterSessionTaskProgressTool(store TaskProgressStore) {
+	m.Register(NewSessionTaskProgressTool(store))
 }
 
 // Register adds a tool to the manager

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/gratheon/aagent/internal/storage"
+	"github.com/A2gent/brute/internal/storage"
 )
 
 // Status represents the session status
@@ -23,17 +23,18 @@ const (
 
 // Session represents an agent session
 type Session struct {
-	ID        string                 `json:"id"`
-	AgentID   string                 `json:"agent_id"`
-	ParentID  *string                `json:"parent_id,omitempty"`
-	JobID     *string                `json:"job_id,omitempty"` // Associated recurring job
-	ProjectID *string                `json:"project_id,omitempty"`
-	Title     string                 `json:"title"`
-	Status    Status                 `json:"status"`
-	Messages  []Message              `json:"messages"`
-	Metadata  map[string]interface{} `json:"metadata,omitempty"`
-	CreatedAt time.Time              `json:"created_at"`
-	UpdatedAt time.Time              `json:"updated_at"`
+	ID           string                 `json:"id"`
+	AgentID      string                 `json:"agent_id"`
+	ParentID     *string                `json:"parent_id,omitempty"`
+	JobID        *string                `json:"job_id,omitempty"` // Associated recurring job
+	ProjectID    *string                `json:"project_id,omitempty"`
+	Title        string                 `json:"title"`
+	Status       Status                 `json:"status"`
+	Messages     []Message              `json:"messages"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	TaskProgress string                 `json:"task_progress,omitempty"` // Temporary task planning and progress tracking
+	CreatedAt    time.Time              `json:"created_at"`
+	UpdatedAt    time.Time              `json:"updated_at"`
 }
 
 // Message represents a conversation message
@@ -202,17 +203,18 @@ func (s *Session) ToStorage() *storage.Session {
 	}
 
 	return &storage.Session{
-		ID:        s.ID,
-		AgentID:   s.AgentID,
-		ParentID:  s.ParentID,
-		JobID:     s.JobID,
-		ProjectID: s.ProjectID,
-		Title:     s.Title,
-		Status:    string(s.Status),
-		Messages:  messages,
-		Metadata:  s.Metadata,
-		CreatedAt: s.CreatedAt,
-		UpdatedAt: s.UpdatedAt,
+		ID:           s.ID,
+		AgentID:      s.AgentID,
+		ParentID:     s.ParentID,
+		JobID:        s.JobID,
+		ProjectID:    s.ProjectID,
+		Title:        s.Title,
+		Status:       string(s.Status),
+		Messages:     messages,
+		Metadata:     s.Metadata,
+		TaskProgress: s.TaskProgress,
+		CreatedAt:    s.CreatedAt,
+		UpdatedAt:    s.UpdatedAt,
 	}
 }
 
@@ -237,16 +239,17 @@ func FromStorage(ss *storage.Session) *Session {
 	}
 
 	return &Session{
-		ID:        ss.ID,
-		AgentID:   ss.AgentID,
-		ParentID:  ss.ParentID,
-		JobID:     ss.JobID,
-		ProjectID: ss.ProjectID,
-		Title:     ss.Title,
-		Status:    Status(ss.Status),
-		Messages:  messages,
-		Metadata:  ss.Metadata,
-		CreatedAt: ss.CreatedAt,
-		UpdatedAt: ss.UpdatedAt,
+		ID:           ss.ID,
+		AgentID:      ss.AgentID,
+		ParentID:     ss.ParentID,
+		JobID:        ss.JobID,
+		ProjectID:    ss.ProjectID,
+		Title:        ss.Title,
+		Status:       Status(ss.Status),
+		Messages:     messages,
+		Metadata:     ss.Metadata,
+		TaskProgress: ss.TaskProgress,
+		CreatedAt:    ss.CreatedAt,
+		UpdatedAt:    ss.UpdatedAt,
 	}
 }

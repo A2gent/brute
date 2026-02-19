@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gratheon/aagent/internal/speechcache"
+	"github.com/A2gent/brute/internal/speechcache"
 )
 
 func TestPiperTTSToolExecuteWithNativeBinary(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gratheon/aagent/internal/logging"
+	"github.com/A2gent/brute/internal/logging"
 )
 
 const speechTimeout = 10 * time.Second

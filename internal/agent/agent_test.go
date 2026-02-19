@@ -5,9 +5,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/gratheon/aagent/internal/llm"
-	"github.com/gratheon/aagent/internal/session"
-	"github.com/gratheon/aagent/internal/storage"
+	"github.com/A2gent/brute/internal/llm"
+	"github.com/A2gent/brute/internal/session"
+	"github.com/A2gent/brute/internal/storage"
 )
 
 // MockLLM is a mock implementation of llm.Client

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/gratheon/aagent/internal/storage"
+	"github.com/A2gent/brute/internal/storage"
 )
 
 func TestMCPManageToolAddListRemove(t *testing.T) {

@@ -15,11 +15,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/gratheon/aagent/internal/agent"
-	"github.com/gratheon/aagent/internal/config"
-	"github.com/gratheon/aagent/internal/logging"
-	"github.com/gratheon/aagent/internal/session"
-	"github.com/gratheon/aagent/internal/storage"
+	"github.com/A2gent/brute/internal/agent"
+	"github.com/A2gent/brute/internal/config"
+	"github.com/A2gent/brute/internal/logging"
+	"github.com/A2gent/brute/internal/session"
+	"github.com/A2gent/brute/internal/storage"
 )
 
 var supportedIntegrationProviders = map[string]struct{}{

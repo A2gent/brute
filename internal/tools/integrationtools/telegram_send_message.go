@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gratheon/aagent/internal/storage"
-	"github.com/gratheon/aagent/internal/tools"
+	"github.com/A2gent/brute/internal/storage"
+	"github.com/A2gent/brute/internal/tools"
 )
 
 const telegramSendMessageEndpointFmt = "https://api.telegram.org/bot%s/sendMessage"

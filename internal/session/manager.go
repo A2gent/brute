@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/gratheon/aagent/internal/storage"
+	"github.com/A2gent/brute/internal/storage"
 )
 
 // Manager manages sessions
@@ -180,6 +180,25 @@ func (m *Manager) SetSessionStatus(sessionID string, status string) error {
 	}
 
 	sess.SetStatus(Status(status))
+	return m.Save(sess)
+}
+
+// GetSessionTaskProgress retrieves task progress for a session
+func (m *Manager) GetSessionTaskProgress(sessionID string) (string, error) {
+	sess, err := m.Get(sessionID)
+	if err != nil {
+		return "", fmt.Errorf("session not found: %w", err)
+	}
+	return sess.TaskProgress, nil
+}
+
+// SetSessionTaskProgress updates task progress for a session
+func (m *Manager) SetSessionTaskProgress(sessionID string, progress string) error {
+	sess, err := m.Get(sessionID)
+	if err != nil {
+		return fmt.Errorf("session not found: %w", err)
+	}
+	sess.TaskProgress = progress
 	return m.Save(sess)
 }
 

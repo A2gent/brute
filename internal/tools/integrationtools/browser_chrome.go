@@ -14,8 +14,8 @@ import (
 	"github.com/go-rod/rod/lib/input"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
-	"github.com/gratheon/aagent/internal/logging"
-	"github.com/gratheon/aagent/internal/tools"
+	"github.com/A2gent/brute/internal/logging"
+	"github.com/A2gent/brute/internal/tools"
 )
 
 // BrowserChromeTool allows controlling a Chrome browser instance.

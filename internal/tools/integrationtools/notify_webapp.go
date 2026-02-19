@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gratheon/aagent/internal/tools"
+	"github.com/A2gent/brute/internal/tools"
 )
 
 type NotifyWebAppTool struct{}

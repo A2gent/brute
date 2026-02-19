@@ -7,17 +7,18 @@ import (
 
 // Session represents a stored session (storage layer copy to avoid import cycle)
 type Session struct {
-	ID        string
-	AgentID   string
-	ParentID  *string
-	JobID     *string // Associated recurring job (nil for regular sessions)
-	ProjectID *string // Associated project (nil for ungrouped sessions)
-	Title     string
-	Status    string
-	Messages  []Message
-	Metadata  map[string]interface{}
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           string
+	AgentID      string
+	ParentID     *string
+	JobID        *string // Associated recurring job (nil for regular sessions)
+	ProjectID    *string // Associated project (nil for ungrouped sessions)
+	Title        string
+	Status       string
+	Messages     []Message
+	Metadata     map[string]interface{}
+	TaskProgress string // Temporary task planning and progress tracking
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // Message represents a stored message

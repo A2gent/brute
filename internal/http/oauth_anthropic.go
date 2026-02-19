@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gratheon/aagent/internal/config"
-	"github.com/gratheon/aagent/internal/llm/anthropic"
+	"github.com/A2gent/brute/internal/config"
+	"github.com/A2gent/brute/internal/llm/anthropic"
 )
 
 // AnthropicOAuthStartResponse contains the authorization URL

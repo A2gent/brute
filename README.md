@@ -369,6 +369,54 @@ Hot reload details:
 - `stop_on_error = false` keeps the previous healthy process running when a code change fails to compile.
 - The server restarts only after a successful `go build`, which avoids replacing a working backend with a broken one during self-edits.
 
+## Testing
+
+The project uses Go's standard testing framework. Tests are automatically run on every push and pull request via GitHub Actions.
+
+### Running Tests
+
+```bash
+# Run all tests
+just test
+
+# Run tests with coverage
+go test -v -race -coverprofile=coverage.out ./...
+
+# Run tests for a specific package
+go test -v ./internal/tools/...
+
+# Run a specific test
+go test -v ./internal/tools/... -run TestFindFilesTool
+```
+
+### Writing Tests
+
+Tests follow Go conventions and are located in `*_test.go` files alongside the code they test. See `internal/tools/find_files_test.go` for a comprehensive example that demonstrates:
+
+- **Table-driven tests** using `t.Run()` for sub-tests
+- **Temporary directories** with `t.TempDir()` for isolated test environments
+- **Helper functions** for common assertions and setup
+- **Test coverage** for success cases, error cases, and edge cases
+
+Example test structure:
+
+```go
+func TestFindFilesTool_Execute(t *testing.T) {
+    tempDir := t.TempDir()
+    // Create test files...
+
+    tool := NewFindFilesTool(tempDir)
+
+    t.Run("find all markdown files", func(t *testing.T) {
+        params := map[string]interface{}{"pattern": "*.md"}
+        result := executeTool(t, tool, params)
+
+        assertSuccess(t, result)
+        assertContains(t, result.Output, "readme.md")
+    })
+}
+```
+
 ## Troubleshooting
 
 ### API Key Issues

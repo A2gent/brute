@@ -687,11 +687,15 @@ func (s *Server) processTelegramDuplexIntegrations(ctx context.Context) {
 			if result.createdThread > 0 && message.MessageThreadID == 0 {
 				topicLink := fmt.Sprintf("https://t.me/c/%s/%d", strings.TrimPrefix(messageChatID, "-100"), result.createdThread)
 				generalChatReply := fmt.Sprintf("Moved to topic: %s", topicLink)
+				logging.Info("Sending topic link to general chat: link=%s", topicLink)
 				if sendErr := s.sendTelegramMessage(ctx, botToken, messageChatID, 0, generalChatReply); sendErr != nil {
 					logging.Warn("Telegram topic link reply to general chat failed for integration %s: %s", integration.ID, sanitizeTelegramError(sendErr))
+				} else {
+					logging.Info("Successfully sent topic link to general chat")
 				}
 				
 				// Send actual reply to the new topic
+				logging.Info("Sending agent reply to new topic %d", result.createdThread)
 				if err := s.sendTelegramMessage(ctx, botToken, messageChatID, result.createdThread, reply); err != nil {
 					logging.Warn("Telegram reply send to new topic failed for integration %s: %s", integration.ID, sanitizeTelegramError(err))
 					continue
@@ -828,14 +832,18 @@ func (s *Server) handleTelegramInboundMessage(
 		return nil, err
 	}
 
+
 	newSession := sess == nil
 	createdThreadID := int64(0)
 	
 	if sess == nil {
+		logging.Info("Creating new Telegram session for chat=%s threadID=%d", chatID, threadID)
 		sess, err = s.sessionManager.Create("build")
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Telegram session: %w", err)
 		}
+		logging.Info("Created new session: id=%s", sess.ID)
+		
 		if sess.Metadata == nil {
 			sess.Metadata = map[string]interface{}{}
 		}
@@ -853,27 +861,44 @@ func (s *Server) handleTelegramInboundMessage(
 		
 		// Create topic for new sessions from general chat
 		scope := strings.ToLower(strings.TrimSpace(integration.Config["session_scope"]))
+		logging.Info("Telegram integration config: session_scope=%q (all config keys: %v)", scope, getConfigKeys(integration.Config))
+		logging.Info("Telegram session evaluation: scope=%q threadID=%d scope_not_chat=%v threadID_zero=%v will_create_topic=%v", 
+			scope, threadID, scope != "chat", threadID == 0, threadID == 0 && scope != "chat")
+		
 		if threadID == 0 && scope != "chat" {
 			botToken := strings.TrimSpace(integration.Config["bot_token"])
 			if botToken != "" {
 				topicName := telegramTopicNameForSession(sess, userMessage)
+				logging.Info("Attempting to create Telegram forum topic: name=%s", topicName)
 				createdThreadID, err = s.createTelegramForumTopic(ctx, botToken, chatID, topicName)
 				if err != nil {
 					logging.Warn("Failed to create Telegram topic for new session from general chat: %s", sanitizeTelegramError(err))
 				} else {
+					logging.Info("Successfully created Telegram forum topic: threadID=%d name=%s", createdThreadID, topicName)
 					threadID = createdThreadID
 					scopeKey = telegramSessionScopeKey(integration, chatID, threadID)
 					sess.Metadata["telegram_topic_name"] = topicName
 				}
+			} else {
+				logging.Warn("Cannot create topic: bot_token is empty")
+			}
+		} else {
+			if threadID == 0 {
+				logging.Info("Skipping topic creation: scope=%s (need scope != 'chat')", scope)
+			} else {
+				logging.Info("Skipping topic creation: already in thread %d", threadID)
 			}
 		}
 		
 		sess.Metadata["telegram_scope_key"] = scopeKey
 		if threadID > 0 {
 			sess.Metadata["telegram_thread_id"] = strconv.FormatInt(threadID, 10)
+			logging.Info("Session metadata updated with threadID=%d", threadID)
 		}
 		if err := s.sessionManager.Save(sess); err != nil {
 			logging.Warn("Failed to persist new Telegram session metadata: %v", err)
+		} else {
+			logging.Info("Successfully saved session metadata for session %s", sess.ID)
 		}
 	}
 	if err := s.assignTelegramSessionToMyMindProject(sess); err != nil {
@@ -979,6 +1004,14 @@ func (s *Server) findTelegramSession(integrationID string, chatID string, scopeK
 	return nil, nil
 }
 
+
+func getConfigKeys(config map[string]string) []string {
+	keys := make([]string, 0, len(config))
+	for k := range config {
+		keys = append(keys, k)
+	}
+	return keys
+}
 func metadataString(value interface{}) string {
 	switch v := value.(type) {
 	case string:
@@ -997,32 +1030,49 @@ func telegramSessionScopeKey(integration *storage.Integration, chatID string, th
 }
 
 func (s *Server) assignTelegramSessionToMyMindProject(sess *session.Session) error {
+	logging.Info("Attempting to assign My Mind project to session %s", sess.ID)
 	project, err := s.ensureMyMindProject()
 	if err != nil {
+		logging.Warn("ensureMyMindProject failed: %v", err)
 		return err
 	}
 	if project == nil {
+		logging.Info("No My Mind project configured, skipping project assignment")
 		return nil
 	}
+	logging.Info("Assigning session %s to project %s (%s)", sess.ID, project.ID, project.Name)
 	sess.ProjectID = &project.ID
-	return s.sessionManager.Save(sess)
+	err = s.sessionManager.Save(sess)
+	if err != nil {
+		logging.Warn("Failed to save session with project assignment: %v", err)
+		return err
+	}
+	logging.Info("Successfully assigned session %s to project %s", sess.ID, project.ID)
+	return nil
 }
 
 func (s *Server) ensureMyMindProject() (*storage.Project, error) {
 	settings, err := s.store.GetSettings()
 	if err != nil {
+		logging.Warn("Failed to get settings for My Mind project: %v", err)
 		return nil, err
 	}
 
 	expectedFolder := ""
 	if root := strings.TrimSpace(settings[mindRootFolderSettingKey]); root != "" {
 		expectedFolder = root
+		logging.Info("My Mind expected folder: %s", expectedFolder)
+	} else {
+		logging.Info("My Mind folder not configured in settings")
 	}
 
 	projects, err := s.store.ListProjects()
 	if err != nil {
+		logging.Warn("Failed to list projects for My Mind project: %v", err)
 		return nil, err
 	}
+	
+	logging.Info("Looking for existing My Mind project (total projects: %d)", len(projects))
 	for _, project := range projects {
 		if project == nil {
 			continue
@@ -1030,11 +1080,13 @@ func (s *Server) ensureMyMindProject() (*storage.Project, error) {
 		if !strings.EqualFold(strings.TrimSpace(project.Name), myMindProjectName) {
 			continue
 		}
+		logging.Info("Found existing My Mind project: id=%s name=%s", project.ID, project.Name)
 		currentFolder := ""
 		if project.Folder != nil {
 			currentFolder = *project.Folder
 		}
 		if currentFolder != expectedFolder {
+			logging.Info("Updating My Mind project folder from %s to %s", currentFolder, expectedFolder)
 			if expectedFolder == "" {
 				project.Folder = nil
 			} else {
@@ -1042,12 +1094,14 @@ func (s *Server) ensureMyMindProject() (*storage.Project, error) {
 			}
 			project.UpdatedAt = time.Now()
 			if err := s.store.SaveProject(project); err != nil {
+				logging.Warn("Failed to update My Mind project folder: %v", err)
 				return nil, err
 			}
 		}
 		return project, nil
 	}
 
+	logging.Info("My Mind project not found, creating new one")
 	now := time.Now()
 	project := &storage.Project{
 		ID:        uuid.New().String(),
@@ -1059,8 +1113,10 @@ func (s *Server) ensureMyMindProject() (*storage.Project, error) {
 		project.Folder = &expectedFolder
 	}
 	if err := s.store.SaveProject(project); err != nil {
+		logging.Warn("Failed to save new My Mind project: %v", err)
 		return nil, err
 	}
+	logging.Info("Successfully created My Mind project: id=%s", project.ID)
 	return project, nil
 }
 
@@ -1130,12 +1186,14 @@ func (s *Server) sendTelegramMessage(ctx context.Context, botToken string, chatI
 }
 
 func (s *Server) createTelegramForumTopic(ctx context.Context, botToken string, chatID string, name string) (int64, error) {
+	logging.Info("Creating Telegram forum topic: chatID=%s name=%s", chatID, name)
 	payload := map[string]interface{}{
 		"chat_id": chatID,
 		"name":    name,
 	}
 	jsonBody, err := json.Marshal(payload)
 	if err != nil {
+		logging.Warn("Failed to encode createForumTopic payload: %v", err)
 		return 0, fmt.Errorf("failed to encode createForumTopic payload: %w", err)
 	}
 
@@ -1146,6 +1204,7 @@ func (s *Server) createTelegramForumTopic(ctx context.Context, botToken string, 
 		bytes.NewReader(jsonBody),
 	)
 	if err != nil {
+		logging.Warn("Failed to build createForumTopic request: %v", err)
 		return 0, fmt.Errorf("failed to build createForumTopic request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -1153,12 +1212,14 @@ func (s *Server) createTelegramForumTopic(ctx context.Context, botToken string, 
 	client := &http.Client{Timeout: 20 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		logging.Warn("createForumTopic HTTP request failed: %v", err)
 		return 0, fmt.Errorf("createForumTopic request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	var result telegramCreateForumTopicPayload
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		logging.Warn("Failed to decode createForumTopic response: %v", err)
 		return 0, fmt.Errorf("failed to decode createForumTopic response: %w", err)
 	}
 
@@ -1167,11 +1228,14 @@ func (s *Server) createTelegramForumTopic(ctx context.Context, botToken string, 
 		if msg == "" {
 			msg = resp.Status
 		}
+		logging.Warn("Telegram createForumTopic failed: status=%d ok=%v description=%s", resp.StatusCode, result.OK, msg)
 		return 0, fmt.Errorf("telegram createForumTopic failed: %s", msg)
 	}
 	if result.Result.MessageThreadID <= 0 {
+		logging.Warn("Telegram createForumTopic succeeded but returned empty message_thread_id")
 		return 0, fmt.Errorf("telegram createForumTopic succeeded but returned empty message_thread_id")
 	}
+	logging.Info("Successfully created Telegram forum topic: threadID=%d chatID=%s name=%s", result.Result.MessageThreadID, chatID, name)
 	return result.Result.MessageThreadID, nil
 }
 

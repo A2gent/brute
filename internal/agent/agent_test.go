@@ -74,6 +74,16 @@ func TestMaybeCompactContext(t *testing.T) {
 	// Manually set metadata to simulate high token usage
 	// 600 tokens > 50% of 1000
 	metadataSetFloat(sess, metadataCurrentContextTokens, 600)
+	
+	// Debug: print the values being checked
+	if testing.Verbose() {
+		cfg := a.resolveCompactionConfig()
+		currentTokens := metadataFloat(sess.Metadata, metadataCurrentContextTokens)
+		usagePercent := (currentTokens / float64(cfg.ContextWindow)) * 100.0
+		t.Logf("Debug: cfg.Enabled=%v, cfg.ContextWindow=%d, cfg.TriggerPercent=%f", cfg.Enabled, cfg.ContextWindow, cfg.TriggerPercent)
+		t.Logf("Debug: currentTokens=%f, usagePercent=%f, should trigger=%v", currentTokens, usagePercent, usagePercent >= cfg.TriggerPercent)
+		t.Logf("Debug: sess.Messages count=%d", len(sess.Messages))
+	}
 
 	// Run compaction
 	_, compacted, err := a.maybeCompactContext(context.Background(), sess, 1)

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -523,9 +524,10 @@ type Model struct {
 	filteredCommands []commands.Command
 
 	// Sessions list view state
-	showSessionsList  bool
-	sessionsListIndex int
-	availableSessions []*session.Session
+	showSessionsList   bool
+	sessionsListIndex  int
+	sessionsListOffset int // Scroll offset for long lists
+	availableSessions  []*session.Session
 
 	// Logs view state
 	showLogsView bool
@@ -988,6 +990,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.Type {
 			case tea.KeyEsc:
 				m.showSessionsList = false
+				m.sessionsListOffset = 0
 				m.viewport.SetContent(m.renderMessages())
 				return m, nil
 			case tea.KeyUp:
@@ -1000,11 +1003,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.sessionsListIndex++
 				}
 				return m, nil
+			case tea.KeyPgUp:
+				// Scroll up by page
+				pageSize := m.height - 8
+				if pageSize < 3 {
+					pageSize = 3
+				}
+				m.sessionsListIndex -= pageSize
+				if m.sessionsListIndex < 0 {
+					m.sessionsListIndex = 0
+				}
+				return m, nil
+			case tea.KeyPgDown:
+				// Scroll down by page
+				pageSize := m.height - 8
+				if pageSize < 3 {
+					pageSize = 3
+				}
+				m.sessionsListIndex += pageSize
+				if m.sessionsListIndex >= len(m.availableSessions) {
+					m.sessionsListIndex = len(m.availableSessions) - 1
+				}
+				return m, nil
+			case tea.KeyHome:
+				m.sessionsListIndex = 0
+				return m, nil
+			case tea.KeyEnd:
+				m.sessionsListIndex = len(m.availableSessions) - 1
+				return m, nil
 			case tea.KeyEnter:
 				if len(m.availableSessions) > 0 {
 					selectedSession := m.availableSessions[m.sessionsListIndex]
 					m = m.switchToSession(selectedSession.ID)
 					m.showSessionsList = false
+					m.sessionsListOffset = 0
 					m.viewport.SetContent(m.renderMessages())
 					m.viewport.GotoBottom()
 				}
@@ -2181,6 +2213,7 @@ func (m Model) showSessions() (tea.Model, tea.Cmd) {
 
 	m.availableSessions = sessions
 	m.sessionsListIndex = 0
+	m.sessionsListOffset = 0
 	m.showSessionsList = true
 
 	// Find current session in list
@@ -2551,40 +2584,149 @@ func (m Model) renderSessionsList() string {
 		return ""
 	}
 
-	var items []string
-	items = append(items, lipgloss.NewStyle().Bold(true).Render("Sessions (Enter to switch, Esc to cancel):"))
-	items = append(items, "")
-
-	for i, sess := range m.availableSessions {
-		title := sess.Title
-		if title == "" {
-			title = "(no title)"
-		}
-		if len(title) > 40 {
-			title = title[:37] + "..."
-		}
-
-		current := ""
-		if sess.ID == m.session.ID {
-			current = " (current)"
-		}
-
-		item := fmt.Sprintf("%s  %s  %s%s",
-			sess.ID[:8],
-			sess.CreatedAt.Format("01/02 15:04"),
-			title,
-			current,
-		)
-
-		if i == m.sessionsListIndex {
-			item = commandSelectedStyle.Render(item)
-		} else {
-			item = commandItemStyle.Render(item)
-		}
-		items = append(items, item)
+	// Group sessions by day
+	type sessionWithIndex struct {
+		sess  *session.Session
+		index int
 	}
 
-	content := strings.Join(items, "\n")
+	grouped := make(map[string][]sessionWithIndex)
+	for i, sess := range m.availableSessions {
+		dayKey := sess.CreatedAt.Format("2006-01-02")
+		grouped[dayKey] = append(grouped[dayKey], sessionWithIndex{sess: sess, index: i})
+	}
+
+	// Sort days in reverse chronological order
+	var days []string
+	for day := range grouped {
+		days = append(days, day)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(days)))
+
+	// Build flat list of items with their types
+	type listItem struct {
+		isHeader bool
+		day      string
+		session  sessionWithIndex
+	}
+
+	var items []listItem
+	for _, day := range days {
+		items = append(items, listItem{isHeader: true, day: day})
+		sessions := grouped[day]
+		for _, s := range sessions {
+			items = append(items, listItem{isHeader: false, session: s})
+		}
+	}
+
+	// Calculate visible range based on scroll offset
+	maxVisibleItems := m.height - 6 // Leave room for title, header, and borders
+	if maxVisibleItems < 5 {
+		maxVisibleItems = 5
+	}
+
+	// Ensure selected item is visible
+	selectedItemIdx := 0
+	for i, item := range items {
+		if !item.isHeader && item.session.index == m.sessionsListIndex {
+			selectedItemIdx = i
+			break
+		}
+	}
+
+	// Adjust offset to keep selected item in view
+	if selectedItemIdx < m.sessionsListOffset {
+		m.sessionsListOffset = selectedItemIdx
+	} else if selectedItemIdx >= m.sessionsListOffset+maxVisibleItems {
+		m.sessionsListOffset = selectedItemIdx - maxVisibleItems + 1
+	}
+
+	// Ensure offset doesn't go negative
+	if m.sessionsListOffset < 0 {
+		m.sessionsListOffset = 0
+	}
+
+	// Render visible items
+	var rendered []string
+	rendered = append(rendered, lipgloss.NewStyle().Bold(true).Render("Sessions (Enter to switch, Esc to cancel):"))
+	rendered = append(rendered, "")
+
+	// Calculate end index
+	endIdx := m.sessionsListOffset + maxVisibleItems
+	if endIdx > len(items) {
+		endIdx = len(items)
+	}
+
+	for i := m.sessionsListOffset; i < endIdx; i++ {
+		item := items[i]
+
+		if item.isHeader {
+			// Format day header
+			day, _ := time.Parse("2006-01-02", item.day)
+			today := time.Now().Truncate(24 * time.Hour)
+			dayStart := day.Truncate(24 * time.Hour)
+
+			var dayLabel string
+			daysDiff := int(today.Sub(dayStart).Hours() / 24)
+			switch daysDiff {
+			case 0:
+				dayLabel = "Today"
+			case 1:
+				dayLabel = "Yesterday"
+			default:
+				dayLabel = day.Format("Monday, Jan 2")
+			}
+
+			header := lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("#7D56F4")).
+				Render("  " + dayLabel)
+			rendered = append(rendered, header)
+		} else {
+			// Format session entry
+			sess := item.session.sess
+			title := sess.Title
+			if title == "" {
+				title = "(no title)"
+			}
+			if len(title) > 40 {
+				title = title[:37] + "..."
+			}
+
+			current := ""
+			if sess.ID == m.session.ID {
+				current = " (current)"
+			}
+
+			entry := fmt.Sprintf("    %s  %s%s",
+				sess.CreatedAt.Format("15:04"),
+				title,
+				current,
+			)
+
+			if item.session.index == m.sessionsListIndex {
+				entry = commandSelectedStyle.Render("  " + entry)
+			} else {
+				entry = commandItemStyle.Render("  " + entry)
+			}
+			rendered = append(rendered, entry)
+		}
+	}
+
+	// Add scroll indicators if needed
+	if m.sessionsListOffset > 0 {
+		rendered[1] = lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render("  ▲ more above")
+	}
+	if endIdx < len(items) {
+		rendered = append(rendered, lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render("  ▼ more below"))
+	}
+
+	// Add help text
+	help := fmt.Sprintf("↑/↓: navigate  pgup/pgdn: page  home/end: top/bottom  enter: switch  esc: cancel")
+	rendered = append(rendered, "")
+	rendered = append(rendered, lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render("  "+help))
+
+	content := strings.Join(rendered, "\n")
 	return commandMenuStyle.Width(m.width - 4).Render(content)
 }
 
@@ -2746,10 +2888,16 @@ func (m Model) selectProvider(providerType config.ProviderType) (tea.Model, tea.
 		}
 	}
 
-	// For providers requiring API key
+	// For providers requiring API key (except if OAuth is configured for Anthropic)
 	if providerDef.RequiresKey && existingProvider.APIKey == "" {
-		m.providerMenuStep = 1 // Go to API key input
-		return m, nil
+		// Check if Anthropic has OAuth configured
+		hasOAuth := providerType == config.ProviderAnthropic &&
+			existingProvider.OAuth != nil &&
+			existingProvider.OAuth.AccessToken != ""
+		if !hasOAuth {
+			m.providerMenuStep = 1 // Go to API key input
+			return m, nil
+		}
 	}
 
 	// Provider is ready, activate it
@@ -2840,6 +2988,17 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenAI:
 			// Other OpenAI-compatible providers
 			return lmstudio.NewClient(apiKey, model, baseURL), model, nil
+		case config.ProviderAnthropic:
+			// Anthropic supports OAuth or API key
+			if provider.OAuth != nil && provider.OAuth.AccessToken != "" {
+				tokens := &anthropic.OAuthTokens{
+					AccessToken:  provider.OAuth.AccessToken,
+					RefreshToken: provider.OAuth.RefreshToken,
+					ExpiresIn:    int(provider.OAuth.ExpiresAt - time.Now().Unix()),
+				}
+				return anthropic.NewOAuthClient(tokens, model, nil), model, nil
+			}
+			return anthropic.NewClientWithBaseURL(apiKey, model, baseURL), model, nil
 		default:
 			return anthropic.NewClientWithBaseURL(apiKey, model, baseURL), model, nil
 		}
@@ -2979,6 +3138,14 @@ func (m Model) validateActiveProviderConfig() error {
 	}
 
 	provider := m.appConfig.Providers[string(providerType)]
+
+	// Check if Anthropic has OAuth configured
+	if providerType == config.ProviderAnthropic &&
+		provider.OAuth != nil &&
+		provider.OAuth.AccessToken != "" {
+		return nil
+	}
+
 	apiKey := strings.TrimSpace(provider.APIKey)
 	if apiKey == "" {
 		apiKey = providerAPIKeyFromEnv(providerType)

@@ -1394,12 +1394,8 @@ func (s *Server) handleGetPendingQuestion(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if question == nil {
-		s.jsonResponse(w, http.StatusOK, map[string]interface{}{"question": nil})
-		return
-	}
-
-	s.jsonResponse(w, http.StatusOK, question)
+	// Always wrap in an object for consistent API
+	s.jsonResponse(w, http.StatusOK, map[string]interface{}{"question": question})
 }
 
 func (s *Server) handleAnswerQuestion(w http.ResponseWriter, r *http.Request) {

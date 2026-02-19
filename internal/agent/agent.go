@@ -248,19 +248,23 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		// Add tool results to session
 		sess.AddToolResult(sessionResults)
 
+		// Reload session to check if status was changed by tools (e.g., question tool)
+		// IMPORTANT: Do this BEFORE Save() so we can detect status changes made by tools
+		freshSess, reloadErr := a.sessionManager.Get(sess.ID)
+		if reloadErr == nil && freshSess.Status == session.StatusInputRequired {
+			logging.Info("Session %s requires user input (detected after tool execution), pausing", sess.ID)
+			// Don't save the local sess changes - use the fresh one with input_required status
+			if onEvent != nil {
+				onEvent(Event{Type: EventToolCompleted, Step: step})
+				onEvent(Event{Type: EventStepCompleted, Step: step})
+			}
+			return "", totalUsage, nil
+		}
+
 		// Save session after each step
 		if err := a.sessionManager.Save(sess); err != nil {
 			// Silently continue on save errors
 			_ = err
-		}
-
-		// Check if session status changed to input_required (e.g., question tool was called)
-		if sess.Status == session.StatusInputRequired {
-			logging.Info("Session %s requires user input, pausing execution", sess.ID)
-			if onEvent != nil {
-				onEvent(Event{Type: EventStepCompleted, Step: step})
-			}
-			return "", totalUsage, nil
 		}
 
 		if onEvent != nil {

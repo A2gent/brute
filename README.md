@@ -1,12 +1,10 @@
-# A²gent/brute terminal agent
+# 🗡️ A²gent/brute terminal agent
 
 [![Go Version](https://img.shields.io/badge/go-1.21+-00ADD8.svg)](https://golang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A Go-based autonomous AI coding agent that executes tasks in sessions with a beautiful TUI interface.
-Lightweight and efficient - as opposed to [OpenCode](https://github.com/anomalyco/opencode), it does not consume hundreds MB of RAM.
-
-Recommended to use [web-app](https://github.com/A2gent/web-app) for full experience (with voice and notifications).
+Works best with [A²gent/caesar](https://github.com/A2gent/caesar) as control app.
 
 > **Note:** Supports multiple LLM providers including Anthropic Claude, Kimi, Gemini, LM Studio, and custom endpoints. You will need an API key for your chosen provider.
 
@@ -56,7 +54,7 @@ Recommended to use [web-app](https://github.com/A2gent/web-app) for full experie
 - **Session Management**: Create, list, resume, and manage sessions via API
 
 ### Performance & Reliability
-- **Lightweight**: Minimal memory footprint compared to alternatives
+- **Lightweight**: Minimal memory footprint compared to alternatives. Uses ~10MB of RAM.
 - **Context Management**: Automatic context window tracking and compaction
 - **Error Recovery**: Graceful error handling and provider fallback
 - **File Logging**: Detailed logging for debugging and monitoring

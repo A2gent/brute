@@ -18,6 +18,7 @@ type AgentCard struct {
 	DefaultInputModes   []string                   `json:"defaultInputModes"`
 	DefaultOutputModes  []string                   `json:"defaultOutputModes"`
 	Skills              []AgentSkill               `json:"skills"`
+	Tools               []AgentTool                `json:"tools,omitempty"`
 	Signatures          []AgentCardSignature       `json:"signatures,omitempty"`
 	IconURL             string                     `json:"iconUrl,omitempty"`
 }
@@ -63,6 +64,14 @@ type AgentSkill struct {
 	OutputModes          []string              `json:"outputModes,omitempty"`
 	SecurityRequirements []SecurityRequirement `json:"securityRequirements,omitempty"`
 }
+
+// AgentTool represents a tool/function that the agent can execute.
+type AgentTool struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	InputSchema map[string]interface{} `json:"input_schema,omitempty"`
+}
+
 
 // SecurityScheme defines a security scheme for authenticating with an agent.
 type SecurityScheme struct {

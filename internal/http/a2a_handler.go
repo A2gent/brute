@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 )
 
 // handleAgentCard returns the A2A agent card for discovery.
@@ -34,8 +35,30 @@ func (s *Server) handleAgentCard(w http.ResponseWriter, r *http.Request) {
 		version = "0.1.0"
 	}
 
+	// Get agent name from settings or use default
+	agentName := "A2gent"
+	if settings, err := s.store.GetSettings(); err == nil {
+		if customName := strings.TrimSpace(settings[agentNameSettingKey]); customName != "" {
+			agentName = customName
+		}
+	}
+
+	// Get tools from tool manager
+	var agentTools []AgentTool
+	if s.toolManager != nil {
+		toolDefs := s.toolManager.GetDefinitions()
+		agentTools = make([]AgentTool, len(toolDefs))
+		for i, def := range toolDefs {
+			agentTools[i] = AgentTool{
+				Name:        def.Name,
+				Description: def.Description,
+				InputSchema: def.InputSchema,
+			}
+		}
+	}
+
 	agentCard := AgentCard{
-		Name:        "A2gent",
+		Name:        agentName,
 		Description: "AI agent for software engineering tasks with tool execution capabilities including file operations, shell commands, web search, browser automation, and integrations.",
 		SupportedInterfaces: []AgentInterface{
 			{
@@ -53,6 +76,7 @@ func (s *Server) handleAgentCard(w http.ResponseWriter, r *http.Request) {
 		},
 		DefaultInputModes:  []string{"text/plain", "application/json"},
 		DefaultOutputModes: []string{"text/plain", "application/json"},
+		Tools:              agentTools,
 		Skills: []AgentSkill{
 			{
 				ID:          "code-generation",

@@ -664,9 +664,18 @@ type UpdateProjectRequest struct {
 
 // --- Handlers ---
 
+const agentNameSettingKey = "AAGENT_NAME"
+const defaultAgentName = "A2gent"
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	agentName := defaultAgentName
+	if settings, err := s.store.GetSettings(); err == nil {
+		if v := strings.TrimSpace(settings[agentNameSettingKey]); v != "" {
+			agentName = v
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "agent_name": agentName})
 }
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {

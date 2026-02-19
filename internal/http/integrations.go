@@ -827,9 +827,22 @@ func (s *Server) handleTelegramInboundMessage(
 
 	chatID := strconv.FormatInt(chat.ID, 10)
 	scopeKey := telegramSessionScopeKey(integration, chatID, threadID)
-	sess, err := s.findTelegramSession(integration.ID, chatID, scopeKey, threadID)
-	if err != nil {
-		return nil, err
+	
+	// For general chat (threadID == 0), always create new session
+	// For topics (threadID > 0), reuse existing session
+	var sess *session.Session
+	var err error
+	if threadID == 0 {
+		logging.Info("General chat message (threadID=0), forcing new session creation")
+		sess = nil // Force new session creation
+	} else {
+		sess, err = s.findTelegramSession(integration.ID, chatID, scopeKey, threadID)
+		if err != nil {
+			return nil, err
+		}
+		if sess != nil {
+			logging.Info("Found existing session for topic %d: session=%s", threadID, sess.ID)
+		}
 	}
 
 

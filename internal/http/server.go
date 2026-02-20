@@ -215,6 +215,7 @@ func (s *Server) setupRoutes() {
 		r.Put("/{providerType}", s.handleUpdateProvider)
 		r.Delete("/{providerType}", s.handleDeleteProvider)
 		r.Post("/{providerType}/test", s.handleTestProvider)
+		r.Post("/test-all", s.handleTestAllProviders)
 
 		// Anthropic OAuth
 		r.Post("/anthropic/oauth/start", s.handleAnthropicOAuthStart)
@@ -4436,6 +4437,114 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 	s.jsonResponse(w, http.StatusOK, ProviderTestResponse{
 		Success: true,
 		Message: fmt.Sprintf("Success! Response: %s", strings.TrimSpace(resp.Content)),
+	})
+}
+
+// ProviderTestResult represents the test result for a single provider
+type ProviderTestResult struct {
+	Provider string `json:"provider"`
+	Success  bool   `json:"success"`
+	Message  string `json:"message"`
+	Duration int64  `json:"duration_ms"`
+}
+
+// handleTestAllProviders tests all configured providers concurrently
+func (s *Server) handleTestAllProviders(w http.ResponseWriter, r *http.Request) {
+	definitions := config.SupportedProviders()
+
+	// Filter to only testable providers (not fallback chains or auto router)
+	var testableProviders []config.ProviderDefinition
+	for _, def := range definitions {
+		if def.Type != config.ProviderFallback && def.Type != config.ProviderAutoRouter {
+			testableProviders = append(testableProviders, def)
+		}
+	}
+
+	results := make([]ProviderTestResult, 0, len(testableProviders))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for _, def := range testableProviders {
+		wg.Add(1)
+		go func(def config.ProviderDefinition) {
+			defer wg.Done()
+
+			start := time.Now()
+			result := ProviderTestResult{
+				Provider: string(def.Type),
+			}
+
+			// Check if provider is configured
+			if !s.providerConfiguredForUse(def.Type) {
+				result.Success = false
+				result.Message = "Not configured"
+				result.Duration = time.Since(start).Milliseconds()
+				mu.Lock()
+				results = append(results, result)
+				mu.Unlock()
+				return
+			}
+
+			// Create LLM client
+			client, err := s.createBaseLLMClient(def.Type, "")
+			if err != nil {
+				result.Success = false
+				result.Message = "Failed to create client: " + err.Error()
+				result.Duration = time.Since(start).Milliseconds()
+				mu.Lock()
+				results = append(results, result)
+				mu.Unlock()
+				return
+			}
+
+			// Send test message
+			ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+			defer cancel()
+
+			req := &llm.ChatRequest{
+				Model: s.resolveModelForProvider(def.Type),
+				Messages: []llm.Message{
+					{Role: "user", Content: "hello"},
+				},
+				Temperature: 0.7,
+				MaxTokens:   100,
+			}
+
+			resp, err := client.Chat(ctx, req)
+			if err != nil {
+				result.Success = false
+				result.Message = "Request failed: " + err.Error()
+				result.Duration = time.Since(start).Milliseconds()
+				mu.Lock()
+				results = append(results, result)
+				mu.Unlock()
+				return
+			}
+
+			if resp.Content == "" {
+				result.Success = false
+				result.Message = "Empty response"
+				result.Duration = time.Since(start).Milliseconds()
+				mu.Lock()
+				results = append(results, result)
+				mu.Unlock()
+				return
+			}
+
+			result.Success = true
+			result.Message = strings.TrimSpace(resp.Content)
+			result.Duration = time.Since(start).Milliseconds()
+			mu.Lock()
+			results = append(results, result)
+			mu.Unlock()
+		}(def)
+	}
+
+	wg.Wait()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"results": results,
 	})
 }
 

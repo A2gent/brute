@@ -68,7 +68,7 @@ type geminiToolCall struct {
 	Function struct {
 		Name             string `json:"name"`
 		Arguments        string `json:"arguments"`
-		ThoughtSignature string `json:"thought_signature"` // Required by Gemini
+		ThoughtSignature string `json:"thought_signature,omitempty"` // Gemini thinking models only; omit when absent
 	} `json:"function"`
 }
 
@@ -496,13 +496,11 @@ func (c *Client) convertMessage(msg llm.Message) []geminiMessage {
 			toolCall.Type = "function"
 			toolCall.Function.Name = tc.Name
 			toolCall.Function.Arguments = tc.Input
-			// Use saved thought_signature or generate default
+			// Preserve the real thought_signature from Gemini (thinking models only).
+			// Never fabricate a fake one — Gemini 3.x rejects invalid signatures with a 400.
 			if tc.ThoughtSignature != "" {
 				toolCall.Function.ThoughtSignature = tc.ThoughtSignature
-				logging.Debug("Using saved thought_signature for %s: %s", tc.Name, tc.ThoughtSignature)
-			} else {
-				toolCall.Function.ThoughtSignature = "Calling tool: " + tc.Name
-				logging.Debug("Generated thought_signature for %s: %s", tc.Name, toolCall.Function.ThoughtSignature)
+				logging.Debug("Using saved thought_signature for %s", tc.Name)
 			}
 			toolCalls = append(toolCalls, toolCall)
 		}

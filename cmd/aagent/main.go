@@ -305,7 +305,13 @@ func runAgent(cmd *cobra.Command, args []string) error {
 
 	// Initialize session manager
 	sessionManager := session.NewManager(store)
-
+	if settings, err2 := store.GetSettings(); err2 == nil {
+		folder := strings.TrimSpace(settings["AAGENT_SESSIONS_FOLDER"])
+		if folder == "" {
+			folder = filepath.Join(cfg.DataPath, "sessions")
+		}
+		sessionManager.SetJSONLFolder(folder)
+	}
 	// Create or resume session
 	var sess *session.Session
 	if continueFlag != "" {

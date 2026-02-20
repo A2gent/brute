@@ -3,18 +3,42 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/A2gent/brute/internal/storage"
 )
 
 // Manager manages sessions
 type Manager struct {
-	store storage.Store
+	store      storage.Store
+	jsonlWriter *JSONLWriter
 }
 
 // NewManager creates a new session manager
 func NewManager(store storage.Store) *Manager {
 	return &Manager{store: store}
+}
+
+// SetJSONLWriter configures the JSONL writer used to persist session events.
+// Pass nil to disable JSONL persistence.
+func (m *Manager) SetJSONLWriter(w *JSONLWriter) {
+	m.jsonlWriter = w
+}
+
+// SetJSONLFolder updates the folder used for JSONL persistence.
+// If the writer has not been initialised yet it is created. Passing "" disables writing.
+func (m *Manager) SetJSONLFolder(folder string) {
+	if folder == "" {
+		if m.jsonlWriter != nil {
+			m.jsonlWriter.SetFolder("")
+		}
+		return
+	}
+	if m.jsonlWriter == nil {
+		m.jsonlWriter = NewJSONLWriter(folder)
+	} else {
+		m.jsonlWriter.SetFolder(folder)
+	}
 }
 
 // Create creates a new session
@@ -62,9 +86,20 @@ func (m *Manager) Get(id string) (*Session, error) {
 	return FromStorage(ss), nil
 }
 
-// Save saves a session
+// Save saves a session and appends new messages to the JSONL log (if configured).
 func (m *Manager) Save(sess *Session) error {
-	return m.store.SaveSession(sess.ToStorage())
+	if err := m.store.SaveSession(sess.ToStorage()); err != nil {
+		return err
+	}
+	// Best-effort JSONL flush – do not fail the save if writing fails.
+	if m.jsonlWriter != nil {
+		if err := m.jsonlWriter.Flush(sess); err != nil {
+			// Log to stderr; the logging package is not imported here to keep
+			// the session package free of heavy dependencies.
+			fmt.Fprintf(os.Stderr, "session jsonl flush warning: %v\n", err)
+		}
+	}
+	return nil
 }
 
 // List lists all sessions

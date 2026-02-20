@@ -189,9 +189,6 @@ func (s *Server) handleBrowseSkillDirectories(w http.ResponseWriter, r *http.Req
 		if !entry.IsDir() {
 			continue
 		}
-		if strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
 		fullPath := filepath.Join(resolvedPath, entry.Name())
 		hasChild := directoryHasChildren(fullPath)
 		respEntries = append(respEntries, MindTreeEntry{

@@ -167,6 +167,16 @@ func NewServer(
 		activeRuns:     make(map[string]map[string]context.CancelFunc),
 	}
 
+	// Apply persisted sessions-folder setting to JSONL writer,
+	// falling back to <DataPath>/sessions alongside the SQLite database.
+	if settings, err := store.GetSettings(); err == nil {
+		folder := strings.TrimSpace(settings[sessionsFolderSettingKey])
+		if folder == "" {
+			folder = filepath.Join(cfg.DataPath, "sessions")
+		}
+		sessionManager.SetJSONLFolder(folder)
+	}
+
 	s.registerServerBackedTools(s.toolManager)
 	s.setupRoutes()
 	return s
@@ -673,6 +683,8 @@ type UpdateProjectRequest struct {
 // --- Handlers ---
 
 const agentNameSettingKey = "AAGENT_NAME"
+const sessionsFolderSettingKey = "AAGENT_SESSIONS_FOLDER"
+const repeatInitialPromptSettingKey = "AAGENT_REPEAT_INITIAL_PROMPT"
 const defaultAgentName = "A2gent"
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -717,6 +729,11 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	syncSettingsToEnv(oldSettings, req.Settings)
+	folder := strings.TrimSpace(req.Settings[sessionsFolderSettingKey])
+	if folder == "" {
+		folder = filepath.Join(s.config.DataPath, "sessions")
+	}
+	s.sessionManager.SetJSONLFolder(folder)
 	s.jsonResponse(w, http.StatusOK, settingsResponse(req.Settings))
 }
 
@@ -1318,6 +1335,17 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// If an initial task is provided, add it as the first message
 	if req.Task != "" {
 		sess.AddUserMessage(req.Task)
+		// Repeat initial prompt if enabled and under 600 characters
+		if len(req.Task) < 600 {
+			settings, err := s.store.GetSettings()
+			if err == nil {
+				repeatEnabled := strings.TrimSpace(settings[repeatInitialPromptSettingKey])
+				if repeatEnabled != "false" {
+					// Add the repeated prompt as a second user message
+					sess.AddUserMessage(req.Task)
+				}
+			}
+		}
 		if err := s.sessionManager.Save(sess); err != nil {
 			logging.Error("Failed to save session with initial task: %v", err)
 		}

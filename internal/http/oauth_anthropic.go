@@ -54,8 +54,8 @@ func (s *Server) handleAnthropicOAuthCallback(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if req.Code == "" || req.Verifier == "" {
-		s.errorResponse(w, http.StatusBadRequest, "Missing code or verifier")
+	if req.Code == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Missing authorization code")
 		return
 	}
 
@@ -143,5 +143,7 @@ func (s *Server) refreshAnthropicOAuthToken(refreshToken string) (*anthropic.OAu
 		return nil, fmt.Errorf("failed to save refreshed tokens: %w", err)
 	}
 
+	// Propagate ExpiresAt back so the in-memory client updates correctly.
+	newTokens.ExpiresAt = expiresAt
 	return newTokens, nil
 }

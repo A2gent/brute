@@ -27,6 +27,10 @@ type OAuthTokens struct {
 	RefreshToken string `json:"refresh_token"`
 	ExpiresIn    int    `json:"expires_in"`
 	TokenType    string `json:"token_type"`
+	// ExpiresAt is an absolute Unix timestamp (seconds). When non-zero it takes
+	// precedence over ExpiresIn for expiry checks so the value stays accurate
+	// across the lifetime of a long-lived client.
+	ExpiresAt int64 `json:"expires_at,omitempty"`
 }
 
 // PKCEChallenge contains PKCE verifier and challenge
@@ -69,14 +73,24 @@ func BuildAuthorizationURL(pkce *PKCEChallenge) string {
 	return authURL + "?" + params.Encode()
 }
 
-// ExchangeCodeForTokens exchanges authorization code for access tokens
+// ExchangeCodeForTokens exchanges authorization code for access tokens.
+// The code is in the format "authcode#verifier" as returned by the
+// claude.ai OAuth callback page — the state/verifier is embedded in the
+// pasted string, so we always derive code_verifier from the code itself.
+// The separate verifier parameter is kept for backwards compatibility but
+// is only used as a fallback when the code contains no "#" separator.
 func ExchangeCodeForTokens(code, verifier string) (*OAuthTokens, error) {
-	// Parse code (format: "code#state")
+	// Parse code (format: "authcode#verifier")
 	parts := strings.Split(code, "#")
 	authCode := parts[0]
 	state := ""
 	if len(parts) > 1 {
+		// The state echoed back by the auth server IS the PKCE verifier
+		// (we set state=verifier in BuildAuthorizationURL). Always use it
+		// as code_verifier so the exchange works even when the frontend
+		// loses the separately stored verifier (e.g. after a page refresh).
 		state = parts[1]
+		verifier = parts[1]
 	}
 
 	payload := map[string]string{

@@ -103,7 +103,7 @@ func (c *Client) isUsingOAuth() bool {
 func (c *Client) validateToolSequence(messages []anthropicMessage) []anthropicMessage {
 	// Track tool_use IDs that have been used
 	usedToolIds := make(map[string]bool)
-	
+
 	// First pass: collect all tool_use IDs
 	for _, msg := range messages {
 		if blocks, ok := msg.Content.([]contentBlock); ok {
@@ -114,11 +114,11 @@ func (c *Client) validateToolSequence(messages []anthropicMessage) []anthropicMe
 			}
 		}
 	}
-	
+
 	// Second pass: filter out tool_result blocks with orphaned tool_use_ids
 	cleanedMessages := make([]anthropicMessage, 0, len(messages))
 	removedResults := 0
-	
+
 	for _, msg := range messages {
 		if blocks, ok := msg.Content.([]contentBlock); ok {
 			cleanedBlocks := make([]contentBlock, 0, len(blocks))
@@ -135,7 +135,7 @@ func (c *Client) validateToolSequence(messages []anthropicMessage) []anthropicMe
 					cleanedBlocks = append(cleanedBlocks, block)
 				}
 			}
-			
+
 			// Only include message if it has content blocks
 			if len(cleanedBlocks) > 0 {
 				msg.Content = cleanedBlocks
@@ -146,11 +146,11 @@ func (c *Client) validateToolSequence(messages []anthropicMessage) []anthropicMe
 			cleanedMessages = append(cleanedMessages, msg)
 		}
 	}
-	
+
 	if removedResults > 0 {
 		logging.Debug("Cleaned up %d orphaned tool results from message sequence", removedResults)
 	}
-	
+
 	return cleanedMessages
 }
 
@@ -245,8 +245,14 @@ func (c *Client) refreshOAuthTokenIfNeeded() error {
 		return nil
 	}
 
-	// Calculate expiration time (token expires_in seconds from now)
-	expiresAt := time.Now().Unix() + int64(c.oauth.ExpiresIn)
+	// Prefer the absolute ExpiresAt timestamp; fall back to ExpiresIn relative
+	// seconds only when ExpiresAt is not set (legacy path).
+	var expiresAt int64
+	if c.oauth.ExpiresAt > 0 {
+		expiresAt = c.oauth.ExpiresAt
+	} else {
+		expiresAt = time.Now().Unix() + int64(c.oauth.ExpiresIn)
+	}
 
 	// Check if token is expired (with 5 minute buffer)
 	if !IsTokenExpired(expiresAt) {
@@ -255,7 +261,7 @@ func (c *Client) refreshOAuthTokenIfNeeded() error {
 
 	// Refresh token
 	if c.refreshHandler == nil {
-		return fmt.Errorf("OAuth token expired but no refresh handler configured")
+		return fmt.Errorf("OAuth token expired and no refresh handler is configured — please reconnect OAuth in provider settings")
 	}
 
 	newTokens, err := c.refreshHandler(c.oauth.RefreshToken)
@@ -325,7 +331,7 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 		anthroMsg := c.convertMessage(msg)
 		messages = append(messages, anthroMsg)
 	}
-	
+
 	// Validate and clean up tool use/result pairs
 	messages = c.validateToolSequence(messages)
 
@@ -455,7 +461,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	for _, msg := range request.Messages {
 		messages = append(messages, c.convertMessage(msg))
 	}
-	
+
 	// Validate and clean up tool use/result pairs
 	messages = c.validateToolSequence(messages)
 
@@ -629,7 +635,7 @@ func (c *Client) convertMessage(msg llm.Message) anthropicMessage {
 			if result.ToolCallID == "" {
 				continue // Skip tool results without valid tool call IDs
 			}
-			
+
 			content := any(result.Content)
 			if inline := extractInlineImage(result.Metadata); inline != nil {
 				content = []map[string]interface{}{
@@ -654,7 +660,7 @@ func (c *Client) convertMessage(msg llm.Message) anthropicMessage {
 				IsError:   result.IsError,
 			})
 		}
-		
+
 		// Only create tool result message if we have valid blocks
 		if len(blocks) > 0 {
 			return anthropicMessage{
@@ -662,7 +668,7 @@ func (c *Client) convertMessage(msg llm.Message) anthropicMessage {
 				Content: blocks,
 			}
 		}
-		
+
 		// If no valid tool results, return empty user message
 		return anthropicMessage{
 			Role:    "user",
@@ -685,7 +691,7 @@ func (c *Client) convertMessage(msg llm.Message) anthropicMessage {
 				logging.Debug("Skipping tool call with missing ID or Name: ID=%s, Name=%s", tc.ID, tc.Name)
 				continue
 			}
-			
+
 			var input any
 			if tc.Input != "" {
 				if err := json.Unmarshal([]byte(tc.Input), &input); err != nil {

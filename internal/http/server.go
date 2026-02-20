@@ -3982,11 +3982,17 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 	// Special handling for Anthropic: OAuth or API key
 	if providerType == config.ProviderAnthropic {
 		if provider.OAuth != nil && provider.OAuth.AccessToken != "" {
-			// Use OAuth
+			// Use OAuth — pass ExpiresAt as an absolute timestamp so the client
+			// can correctly detect expiry regardless of when it was created.
+			remaining := int(provider.OAuth.ExpiresAt - time.Now().Unix())
+			if remaining < 0 {
+				remaining = 0
+			}
 			tokens := &anthropic.OAuthTokens{
 				AccessToken:  provider.OAuth.AccessToken,
 				RefreshToken: provider.OAuth.RefreshToken,
-				ExpiresIn:    int(provider.OAuth.ExpiresAt - time.Now().Unix()),
+				ExpiresIn:    remaining,
+				ExpiresAt:    provider.OAuth.ExpiresAt,
 			}
 			return anthropic.NewOAuthClient(tokens, modelName, s.refreshAnthropicOAuthToken), nil
 		}
@@ -4245,6 +4251,10 @@ func (s *Server) providerConfiguredForUse(providerType config.ProviderType) bool
 	if !def.RequiresKey {
 		return true
 	}
+	// OAuth tokens count as valid authentication (e.g. Anthropic OAuth)
+	if provider.OAuth != nil && strings.TrimSpace(provider.OAuth.AccessToken) != "" {
+		return true
+	}
 	apiKey := strings.TrimSpace(provider.APIKey)
 	if apiKey == "" {
 		apiKey = s.apiKeyFromEnv(providerType)
@@ -4463,7 +4473,19 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 
 	// Check if provider is configured
 	if !s.providerConfiguredForUse(providerType) {
-		s.jsonResponse(w, http.StatusBadRequest, ProviderTestResponse{Success: false, Message: "Provider is not configured"})
+		// Give a more specific message when OAuth was set up but credentials are missing
+		provider := s.config.Providers[string(providerType)]
+		if provider.OAuth != nil {
+			s.jsonResponse(w, http.StatusBadRequest, ProviderTestResponse{
+				Success: false,
+				Message: "Provider OAuth credentials are incomplete — please reconnect OAuth in provider settings",
+			})
+		} else {
+			s.jsonResponse(w, http.StatusBadRequest, ProviderTestResponse{
+				Success: false,
+				Message: "Provider is not configured — add an API key or connect via OAuth",
+			})
+		}
 		return
 	}
 

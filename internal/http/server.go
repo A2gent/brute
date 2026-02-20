@@ -214,6 +214,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/anthropic/models", s.handleListAnthropicModels)
 		r.Put("/{providerType}", s.handleUpdateProvider)
 		r.Delete("/{providerType}", s.handleDeleteProvider)
+		r.Post("/{providerType}/test", s.handleTestProvider)
 
 		// Anthropic OAuth
 		r.Post("/anthropic/oauth/start", s.handleAnthropicOAuthStart)
@@ -4369,6 +4370,72 @@ func (s *Server) handleBrowserChromeLaunch(w http.ResponseWriter, r *http.Reques
 		"pid":           cmd.Process.Pid,
 		"profile":       chromeAgentDir,
 		"profileExists": profileExists,
+	})
+}
+
+// ProviderTestResponse represents the response from testing a provider
+type ProviderTestResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// handleTestProvider tests a provider by sending a simple "hello" message
+func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
+	providerType := config.ProviderType(chi.URLParam(r, "providerType"))
+
+	// Check if provider exists
+	def := config.GetProviderDefinition(providerType)
+	if def == nil {
+		s.jsonResponse(w, http.StatusNotFound, ProviderTestResponse{Success: false, Message: "Unknown provider"})
+		return
+	}
+
+	// Cannot test fallback chains or automatic router directly
+	if providerType == config.ProviderFallback || providerType == config.ProviderAutoRouter {
+		s.jsonResponse(w, http.StatusBadRequest, ProviderTestResponse{Success: false, Message: "Cannot test aggregate providers directly"})
+		return
+	}
+
+	// Check if provider is configured
+	if !s.providerConfiguredForUse(providerType) {
+		s.jsonResponse(w, http.StatusBadRequest, ProviderTestResponse{Success: false, Message: "Provider is not configured"})
+		return
+	}
+
+	// Create LLM client
+	client, err := s.createBaseLLMClient(providerType, "")
+	if err != nil {
+		s.jsonResponse(w, http.StatusBadGateway, ProviderTestResponse{Success: false, Message: "Failed to create client: " + err.Error()})
+		return
+	}
+
+	// Send test message
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	req := &llm.ChatRequest{
+		Model: s.resolveModelForProvider(providerType),
+		Messages: []llm.Message{
+			{Role: "user", Content: "hello"},
+		},
+		Temperature: 0.7,
+		MaxTokens:   100,
+	}
+
+	resp, err := client.Chat(ctx, req)
+	if err != nil {
+		s.jsonResponse(w, http.StatusBadGateway, ProviderTestResponse{Success: false, Message: "Request failed: " + err.Error()})
+		return
+	}
+
+	if resp.Content == "" {
+		s.jsonResponse(w, http.StatusBadGateway, ProviderTestResponse{Success: false, Message: "Empty response from provider"})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, ProviderTestResponse{
+		Success: true,
+		Message: fmt.Sprintf("Success! Response: %s", strings.TrimSpace(resp.Content)),
 	})
 }
 

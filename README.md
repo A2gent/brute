@@ -499,3 +499,12 @@ a2 logs -f
 ## License
 
 MIT
+
+## 📞 Support
+
+|Channel|Link|
+|--|--|
+| 📱 Founder Telegram | @tot_ra |
+| 🐦 X / Twitter | @tot_ra |
+| 📅 Schedule Demo | https://calendly.com/artkurapov/30min | 
+| ✉️ Email | artkurapov at gmail.com |

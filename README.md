@@ -18,6 +18,7 @@ Works best with [A²gent/caesar](https://github.com/A2gent/caesar) as control ap
 ### Core Agent Capabilities
 - **Agentic Loop**: Autonomous task execution with tool calling - receive task → call LLM with tools → execute tool calls → return results → repeat until complete
 - **Multi-Provider Support**: Works with Anthropic Claude, Kimi, Google Gemini, LM Studio, and custom OpenAI-compatible endpoints
+- **A²A Basic Protocol**: Supports a2A basic protocol for agent card endpoint
 - **Auto-Router**: Intelligent provider fallback - automatically switches to backup providers on failure
 - **Comprehensive Tool System**: 
   - File operations: read, write, edit, replace_lines
@@ -32,6 +33,7 @@ Works best with [A²gent/caesar](https://github.com/A2gent/caesar) as control ap
 - **Session Relationships**: Parent/child sessions and recurring-job sessions
 - **Project Organization**: Group sessions by project
 - **Recurring Jobs**: Schedule and execute automated tasks
+- **In-Session Model Switching**: Change LLM provider/model mid-conversation without losing context (web-app)
 
 ### Beautiful TUI Interface
 - **Modern Design**: Clean, minimal interface with ASCII art welcome screen

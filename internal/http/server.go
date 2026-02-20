@@ -279,6 +279,7 @@ func (s *Server) setupRoutes() {
 		r.Delete("/{sessionID}", s.handleDeleteSession)
 		r.Post("/{sessionID}/cancel", s.handleCancelSession)
 		r.Put("/{sessionID}/project", s.handleUpdateSessionProject)
+		r.Put("/{sessionID}/provider", s.handleUpdateSessionProvider)
 		r.Post("/{sessionID}/chat", s.handleChat)
 		r.Post("/{sessionID}/chat/stream", s.handleChatStream)
 		r.Get("/{sessionID}/question", s.handleGetPendingQuestion)
@@ -643,6 +644,11 @@ type ListProviderModelsResponse struct {
 
 type UpdateSessionProjectRequest struct {
 	ProjectID *string `json:"project_id"`
+}
+
+type UpdateSessionProviderRequest struct {
+	Provider string  `json:"provider"`
+	Model    *string `json:"model,omitempty"`
 }
 
 type ProjectResponse struct {
@@ -1420,6 +1426,64 @@ func (s *Server) handleUpdateSessionProject(w http.ResponseWriter, r *http.Reque
 
 	if err := s.sessionManager.Save(sess); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to update session project: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, s.sessionToResponse(sess))
+}
+
+func (s *Server) handleUpdateSessionProvider(w http.ResponseWriter, r *http.Request) {
+	sessionID := chi.URLParam(r, "sessionID")
+
+	sess, err := s.sessionManager.Get(sessionID)
+	if err != nil {
+		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
+		return
+	}
+
+	var req UpdateSessionProviderRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	provider := strings.TrimSpace(req.Provider)
+	if provider == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Provider is required")
+		return
+	}
+
+	// Validate provider exists
+	providerType := config.ProviderType(provider)
+	if !s.config.IsValidProvider(providerType) {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid provider: "+provider)
+		return
+	}
+
+	// Initialize metadata if needed
+	if sess.Metadata == nil {
+		sess.Metadata = make(map[string]interface{})
+	}
+
+	// Update provider in metadata
+	sess.Metadata["provider"] = provider
+
+	// Update model if provided
+	if req.Model != nil {
+		model := strings.TrimSpace(*req.Model)
+		if model == "" {
+			delete(sess.Metadata, "model")
+		} else {
+			sess.Metadata["model"] = model
+		}
+	}
+
+	// Clear routed provider/model since we're explicitly setting a new provider
+	delete(sess.Metadata, "routed_provider")
+	delete(sess.Metadata, "routed_model")
+
+	if err := s.sessionManager.Save(sess); err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to update session provider: "+err.Error())
 		return
 	}
 

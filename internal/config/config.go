@@ -220,6 +220,11 @@ func (c *Config) SetProvider(ptype ProviderType, provider Provider) {
 	c.Providers[string(ptype)] = provider
 }
 
+// IsValidProvider checks if a provider type is valid/supported
+func (c *Config) IsValidProvider(ptype ProviderType) bool {
+	return GetProviderDefinition(ptype) != nil
+}
+
 // GetConfigPath returns the path where config should be saved
 func GetConfigPath() string {
 	homeDir, _ := os.UserHomeDir()

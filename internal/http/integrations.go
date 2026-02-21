@@ -13,13 +13,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/storage"
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 var supportedIntegrationProviders = map[string]struct{}{
@@ -34,6 +34,7 @@ var supportedIntegrationProviders = map[string]struct{}{
 	"perplexity":      {},
 	"brave_search":    {},
 	"exa":             {},
+	"a2_registry":     {},
 }
 
 var supportedIntegrationModes = map[string]struct{}{
@@ -53,6 +54,7 @@ var requiredConfigFields = map[string][]string{
 	"perplexity":      {"api_key"},
 	"brave_search":    {"api_key"},
 	"exa":             {"api_key"},
+	"a2_registry":     {"api_key"},
 }
 
 type IntegrationRequest struct {
@@ -682,7 +684,7 @@ func (s *Server) processTelegramDuplexIntegrations(ctx context.Context) {
 				logging.Debug("Telegram reply skipped for integration %s: empty reply", integration.ID)
 				continue
 			}
-			
+
 			// If we created a new topic from general chat, send link to general chat and reply to topic
 			if result.createdThread > 0 && message.MessageThreadID == 0 {
 				topicLink := fmt.Sprintf("https://t.me/c/%s/%d", strings.TrimPrefix(messageChatID, "-100"), result.createdThread)
@@ -693,7 +695,7 @@ func (s *Server) processTelegramDuplexIntegrations(ctx context.Context) {
 				} else {
 					logging.Info("Successfully sent topic link to general chat")
 				}
-				
+
 				// Send actual reply to the new topic
 				logging.Info("Sending agent reply to new topic %d", result.createdThread)
 				if err := s.sendTelegramMessage(ctx, botToken, messageChatID, result.createdThread, reply); err != nil {
@@ -808,7 +810,6 @@ func telegramRetryAfterSeconds(err error) int {
 	return n
 }
 
-
 type telegramInboundResponse struct {
 	reply         string
 	createdThread int64 // if > 0, a new topic was created
@@ -827,7 +828,7 @@ func (s *Server) handleTelegramInboundMessage(
 
 	chatID := strconv.FormatInt(chat.ID, 10)
 	scopeKey := telegramSessionScopeKey(integration, chatID, threadID)
-	
+
 	// For general chat (threadID == 0), always create new session
 	// For topics (threadID > 0), reuse existing session
 	var sess *session.Session
@@ -845,10 +846,9 @@ func (s *Server) handleTelegramInboundMessage(
 		}
 	}
 
-
 	newSession := sess == nil
 	createdThreadID := int64(0)
-	
+
 	if sess == nil {
 		logging.Info("Creating new Telegram session for chat=%s threadID=%d", chatID, threadID)
 		sess, err = s.sessionManager.Create("build")
@@ -856,7 +856,7 @@ func (s *Server) handleTelegramInboundMessage(
 			return nil, fmt.Errorf("failed to create Telegram session: %w", err)
 		}
 		logging.Info("Created new session: id=%s", sess.ID)
-		
+
 		if sess.Metadata == nil {
 			sess.Metadata = map[string]interface{}{}
 		}
@@ -871,13 +871,13 @@ func (s *Server) handleTelegramInboundMessage(
 		sess.Metadata["integration_provider"] = "telegram"
 		sess.Metadata["integration_id"] = integration.ID
 		sess.Metadata["telegram_chat_id"] = chatID
-		
+
 		// Create topic for new sessions from general chat
 		scope := strings.ToLower(strings.TrimSpace(integration.Config["session_scope"]))
 		logging.Info("Telegram integration config: session_scope=%q (all config keys: %v)", scope, getConfigKeys(integration.Config))
-		logging.Info("Telegram session evaluation: scope=%q threadID=%d scope_not_chat=%v threadID_zero=%v will_create_topic=%v", 
+		logging.Info("Telegram session evaluation: scope=%q threadID=%d scope_not_chat=%v threadID_zero=%v will_create_topic=%v",
 			scope, threadID, scope != "chat", threadID == 0, threadID == 0 && scope != "chat")
-		
+
 		if threadID == 0 && scope != "chat" {
 			botToken := strings.TrimSpace(integration.Config["bot_token"])
 			if botToken != "" {
@@ -902,7 +902,7 @@ func (s *Server) handleTelegramInboundMessage(
 				logging.Info("Skipping topic creation: already in thread %d", threadID)
 			}
 		}
-		
+
 		sess.Metadata["telegram_scope_key"] = scopeKey
 		if threadID > 0 {
 			sess.Metadata["telegram_thread_id"] = strconv.FormatInt(threadID, 10)
@@ -1017,7 +1017,6 @@ func (s *Server) findTelegramSession(integrationID string, chatID string, scopeK
 	return nil, nil
 }
 
-
 func getConfigKeys(config map[string]string) []string {
 	keys := make([]string, 0, len(config))
 	for k := range config {
@@ -1045,7 +1044,7 @@ func telegramSessionScopeKey(integration *storage.Integration, chatID string, th
 func (s *Server) assignTelegramSessionToProject(sess *session.Session, chatTitle string) error {
 	chatTitle = strings.TrimSpace(chatTitle)
 	logging.Info("Attempting to assign project to session %s (chat title: %q)", sess.ID, chatTitle)
-	
+
 	// Step 1: Try to find project by chat title
 	if chatTitle != "" {
 		projects, err := s.store.ListProjects()
@@ -1071,7 +1070,7 @@ func (s *Server) assignTelegramSessionToProject(sess *session.Session, chatTitle
 			logging.Info("No project found matching chat title %q", chatTitle)
 		}
 	}
-	
+
 	// Step 2: Fallback to Knowledge Base project
 	logging.Info("Looking for Knowledge Base project as fallback")
 	project, err := s.ensureKnowledgeBaseProject()
@@ -1083,7 +1082,7 @@ func (s *Server) assignTelegramSessionToProject(sess *session.Session, chatTitle
 		logging.Info("No Knowledge Base project available, skipping project assignment")
 		return nil
 	}
-	
+
 	logging.Info("Assigning session %s to Knowledge Base project %s (%s)", sess.ID, project.ID, project.Name)
 	sess.ProjectID = &project.ID
 	err = s.sessionManager.Save(sess)
@@ -1097,13 +1096,13 @@ func (s *Server) assignTelegramSessionToProject(sess *session.Session, chatTitle
 
 func (s *Server) ensureKnowledgeBaseProject() (*storage.Project, error) {
 	const knowledgeBaseProjectName = "Knowledge Base"
-	
+
 	projects, err := s.store.ListProjects()
 	if err != nil {
 		logging.Warn("Failed to list projects for Knowledge Base: %v", err)
 		return nil, err
 	}
-	
+
 	// Look for existing Knowledge Base project
 	for _, project := range projects {
 		if project == nil {
@@ -1114,7 +1113,7 @@ func (s *Server) ensureKnowledgeBaseProject() (*storage.Project, error) {
 			return project, nil
 		}
 	}
-	
+
 	// Create Knowledge Base project if not found
 	logging.Info("Knowledge Base project not found, creating new one")
 	now := time.Now()
@@ -1152,7 +1151,7 @@ func (s *Server) ensureMyMindProject() (*storage.Project, error) {
 		logging.Warn("Failed to list projects for My Mind project: %v", err)
 		return nil, err
 	}
-	
+
 	logging.Info("Looking for existing My Mind project (total projects: %d)", len(projects))
 	for _, project := range projects {
 		if project == nil {
@@ -1554,16 +1553,15 @@ func (s *Server) inferTelegramChatIDForIntegration(integrationID string) string 
 	return chatID
 }
 
-
 func telegramTopicNameForSession(sess *session.Session, initialTask string) string {
 	// Prioritize initialTask (first user prompt) for topic name
 	base := strings.TrimSpace(initialTask)
-	
+
 	// Fallback to session title if no initialTask
 	if base == "" && sess != nil {
 		base = strings.TrimSpace(sess.Title)
 	}
-	
+
 	// Final fallback to session ID
 	if base == "" && sess != nil {
 		id := strings.TrimSpace(sess.ID)
@@ -1575,7 +1573,7 @@ func telegramTopicNameForSession(sess *session.Session, initialTask string) stri
 			base = "Session"
 		}
 	}
-	
+
 	if base == "" {
 		base = "Session"
 	}

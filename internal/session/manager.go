@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/A2gent/brute/internal/storage"
 )
@@ -28,6 +30,7 @@ func (m *Manager) SetJSONLWriter(w *JSONLWriter) {
 // SetJSONLFolder updates the folder used for JSONL persistence.
 // If the writer has not been initialised yet it is created. Passing "" disables writing.
 func (m *Manager) SetJSONLFolder(folder string) {
+	folder = expandTilde(folder)
 	if folder == "" {
 		if m.jsonlWriter != nil {
 			m.jsonlWriter.SetFolder("")
@@ -39,6 +42,21 @@ func (m *Manager) SetJSONLFolder(folder string) {
 	} else {
 		m.jsonlWriter.SetFolder(folder)
 	}
+}
+
+// expandTilde replaces ~ with the user's home directory.
+func expandTilde(path string) string {
+	if !strings.HasPrefix(path, "~") {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	if path == "~" {
+		return home
+	}
+	return filepath.Join(home, path[2:])
 }
 
 // Create creates a new session

@@ -69,14 +69,15 @@ type RouterRule struct {
 type ProviderType string
 
 const (
-	ProviderKimi       ProviderType = "kimi"
-	ProviderOpenRouter ProviderType = "openrouter"
-	ProviderLMStudio   ProviderType = "lmstudio"
-	ProviderAnthropic  ProviderType = "anthropic"
-	ProviderGoogle     ProviderType = "google"
-	ProviderOpenAI     ProviderType = "openai"
-	ProviderFallback   ProviderType = "fallback_chain"
-	ProviderAutoRouter ProviderType = "automatic_router"
+	ProviderKimi        ProviderType = "kimi"
+	ProviderOpenRouter  ProviderType = "openrouter"
+	ProviderLMStudio    ProviderType = "lmstudio"
+	ProviderAnthropic   ProviderType = "anthropic"
+	ProviderGoogle      ProviderType = "google"
+	ProviderOpenAI      ProviderType = "openai"
+	ProviderOpenAICodex ProviderType = "openai_codex"
+	ProviderFallback    ProviderType = "fallback_chain"
+	ProviderAutoRouter  ProviderType = "automatic_router"
 )
 
 // ProviderDefinition describes a supported provider
@@ -155,6 +156,14 @@ func SupportedProviders() []ProviderDefinition {
 			RequiresKey:   true,
 			DefaultModel:  "gpt-4.1-mini",
 			ContextWindow: 128000,
+		},
+		{
+			Type:          ProviderOpenAICodex,
+			DisplayName:   "OpenAI (Codex OAuth)",
+			DefaultURL:    "https://chatgpt.com/backend-api/codex",
+			RequiresKey:   true,
+			DefaultModel:  "gpt-5.3-codex",
+			ContextWindow: 400000,
 		},
 	}
 }

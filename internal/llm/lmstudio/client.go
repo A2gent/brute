@@ -35,6 +35,15 @@ func (c *Client) providerName() string {
 	if c.isGemini {
 		return "Gemini"
 	}
+	base := strings.ToLower(strings.TrimSpace(c.baseURL))
+	switch {
+	case strings.Contains(base, "api.openai.com"):
+		return "OpenAI"
+	case strings.Contains(base, "openrouter.ai"):
+		return "OpenRouter"
+	case strings.Contains(base, "kimi.com"), strings.Contains(base, "moonshot"):
+		return "Kimi"
+	}
 	return "LM Studio"
 }
 

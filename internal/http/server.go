@@ -27,6 +27,7 @@ import (
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/llm/gemini"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
+	"github.com/A2gent/brute/internal/llm/openaicodex"
 	"github.com/A2gent/brute/internal/llm/retry"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
@@ -232,6 +233,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/kimi/models", s.handleListKimiModels)
 		r.Get("/google/models", s.handleListGoogleModels)
 		r.Get("/openai/models", s.handleListOpenAIModels)
+		r.Get("/openai_codex/models", s.handleListOpenAICodexModels)
 		r.Get("/openrouter/models", s.handleListOpenRouterModels)
 		r.Get("/anthropic/models", s.handleListAnthropicModels)
 		r.Put("/{providerType}", s.handleUpdateProvider)
@@ -244,6 +246,11 @@ func (s *Server) setupRoutes() {
 		r.Post("/anthropic/oauth/callback", s.handleAnthropicOAuthCallback)
 		r.Get("/anthropic/oauth/status", s.handleAnthropicOAuthStatus)
 		r.Delete("/anthropic/oauth", s.handleAnthropicOAuthDisconnect)
+
+		// OpenAI Codex OAuth (import from Codex auth cache)
+		r.Post("/openai_codex/oauth/import", s.handleOpenAICodexOAuthImport)
+		r.Get("/openai_codex/oauth/status", s.handleOpenAICodexOAuthStatus)
+		r.Delete("/openai_codex/oauth", s.handleOpenAICodexOAuthDisconnect)
 	})
 
 	// External channel integrations
@@ -920,7 +927,7 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 
 		configured := baseURL != ""
 		hasAPIKey := strings.TrimSpace(existing.APIKey) != ""
-		hasOAuth := existing.OAuth != nil && existing.OAuth.AccessToken != ""
+		hasOAuth := s.providerSupportsOAuth(def.Type) && existing.OAuth != nil && existing.OAuth.AccessToken != ""
 
 		if def.RequiresKey {
 			// Provider is configured if it has API key OR OAuth tokens
@@ -1257,6 +1264,20 @@ func (s *Server) handleListOpenAIModels(w http.ResponseWriter, r *http.Request) 
 	s.handleListOpenAICompatibleModels(w, r, config.ProviderOpenAI, "OpenAI")
 }
 
+func (s *Server) handleListOpenAICodexModels(w http.ResponseWriter, r *http.Request) {
+	// Codex OAuth does not expose a public models listing endpoint like standard OpenAI API.
+	// Return a curated list of known Codex-capable models instead.
+	s.jsonResponse(w, http.StatusOK, ListProviderModelsResponse{
+		Models: []string{
+			"gpt-5.3-codex",
+			"gpt-5.2-codex",
+			"gpt-5.1-codex",
+			"gpt-5.1-codex-max",
+			"gpt-5.1-codex-mini",
+		},
+	})
+}
+
 func (s *Server) handleListOpenRouterModels(w http.ResponseWriter, r *http.Request) {
 	s.handleListOpenAICompatibleModels(w, r, config.ProviderOpenRouter, "OpenRouter")
 }
@@ -1296,6 +1317,9 @@ func (s *Server) handleListOpenAICompatibleModels(w http.ResponseWriter, r *http
 
 	provider := s.config.Providers[string(providerType)]
 	apiKey := strings.TrimSpace(provider.APIKey)
+	if apiKey == "" && s.providerSupportsOAuth(providerType) && provider.OAuth != nil {
+		apiKey = strings.TrimSpace(provider.OAuth.AccessToken)
+	}
 	if apiKey == "" {
 		apiKey = s.apiKeyFromEnv(providerType)
 	}
@@ -1918,11 +1942,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			s.errorResponse(w, http.StatusConflict, "Request was canceled before completion")
 			return
 		}
-		sess.AddAssistantMessage(fmt.Sprintf("Request failed: %s", err.Error()), nil)
+		adaptedErr := s.adaptProviderErrorMessage(target.ProviderType, err)
+		sess.AddAssistantMessage(fmt.Sprintf("Request failed: %s", adaptedErr.Error()), nil)
 		sess.SetStatus(session.StatusFailed)
 		// Save session state even on error
 		s.sessionManager.Save(sess)
-		s.errorResponse(w, http.StatusInternalServerError, "Agent error: "+err.Error())
+		s.errorResponse(w, http.StatusInternalServerError, "Agent error: "+adaptedErr.Error())
 		return
 	}
 
@@ -2107,12 +2132,13 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		sess.AddAssistantMessage(fmt.Sprintf("Request failed: %s", err.Error()), nil)
+		adaptedErr := s.adaptProviderErrorMessage(target.ProviderType, err)
+		sess.AddAssistantMessage(fmt.Sprintf("Request failed: %s", adaptedErr.Error()), nil)
 		sess.SetStatus(session.StatusFailed)
 		s.sessionManager.Save(sess)
 		_ = writeEvent(ChatStreamEvent{
 			Type:   "error",
-			Error:  "Agent error: " + err.Error(),
+			Error:  "Agent error: " + adaptedErr.Error(),
 			Status: string(sess.Status),
 		})
 		return
@@ -4285,12 +4311,21 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 	if baseURL == "" {
 		baseURL = strings.TrimSpace(def.DefaultURL)
 	}
+	if providerType == config.ProviderOpenAICodex {
+		lower := strings.ToLower(strings.TrimSpace(baseURL))
+		if lower == "" || strings.Contains(lower, "api.openai.com") {
+			baseURL = strings.TrimSpace(def.DefaultURL)
+		}
+	}
 	modelName := strings.TrimSpace(model)
 	if modelName == "" {
 		modelName = s.resolveModelForProvider(providerType)
 	}
 
 	apiKey := strings.TrimSpace(provider.APIKey)
+	if apiKey == "" && s.providerSupportsOAuth(providerType) && provider.OAuth != nil {
+		apiKey = strings.TrimSpace(provider.OAuth.AccessToken)
+	}
 	if apiKey == "" {
 		apiKey = s.apiKeyFromEnv(providerType)
 	}
@@ -4328,6 +4363,8 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 		// Other OpenAI-compatible providers
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return lmstudio.NewClient(apiKey, modelName, baseURL), nil
+	case config.ProviderOpenAICodex:
+		return openaicodex.NewClient(apiKey, modelName, baseURL), nil
 	case config.ProviderAnthropic:
 		// Use API key (OAuth case handled above)
 		return anthropic.NewClientWithBaseURL(apiKey, modelName, baseURL), nil
@@ -4399,6 +4436,8 @@ func (s *Server) apiKeyEnvName(providerType config.ProviderType) string {
 	case config.ProviderGoogle:
 		return "GOOGLE_API_KEY"
 	case config.ProviderOpenAI:
+		return "OPENAI_API_KEY"
+	case config.ProviderOpenAICodex:
 		return "OPENAI_API_KEY"
 	default:
 		return ""
@@ -4568,8 +4607,8 @@ func (s *Server) providerConfiguredForUse(providerType config.ProviderType) bool
 	if !def.RequiresKey {
 		return true
 	}
-	// OAuth tokens count as valid authentication (e.g. Anthropic OAuth)
-	if provider.OAuth != nil && strings.TrimSpace(provider.OAuth.AccessToken) != "" {
+	// OAuth tokens count as valid authentication only for providers that support OAuth.
+	if s.providerSupportsOAuth(providerType) && provider.OAuth != nil && strings.TrimSpace(provider.OAuth.AccessToken) != "" {
 		return true
 	}
 	apiKey := strings.TrimSpace(provider.APIKey)
@@ -4577,6 +4616,24 @@ func (s *Server) providerConfiguredForUse(providerType config.ProviderType) bool
 		apiKey = s.apiKeyFromEnv(providerType)
 	}
 	return apiKey != ""
+}
+
+func (s *Server) providerSupportsOAuth(providerType config.ProviderType) bool {
+	return providerType == config.ProviderAnthropic || providerType == config.ProviderOpenAICodex
+}
+
+func (s *Server) adaptProviderErrorMessage(providerType config.ProviderType, err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if providerType == config.ProviderOpenAICodex && strings.Contains(strings.ToLower(msg), "insufficient_quota") {
+		return fmt.Errorf("%s. OpenAI accepted the token, but this account/project has no API quota. Codex login access does not automatically grant paid API credits", msg)
+	}
+	if providerType == config.ProviderOpenAICodex && strings.Contains(strings.ToLower(msg), "usage_not_included") {
+		return fmt.Errorf("%s. This ChatGPT account does not include Codex usage. Upgrade the ChatGPT plan for Codex access, then reconnect OAuth", msg)
+	}
+	return err
 }
 
 // handleBrowserChromeProfileStatus returns the status of the browser_chrome agent profile
@@ -4792,15 +4849,19 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 	if !s.providerConfiguredForUse(providerType) {
 		// Give a more specific message when OAuth was set up but credentials are missing
 		provider := s.config.Providers[string(providerType)]
-		if provider.OAuth != nil {
+		if s.providerSupportsOAuth(providerType) && provider.OAuth != nil {
 			s.jsonResponse(w, http.StatusBadRequest, ProviderTestResponse{
 				Success: false,
 				Message: "Provider OAuth credentials are incomplete — please reconnect OAuth in provider settings",
 			})
 		} else {
+			message := "Provider is not configured — add an API key"
+			if s.providerSupportsOAuth(providerType) {
+				message = "Provider is not configured — add an API key or connect via OAuth"
+			}
 			s.jsonResponse(w, http.StatusBadRequest, ProviderTestResponse{
 				Success: false,
-				Message: "Provider is not configured — add an API key or connect via OAuth",
+				Message: message,
 			})
 		}
 		return
@@ -4828,7 +4889,8 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := client.Chat(ctx, req)
 	if err != nil {
-		s.jsonResponse(w, http.StatusBadGateway, ProviderTestResponse{Success: false, Message: "Request failed: " + err.Error()})
+		adaptedErr := s.adaptProviderErrorMessage(providerType, err)
+		s.jsonResponse(w, http.StatusBadGateway, ProviderTestResponse{Success: false, Message: "Request failed: " + adaptedErr.Error()})
 		return
 	}
 

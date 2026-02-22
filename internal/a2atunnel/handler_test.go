@@ -59,6 +59,10 @@ func TestResolveSessionByConversationContinuity(t *testing.T) {
 	if err := manager.Save(first); err != nil {
 		t.Fatalf("save first failed: %v", err)
 	}
+	first.AddAssistantMessage("history-should-survive", nil)
+	if err := manager.Save(first); err != nil {
+		t.Fatalf("save first history failed: %v", err)
+	}
 
 	second, err := handler.resolveSession(InboundPayload{
 		Task:           "two",
@@ -70,6 +74,9 @@ func TestResolveSessionByConversationContinuity(t *testing.T) {
 	}
 	if second.ID != first.ID {
 		t.Fatalf("expected same session ID for same source+conversation, got %s vs %s", second.ID, first.ID)
+	}
+	if len(second.Messages) == 0 {
+		t.Fatalf("expected existing session messages to be loaded, got none")
 	}
 
 	third, err := handler.resolveSession(InboundPayload{

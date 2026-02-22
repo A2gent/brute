@@ -313,6 +313,10 @@ func (s *Server) setupRoutes() {
 		r.Post("/", s.handleCreateProject)
 		// Static routes must come before dynamic {projectID} route
 		r.Get("/tree", s.handleListProjectTree)
+		r.Get("/git/status", s.handleProjectGitStatus)
+		r.Post("/git/stage", s.handleProjectGitStageFile)
+		r.Post("/git/unstage", s.handleProjectGitUnstageFile)
+		r.Post("/git/commit", s.handleProjectGitCommit)
 		r.Get("/file", s.handleGetProjectFile)
 		r.Post("/file", s.handleUpsertProjectFile)
 		r.Put("/file", s.handleUpsertProjectFile)

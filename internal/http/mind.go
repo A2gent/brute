@@ -3,8 +3,10 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -78,6 +80,37 @@ type RenameEntryResponse struct {
 	RootFolder string `json:"root_folder"`
 	OldPath    string `json:"old_path"`
 	NewPath    string `json:"new_path"`
+}
+
+type ProjectGitChangedFile struct {
+	Path           string `json:"path"`
+	Status         string `json:"status"`
+	IndexStatus    string `json:"index_status"`
+	WorktreeStatus string `json:"worktree_status"`
+	Staged         bool   `json:"staged"`
+	Untracked      bool   `json:"untracked"`
+}
+
+type ProjectGitStatusResponse struct {
+	RootFolder string                  `json:"root_folder"`
+	HasGit     bool                    `json:"has_git"`
+	Files      []ProjectGitChangedFile `json:"files"`
+}
+
+type ProjectGitCommitRequest struct {
+	Message  string `json:"message"`
+	RepoPath string `json:"repo_path,omitempty"`
+}
+
+type ProjectGitFileRequest struct {
+	RepoPath string `json:"repo_path,omitempty"`
+	Path     string `json:"path"`
+}
+
+type ProjectGitCommitResponse struct {
+	RootFolder     string `json:"root_folder"`
+	Commit         string `json:"commit"`
+	FilesCommitted int    `json:"files_committed"`
 }
 
 func (s *Server) handleGetMindConfig(w http.ResponseWriter, r *http.Request) {
@@ -1316,4 +1349,341 @@ func (s *Server) handleRenameProjectEntry(w http.ResponseWriter, r *http.Request
 		OldPath:    filepath.ToSlash(oldNormalized),
 		NewPath:    filepath.ToSlash(newRelPath),
 	})
+}
+
+func (s *Server) handleProjectGitStatus(w http.ResponseWriter, r *http.Request) {
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+
+	resolvedRoot, err := s.resolveProjectRootFolder(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	repoPath := strings.TrimSpace(r.URL.Query().Get("repoPath"))
+	targetRepoRoot, err := resolveProjectGitTargetRoot(resolvedRoot, repoPath)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if !projectHasGitMetadata(targetRepoRoot) {
+		s.jsonResponse(w, http.StatusOK, ProjectGitStatusResponse{
+			RootFolder: targetRepoRoot,
+			HasGit:     false,
+			Files:      []ProjectGitChangedFile{},
+		})
+		return
+	}
+
+	porcelainOutput, err := runGitCommand(targetRepoRoot, "status", "--porcelain=v1")
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to read git status: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, ProjectGitStatusResponse{
+		RootFolder: targetRepoRoot,
+		HasGit:     true,
+		Files:      parseGitPorcelain(porcelainOutput),
+	})
+}
+
+func (s *Server) handleProjectGitCommit(w http.ResponseWriter, r *http.Request) {
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+
+	resolvedRoot, err := s.resolveProjectRootFolder(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var req ProjectGitCommitRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	targetRepoRoot, err := resolveProjectGitTargetRoot(resolvedRoot, strings.TrimSpace(req.RepoPath))
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !projectHasGitMetadata(targetRepoRoot) {
+		s.errorResponse(w, http.StatusBadRequest, "Target folder does not contain a .git directory")
+		return
+	}
+
+	message := strings.TrimSpace(req.Message)
+	if message == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Commit message is required")
+		return
+	}
+
+	porcelainOutput, err := runGitCommand(targetRepoRoot, "status", "--porcelain=v1")
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to read git status: "+err.Error())
+		return
+	}
+	changedFiles := parseGitPorcelain(porcelainOutput)
+	if len(changedFiles) == 0 {
+		s.errorResponse(w, http.StatusConflict, "No changed files")
+		return
+	}
+	stagedCount := 0
+	for _, file := range changedFiles {
+		if file.Staged {
+			stagedCount++
+		}
+	}
+	if stagedCount == 0 {
+		s.errorResponse(w, http.StatusConflict, "No staged files to commit")
+		return
+	}
+
+	if _, err := runGitCommand(targetRepoRoot, "commit", "-m", message); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to create commit: "+err.Error())
+		return
+	}
+
+	commit, err := runGitCommand(targetRepoRoot, "rev-parse", "--short", "HEAD")
+	if err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Commit created, but failed to read commit hash: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, ProjectGitCommitResponse{
+		RootFolder:     targetRepoRoot,
+		Commit:         strings.TrimSpace(commit),
+		FilesCommitted: stagedCount,
+	})
+}
+
+func (s *Server) handleProjectGitStageFile(w http.ResponseWriter, r *http.Request) {
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+
+	resolvedRoot, err := s.resolveProjectRootFolder(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var req ProjectGitFileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	targetRepoRoot, err := resolveProjectGitTargetRoot(resolvedRoot, strings.TrimSpace(req.RepoPath))
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !projectHasGitMetadata(targetRepoRoot) {
+		s.errorResponse(w, http.StatusBadRequest, "Target folder does not contain a .git directory")
+		return
+	}
+
+	normalizedPath, err := resolveGitRepoFilePath(targetRepoRoot, req.Path)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if _, err := runGitCommand(targetRepoRoot, "add", "--", normalizedPath); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to stage file: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleProjectGitUnstageFile(w http.ResponseWriter, r *http.Request) {
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+
+	resolvedRoot, err := s.resolveProjectRootFolder(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var req ProjectGitFileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	targetRepoRoot, err := resolveProjectGitTargetRoot(resolvedRoot, strings.TrimSpace(req.RepoPath))
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !projectHasGitMetadata(targetRepoRoot) {
+		s.errorResponse(w, http.StatusBadRequest, "Target folder does not contain a .git directory")
+		return
+	}
+
+	normalizedPath, err := resolveGitRepoFilePath(targetRepoRoot, req.Path)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if _, err := runGitCommand(targetRepoRoot, "restore", "--staged", "--", normalizedPath); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to unstage file: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) resolveProjectRootFolder(projectID string) (string, error) {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return "", errors.New("project not found")
+	}
+
+	if project.Folder == nil || strings.TrimSpace(*project.Folder) == "" {
+		return "", errors.New("project folder is not configured")
+	}
+
+	rootFolder := strings.TrimSpace(*project.Folder)
+	if !filepath.IsAbs(rootFolder) {
+		rootFolder = filepath.Join(".", rootFolder)
+	}
+
+	resolvedRoot, err := filepath.Abs(rootFolder)
+	if err != nil {
+		return "", errors.New("project folder path is invalid")
+	}
+
+	info, err := os.Stat(resolvedRoot)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", errors.New("project folder does not exist")
+		}
+		return "", fmt.Errorf("failed to access project folder: %w", err)
+	}
+	if !info.IsDir() {
+		return "", errors.New("project folder path is not a directory")
+	}
+
+	return resolvedRoot, nil
+}
+
+func projectHasGitMetadata(projectRoot string) bool {
+	_, err := os.Stat(filepath.Join(projectRoot, ".git"))
+	return err == nil
+}
+
+func resolveProjectGitTargetRoot(projectRoot string, repoPath string) (string, error) {
+	trimmedPath := strings.TrimSpace(repoPath)
+	if trimmedPath == "" {
+		return projectRoot, nil
+	}
+
+	resolvedPath, _, err := resolveMindPath(projectRoot, trimmedPath)
+	if err != nil {
+		return "", err
+	}
+
+	info, err := os.Stat(resolvedPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", errors.New("target repo path does not exist")
+		}
+		return "", fmt.Errorf("failed to access target repo path: %w", err)
+	}
+	if !info.IsDir() {
+		return "", errors.New("target repo path is not a directory")
+	}
+
+	return resolvedPath, nil
+}
+
+func runGitCommand(projectRoot string, args ...string) (string, error) {
+	commandArgs := append([]string{"-C", projectRoot}, args...)
+	cmd := exec.Command("git", commandArgs...)
+	output, err := cmd.CombinedOutput()
+	trimmed := strings.TrimSpace(string(output))
+	if err != nil {
+		if trimmed == "" {
+			trimmed = err.Error()
+		}
+		return "", errors.New(trimmed)
+	}
+	return trimmed, nil
+}
+
+func resolveGitRepoFilePath(repoRoot string, relPath string) (string, error) {
+	normalizedPath := filepath.Clean(strings.TrimSpace(relPath))
+	if normalizedPath == "" || normalizedPath == "." {
+		return "", errors.New("file path is required")
+	}
+	if filepath.IsAbs(normalizedPath) {
+		return "", errors.New("file path must be relative")
+	}
+
+	resolvedPath := filepath.Clean(filepath.Join(repoRoot, normalizedPath))
+	relToRoot, err := filepath.Rel(repoRoot, resolvedPath)
+	if err != nil {
+		return "", errors.New("invalid file path")
+	}
+	if relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(os.PathSeparator)) {
+		return "", errors.New("file path escapes repository root")
+	}
+
+	return filepath.ToSlash(relToRoot), nil
+}
+
+func parseGitPorcelain(output string) []ProjectGitChangedFile {
+	lines := strings.Split(output, "\n")
+	files := make([]ProjectGitChangedFile, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" || len(line) < 3 {
+			continue
+		}
+
+		statusCode := line[:2]
+		pathPart := strings.TrimSpace(line[3:])
+		if strings.Contains(pathPart, " -> ") {
+			parts := strings.SplitN(pathPart, " -> ", 2)
+			pathPart = strings.TrimSpace(parts[1])
+		}
+		if pathPart == "" {
+			continue
+		}
+
+		indexStatus := string(statusCode[0])
+		worktreeStatus := string(statusCode[1])
+		untracked := statusCode == "??"
+		staged := !untracked && indexStatus != " "
+
+		files = append(files, ProjectGitChangedFile{
+			Path:           pathPart,
+			Status:         strings.TrimSpace(statusCode),
+			IndexStatus:    indexStatus,
+			WorktreeStatus: worktreeStatus,
+			Staged:         staged,
+			Untracked:      untracked,
+		})
+	}
+	return files
 }

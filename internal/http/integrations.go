@@ -54,7 +54,7 @@ var requiredConfigFields = map[string][]string{
 	"perplexity":      {"api_key"},
 	"brave_search":    {"api_key"},
 	"exa":             {"api_key"},
-	"a2_registry":     {"api_key"},
+	"a2_registry":     {"api_key", "square_grpc_addr"},
 }
 
 type IntegrationRequest struct {
@@ -216,6 +216,7 @@ func (s *Server) handleCreateIntegration(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	s.reconcileA2ATunnelAfterIntegrationSave(integration.Provider)
 	s.jsonResponse(w, http.StatusCreated, integrationToResponse(integration))
 }
 
@@ -261,17 +262,25 @@ func (s *Server) handleUpdateIntegration(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	s.reconcileA2ATunnelAfterIntegrationSave(next.Provider)
 	s.jsonResponse(w, http.StatusOK, integrationToResponse(next))
 }
 
 func (s *Server) handleDeleteIntegration(w http.ResponseWriter, r *http.Request) {
 	integrationID := chi.URLParam(r, "integrationID")
 
+	// Capture provider before deleting so we can reconcile the tunnel.
+	var deletedProvider string
+	if existing, err := s.store.GetIntegration(integrationID); err == nil && existing != nil {
+		deletedProvider = existing.Provider
+	}
+
 	if err := s.store.DeleteIntegration(integrationID); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete integration: "+err.Error())
 		return
 	}
 
+	s.reconcileA2ATunnelAfterIntegrationSave(deletedProvider)
 	w.WriteHeader(http.StatusNoContent)
 }
 

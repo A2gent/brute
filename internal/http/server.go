@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/A2gent/brute/internal/a2atunnel"
 	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/jobs"
@@ -53,6 +54,11 @@ type Server struct {
 	speechClips    *speechcache.Store
 	activeRunsMu   sync.Mutex
 	activeRuns     map[string]map[string]context.CancelFunc
+
+	// A2A gRPC tunnel (managed by a2a_tunnel.go)
+	tunnelMu     sync.Mutex
+	tunnelClient *a2atunnel.TunnelClient
+	tunnelCancel context.CancelFunc
 }
 
 func (s *Server) resolveSessionWorkDir(sess *session.Session) string {
@@ -239,6 +245,9 @@ func (s *Server) setupRoutes() {
 		r.Get("/", s.handleListIntegrations)
 		r.Post("/", s.handleCreateIntegration)
 		r.Post("/telegram/chat-ids", s.handleDiscoverTelegramChats)
+		// A2A tunnel status endpoints (no integrationID in path)
+		r.Get("/a2_registry/tunnel-status", s.handleA2ATunnelStatus)
+		r.Get("/a2_registry/tunnel-status/stream", s.handleA2ATunnelStatusStream)
 		r.Get("/{integrationID}", s.handleGetIntegration)
 		r.Put("/{integrationID}", s.handleUpdateIntegration)
 		r.Delete("/{integrationID}", s.handleDeleteIntegration)
@@ -365,6 +374,7 @@ func (s *Server) Run(ctx context.Context) error {
 	fmt.Printf("HTTP API server running on http://0.0.0.0:%d (accessible from any host)\n", s.port)
 
 	go s.runTelegramDuplexLoop(ctx)
+	go s.runA2ATunnelIfConfigured()
 
 	server := &http.Server{
 		Addr:    addr,
@@ -543,6 +553,10 @@ type SessionListItem struct {
 	TaskProgress       string    `json:"task_progress,omitempty"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
+	// A2A inbound fields — only set for sessions created from A2A tunnel requests.
+	A2AInbound         bool   `json:"a2a_inbound,omitempty"`
+	A2ASourceAgentID   string `json:"a2a_source_agent_id,omitempty"`
+	A2ASourceAgentName string `json:"a2a_source_agent_name,omitempty"`
 }
 
 // --- Recurring Jobs Request/Response types ---
@@ -1269,8 +1283,15 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]SessionListItem, len(sessions))
-	for i, sess := range sessions {
+	// Optional filter: ?a2a_inbound=true returns only A2A-originated sessions.
+	filterA2A := r.URL.Query().Get("a2a_inbound") == "true"
+
+	items := make([]SessionListItem, 0, len(sessions))
+	for _, sess := range sessions {
+		isInbound, sourceAgentID, sourceAgentName := sessionA2AMeta(sess)
+		if filterA2A && !isInbound {
+			continue
+		}
 		provider, model := sessionProviderAndModel(sess)
 		routedProvider, routedModel := sessionRoutedProviderAndModel(sess)
 		projectID := ""
@@ -1278,7 +1299,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			projectID = *sess.ProjectID
 		}
 		inputTokens, outputTokens := sessionInputOutputTokens(sess)
-		items[i] = SessionListItem{
+		items = append(items, SessionListItem{
 			ID:                 sess.ID,
 			AgentID:            sess.AgentID,
 			ProjectID:          projectID,
@@ -1295,7 +1316,10 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			TaskProgress:       sess.TaskProgress,
 			CreatedAt:          sess.CreatedAt,
 			UpdatedAt:          sess.UpdatedAt,
-		}
+			A2AInbound:         isInbound,
+			A2ASourceAgentID:   sourceAgentID,
+			A2ASourceAgentName: sourceAgentName,
+		})
 	}
 
 	s.jsonResponse(w, http.StatusOK, items)

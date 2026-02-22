@@ -931,7 +931,7 @@ func (s *Server) handleTelegramInboundMessage(
 
 	providerType := s.resolveSessionProviderType(sess)
 	model := s.resolveSessionModel(sess, providerType)
-	target, err := s.resolveExecutionTarget(ctx, providerType, model, userMessage)
+	target, err := s.resolveExecutionTarget(ctx, providerType, model, userMessage, sess)
 	if err != nil {
 		sess.AddAssistantMessage(fmt.Sprintf("Unable to start request: %s", err.Error()), nil)
 		sess.SetStatus(session.StatusFailed)

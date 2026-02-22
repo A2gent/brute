@@ -45,6 +45,16 @@ func WithMaxRetries(n int) ClientOption {
 	}
 }
 
+// WithStartIndex seeds the fallback chain at a specific node index.
+// Useful for session-scoped sticky progression across separate requests.
+func WithStartIndex(idx int) ClientOption {
+	return func(c *Client) {
+		if idx >= 0 {
+			c.current = idx
+		}
+	}
+}
+
 func NewClient(nodes []Node, opts ...ClientOption) *Client {
 	copied := make([]Node, 0, len(nodes))
 	for _, node := range nodes {
@@ -60,6 +70,12 @@ func NewClient(nodes []Node, opts ...ClientOption) *Client {
 	}
 	for _, opt := range opts {
 		opt(c)
+	}
+	if c.current < 0 {
+		c.current = 0
+	}
+	if c.current > len(c.nodes) {
+		c.current = len(c.nodes)
 	}
 	return c
 }

@@ -1777,6 +1777,40 @@ func (s *Server) cancelActiveSessionRuns(sessionID string) int {
 	return len(cancels)
 }
 
+func (s *Server) applyProviderTraceToSession(sess *session.Session, targetProvider config.ProviderType, trace *agent.ProviderTraceEvent) {
+	if sess == nil || trace == nil {
+		return
+	}
+	changed := false
+
+	if shouldPersistProviderFailure(trace.Phase) {
+		appendSessionProviderFailure(sess, trace)
+		changed = true
+	}
+
+	if config.IsFallbackAggregateRef(string(targetProvider)) || targetProvider == config.ProviderFallback {
+		switch strings.TrimSpace(trace.Phase) {
+		case "completed":
+			if trace.NodeIndex > 0 {
+				setSessionFallbackStartIndex(sess, targetProvider, trace.NodeIndex-1)
+				changed = true
+			}
+		case "switching_provider":
+			if trace.NodeIndex > 0 {
+				// NodeIndex is 1-based current failed node; next node is equal to NodeIndex in 0-based indexing.
+				setSessionFallbackStartIndex(sess, targetProvider, trace.NodeIndex)
+				changed = true
+			}
+		}
+	}
+
+	if changed {
+		if err := s.sessionManager.Save(sess); err != nil {
+			logging.Warn("Failed to persist provider trace metadata: %v", err)
+		}
+	}
+}
+
 func isCancellationError(err error) bool {
 	if err == nil {
 		return false
@@ -1827,7 +1861,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	providerType := s.resolveSessionProviderType(sess)
 	model := s.resolveSessionModel(sess, providerType)
-	target, err := s.resolveExecutionTarget(runCtx, providerType, model, req.Message)
+	target, err := s.resolveExecutionTarget(runCtx, providerType, model, req.Message, sess)
 	if err != nil {
 		sess.AddAssistantMessage(fmt.Sprintf("Unable to start request: %s", err.Error()), nil)
 		sess.SetStatus(session.StatusFailed)
@@ -1855,7 +1889,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	ag := agent.New(agentConfig, target.Client, s.toolManagerForSession(sess), s.sessionManager)
 
 	// Run the agent (this is synchronous for now)
-	content, usage, err := ag.Run(runCtx, sess, req.Message)
+	content, usage, err := ag.RunWithEvents(runCtx, sess, req.Message, func(ev agent.Event) {
+		if ev.Type == agent.EventProviderTrace && ev.Provider != nil {
+			s.applyProviderTraceToSession(sess, target.ProviderType, ev.Provider)
+		}
+	})
 	if err != nil {
 		if isCancellationError(err) {
 			sess.SetStatus(session.StatusPaused)
@@ -1932,7 +1970,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	providerType := s.resolveSessionProviderType(sess)
 	model := s.resolveSessionModel(sess, providerType)
-	target, err := s.resolveExecutionTarget(runCtx, providerType, model, req.Message)
+	target, err := s.resolveExecutionTarget(runCtx, providerType, model, req.Message, sess)
 	if err != nil {
 		sess.AddAssistantMessage(fmt.Sprintf("Unable to start request: %s", err.Error()), nil)
 		sess.SetStatus(session.StatusFailed)
@@ -2020,12 +2058,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			if ev.Provider == nil {
 				return
 			}
-			if shouldPersistProviderFailure(ev.Provider.Phase) {
-				appendSessionProviderFailure(sess, ev.Provider)
-				if err := s.sessionManager.Save(sess); err != nil {
-					logging.Warn("Failed to persist provider failure metadata: %v", err)
-				}
-			}
+			s.applyProviderTraceToSession(sess, target.ProviderType, ev.Provider)
 			_ = writeEvent(ChatStreamEvent{
 				Type: "provider_trace",
 				Step: ev.Step,
@@ -2420,7 +2453,7 @@ Cron expression:`, scheduleText)
 
 	providerType := config.ProviderType(config.NormalizeProviderRef(s.config.ActiveProvider))
 	model := s.resolveModelForProvider(providerType)
-	target, err := s.resolveExecutionTarget(ctx, providerType, model, prompt)
+	target, err := s.resolveExecutionTarget(ctx, providerType, model, prompt, sess)
 	if err != nil {
 		return "", fmt.Errorf("failed to initialize provider %s: %w", providerType, err)
 	}
@@ -2523,7 +2556,7 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 		effectiveTaskPrompt = thinkingRunTaskPrompt
 	}
 
-	target, clientErr := s.resolveExecutionTarget(ctx, providerType, model, effectiveTaskPrompt)
+	target, clientErr := s.resolveExecutionTarget(ctx, providerType, model, effectiveTaskPrompt, sess)
 	if clientErr != nil {
 		exec.Status = "failed"
 		exec.Error = "Failed to initialize provider: " + clientErr.Error()
@@ -3894,6 +3927,7 @@ func sessionRunDurationSeconds(createdAt time.Time, updatedAt time.Time, status 
 }
 
 const providerFailuresMetadataKey = "provider_failures"
+const fallbackProgressMetadataKey = "fallback_progress"
 
 func shouldPersistProviderFailure(phase string) bool {
 	switch strings.TrimSpace(phase) {
@@ -3946,6 +3980,47 @@ func appendSessionProviderFailure(sess *session.Session, trace *agent.ProviderTr
 		})
 	}
 	sess.Metadata[providerFailuresMetadataKey] = serialized
+}
+
+func sessionFallbackStartIndex(sess *session.Session, providerRef config.ProviderType) int {
+	if sess == nil || sess.Metadata == nil {
+		return 0
+	}
+	raw, ok := sess.Metadata[fallbackProgressMetadataKey]
+	if !ok || raw == nil {
+		return 0
+	}
+	byProvider, ok := raw.(map[string]interface{})
+	if !ok {
+		return 0
+	}
+	key := config.NormalizeProviderRef(string(providerRef))
+	if key == "" {
+		return 0
+	}
+	return int(metadataNumber(byProvider, key))
+}
+
+func setSessionFallbackStartIndex(sess *session.Session, providerRef config.ProviderType, idx int) {
+	if sess == nil {
+		return
+	}
+	if idx < 0 {
+		idx = 0
+	}
+	key := config.NormalizeProviderRef(string(providerRef))
+	if key == "" {
+		return
+	}
+	if sess.Metadata == nil {
+		sess.Metadata = map[string]interface{}{}
+	}
+	raw, _ := sess.Metadata[fallbackProgressMetadataKey].(map[string]interface{})
+	if raw == nil {
+		raw = map[string]interface{}{}
+	}
+	raw[key] = idx
+	sess.Metadata[fallbackProgressMetadataKey] = raw
 }
 
 func sessionProviderFailures(metadata map[string]interface{}) []ProviderFailurePayload {
@@ -4157,12 +4232,12 @@ func (s *Server) resolveContextWindowForProvider(providerType config.ProviderTyp
 	return 0
 }
 
-func (s *Server) createLLMClient(providerType config.ProviderType, model string) (llm.Client, error) {
+func (s *Server) createLLMClient(providerType config.ProviderType, model string, sess *session.Session) (llm.Client, error) {
 	if providerType == config.ProviderAutoRouter {
 		return nil, fmt.Errorf("automatic router requires dynamic prompt routing")
 	}
 	if config.IsFallbackAggregateRef(string(providerType)) || providerType == config.ProviderFallback {
-		return s.createFallbackChainClient(providerType)
+		return s.createFallbackChainClient(providerType, sess)
 	}
 	client, err := s.createBaseLLMClient(providerType, model)
 	if err != nil {
@@ -4240,7 +4315,7 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 	}
 }
 
-func (s *Server) createFallbackChainClient(providerRef config.ProviderType) (llm.Client, error) {
+func (s *Server) createFallbackChainClient(providerRef config.ProviderType, sess *session.Session) (llm.Client, error) {
 	chain, err := s.fallbackNodesForProvider(providerRef)
 	if err != nil {
 		return nil, err
@@ -4264,7 +4339,8 @@ func (s *Server) createFallbackChainClient(providerRef config.ProviderType) (llm
 	if retries <= 0 {
 		retries = fallback.DefaultMaxRetries
 	}
-	return fallback.NewClient(nodes, fallback.WithMaxRetries(retries)), nil
+	start := sessionFallbackStartIndex(sess, providerRef)
+	return fallback.NewClient(nodes, fallback.WithMaxRetries(retries), fallback.WithStartIndex(start)), nil
 }
 
 func normalizeOpenAIBaseURL(raw string) string {

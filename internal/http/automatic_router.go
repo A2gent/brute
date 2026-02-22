@@ -10,6 +10,7 @@ import (
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/logging"
+	"github.com/A2gent/brute/internal/session"
 )
 
 type executionTarget struct {
@@ -109,13 +110,13 @@ func (s *Server) autoRouterConfigured(provider config.Provider) bool {
 	return s.validateAutoRouterProvider(provider) == nil
 }
 
-func (s *Server) resolveExecutionTarget(ctx context.Context, providerType config.ProviderType, model string, userPrompt string) (*executionTarget, error) {
+func (s *Server) resolveExecutionTarget(ctx context.Context, providerType config.ProviderType, model string, userPrompt string, sess *session.Session) (*executionTarget, error) {
 	requestedModel := strings.TrimSpace(model)
 	if providerType != config.ProviderAutoRouter {
 		if requestedModel == "" {
 			requestedModel = s.resolveModelForProvider(providerType)
 		}
-		client, err := s.createLLMClient(providerType, requestedModel)
+		client, err := s.createLLMClient(providerType, requestedModel, sess)
 		if err != nil {
 			return nil, err
 		}
@@ -142,7 +143,7 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, providerType config
 	if targetModel == "" {
 		targetModel = s.resolveModelForProvider(targetProvider)
 	}
-	client, err := s.createLLMClient(targetProvider, targetModel)
+	client, err := s.createLLMClient(targetProvider, targetModel, sess)
 	if err != nil {
 		return nil, fmt.Errorf("automatic router target %s/%s is unavailable: %w", targetProvider, targetModel, err)
 	}
@@ -184,7 +185,7 @@ func (s *Server) selectRoutingRuleViaLLM(ctx context.Context, userPrompt string,
 		routerModel = ""
 	}
 
-	routerClient, err := s.createLLMClient(routerProviderType, routerModel)
+	routerClient, err := s.createLLMClient(routerProviderType, routerModel, nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to initialize router provider: %w", err)
 	}

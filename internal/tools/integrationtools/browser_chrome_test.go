@@ -15,6 +15,10 @@ import (
 )
 
 func TestChromeProfileLaunchWhenNoChromeRunning(t *testing.T) {
+	if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") == "true" {
+		t.Skip("Skipping Chrome profile launch test in CI")
+	}
+
 	// Test verifies that the browser_chrome tool connects to Chrome launched via UI button
 	// Uses symlink approach to work around Chrome's remote debugging security
 

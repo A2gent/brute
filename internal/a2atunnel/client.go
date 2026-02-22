@@ -35,6 +35,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"nhooyr.io/websocket"
+	"nhooyr.io/websocket/wsjson"
 )
 
 // ---- Kind constants (mirror square/internal/tunnel/server.go) ----
@@ -95,6 +97,24 @@ func (s *connectClientStream) Recv() (*AgentRequest, error) {
 }
 
 const tunnelMethodPath = "/square.tunnel.v1.TunnelService/Connect"
+
+type websocketClientStream struct {
+	conn *websocket.Conn
+}
+
+func (s *websocketClientStream) Send(m *AgentResponse) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return wsjson.Write(ctx, s.conn, m)
+}
+
+func (s *websocketClientStream) Recv() (*AgentRequest, error) {
+	var m AgentRequest
+	if err := wsjson.Read(context.Background(), s.conn, &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
 
 // ---- Event log ----
 
@@ -188,6 +208,8 @@ type InboundPayload struct {
 	Task            string `json:"task"`
 	SourceAgentID   string `json:"source_agent_id"`
 	SourceAgentName string `json:"source_agent_name"`
+	ConversationID  string `json:"conversation_id,omitempty"`
+	SourceSessionID string `json:"source_session_id,omitempty"`
 }
 
 // OutboundPayload is what we put in AgentResponse.Payload for a task_response.
@@ -218,13 +240,19 @@ type pendingCall struct {
 // activeStream represents a live gRPC stream and all state scoped to it.
 // It is replaced atomically on each reconnect.
 type activeStream struct {
-	stream       *connectClientStream
+	stream interface {
+		Send(*AgentResponse) error
+		Recv() (*AgentRequest, error)
+	}
 	pendingCalls map[string]*pendingCall // call_id → waiter
 	mu           sync.Mutex
 	sendMu       sync.Mutex // serialises stream.Send
 }
 
-func newActiveStream(s *connectClientStream) *activeStream {
+func newActiveStream(s interface {
+	Send(*AgentResponse) error
+	Recv() (*AgentRequest, error)
+}) *activeStream {
 	return &activeStream{
 		stream:       s,
 		pendingCalls: make(map[string]*pendingCall),
@@ -276,6 +304,7 @@ type TunnelClient struct {
 	squareAddr string
 	apiKey     string
 	handler    Handler
+	transport  Transport
 	log        *eventLog
 
 	// current is the live stream; replaced on each successful connect.
@@ -288,12 +317,28 @@ type TunnelClient struct {
 	connectedAt *time.Time
 }
 
+type Transport string
+
+const (
+	TransportGRPC      Transport = "grpc"
+	TransportWebSocket Transport = "websocket"
+)
+
 // New creates a TunnelClient. Call Run to start the connection loop.
 func New(squareAddr, apiKey string, handler Handler) *TunnelClient {
+	return NewWithTransport(squareAddr, apiKey, handler, TransportGRPC)
+}
+
+// NewWithTransport creates a TunnelClient using the selected tunnel transport.
+func NewWithTransport(squareAddr, apiKey string, handler Handler, transport Transport) *TunnelClient {
+	if transport != TransportWebSocket {
+		transport = TransportGRPC
+	}
 	return &TunnelClient{
 		squareAddr: squareAddr,
 		apiKey:     apiKey,
 		handler:    handler,
+		transport:  transport,
 		log:        newEventLog(200),
 		state:      StateDisconnected,
 	}
@@ -405,6 +450,10 @@ func (c *TunnelClient) Run(ctx context.Context) {
 // runStream opens one gRPC connection + stream and runs the recv loop until
 // the stream closes or ctx is cancelled.
 func (c *TunnelClient) runStream(ctx context.Context) error {
+	if c.transport == TransportWebSocket {
+		return c.runWebSocketStream(ctx)
+	}
+
 	dialCtx, dialCancel := context.WithTimeout(ctx, 15*time.Second)
 	conn, err := grpc.DialContext( //nolint:staticcheck
 		dialCtx,
@@ -438,29 +487,46 @@ func (c *TunnelClient) runStream(ctx context.Context) error {
 	c.setActive(as)
 	c.setState(StateConnected)
 	c.logf("gRPC stream established — agent is live on the A2A network")
+	return c.runRecvLoop(ctx, as)
+}
 
-	// Recv loop — single goroutine, no locking needed on reads.
+func (c *TunnelClient) runWebSocketStream(ctx context.Context) error {
+	dialCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	opts := &websocket.DialOptions{
+		HTTPHeader: map[string][]string{
+			"Authorization": {"Bearer " + c.apiKey},
+		},
+	}
+	conn, _, err := websocket.Dial(dialCtx, c.squareAddr, opts)
+	if err != nil {
+		return fmt.Errorf("websocket dial failed: %w", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "bye")
+
+	as := newActiveStream(&websocketClientStream{conn: conn})
+	c.setActive(as)
+	c.setState(StateConnected)
+	c.logf("WebSocket stream established — agent is live on the A2A network")
+	return c.runRecvLoop(ctx, as)
+}
+
+func (c *TunnelClient) runRecvLoop(ctx context.Context, as *activeStream) error {
 	for {
 		msg, err := as.stream.Recv()
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil // clean shutdown
+				return nil
 			}
 			return fmt.Errorf("stream recv: %w", err)
 		}
 
 		switch msg.Kind {
 		case KindCallResponse:
-			// Square is returning the result of a call we initiated.
-			// Deliver to the waiting Call() goroutine.
 			as.deliverCallResponse(msg)
-
 		case KindTask, "":
-			// Square is pushing an inbound task. Handle in a separate
-			// goroutine so the recv loop keeps running — enabling the
-			// handler to call Call() concurrently on the same stream.
 			go c.dispatchTask(ctx, as, msg)
-
 		default:
 			c.logf("Unknown message kind %q (request_id=%s) — ignored", msg.Kind, msg.RequestID)
 		}

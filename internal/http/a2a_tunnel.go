@@ -30,6 +30,10 @@ import (
 
 const (
 	a2aInboundProjectIDSettingKey = "A2A_INBOUND_PROJECT_ID"
+	a2aOutboundSessionKey         = "a2a_outbound"
+	a2aOutboundTargetAgentIDKey   = "a2a_target_agent_id"
+	a2aOutboundTargetAgentNameKey = "a2a_target_agent_name"
+	a2aConversationIDKey          = "a2a_conversation_id"
 )
 
 // tunnelState holds all mutable state for the running tunnel goroutine.
@@ -49,7 +53,7 @@ type a2aTunnel struct {
 
 // startA2ATunnel starts the gRPC tunnel using the current a2_registry
 // integration config. If a tunnel is already running it is stopped first.
-func (s *Server) startA2ATunnel(apiKey, squareAddr string) {
+func (s *Server) startA2ATunnel(apiKey, transport, squareAddr string) {
 	s.tunnelMu.Lock()
 	defer s.tunnelMu.Unlock()
 
@@ -57,8 +61,11 @@ func (s *Server) startA2ATunnel(apiKey, squareAddr string) {
 	s.stopA2ATunnelLocked()
 
 	if apiKey == "" || squareAddr == "" {
-		logging.Warn("A2A tunnel: missing api_key or square_grpc_addr — not starting")
+		logging.Warn("A2A tunnel: missing api_key or tunnel address — not starting")
 		return
+	}
+	if transport == "" {
+		transport = string(a2atunnel.TransportGRPC)
 	}
 
 	handler := a2atunnel.NewInboundHandler(
@@ -69,14 +76,14 @@ func (s *Server) startA2ATunnel(apiKey, squareAddr string) {
 		s.getA2AInboundProjectID,
 	)
 
-	client := a2atunnel.New(squareAddr, apiKey, handler)
+	client := a2atunnel.NewWithTransport(squareAddr, apiKey, handler, a2atunnel.Transport(transport))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s.tunnelClient = client
 	s.tunnelCancel = cancel
 
 	go client.Run(ctx)
-	logging.Info("A2A tunnel started: addr=%s", squareAddr)
+	logging.Info("A2A tunnel started: transport=%s addr=%s", transport, squareAddr)
 }
 
 // stopA2ATunnel stops the running tunnel (if any). Safe to call when idle.
@@ -114,8 +121,15 @@ func (s *Server) runA2ATunnelIfConfigured() {
 			return
 		}
 		apiKey := strings.TrimSpace(integ.Config["api_key"])
+		transport := strings.TrimSpace(strings.ToLower(integ.Config["transport"]))
+		if transport == "" {
+			transport = string(a2atunnel.TransportGRPC)
+		}
 		squareAddr := strings.TrimSpace(integ.Config["square_grpc_addr"])
-		s.startA2ATunnel(apiKey, squareAddr)
+		if transport == string(a2atunnel.TransportWebSocket) {
+			squareAddr = strings.TrimSpace(integ.Config["square_ws_url"])
+		}
+		s.startA2ATunnel(apiKey, transport, squareAddr)
 		return
 	}
 	// No integration found — ensure tunnel is stopped.
@@ -335,6 +349,22 @@ func sessionA2AMeta(sess *session.Session) (isInbound bool, sourceAgentID, sourc
 	}
 	if v, ok := sess.Metadata[a2atunnel.MetaA2ASourceAgentName]; ok {
 		sourceAgentName, _ = v.(string)
+	}
+	return
+}
+
+func sessionA2AOutboundMeta(sess *session.Session) (isOutbound bool, targetAgentID, targetAgentName string) {
+	if sess == nil || sess.Metadata == nil {
+		return
+	}
+	if v, ok := sess.Metadata[a2aOutboundSessionKey]; ok {
+		isOutbound, _ = v.(bool)
+	}
+	if v, ok := sess.Metadata[a2aOutboundTargetAgentIDKey]; ok {
+		targetAgentID, _ = v.(string)
+	}
+	if v, ok := sess.Metadata[a2aOutboundTargetAgentNameKey]; ok {
+		targetAgentName, _ = v.(string)
 	}
 	return
 }

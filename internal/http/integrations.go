@@ -54,7 +54,7 @@ var requiredConfigFields = map[string][]string{
 	"perplexity":      {"api_key"},
 	"brave_search":    {"api_key"},
 	"exa":             {"api_key"},
-	"a2_registry":     {"api_key", "square_grpc_addr"},
+	"a2_registry":     {"api_key"},
 }
 
 type IntegrationRequest struct {
@@ -1974,6 +1974,24 @@ func validateIntegration(integration storage.Integration) error {
 	for _, field := range requiredFields {
 		if strings.TrimSpace(integration.Config[field]) == "" {
 			return fmt.Errorf("missing required config field: %s", field)
+		}
+	}
+	if integration.Provider == "a2_registry" {
+		transport := strings.TrimSpace(strings.ToLower(integration.Config["transport"]))
+		if transport == "" {
+			transport = "grpc"
+		}
+		switch transport {
+		case "grpc":
+			if strings.TrimSpace(integration.Config["square_grpc_addr"]) == "" {
+				return fmt.Errorf("missing required config field: square_grpc_addr")
+			}
+		case "websocket":
+			if strings.TrimSpace(integration.Config["square_ws_url"]) == "" {
+				return fmt.Errorf("missing required config field: square_ws_url")
+			}
+		default:
+			return fmt.Errorf("unsupported a2_registry transport: %s", transport)
 		}
 	}
 	if integration.Provider == "webhook" {

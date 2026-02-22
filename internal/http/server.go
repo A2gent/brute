@@ -212,6 +212,12 @@ func (s *Server) setupRoutes() {
 	// A2A Agent Card (Well-Known URI per A2A spec)
 	r.Get("/.well-known/agent-card.json", s.handleAgentCard)
 
+	// A2A outbound chat (local session -> remote agent via tunnel).
+	r.Route("/a2a", func(r chi.Router) {
+		r.Post("/outbound/sessions", s.handleCreateA2AOutboundSession)
+		r.Post("/outbound/sessions/{sessionID}/chat", s.handleA2AOutboundChat)
+	})
+
 	// App settings (tokens/secrets/runtime options)
 	r.Get("/settings", s.handleGetSettings)
 	r.Put("/settings", s.handleUpdateSettings)
@@ -443,6 +449,10 @@ type SessionResponse struct {
 	UpdatedAt            time.Time                    `json:"updated_at"`
 	Messages             []MessageResponse            `json:"messages"`
 	SystemPromptSnapshot *SystemPromptSnapshotPayload `json:"system_prompt_snapshot,omitempty"`
+	// A2A outbound fields — set for sessions used to contact remote agents.
+	A2AOutbound        bool   `json:"a2a_outbound,omitempty"`
+	A2ATargetAgentID   string `json:"a2a_target_agent_id,omitempty"`
+	A2ATargetAgentName string `json:"a2a_target_agent_name,omitempty"`
 }
 
 type ProviderFailurePayload struct {
@@ -2708,6 +2718,7 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 	totalTokens := inputTokens + outputTokens
 	currentContextTokens := int(metadataNumber(sess.Metadata, "current_context_tokens"))
 	modelContextWindow := int(metadataNumber(sess.Metadata, "context_window"))
+	isOutbound, targetAgentID, targetAgentName := sessionA2AOutboundMeta(sess)
 
 	return SessionResponse{
 		ID:                   sess.ID,
@@ -2731,6 +2742,9 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		UpdatedAt:            sess.UpdatedAt,
 		Messages:             s.messagesToResponse(sess.Messages),
 		SystemPromptSnapshot: snapshotPayload,
+		A2AOutbound:          isOutbound,
+		A2ATargetAgentID:     targetAgentID,
+		A2ATargetAgentName:   targetAgentName,
 	}
 }
 

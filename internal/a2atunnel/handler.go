@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/session"
@@ -16,6 +17,7 @@ const (
 	MetaA2ASourceAgentID   = "a2a_source_agent_id"
 	MetaA2ASourceAgentName = "a2a_source_agent_name"
 	MetaA2ARequestID       = "a2a_request_id"
+	MetaA2AConversationID  = "a2a_conversation_id"
 )
 
 // AgentRunnerFactory creates an *agent.Agent for a given tool manager.
@@ -69,10 +71,10 @@ func (h *InboundHandler) Handle(ctx context.Context, req *AgentRequest) ([]byte,
 	// 2. Resolve base project (dynamic — reads current settings).
 	projectID := h.inboundProjectID()
 
-	// 3. Create a session stamped with A2A origin metadata.
-	sess, err := h.sessionManager.Create(h.agentID)
+	// 3. Resolve or create a session stamped with A2A origin metadata.
+	sess, err := h.resolveSession(p)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create session: %w", err)
+		return nil, err
 	}
 	if sess.Metadata == nil {
 		sess.Metadata = make(map[string]interface{})
@@ -81,10 +83,14 @@ func (h *InboundHandler) Handle(ctx context.Context, req *AgentRequest) ([]byte,
 	sess.Metadata[MetaA2ASourceAgentID] = p.SourceAgentID
 	sess.Metadata[MetaA2ASourceAgentName] = p.SourceAgentName
 	sess.Metadata[MetaA2ARequestID] = req.RequestID
+	if strings.TrimSpace(p.ConversationID) != "" {
+		sess.Metadata[MetaA2AConversationID] = strings.TrimSpace(p.ConversationID)
+	}
 	if projectID != "" {
 		sess.ProjectID = &projectID
 	}
 	sess.AddUserMessage(p.Task)
+	sess.SetStatus(session.StatusRunning)
 	if err := h.sessionManager.Save(sess); err != nil {
 		return nil, fmt.Errorf("failed to save session: %w", err)
 	}
@@ -108,3 +114,45 @@ func (h *InboundHandler) Handle(ctx context.Context, req *AgentRequest) ([]byte,
 
 // compile-time assertion that InboundHandler satisfies Handler.
 var _ Handler = (*InboundHandler)(nil)
+
+func (h *InboundHandler) resolveSession(p InboundPayload) (*session.Session, error) {
+	conversationID := strings.TrimSpace(p.ConversationID)
+	sourceAgentID := strings.TrimSpace(p.SourceAgentID)
+	if conversationID == "" || sourceAgentID == "" {
+		sess, err := h.sessionManager.Create(h.agentID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create session: %w", err)
+		}
+		return sess, nil
+	}
+
+	sessions, err := h.sessionManager.List()
+	if err == nil {
+		var candidate *session.Session
+		for _, sess := range sessions {
+			if sess == nil || sess.Metadata == nil {
+				continue
+			}
+			inbound, _ := sess.Metadata[MetaA2AInbound].(bool)
+			if !inbound {
+				continue
+			}
+			metaSource, _ := sess.Metadata[MetaA2ASourceAgentID].(string)
+			metaConversation, _ := sess.Metadata[MetaA2AConversationID].(string)
+			if strings.TrimSpace(metaSource) == sourceAgentID && strings.TrimSpace(metaConversation) == conversationID {
+				if candidate == nil || sess.UpdatedAt.After(candidate.UpdatedAt) {
+					candidate = sess
+				}
+			}
+		}
+		if candidate != nil {
+			return candidate, nil
+		}
+	}
+
+	sess, err := h.sessionManager.Create(h.agentID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create session: %w", err)
+	}
+	return sess, nil
+}

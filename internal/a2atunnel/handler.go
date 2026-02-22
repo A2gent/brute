@@ -89,8 +89,18 @@ func (h *InboundHandler) Handle(ctx context.Context, req *AgentRequest) ([]byte,
 	if projectID != "" {
 		sess.ProjectID = &projectID
 	}
-	sess.AddUserMessage(p.Task)
-	sess.SetStatus(session.StatusRunning)
+	if pending, _ := h.sessionManager.GetPendingQuestion(sess.ID); pending != nil && sess.Status == session.StatusInputRequired {
+		if err := h.sessionManager.AnswerQuestion(sess.ID, p.Task); err != nil {
+			return nil, fmt.Errorf("failed to answer pending question: %w", err)
+		}
+		reloaded, reloadErr := h.sessionManager.Get(sess.ID)
+		if reloadErr == nil && reloaded != nil {
+			sess = reloaded
+		}
+	} else {
+		sess.AddUserMessage(p.Task)
+		sess.SetStatus(session.StatusRunning)
+	}
 	beforeRunCount := len(sess.Messages)
 	if err := h.sessionManager.Save(sess); err != nil {
 		return nil, fmt.Errorf("failed to save session: %w", err)
@@ -108,8 +118,16 @@ func (h *InboundHandler) Handle(ctx context.Context, req *AgentRequest) ([]byte,
 		return nil, fmt.Errorf("agent run failed: %w", runErr)
 	}
 	if sess.Status == session.StatusInputRequired {
-		if question, qErr := h.sessionManager.GetPendingQuestion(sess.ID); qErr == nil && question != nil && strings.TrimSpace(question.Question) != "" {
-			return nil, fmt.Errorf("agent requires user input: %s", strings.TrimSpace(question.Question))
+		if question, qErr := h.sessionManager.GetPendingQuestion(sess.ID); qErr == nil && question != nil {
+			text := renderPendingQuestion(question)
+			if strings.TrimSpace(text) != "" {
+				out, encErr := json.Marshal(OutboundPayload{Result: text})
+				if encErr != nil {
+					return nil, fmt.Errorf("failed to encode question response: %w", encErr)
+				}
+				return out, nil
+			}
+			return nil, fmt.Errorf("agent requires user input")
 		}
 		return nil, fmt.Errorf("agent requires user input")
 	}
@@ -195,4 +213,41 @@ func latestAssistantMessageContentSince(messages []session.Message, start int) s
 		}
 	}
 	return ""
+}
+
+func renderPendingQuestion(q *session.QuestionData) string {
+	if q == nil {
+		return ""
+	}
+	var b strings.Builder
+	question := strings.TrimSpace(q.Question)
+	if question == "" {
+		question = "I need your input to continue."
+	}
+	b.WriteString(question)
+	if len(q.Options) > 0 {
+		b.WriteString("\n\nOptions:\n")
+		for _, opt := range q.Options {
+			label := strings.TrimSpace(opt.Label)
+			if label == "" {
+				continue
+			}
+			desc := strings.TrimSpace(opt.Description)
+			if desc != "" {
+				b.WriteString("- ")
+				b.WriteString(label)
+				b.WriteString(": ")
+				b.WriteString(desc)
+				b.WriteString("\n")
+				continue
+			}
+			b.WriteString("- ")
+			b.WriteString(label)
+			b.WriteString("\n")
+		}
+	}
+	if q.Custom {
+		b.WriteString("\nYou can also type your own answer.")
+	}
+	return strings.TrimSpace(b.String())
 }

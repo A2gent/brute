@@ -8,7 +8,7 @@ import (
 	"github.com/A2gent/brute/internal/storage"
 )
 
-func TestLatestAssistantMessageContent(t *testing.T) {
+func TestLatestAssistantMessageContentSince(t *testing.T) {
 	t.Parallel()
 
 	msgs := []session.Message{
@@ -18,9 +18,13 @@ func TestLatestAssistantMessageContent(t *testing.T) {
 		{Role: "user", Content: "next"},
 		{Role: "assistant", Content: "answer 2"},
 	}
-	got := latestAssistantMessageContent(msgs)
+	got := latestAssistantMessageContentSince(msgs, 3)
 	if got != "answer 2" {
 		t.Fatalf("expected latest assistant message, got %q", got)
+	}
+	got = latestAssistantMessageContentSince(msgs, 5)
+	if got != "" {
+		t.Fatalf("expected empty assistant message after start bound, got %q", got)
 	}
 }
 

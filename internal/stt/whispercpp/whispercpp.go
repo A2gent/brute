@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/A2gent/brute/internal/logging"
 )
 
 const (
@@ -83,8 +85,39 @@ func TranscribeWithOptions(ctx context.Context, audioPath string, language strin
 	if translate {
 		args = append(args, "-tr")
 	}
+	if resolveNoGPU() {
+		logging.Info("whisper.cpp configured for CPU-only mode (AAGENT_WHISPER_NO_GPU enabled)")
+		args = append(args, "-ng", "-nfa")
+	}
 
-	cmd := exec.CommandContext(ctx, cfg.BinaryPath, args...)
+	logging.Info("whisper.cpp run start: binary=%s no_gpu=%v lang=%s translate=%v", cfg.BinaryPath, resolveNoGPU(), lang, translate)
+	text, err := runWhisperCLI(ctx, cfg.BinaryPath, args, outputPrefix)
+	if err == nil {
+		logging.Info("whisper.cpp run succeeded (primary)")
+		return text, nil
+	}
+	logging.Warn("whisper.cpp run failed (primary): %v", err)
+	if resolveNoGPU() {
+		return "", err
+	}
+	if shouldRetryWhisperWithoutGPU(err) {
+		logging.Warn("whisper.cpp retry condition matched; retrying with CPU-only flags")
+		retryArgs := append([]string{}, args...)
+		retryArgs = append(retryArgs, "-ng", "-nfa")
+		if retryText, retryErr := runWhisperCLI(ctx, cfg.BinaryPath, retryArgs, outputPrefix); retryErr == nil {
+			logging.Info("whisper.cpp CPU-only retry succeeded")
+			return retryText, nil
+		} else {
+			logging.Warn("whisper.cpp CPU-only retry failed: %v", retryErr)
+			return "", fmt.Errorf("whisper.cpp GPU run failed and CPU retry failed: first=%v; retry=%v", err, retryErr)
+		}
+	}
+	return "", err
+}
+
+func runWhisperCLI(ctx context.Context, binaryPath string, args []string, outputPrefix string) (string, error) {
+	logging.Info("whisper.cpp command args: %s", summarizeWhisperArgs(args))
+	cmd := exec.CommandContext(ctx, binaryPath, args...)
 	var output bytes.Buffer
 	cmd.Stdout = &output
 	cmd.Stderr = &output
@@ -93,6 +126,7 @@ func TranscribeWithOptions(ctx context.Context, audioPath string, language strin
 		if detail == "" {
 			detail = err.Error()
 		}
+		logging.Warn("whisper.cpp command failed: %s", truncateLogLine(detail, 1000))
 		return "", fmt.Errorf("whisper.cpp failed: %s", detail)
 	}
 
@@ -102,6 +136,7 @@ func TranscribeWithOptions(ctx context.Context, audioPath string, language strin
 		if detail == "" {
 			detail = err.Error()
 		}
+		logging.Warn("whisper.cpp output file missing/read failed: %s", truncateLogLine(detail, 1000))
 		return "", fmt.Errorf("failed to read whisper output: %s", detail)
 	}
 
@@ -110,6 +145,50 @@ func TranscribeWithOptions(ctx context.Context, audioPath string, language strin
 		return "", errors.New("no speech detected")
 	}
 	return text, nil
+}
+
+func shouldRetryWhisperWithoutGPU(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	if text == "" {
+		return false
+	}
+	if strings.Contains(text, "failed to read whisper output") && strings.Contains(text, "use gpu") {
+		return true
+	}
+	if strings.Contains(text, "flash attn") && strings.Contains(text, "gpu") {
+		return true
+	}
+	if strings.Contains(text, "metal") && strings.Contains(text, "gpu") {
+		return true
+	}
+	return false
+}
+
+func summarizeWhisperArgs(args []string) string {
+	parts := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		part := args[i]
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, " ")
+}
+
+func truncateLogLine(text string, max int) string {
+	text = strings.TrimSpace(text)
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= max {
+		return text
+	}
+	if max <= 3 {
+		return string(runes[:max])
+	}
+	return string(runes[:max-3]) + "..."
 }
 
 func loadConfig(ctx context.Context) (Config, error) {
@@ -622,6 +701,16 @@ func resolveTranslate() bool {
 	switch raw {
 	case "", "0", "false", "no", "off":
 		return false
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func resolveNoGPU() bool {
+	raw := strings.TrimSpace(strings.ToLower(os.Getenv("AAGENT_WHISPER_NO_GPU")))
+	switch raw {
 	case "1", "true", "yes", "on":
 		return true
 	default:

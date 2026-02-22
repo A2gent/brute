@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -18,6 +21,7 @@ import (
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/storage"
+	"github.com/A2gent/brute/internal/stt/whispercpp"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -104,6 +108,7 @@ const telegramNextPollAtConfigKey = "next_poll_at_unix"
 const telegramSyncedMessageCountMetadataKey = "telegram_synced_message_count"
 const myMindProjectName = "My Mind"
 const telegramMaxMessageRunes = 3900
+const telegramMaxInboundAudioBytes = 25 * 1024 * 1024
 
 var telegramBotTokenPattern = regexp.MustCompile(`bot[0-9]{5,}:[A-Za-z0-9_-]{20,}`)
 
@@ -115,8 +120,25 @@ type telegramMessagePayload struct {
 	MessageID       int                   `json:"message_id"`
 	MessageThreadID int64                 `json:"message_thread_id"`
 	Text            string                `json:"text"`
+	Caption         string                `json:"caption"`
+	Voice           *telegramVoicePayload `json:"voice"`
+	Audio           *telegramAudioPayload `json:"audio"`
+	Document        *telegramAudioPayload `json:"document"`
 	Chat            telegramChatPayload   `json:"chat"`
 	From            telegramMessageAuthor `json:"from"`
+}
+
+type telegramVoicePayload struct {
+	FileID   string `json:"file_id"`
+	FileSize int64  `json:"file_size"`
+	MimeType string `json:"mime_type"`
+}
+
+type telegramAudioPayload struct {
+	FileID   string `json:"file_id"`
+	FileSize int64  `json:"file_size"`
+	FileName string `json:"file_name"`
+	MimeType string `json:"mime_type"`
 }
 
 type telegramChatPayload struct {
@@ -176,6 +198,15 @@ type telegramCreateForumTopicPayload struct {
 type telegramBasicResponsePayload struct {
 	OK          bool   `json:"ok"`
 	Description string `json:"description"`
+}
+
+type telegramGetFilePayload struct {
+	OK          bool   `json:"ok"`
+	Description string `json:"description"`
+	Result      struct {
+		FilePath string `json:"file_path"`
+		FileSize int64  `json:"file_size"`
+	} `json:"result"`
 }
 
 func (s *Server) handleListIntegrations(w http.ResponseWriter, r *http.Request) {
@@ -637,19 +668,6 @@ func (s *Server) processTelegramDuplexIntegrations(ctx context.Context) {
 				logging.Debug("Telegram update skipped for integration %s: from bot", integration.ID)
 				continue
 			}
-			text := strings.TrimSpace(message.Text)
-			if text == "" {
-				logging.Debug(
-					"Telegram update skipped for integration %s: empty text (chat=%d type=%s thread=%d update=%d)",
-					integration.ID,
-					message.Chat.ID,
-					message.Chat.Type,
-					message.MessageThreadID,
-					update.UpdateID,
-				)
-				continue
-			}
-
 			messageChatID := strconv.FormatInt(message.Chat.ID, 10)
 			chatType := strings.ToLower(strings.TrimSpace(message.Chat.Type))
 			if chatType != "group" && chatType != "supergroup" {
@@ -662,14 +680,36 @@ func (s *Server) processTelegramDuplexIntegrations(ctx context.Context) {
 				)
 				continue
 			}
+
+			userPrompt, err := s.telegramPromptFromInboundMessage(ctx, botToken, integration, message)
+			if err != nil {
+				logging.Warn("Telegram inbound media processing failed for integration %s: %s", integration.ID, sanitizeTelegramError(err))
+				failureReply := telegramInboundFailureReply(err)
+				if sendErr := s.sendTelegramMessage(ctx, botToken, messageChatID, message.MessageThreadID, failureReply); sendErr != nil {
+					logging.Warn("Telegram media failure reply send failed for integration %s: %s", integration.ID, sanitizeTelegramError(sendErr))
+				}
+				continue
+			}
+			if strings.TrimSpace(userPrompt) == "" {
+				logging.Debug(
+					"Telegram update skipped for integration %s: no text/caption/audio prompt (chat=%d type=%s thread=%d update=%d)",
+					integration.ID,
+					message.Chat.ID,
+					message.Chat.Type,
+					message.MessageThreadID,
+					update.UpdateID,
+				)
+				continue
+			}
+
 			logging.Info(
-				"Telegram inbound accepted: integration=%s chat=%s type=%s thread=%d update=%d text_len=%d",
+				"Telegram inbound accepted: integration=%s chat=%s type=%s thread=%d update=%d prompt_len=%d",
 				integration.ID,
 				messageChatID,
 				message.Chat.Type,
 				message.MessageThreadID,
 				update.UpdateID,
-				len([]rune(text)),
+				len([]rune(userPrompt)),
 			)
 
 			result, err := s.handleTelegramInboundMessage(
@@ -677,7 +717,7 @@ func (s *Server) processTelegramDuplexIntegrations(ctx context.Context) {
 				integration,
 				message.Chat,
 				message.MessageThreadID,
-				text,
+				userPrompt,
 			)
 			if err != nil {
 				logging.Warn("Telegram duplex handling failed for integration %s: %s", integration.ID, sanitizeTelegramError(err))
@@ -734,6 +774,198 @@ func (s *Server) processTelegramDuplexIntegrations(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (s *Server) telegramPromptFromInboundMessage(
+	ctx context.Context,
+	botToken string,
+	integration *storage.Integration,
+	message *telegramMessagePayload,
+) (string, error) {
+	if message == nil {
+		return "", nil
+	}
+	text := strings.TrimSpace(message.Text)
+	if text != "" {
+		return text, nil
+	}
+
+	caption := strings.TrimSpace(message.Caption)
+	fileID, mediaKind := telegramAudioFileIDForMessage(message)
+	if fileID == "" {
+		return caption, nil
+	}
+	if !telegramVoiceTranscriptionEnabled(integration) {
+		return caption, nil
+	}
+
+	audioPath, cleanup, err := s.downloadTelegramFile(ctx, botToken, fileID)
+	if err != nil {
+		return "", fmt.Errorf("failed to download %s message: %w", mediaKind, err)
+	}
+	defer cleanup()
+
+	transcript, err := whispercpp.TranscribeWithOptions(
+		ctx,
+		audioPath,
+		telegramTranscriptionLanguage(integration),
+		telegramTranscriptionTranslateFlag(integration),
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to transcribe %s message: %w", mediaKind, err)
+	}
+	transcript = strings.TrimSpace(transcript)
+	if transcript == "" {
+		return caption, nil
+	}
+	if caption == "" {
+		return transcript, nil
+	}
+	return caption + "\n\nVoice transcript:\n" + transcript, nil
+}
+
+func telegramAudioFileIDForMessage(message *telegramMessagePayload) (string, string) {
+	if message == nil {
+		return "", ""
+	}
+	if message.Voice != nil {
+		if fileID := strings.TrimSpace(message.Voice.FileID); fileID != "" {
+			return fileID, "voice"
+		}
+	}
+	if message.Audio != nil {
+		if fileID := strings.TrimSpace(message.Audio.FileID); fileID != "" {
+			return fileID, "audio"
+		}
+	}
+	if message.Document != nil {
+		fileID := strings.TrimSpace(message.Document.FileID)
+		mimeType := strings.TrimSpace(strings.ToLower(message.Document.MimeType))
+		if fileID != "" && strings.HasPrefix(mimeType, "audio/") {
+			return fileID, "audio document"
+		}
+	}
+	return "", ""
+}
+
+func telegramVoiceTranscriptionEnabled(integration *storage.Integration) bool {
+	raw := ""
+	if integration != nil {
+		raw = strings.TrimSpace(strings.ToLower(integration.Config["transcribe_voice_messages"]))
+	}
+	switch raw {
+	case "", "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return true
+	}
+}
+
+func telegramTranscriptionLanguage(integration *storage.Integration) string {
+	if integration == nil {
+		return ""
+	}
+	return strings.TrimSpace(integration.Config["transcribe_language"])
+}
+
+func telegramTranscriptionTranslateFlag(integration *storage.Integration) *bool {
+	if integration == nil {
+		return nil
+	}
+	return parseOptionalBool(integration.Config["transcribe_translate_to_english"])
+}
+
+func (s *Server) downloadTelegramFile(ctx context.Context, botToken string, fileID string) (string, func(), error) {
+	if strings.TrimSpace(botToken) == "" {
+		return "", func() {}, fmt.Errorf("missing bot token")
+	}
+	fileID = strings.TrimSpace(fileID)
+	if fileID == "" {
+		return "", func() {}, fmt.Errorf("missing file id")
+	}
+
+	getFileURL := fmt.Sprintf(
+		"https://api.telegram.org/bot%s/getFile?file_id=%s",
+		botToken,
+		url.QueryEscape(fileID),
+	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, getFileURL, nil)
+	if err != nil {
+		return "", func() {}, fmt.Errorf("failed to build getFile request: %w", err)
+	}
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", func() {}, fmt.Errorf("getFile request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var getFile telegramGetFilePayload
+	if err := json.NewDecoder(resp.Body).Decode(&getFile); err != nil {
+		return "", func() {}, fmt.Errorf("failed to decode getFile response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK || !getFile.OK {
+		msg := strings.TrimSpace(getFile.Description)
+		if msg == "" {
+			msg = resp.Status
+		}
+		return "", func() {}, fmt.Errorf("telegram getFile failed: %s", msg)
+	}
+
+	filePath := strings.TrimSpace(getFile.Result.FilePath)
+	if filePath == "" {
+		return "", func() {}, fmt.Errorf("telegram getFile returned empty file_path")
+	}
+	downloadURL := fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", botToken, strings.TrimLeft(filePath, "/"))
+
+	downloadReq, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return "", func() {}, fmt.Errorf("failed to build file download request: %w", err)
+	}
+	downloadResp, err := client.Do(downloadReq)
+	if err != nil {
+		return "", func() {}, fmt.Errorf("file download request failed: %w", err)
+	}
+	defer downloadResp.Body.Close()
+	if downloadResp.StatusCode < http.StatusOK || downloadResp.StatusCode >= http.StatusMultipleChoices {
+		return "", func() {}, fmt.Errorf("telegram file download failed: %s", downloadResp.Status)
+	}
+
+	limited := io.LimitReader(downloadResp.Body, telegramMaxInboundAudioBytes+1)
+	payload, err := io.ReadAll(limited)
+	if err != nil {
+		return "", func() {}, fmt.Errorf("failed to read downloaded file: %w", err)
+	}
+	if len(payload) == 0 {
+		return "", func() {}, fmt.Errorf("downloaded file is empty")
+	}
+	if len(payload) > telegramMaxInboundAudioBytes {
+		return "", func() {}, fmt.Errorf("downloaded audio exceeds %d bytes", telegramMaxInboundAudioBytes)
+	}
+
+	ext := filepath.Ext(filePath)
+	if ext == "" {
+		ext = ".audio"
+	}
+	tmp, err := os.CreateTemp("", "a2gent-telegram-audio-*"+ext)
+	if err != nil {
+		return "", func() {}, fmt.Errorf("failed to create temporary audio file: %w", err)
+	}
+	cleanup := func() {
+		_ = os.Remove(tmp.Name())
+	}
+	if _, err := tmp.Write(payload); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return "", func() {}, fmt.Errorf("failed to write downloaded audio file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("failed to close downloaded audio file: %w", err)
+	}
+	return tmp.Name(), cleanup, nil
 }
 
 func primaryTelegramMessage(update telegramUpdatePayload) *telegramMessagePayload {

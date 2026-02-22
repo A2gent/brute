@@ -1684,6 +1684,7 @@ func (s *Server) handleProjectGitCommitMessageSuggestion(w http.ResponseWriter, 
 	if len(targetFiles) == 0 {
 		targetFiles = files
 	}
+	fallbackMessage := buildFallbackCommitMessage(targetFiles)
 
 	diffSections := make([]string, 0, len(targetFiles))
 	for _, file := range targetFiles {
@@ -1694,7 +1695,11 @@ func (s *Server) handleProjectGitCommitMessageSuggestion(w http.ResponseWriter, 
 		diffSections = append(diffSections, fmt.Sprintf("File: %s\n%s", file.Path, truncateText(preview, 1600)))
 	}
 	if len(diffSections) == 0 {
-		w.WriteHeader(http.StatusNoContent)
+		if fallbackMessage == "" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, ProjectGitCommitMessageResponse{Message: fallbackMessage})
 		return
 	}
 
@@ -1718,20 +1723,47 @@ func (s *Server) handleProjectGitCommitMessageSuggestion(w http.ResponseWriter, 
 	if providerRef == "" {
 		providerRef = s.config.ActiveProvider
 	}
-	providerType := config.ProviderType(config.NormalizeProviderRef(providerRef))
-	model := s.resolveModelForProvider(providerType)
+	configuredProviderType := config.ProviderType(config.NormalizeProviderRef(providerRef))
+	activeProviderType := config.ProviderType(config.NormalizeProviderRef(s.config.ActiveProvider))
 
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
 
-	target, err := s.resolveExecutionTarget(ctx, providerType, model, prompt, nil)
+	response, err := s.generateGitCommitMessageWithProvider(ctx, configuredProviderType, prompt)
+	if err != nil && configuredProviderType != activeProviderType {
+		logging.Warn("Commit message generation failed with configured provider %s: %v. Retrying active provider %s", configuredProviderType, err, activeProviderType)
+		response, err = s.generateGitCommitMessageWithProvider(ctx, activeProviderType, prompt)
+	}
 	if err != nil {
-		logging.Warn("Commit message generation skipped due to provider resolution error: %v", err)
-		w.WriteHeader(http.StatusNoContent)
+		logging.Warn("Commit message generation failed: %v", err)
+		if fallbackMessage == "" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, ProjectGitCommitMessageResponse{Message: fallbackMessage})
 		return
 	}
 
-	response, err := target.Client.Chat(ctx, &llm.ChatRequest{
+	message := sanitizeGeneratedCommitMessage(response.Content)
+	if message == "" {
+		if fallbackMessage == "" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, ProjectGitCommitMessageResponse{Message: fallbackMessage})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, ProjectGitCommitMessageResponse{Message: message})
+}
+
+func (s *Server) generateGitCommitMessageWithProvider(ctx context.Context, providerType config.ProviderType, prompt string) (*llm.ChatResponse, error) {
+	model := s.resolveModelForProvider(providerType)
+	target, err := s.resolveExecutionTarget(ctx, providerType, model, prompt, nil)
+	if err != nil {
+		return nil, err
+	}
+	return target.Client.Chat(ctx, &llm.ChatRequest{
 		Model: target.Model,
 		Messages: []llm.Message{
 			{Role: "user", Content: prompt},
@@ -1739,19 +1771,6 @@ func (s *Server) handleProjectGitCommitMessageSuggestion(w http.ResponseWriter, 
 		Temperature: 0.2,
 		MaxTokens:   80,
 	})
-	if err != nil {
-		logging.Warn("Commit message generation failed: %v", err)
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
-	message := sanitizeGeneratedCommitMessage(response.Content)
-	if message == "" {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
-	s.jsonResponse(w, http.StatusOK, ProjectGitCommitMessageResponse{Message: message})
 }
 
 func (s *Server) handleProjectGitPush(w http.ResponseWriter, r *http.Request) {
@@ -2021,6 +2040,30 @@ func buildGitCommitPrompt(template string, files string, diffs string) string {
 	prompt = strings.ReplaceAll(prompt, "{{files}}", strings.TrimSpace(files))
 	prompt = strings.ReplaceAll(prompt, "{{diffs}}", strings.TrimSpace(diffs))
 	return strings.TrimSpace(prompt)
+}
+
+func buildFallbackCommitMessage(files []ProjectGitChangedFile) string {
+	if len(files) == 0 {
+		return ""
+	}
+	if len(files) == 1 {
+		return fmt.Sprintf("Update %s", files[0].Path)
+	}
+
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		if strings.TrimSpace(file.Path) == "" {
+			continue
+		}
+		paths = append(paths, file.Path)
+	}
+	if len(paths) == 0 {
+		return fmt.Sprintf("Update %d files", len(files))
+	}
+	if len(paths) == 2 {
+		return fmt.Sprintf("Update %s and %s", paths[0], paths[1])
+	}
+	return fmt.Sprintf("Update %d files (%s, %s, ...)", len(paths), paths[0], paths[1])
 }
 
 func truncateText(text string, limit int) string {

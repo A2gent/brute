@@ -1,6 +1,7 @@
 package whispercpp
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,5 +113,43 @@ func TestResolveTranslate(t *testing.T) {
 	t.Setenv("AAGENT_WHISPER_TRANSLATE", "false")
 	if resolveTranslate() {
 		t.Fatalf("expected resolveTranslate=false for false")
+	}
+}
+
+func TestShouldRetryWhisperWithoutGPU(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "retry on read output with gpu marker",
+			err:  errors.New("failed to read whisper output: whisper_init_with_params_no_state: use gpu    = 1"),
+			want: true,
+		},
+		{
+			name: "retry on flash attn gpu marker",
+			err:  errors.New("whisper.cpp failed: flash attn unsupported on gpu backend"),
+			want: true,
+		},
+		{
+			name: "retry on metal gpu marker",
+			err:  errors.New("whisper.cpp failed: metal gpu init failed"),
+			want: true,
+		},
+		{
+			name: "do not retry generic error",
+			err:  errors.New("whisper.cpp failed: model not found"),
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldRetryWhisperWithoutGPU(tc.err)
+			if got != tc.want {
+				t.Fatalf("shouldRetryWhisperWithoutGPU() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

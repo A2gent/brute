@@ -2027,7 +2027,16 @@ func parseGitPorcelain(output string) []ProjectGitChangedFile {
 		}
 
 		statusCode := line[:2]
-		pathPart := strings.TrimSpace(line[3:])
+		pathStart := 3
+		// Be tolerant if a caller accidentally trimmed leading whitespace in a " M path" line.
+		// In that case git line may look like "M path", where path starts at index 2.
+		if len(line) > 2 && statusCode[1] == ' ' && line[2] != ' ' {
+			pathStart = 2
+		}
+		if len(line) <= pathStart {
+			continue
+		}
+		pathPart := strings.TrimSpace(line[pathStart:])
 		if strings.Contains(pathPart, " -> ") {
 			parts := strings.SplitN(pathPart, " -> ", 2)
 			pathPart = strings.TrimSpace(parts[1])

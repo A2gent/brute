@@ -20,6 +20,9 @@ import (
 )
 
 const mindRootFolderSettingKey = "AAGENT_MY_MIND_ROOT_FOLDER"
+const gitCommitProviderSettingKey = "AAGENT_GIT_COMMIT_PROVIDER"
+const gitCommitPromptTemplateSettingKey = "AAGENT_GIT_COMMIT_PROMPT_TEMPLATE"
+const defaultGitCommitPromptTemplate = "Generate one concise Git commit message in imperative mood.\nReturn only the commit message text, no quotes, no bullets, no explanation.\n\nChanged files:\n{{files}}\n\nDiff snippets:\n{{diffs}}"
 
 type MindConfigResponse struct {
 	RootFolder string `json:"root_folder"`
@@ -1700,18 +1703,22 @@ func (s *Server) handleProjectGitCommitMessageSuggestion(w http.ResponseWriter, 
 		fileList = append(fileList, fmt.Sprintf("- %s (%s)", file.Path, file.Status))
 	}
 
-	prompt := strings.Join([]string{
-		"Generate one concise Git commit message in imperative mood.",
-		"Return only the commit message text, no quotes, no bullets, no explanation.",
-		"",
-		"Changed files:",
-		strings.Join(fileList, "\n"),
-		"",
-		"Diff snippets:",
-		strings.Join(diffSections, "\n\n"),
-	}, "\n")
+	settings, settingsErr := s.store.GetSettings()
+	if settingsErr != nil {
+		logging.Warn("Failed to load settings for git commit generation: %v", settingsErr)
+		settings = map[string]string{}
+	}
+	template := strings.TrimSpace(settings[gitCommitPromptTemplateSettingKey])
+	if template == "" {
+		template = defaultGitCommitPromptTemplate
+	}
+	prompt := buildGitCommitPrompt(template, strings.Join(fileList, "\n"), strings.Join(diffSections, "\n\n"))
 
-	providerType := config.ProviderType(config.NormalizeProviderRef(s.config.ActiveProvider))
+	providerRef := strings.TrimSpace(settings[gitCommitProviderSettingKey])
+	if providerRef == "" {
+		providerRef = s.config.ActiveProvider
+	}
+	providerType := config.ProviderType(config.NormalizeProviderRef(providerRef))
 	model := s.resolveModelForProvider(providerType)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
@@ -2007,6 +2014,13 @@ func sanitizeGeneratedCommitMessage(raw string) string {
 	}
 
 	return truncateText(message, 120)
+}
+
+func buildGitCommitPrompt(template string, files string, diffs string) string {
+	prompt := template
+	prompt = strings.ReplaceAll(prompt, "{{files}}", strings.TrimSpace(files))
+	prompt = strings.ReplaceAll(prompt, "{{diffs}}", strings.TrimSpace(diffs))
+	return strings.TrimSpace(prompt)
 }
 
 func truncateText(text string, limit int) string {

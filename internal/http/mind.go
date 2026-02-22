@@ -1,15 +1,22 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
+
+	"github.com/A2gent/brute/internal/config"
+	"github.com/A2gent/brute/internal/llm"
+	"github.com/A2gent/brute/internal/logging"
 )
 
 const mindRootFolderSettingKey = "AAGENT_MY_MIND_ROOT_FOLDER"
@@ -111,6 +118,19 @@ type ProjectGitCommitResponse struct {
 	RootFolder     string `json:"root_folder"`
 	Commit         string `json:"commit"`
 	FilesCommitted int    `json:"files_committed"`
+}
+
+type ProjectGitCommitMessageRequest struct {
+	RepoPath string `json:"repo_path,omitempty"`
+}
+
+type ProjectGitFileDiffResponse struct {
+	Path    string `json:"path"`
+	Preview string `json:"preview"`
+}
+
+type ProjectGitCommitMessageResponse struct {
+	Message string `json:"message"`
 }
 
 func (s *Server) handleGetMindConfig(w http.ResponseWriter, r *http.Request) {
@@ -1553,6 +1573,166 @@ func (s *Server) handleProjectGitUnstageFile(w http.ResponseWriter, r *http.Requ
 	s.jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (s *Server) handleProjectGitFileDiff(w http.ResponseWriter, r *http.Request) {
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	if relPath == "" {
+		s.errorResponse(w, http.StatusBadRequest, "path is required")
+		return
+	}
+
+	resolvedRoot, err := s.resolveProjectRootFolder(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	targetRepoRoot, err := resolveProjectGitTargetRoot(resolvedRoot, strings.TrimSpace(r.URL.Query().Get("repoPath")))
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !projectHasGitMetadata(targetRepoRoot) {
+		s.errorResponse(w, http.StatusBadRequest, "Target folder does not contain a .git directory")
+		return
+	}
+
+	normalizedPath, err := resolveGitRepoFilePath(targetRepoRoot, relPath)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	preview, err := buildGitFileDiffPreview(targetRepoRoot, normalizedPath)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to load file diff: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, ProjectGitFileDiffResponse{
+		Path:    normalizedPath,
+		Preview: preview,
+	})
+}
+
+func (s *Server) handleProjectGitCommitMessageSuggestion(w http.ResponseWriter, r *http.Request) {
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+
+	resolvedRoot, err := s.resolveProjectRootFolder(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var req ProjectGitCommitMessageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	targetRepoRoot, err := resolveProjectGitTargetRoot(resolvedRoot, strings.TrimSpace(req.RepoPath))
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !projectHasGitMetadata(targetRepoRoot) {
+		s.errorResponse(w, http.StatusBadRequest, "Target folder does not contain a .git directory")
+		return
+	}
+
+	porcelainOutput, err := runGitCommand(targetRepoRoot, "status", "--porcelain=v1")
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to read git status: "+err.Error())
+		return
+	}
+	files := parseGitPorcelain(porcelainOutput)
+	if len(files) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	targetFiles := make([]ProjectGitChangedFile, 0, len(files))
+	for _, file := range files {
+		if file.Staged {
+			targetFiles = append(targetFiles, file)
+		}
+	}
+	if len(targetFiles) == 0 {
+		targetFiles = files
+	}
+
+	diffSections := make([]string, 0, len(targetFiles))
+	for _, file := range targetFiles {
+		preview, previewErr := buildGitFileDiffPreview(targetRepoRoot, file.Path)
+		if previewErr != nil {
+			continue
+		}
+		diffSections = append(diffSections, fmt.Sprintf("File: %s\n%s", file.Path, truncateText(preview, 1600)))
+	}
+	if len(diffSections) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	fileList := make([]string, 0, len(targetFiles))
+	for _, file := range targetFiles {
+		fileList = append(fileList, fmt.Sprintf("- %s (%s)", file.Path, file.Status))
+	}
+
+	prompt := strings.Join([]string{
+		"Generate one concise Git commit message in imperative mood.",
+		"Return only the commit message text, no quotes, no bullets, no explanation.",
+		"",
+		"Changed files:",
+		strings.Join(fileList, "\n"),
+		"",
+		"Diff snippets:",
+		strings.Join(diffSections, "\n\n"),
+	}, "\n")
+
+	providerType := config.ProviderType(config.NormalizeProviderRef(s.config.ActiveProvider))
+	model := s.resolveModelForProvider(providerType)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancel()
+
+	target, err := s.resolveExecutionTarget(ctx, providerType, model, prompt, nil)
+	if err != nil {
+		logging.Warn("Commit message generation skipped due to provider resolution error: %v", err)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	response, err := target.Client.Chat(ctx, &llm.ChatRequest{
+		Model: target.Model,
+		Messages: []llm.Message{
+			{Role: "user", Content: prompt},
+		},
+		Temperature: 0.2,
+		MaxTokens:   80,
+	})
+	if err != nil {
+		logging.Warn("Commit message generation failed: %v", err)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	message := sanitizeGeneratedCommitMessage(response.Content)
+	if message == "" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, ProjectGitCommitMessageResponse{Message: message})
+}
+
 func (s *Server) resolveProjectRootFolder(projectID string) (string, error) {
 	project, err := s.store.GetProject(projectID)
 	if err != nil {
@@ -1631,6 +1811,21 @@ func runGitCommand(projectRoot string, args ...string) (string, error) {
 	return trimmed, nil
 }
 
+func runGitCommandWithExitCode(projectRoot string, args ...string) (string, int, error) {
+	commandArgs := append([]string{"-C", projectRoot}, args...)
+	cmd := exec.Command("git", commandArgs...)
+	output, err := cmd.CombinedOutput()
+	trimmed := strings.TrimSpace(string(output))
+	if err == nil {
+		return trimmed, 0, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return trimmed, exitErr.ExitCode(), err
+	}
+	return trimmed, -1, err
+}
+
 func resolveGitRepoFilePath(repoRoot string, relPath string) (string, error) {
 	normalizedPath := filepath.Clean(strings.TrimSpace(relPath))
 	if normalizedPath == "" || normalizedPath == "." {
@@ -1650,6 +1845,111 @@ func resolveGitRepoFilePath(repoRoot string, relPath string) (string, error) {
 	}
 
 	return filepath.ToSlash(relToRoot), nil
+}
+
+func buildGitFileDiffPreview(repoRoot string, relPath string) (string, error) {
+	normalizedPath, err := resolveGitRepoFilePath(repoRoot, relPath)
+	if err != nil {
+		return "", err
+	}
+
+	sections := make([]string, 0, 3)
+
+	if stagedDiff, diffErr := runGitCommand(repoRoot, "diff", "--no-color", "--cached", "--", normalizedPath); diffErr == nil && strings.TrimSpace(stagedDiff) != "" {
+		sections = append(sections, "Staged changes:\n"+stagedDiff)
+	}
+	if unstagedDiff, diffErr := runGitCommand(repoRoot, "diff", "--no-color", "--", normalizedPath); diffErr == nil && strings.TrimSpace(unstagedDiff) != "" {
+		sections = append(sections, "Unstaged changes:\n"+unstagedDiff)
+	}
+
+	if len(sections) == 0 && isGitFileUntracked(repoRoot, normalizedPath) {
+		newFilePreview := buildUntrackedFilePreview(repoRoot, normalizedPath)
+		if strings.TrimSpace(newFilePreview) != "" {
+			sections = append(sections, "Untracked file preview:\n"+newFilePreview)
+		}
+	}
+
+	if len(sections) == 0 {
+		return "No diff available for this file.", nil
+	}
+	return truncateText(strings.Join(sections, "\n\n"), 12000), nil
+}
+
+func isGitFileUntracked(repoRoot string, relPath string) bool {
+	output, _, err := runGitCommandWithExitCode(repoRoot, "status", "--porcelain=v1", "--", relPath)
+	if err != nil && strings.TrimSpace(output) == "" {
+		return false
+	}
+	files := parseGitPorcelain(output)
+	for _, file := range files {
+		if filepath.ToSlash(strings.TrimSpace(file.Path)) == filepath.ToSlash(strings.TrimSpace(relPath)) {
+			return file.Untracked
+		}
+	}
+	return false
+}
+
+func buildUntrackedFilePreview(repoRoot string, relPath string) string {
+	fullPath := filepath.Join(repoRoot, filepath.FromSlash(relPath))
+	info, err := os.Stat(fullPath)
+	if err != nil || info.IsDir() {
+		return ""
+	}
+	content, err := os.ReadFile(fullPath)
+	if err != nil {
+		return ""
+	}
+
+	lines := strings.Split(strings.ReplaceAll(string(content), "\r\n", "\n"), "\n")
+	maxLines := 140
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+	}
+	for i, line := range lines {
+		lines[i] = "+" + line
+	}
+	return strings.Join(lines, "\n")
+}
+
+func sanitizeGeneratedCommitMessage(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+
+	trimmed = strings.Trim(trimmed, "`")
+	lines := strings.Split(trimmed, "\n")
+	message := ""
+	for _, line := range lines {
+		candidate := strings.TrimSpace(strings.Trim(line, "\"'`"))
+		if candidate != "" {
+			message = candidate
+			break
+		}
+	}
+	if message == "" {
+		return ""
+	}
+
+	lowered := strings.ToLower(message)
+	if strings.HasPrefix(lowered, "commit message:") {
+		message = strings.TrimSpace(message[len("commit message:"):])
+	}
+	if strings.HasPrefix(lowered, "message:") {
+		message = strings.TrimSpace(message[len("message:"):])
+	}
+
+	return truncateText(message, 120)
+}
+
+func truncateText(text string, limit int) string {
+	if limit <= 0 || len(text) <= limit {
+		return text
+	}
+	if limit <= 3 {
+		return text[:limit]
+	}
+	return text[:limit-3] + "..."
 }
 
 func parseGitPorcelain(output string) []ProjectGitChangedFile {

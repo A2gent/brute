@@ -434,10 +434,25 @@ type SessionResponse struct {
 	CurrentContextTokens int                          `json:"current_context_tokens"`
 	ModelContextWindow   int                          `json:"model_context_window"`
 	TaskProgress         string                       `json:"task_progress,omitempty"`
+	ProviderFailures     []ProviderFailurePayload     `json:"provider_failures,omitempty"`
 	CreatedAt            time.Time                    `json:"created_at"`
 	UpdatedAt            time.Time                    `json:"updated_at"`
 	Messages             []MessageResponse            `json:"messages"`
 	SystemPromptSnapshot *SystemPromptSnapshotPayload `json:"system_prompt_snapshot,omitempty"`
+}
+
+type ProviderFailurePayload struct {
+	Timestamp     time.Time `json:"timestamp"`
+	Provider      string    `json:"provider,omitempty"`
+	Model         string    `json:"model,omitempty"`
+	Attempt       int       `json:"attempt,omitempty"`
+	MaxAttempts   int       `json:"max_attempts,omitempty"`
+	NodeIndex     int       `json:"node_index,omitempty"`
+	TotalNodes    int       `json:"total_nodes,omitempty"`
+	Phase         string    `json:"phase,omitempty"`
+	Reason        string    `json:"reason,omitempty"`
+	FallbackTo    string    `json:"fallback_to,omitempty"`
+	FallbackModel string    `json:"fallback_model,omitempty"`
 }
 
 type SystemPromptSnapshotPayload struct {
@@ -472,11 +487,12 @@ type MessageResponse struct {
 
 // ToolCallResponse represents a tool call
 type ToolCallResponse struct {
-	ID           string          `json:"id"`
-	Name         string          `json:"name"`
-	Input        json.RawMessage `json:"input"`
-	InputTokens  int             `json:"input_tokens,omitempty"`
-	OutputTokens int             `json:"output_tokens,omitempty"`
+	ID               string          `json:"id"`
+	Name             string          `json:"name"`
+	Input            json.RawMessage `json:"input"`
+	ThoughtSignature string          `json:"thought_signature,omitempty"`
+	InputTokens      int             `json:"input_tokens,omitempty"`
+	OutputTokens     int             `json:"output_tokens,omitempty"`
 }
 
 // ToolResultResponse represents a tool result
@@ -511,14 +527,16 @@ type ChatStreamEvent struct {
 	Error      string                 `json:"error,omitempty"`
 	ToolCalls  []StreamToolCallEvent  `json:"tool_calls,omitempty"`
 	ToolResult *StreamToolResultEvent `json:"tool_result,omitempty"`
+	Provider   *StreamProviderEvent   `json:"provider,omitempty"`
 	Step       int                    `json:"step,omitempty"`
 }
 
 // StreamToolCallEvent represents a tool call in a stream event.
 type StreamToolCallEvent struct {
-	ID    string          `json:"id"`
-	Name  string          `json:"name"`
-	Input json.RawMessage `json:"input"`
+	ID               string          `json:"id"`
+	Name             string          `json:"name"`
+	Input            json.RawMessage `json:"input"`
+	ThoughtSignature string          `json:"thought_signature,omitempty"`
 }
 
 // StreamToolResultEvent represents a tool result in a stream event.
@@ -527,6 +545,20 @@ type StreamToolResultEvent struct {
 	Name       string `json:"name"`
 	Content    string `json:"content"`
 	IsError    bool   `json:"is_error"`
+}
+
+type StreamProviderEvent struct {
+	Provider      string `json:"provider,omitempty"`
+	Model         string `json:"model,omitempty"`
+	Attempt       int    `json:"attempt,omitempty"`
+	MaxAttempts   int    `json:"max_attempts,omitempty"`
+	NodeIndex     int    `json:"node_index,omitempty"`
+	TotalNodes    int    `json:"total_nodes,omitempty"`
+	Phase         string `json:"phase,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	FallbackTo    string `json:"fallback_to,omitempty"`
+	FallbackModel string `json:"fallback_model,omitempty"`
+	Recovered     bool   `json:"recovered,omitempty"`
 }
 
 // UsageResponse represents token usage
@@ -1957,9 +1989,10 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			toolCalls := make([]StreamToolCallEvent, len(ev.ToolCalls))
 			for i, tc := range ev.ToolCalls {
 				toolCalls[i] = StreamToolCallEvent{
-					ID:    tc.ID,
-					Name:  tc.Name,
-					Input: json.RawMessage(tc.Input),
+					ID:               tc.ID,
+					Name:             tc.Name,
+					Input:            json.RawMessage(tc.Input),
+					ThoughtSignature: tc.ThoughtSignature,
 				}
 			}
 			_ = writeEvent(ChatStreamEvent{
@@ -1982,6 +2015,33 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			_ = writeEvent(ChatStreamEvent{
 				Type: "step_completed",
 				Step: ev.Step,
+			})
+		case agent.EventProviderTrace:
+			if ev.Provider == nil {
+				return
+			}
+			if shouldPersistProviderFailure(ev.Provider.Phase) {
+				appendSessionProviderFailure(sess, ev.Provider)
+				if err := s.sessionManager.Save(sess); err != nil {
+					logging.Warn("Failed to persist provider failure metadata: %v", err)
+				}
+			}
+			_ = writeEvent(ChatStreamEvent{
+				Type: "provider_trace",
+				Step: ev.Step,
+				Provider: &StreamProviderEvent{
+					Provider:      ev.Provider.Provider,
+					Model:         ev.Provider.Model,
+					Attempt:       ev.Provider.Attempt,
+					MaxAttempts:   ev.Provider.MaxAttempts,
+					NodeIndex:     ev.Provider.NodeIndex,
+					TotalNodes:    ev.Provider.TotalNodes,
+					Phase:         ev.Provider.Phase,
+					Reason:        ev.Provider.Reason,
+					FallbackTo:    ev.Provider.FallbackTo,
+					FallbackModel: ev.Provider.FallbackModel,
+					Recovered:     ev.Provider.Recovered,
+				},
 			})
 		}
 	})
@@ -2629,6 +2689,7 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		CurrentContextTokens: currentContextTokens,
 		ModelContextWindow:   modelContextWindow,
 		TaskProgress:         sess.TaskProgress,
+		ProviderFailures:     sessionProviderFailures(sess.Metadata),
 		CreatedAt:            sess.CreatedAt,
 		UpdatedAt:            sess.UpdatedAt,
 		Messages:             s.messagesToResponse(sess.Messages),
@@ -2650,9 +2711,10 @@ func (s *Server) messagesToResponse(messages []session.Message) []MessageRespons
 			msg.ToolCalls = make([]ToolCallResponse, len(m.ToolCalls))
 			for j, tc := range m.ToolCalls {
 				msg.ToolCalls[j] = ToolCallResponse{
-					ID:    tc.ID,
-					Name:  tc.Name,
-					Input: tc.Input,
+					ID:               tc.ID,
+					Name:             tc.Name,
+					Input:            tc.Input,
+					ThoughtSignature: tc.ThoughtSignature,
 				}
 			}
 		}
@@ -3829,6 +3891,112 @@ func sessionRunDurationSeconds(createdAt time.Time, updatedAt time.Time, status 
 		return 0
 	}
 	return int64(end.Sub(createdAt).Seconds())
+}
+
+const providerFailuresMetadataKey = "provider_failures"
+
+func shouldPersistProviderFailure(phase string) bool {
+	switch strings.TrimSpace(phase) {
+	case "attempt_failed", "attempt_failed_partial", "retry_layer_failed", "switching_provider":
+		return true
+	default:
+		return false
+	}
+}
+
+func appendSessionProviderFailure(sess *session.Session, trace *agent.ProviderTraceEvent) {
+	if sess == nil || trace == nil {
+		return
+	}
+	if sess.Metadata == nil {
+		sess.Metadata = map[string]interface{}{}
+	}
+	existing := sessionProviderFailures(sess.Metadata)
+	entry := ProviderFailurePayload{
+		Timestamp:     time.Now(),
+		Provider:      strings.TrimSpace(trace.Provider),
+		Model:         strings.TrimSpace(trace.Model),
+		Attempt:       trace.Attempt,
+		MaxAttempts:   trace.MaxAttempts,
+		NodeIndex:     trace.NodeIndex,
+		TotalNodes:    trace.TotalNodes,
+		Phase:         strings.TrimSpace(trace.Phase),
+		Reason:        strings.TrimSpace(trace.Reason),
+		FallbackTo:    strings.TrimSpace(trace.FallbackTo),
+		FallbackModel: strings.TrimSpace(trace.FallbackModel),
+	}
+	existing = append(existing, entry)
+	if len(existing) > 100 {
+		existing = existing[len(existing)-100:]
+	}
+	serialized := make([]map[string]interface{}, 0, len(existing))
+	for _, item := range existing {
+		serialized = append(serialized, map[string]interface{}{
+			"timestamp":      item.Timestamp.Format(time.RFC3339Nano),
+			"provider":       item.Provider,
+			"model":          item.Model,
+			"attempt":        item.Attempt,
+			"max_attempts":   item.MaxAttempts,
+			"node_index":     item.NodeIndex,
+			"total_nodes":    item.TotalNodes,
+			"phase":          item.Phase,
+			"reason":         item.Reason,
+			"fallback_to":    item.FallbackTo,
+			"fallback_model": item.FallbackModel,
+		})
+	}
+	sess.Metadata[providerFailuresMetadataKey] = serialized
+}
+
+func sessionProviderFailures(metadata map[string]interface{}) []ProviderFailurePayload {
+	if metadata == nil {
+		return nil
+	}
+	raw, ok := metadata[providerFailuresMetadataKey]
+	if !ok || raw == nil {
+		return nil
+	}
+	rows, ok := raw.([]interface{})
+	if !ok {
+		return nil
+	}
+	out := make([]ProviderFailurePayload, 0, len(rows))
+	for _, row := range rows {
+		rowMap, ok := row.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		entry := ProviderFailurePayload{}
+		if v, ok := rowMap["timestamp"].(string); ok && strings.TrimSpace(v) != "" {
+			if ts, err := time.Parse(time.RFC3339Nano, v); err == nil {
+				entry.Timestamp = ts
+			}
+		}
+		if v, ok := rowMap["provider"].(string); ok {
+			entry.Provider = strings.TrimSpace(v)
+		}
+		if v, ok := rowMap["model"].(string); ok {
+			entry.Model = strings.TrimSpace(v)
+		}
+		entry.Attempt = int(metadataNumber(rowMap, "attempt"))
+		entry.MaxAttempts = int(metadataNumber(rowMap, "max_attempts"))
+		entry.NodeIndex = int(metadataNumber(rowMap, "node_index"))
+		entry.TotalNodes = int(metadataNumber(rowMap, "total_nodes"))
+		if v, ok := rowMap["phase"].(string); ok {
+			entry.Phase = strings.TrimSpace(v)
+		}
+		if v, ok := rowMap["reason"].(string); ok {
+			entry.Reason = strings.TrimSpace(v)
+		}
+		if v, ok := rowMap["fallback_to"].(string); ok {
+			entry.FallbackTo = strings.TrimSpace(v)
+		}
+		if v, ok := rowMap["fallback_model"].(string); ok {
+			entry.FallbackModel = strings.TrimSpace(v)
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 func metadataNumber(metadata map[string]interface{}, key string) float64 {

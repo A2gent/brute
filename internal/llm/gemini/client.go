@@ -62,6 +62,12 @@ type geminiMessage struct {
 	Name       string           `json:"name,omitempty"` // Function name for tool results
 }
 
+type geminiExtraContent struct {
+	Google struct {
+		ThoughtSignature string `json:"thought_signature,omitempty"`
+	} `json:"google,omitempty"`
+}
+
 type geminiToolCall struct {
 	ID       string `json:"id"`
 	Type     string `json:"type"`
@@ -70,6 +76,7 @@ type geminiToolCall struct {
 		Arguments        string `json:"arguments"`
 		ThoughtSignature string `json:"thought_signature,omitempty"` // Gemini thinking models only; omit when absent
 	} `json:"function"`
+	ExtraContent *geminiExtraContent `json:"extra_content,omitempty"`
 }
 
 type geminiTool struct {
@@ -112,6 +119,7 @@ type geminiStreamResponse struct {
 					Arguments        string `json:"arguments"`
 					ThoughtSignature string `json:"thought_signature,omitempty"`
 				} `json:"function"`
+				ExtraContent *geminiExtraContent `json:"extra_content,omitempty"`
 			} `json:"tool_calls"`
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
@@ -188,10 +196,7 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 		})
 	}
 
-	for _, msg := range request.Messages {
-		geminiMsg := c.convertMessage(msg)
-		messages = append(messages, geminiMsg...)
-	}
+	messages = append(messages, c.convertMessages(request.Messages)...)
 
 	// Convert tools
 	var tools []geminiTool
@@ -222,9 +227,6 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
-
-	// Debug: log full request
-	logging.Debug("Gemini Chat request: %s", string(jsonBody))
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/chat/completions", bytes.NewReader(jsonBody))
 	if err != nil {
@@ -274,11 +276,15 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 
 	// Convert tool calls
 	for _, tc := range choice.Message.ToolCalls {
+		thoughtSig := tc.Function.ThoughtSignature
+		if tc.ExtraContent != nil && tc.ExtraContent.Google.ThoughtSignature != "" {
+			thoughtSig = tc.ExtraContent.Google.ThoughtSignature
+		}
 		response.ToolCalls = append(response.ToolCalls, llm.ToolCall{
 			ID:               tc.ID,
 			Name:             tc.Function.Name,
 			Input:            tc.Function.Arguments,
-			ThoughtSignature: tc.Function.ThoughtSignature,
+			ThoughtSignature: thoughtSig,
 		})
 	}
 
@@ -313,10 +319,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		})
 	}
 
-	for _, msg := range request.Messages {
-		geminiMsg := c.convertMessage(msg)
-		messages = append(messages, geminiMsg...)
-	}
+	messages = append(messages, c.convertMessages(request.Messages)...)
 
 	// Convert tools
 	var tools []geminiTool
@@ -434,10 +437,14 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 					result.ToolCalls[idx].Name = tc.Function.Name
 				}
 				if tc.Function.Arguments != "" {
-					result.ToolCalls[idx].Input += tc.Function.Arguments
+					result.ToolCalls[idx].Input = mergeToolArguments(result.ToolCalls[idx].Input, tc.Function.Arguments)
 				}
-				if tc.Function.ThoughtSignature != "" {
-					result.ToolCalls[idx].ThoughtSignature = tc.Function.ThoughtSignature
+				sigDelta := tc.Function.ThoughtSignature
+				if sigDelta == "" && tc.ExtraContent != nil && tc.ExtraContent.Google.ThoughtSignature != "" {
+					sigDelta = tc.ExtraContent.Google.ThoughtSignature
+				}
+				if sigDelta != "" {
+					result.ToolCalls[idx].ThoughtSignature += sigDelta
 				}
 				if onEvent != nil {
 					if err := onEvent(llm.StreamEvent{
@@ -488,7 +495,15 @@ func (c *Client) convertMessage(msg llm.Message) []geminiMessage {
 	}
 
 	if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
-		// Assistant with tool calls - preserve or generate thought_signature for Gemini
+		// Assistant with tool calls - preserve thought_signature for Gemini when present.
+		sharedSignature := ""
+		for _, tc := range msg.ToolCalls {
+			if tc.ThoughtSignature != "" {
+				sharedSignature = tc.ThoughtSignature
+				break
+			}
+		}
+
 		var toolCalls []geminiToolCall
 		for _, tc := range msg.ToolCalls {
 			var toolCall geminiToolCall
@@ -496,12 +511,26 @@ func (c *Client) convertMessage(msg llm.Message) []geminiMessage {
 			toolCall.Type = "function"
 			toolCall.Function.Name = tc.Name
 			toolCall.Function.Arguments = tc.Input
-			// Preserve the real thought_signature from Gemini (thinking models only).
-			// Never fabricate a fake one — Gemini 3.x rejects invalid signatures with a 400.
-			if tc.ThoughtSignature != "" {
-				toolCall.Function.ThoughtSignature = tc.ThoughtSignature
-				logging.Debug("Using saved thought_signature for %s", tc.Name)
+
+			sig := tc.ThoughtSignature
+			if sig == "" {
+				sig = sharedSignature
 			}
+			// Gemini rejects replayed functionCall parts without thought_signature.
+			if sig == "" {
+				continue
+			}
+			if sig != "" {
+				toolCall.Function.ThoughtSignature = sig
+				toolCall.ExtraContent = &geminiExtraContent{
+					Google: struct {
+						ThoughtSignature string `json:"thought_signature,omitempty"`
+					}{
+						ThoughtSignature: sig,
+					},
+				}
+			}
+
 			toolCalls = append(toolCalls, toolCall)
 		}
 		return []geminiMessage{{
@@ -516,6 +545,68 @@ func (c *Client) convertMessage(msg llm.Message) []geminiMessage {
 		Role:    msg.Role,
 		Content: msg.Content,
 	}}
+}
+
+func (c *Client) convertMessages(messages []llm.Message) []geminiMessage {
+	if len(messages) == 0 {
+		return nil
+	}
+
+	knownToolCalls := make(map[string]struct{})
+	out := make([]geminiMessage, 0, len(messages))
+
+	for _, msg := range messages {
+		switch msg.Role {
+		case "assistant":
+			converted := c.convertMessage(msg)
+			if len(converted) == 0 {
+				continue
+			}
+			for _, gm := range converted {
+				for _, tc := range gm.ToolCalls {
+					if tc.ID != "" {
+						knownToolCalls[tc.ID] = struct{}{}
+					}
+				}
+				// If this assistant message originally had tool calls but all were dropped
+				// due to missing signatures, avoid appending an empty assistant tool block.
+				if len(msg.ToolCalls) > 0 && len(gm.ToolCalls) == 0 && gm.Content == "" {
+					continue
+				}
+				out = append(out, gm)
+			}
+		case "tool":
+			filtered := make([]llm.ToolResult, 0, len(msg.ToolResults))
+			for _, tr := range msg.ToolResults {
+				if _, ok := knownToolCalls[tr.ToolCallID]; ok {
+					filtered = append(filtered, tr)
+				}
+			}
+			if len(filtered) == 0 {
+				continue
+			}
+			tmp := msg
+			tmp.ToolResults = filtered
+			out = append(out, c.convertMessage(tmp)...)
+		default:
+			out = append(out, c.convertMessage(msg)...)
+		}
+	}
+
+	return out
+}
+
+func mergeToolArguments(existing, incoming string) string {
+	trimmedIncoming := strings.TrimSpace(incoming)
+	if trimmedIncoming == "" {
+		return existing
+	}
+	// Some Gemini streaming responses send the full current JSON arguments
+	// snapshot in each chunk, not only a delta.
+	if json.Valid([]byte(trimmedIncoming)) {
+		return trimmedIncoming
+	}
+	return existing + incoming
 }
 
 // Ensure Client implements llm.Client

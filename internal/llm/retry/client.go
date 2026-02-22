@@ -86,6 +86,14 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 
 	var lastErr error
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+		if onEvent != nil {
+			_ = onEvent(llm.StreamEvent{
+				Type:        llm.StreamEventProviderTrace,
+				Attempt:     attempt + 1,
+				MaxAttempts: c.maxRetries + 1,
+				Phase:       "retry_layer_attempt",
+			})
+		}
 		if attempt > 0 {
 			logging.Info("Retrying LLM stream request (attempt %d/%d)", attempt+1, c.maxRetries+1)
 			if err := sleepWithContext(ctx, retryBackoff(attempt)); err != nil {
@@ -109,10 +117,28 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 			if attempt > 0 {
 				logging.Info("LLM stream request succeeded after %d retries", attempt)
 			}
+			if onEvent != nil {
+				_ = onEvent(llm.StreamEvent{
+					Type:        llm.StreamEventProviderTrace,
+					Attempt:     attempt + 1,
+					MaxAttempts: c.maxRetries + 1,
+					Phase:       "retry_layer_completed",
+					Recovered:   attempt > 0,
+				})
+			}
 			return resp, nil
 		}
 
 		lastErr = err
+		if onEvent != nil {
+			_ = onEvent(llm.StreamEvent{
+				Type:        llm.StreamEventProviderTrace,
+				Attempt:     attempt + 1,
+				MaxAttempts: c.maxRetries + 1,
+				Phase:       "retry_layer_failed",
+				Reason:      err.Error(),
+			})
+		}
 		if emitted && !IsRetryableError(ctx, err) {
 			return nil, err
 		}

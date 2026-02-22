@@ -71,6 +71,7 @@ const (
 	StreamEventContentDelta  StreamEventType = "content_delta"
 	StreamEventToolCallDelta StreamEventType = "tool_call_delta"
 	StreamEventUsage         StreamEventType = "usage"
+	StreamEventProviderTrace StreamEventType = "provider_trace"
 )
 
 // StreamEvent is emitted during a streaming LLM response.
@@ -85,6 +86,18 @@ type StreamEvent struct {
 	ToolInputDelta string
 
 	Usage TokenUsage
+
+	Provider      string
+	Model         string
+	Attempt       int
+	MaxAttempts   int
+	NodeIndex     int
+	TotalNodes    int
+	Phase         string
+	Reason        string
+	FallbackTo    string
+	FallbackModel string
+	Recovered     bool
 }
 
 // TokenUsage tracks token consumption

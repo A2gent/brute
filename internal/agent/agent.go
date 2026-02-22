@@ -46,6 +46,7 @@ const (
 	EventStepCompleted  EventType = "step_completed"
 	EventToolExecuting  EventType = "tool_executing"
 	EventToolCompleted  EventType = "tool_completed"
+	EventProviderTrace  EventType = "provider_trace"
 )
 
 const (
@@ -93,13 +94,15 @@ type Event struct {
 	Delta      string
 	ToolCalls  []ToolCallEvent  // Populated for EventToolExecuting
 	ToolResult *ToolResultEvent // Populated for EventToolCompleted (single result)
+	Provider   *ProviderTraceEvent
 }
 
 // ToolCallEvent represents a tool call being executed.
 type ToolCallEvent struct {
-	ID    string
-	Name  string
-	Input string // JSON string
+	ID               string
+	Name             string
+	Input            string // JSON string
+	ThoughtSignature string
 }
 
 // ToolResultEvent represents the result of a tool execution.
@@ -108,6 +111,20 @@ type ToolResultEvent struct {
 	Name       string
 	Content    string
 	IsError    bool
+}
+
+type ProviderTraceEvent struct {
+	Provider      string
+	Model         string
+	Attempt       int
+	MaxAttempts   int
+	NodeIndex     int
+	TotalNodes    int
+	Phase         string
+	Reason        string
+	FallbackTo    string
+	FallbackModel string
+	Recovered     bool
 }
 
 // New creates a new agent
@@ -231,14 +248,20 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		}
 
 		// Convert tool calls for session storage
-		sessionToolCalls := make([]session.ToolCall, len(response.ToolCalls))
-		for i, tc := range response.ToolCalls {
-			sessionToolCalls[i] = session.ToolCall{
+		sessionToolCalls := make([]session.ToolCall, 0, len(response.ToolCalls))
+		for _, tc := range response.ToolCalls {
+			inputRaw := []byte(strings.TrimSpace(tc.Input))
+			if len(inputRaw) == 0 || !json.Valid(inputRaw) {
+				// Keep session/history encodable even if provider streamed malformed args.
+				escaped, _ := json.Marshal(tc.Input)
+				inputRaw = escaped
+			}
+			sessionToolCalls = append(sessionToolCalls, session.ToolCall{
 				ID:               tc.ID,
 				Name:             tc.Name,
-				Input:            []byte(tc.Input),
+				Input:            inputRaw,
 				ThoughtSignature: tc.ThoughtSignature,
-			}
+			})
 		}
 
 		// Add assistant message with tool calls
@@ -249,9 +272,10 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			toolCallEvents := make([]ToolCallEvent, len(response.ToolCalls))
 			for i, tc := range response.ToolCalls {
 				toolCallEvents[i] = ToolCallEvent{
-					ID:    tc.ID,
-					Name:  tc.Name,
-					Input: tc.Input,
+					ID:               tc.ID,
+					Name:             tc.Name,
+					Input:            tc.Input,
+					ThoughtSignature: tc.ThoughtSignature,
 				}
 			}
 			onEvent(Event{Type: EventToolExecuting, Step: step, ToolCalls: toolCallEvents})
@@ -327,6 +351,25 @@ func (a *Agent) callLLM(ctx context.Context, request *llm.ChatRequest, step int,
 				Type:  EventAssistantDelta,
 				Step:  step,
 				Delta: ev.ContentDelta,
+			})
+		}
+		if ev.Type == llm.StreamEventProviderTrace {
+			onEvent(Event{
+				Type: EventProviderTrace,
+				Step: step,
+				Provider: &ProviderTraceEvent{
+					Provider:      ev.Provider,
+					Model:         ev.Model,
+					Attempt:       ev.Attempt,
+					MaxAttempts:   ev.MaxAttempts,
+					NodeIndex:     ev.NodeIndex,
+					TotalNodes:    ev.TotalNodes,
+					Phase:         ev.Phase,
+					Reason:        ev.Reason,
+					FallbackTo:    ev.FallbackTo,
+					FallbackModel: ev.FallbackModel,
+					Recovered:     ev.Recovered,
+				},
 			})
 		}
 		return nil
@@ -644,7 +687,59 @@ func (a *Agent) getActiveConversationMessages(sess *session.Session) []session.M
 			break
 		}
 	}
-	return sess.Messages[start:]
+	return sanitizeConversationForLLM(sess.Messages[start:])
+}
+
+func sanitizeConversationForLLM(messages []session.Message) []session.Message {
+	if len(messages) == 0 {
+		return nil
+	}
+
+	knownToolCalls := make(map[string]struct{})
+	out := make([]session.Message, 0, len(messages))
+
+	for _, msg := range messages {
+		switch msg.Role {
+		case "assistant":
+			if len(msg.ToolCalls) > 0 {
+				validCalls := make([]session.ToolCall, 0, len(msg.ToolCalls))
+				for _, tc := range msg.ToolCalls {
+					if tc.ID == "" || tc.Name == "" {
+						continue
+					}
+					trimmed := strings.TrimSpace(string(tc.Input))
+					// Gemini expects JSON object arguments for function calls.
+					if trimmed == "" || !json.Valid(tc.Input) || !strings.HasPrefix(trimmed, "{") {
+						continue
+					}
+					validCalls = append(validCalls, tc)
+					knownToolCalls[tc.ID] = struct{}{}
+				}
+				msg.ToolCalls = validCalls
+			}
+			out = append(out, msg)
+		case "tool":
+			if len(msg.ToolResults) == 0 {
+				out = append(out, msg)
+				continue
+			}
+			filtered := make([]session.ToolResult, 0, len(msg.ToolResults))
+			for _, tr := range msg.ToolResults {
+				if _, ok := knownToolCalls[tr.ToolCallID]; ok {
+					filtered = append(filtered, tr)
+				}
+			}
+			if len(filtered) == 0 {
+				continue
+			}
+			msg.ToolResults = filtered
+			out = append(out, msg)
+		default:
+			out = append(out, msg)
+		}
+	}
+
+	return out
 }
 
 func isCompactionMessage(msg session.Message) bool {

@@ -73,6 +73,12 @@ type openAIMessage struct {
 	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
 
+type openAIExtraContent struct {
+	Google struct {
+		ThoughtSignature string `json:"thought_signature,omitempty"`
+	} `json:"google,omitempty"`
+}
+
 type openAIToolCall struct {
 	ID       string `json:"id"`
 	Type     string `json:"type"`
@@ -81,6 +87,7 @@ type openAIToolCall struct {
 		Arguments        string `json:"arguments"`
 		ThoughtSignature string `json:"thought_signature,omitempty"` // Required by Gemini
 	} `json:"function"`
+	ExtraContent *openAIExtraContent `json:"extra_content,omitempty"`
 }
 
 type openAITool struct {
@@ -123,6 +130,7 @@ type openAIStreamResponse struct {
 					Arguments        string `json:"arguments"`
 					ThoughtSignature string `json:"thought_signature,omitempty"`
 				} `json:"function"`
+				ExtraContent *openAIExtraContent `json:"extra_content,omitempty"`
 			} `json:"tool_calls"`
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
@@ -288,10 +296,15 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 
 	// Convert tool calls
 	for _, tc := range choice.Message.ToolCalls {
+		thoughtSig := tc.Function.ThoughtSignature
+		if tc.ExtraContent != nil && tc.ExtraContent.Google.ThoughtSignature != "" {
+			thoughtSig = tc.ExtraContent.Google.ThoughtSignature
+		}
 		response.ToolCalls = append(response.ToolCalls, llm.ToolCall{
-			ID:    tc.ID,
-			Name:  tc.Function.Name,
-			Input: tc.Function.Arguments,
+			ID:               tc.ID,
+			Name:             tc.Function.Name,
+			Input:            tc.Function.Arguments,
+			ThoughtSignature: thoughtSig,
 		})
 	}
 
@@ -447,6 +460,12 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 				if tc.Function.Arguments != "" {
 					result.ToolCalls[idx].Input += tc.Function.Arguments
 				}
+				if tc.Function.ThoughtSignature != "" {
+					result.ToolCalls[idx].ThoughtSignature += tc.Function.ThoughtSignature
+				}
+				if tc.ExtraContent != nil && tc.ExtraContent.Google.ThoughtSignature != "" {
+					result.ToolCalls[idx].ThoughtSignature += tc.ExtraContent.Google.ThoughtSignature
+				}
 				if onEvent != nil {
 					if err := onEvent(llm.StreamEvent{
 						Type:           llm.StreamEventToolCallDelta,
@@ -496,6 +515,16 @@ func (c *Client) convertMessage(msg llm.Message) []openAIMessage {
 
 	if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
 		// Assistant with tool calls
+
+		// Find the first thought_signature in the block to share across all tool calls
+		sharedSignature := "skip_thought_signature_validator"
+		for _, tc := range msg.ToolCalls {
+			if tc.ThoughtSignature != "" {
+				sharedSignature = tc.ThoughtSignature
+				break
+			}
+		}
+
 		var toolCalls []openAIToolCall
 		for _, tc := range msg.ToolCalls {
 			toolCall := openAIToolCall{
@@ -510,9 +539,22 @@ func (c *Client) convertMessage(msg llm.Message) []openAIMessage {
 					Arguments: tc.Input,
 				},
 			}
-			// Add thought signature for Gemini
+
+			// Add thought signature for Gemini (on all tool calls, both in extra_content and function)
 			if c.isGemini {
-				toolCall.Function.ThoughtSignature = "Tool call: " + tc.Name
+				sig := sharedSignature
+				if tc.ThoughtSignature != "" {
+					sig = tc.ThoughtSignature
+				}
+
+				toolCall.ExtraContent = &openAIExtraContent{
+					Google: struct {
+						ThoughtSignature string `json:"thought_signature,omitempty"`
+					}{
+						ThoughtSignature: sig,
+					},
+				}
+				toolCall.Function.ThoughtSignature = sig
 			}
 			toolCalls = append(toolCalls, toolCall)
 		}

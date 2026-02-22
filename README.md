@@ -3,85 +3,97 @@
 [![Go Version](https://img.shields.io/badge/go-1.24+-00ADD8.svg)](https://golang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A Go-based autonomous AI coding agent that executes tasks in sessions with a beautiful TUI interface.
+A Go-based autonomous AI coding agent with TUI + HTTP API.
 Works best with [A²gent/caesar](https://github.com/A2gent/caesar) as control app.
-
-> **Note:** Supports multiple LLM providers including Anthropic Claude, Kimi, Gemini, LM Studio, and custom endpoints. You will need an API key for your chosen provider.
-
 
 <img width="1600" height="486" alt="Screenshot 2026-02-18 at 02 28 44" src="https://github.com/user-attachments/assets/829a71f2-e5c2-4258-8fbd-74071aa52dec" />
 <img width="1415" height="483" alt="Screenshot 2026-02-16 at 01 01 04" src="https://github.com/user-attachments/assets/0b472db5-8a78-4f39-8e28-65d50211cc68" />
 
+## 1. Features
 
-## Features
+### 1.1 Core Agent Capabilities
 
-### Core Agent Capabilities
-- **Comprehensive Tool System**: 
-  - File operations: read, write, edit, replace_lines
-  - Search: glob (file patterns), grep (content search), find_files (with filters)
-  - Execution: bash command execution
-  - Media: screenshot capture, camera photo capture
-  - Extensible architecture for custom tools
+- Comprehensive tool system:
+- File operations: `read`, `write`, `edit`, `replace_lines`
+- Search: `glob`, `grep`, `find_files`
+- Execution: `bash` command execution
+- Media: screenshot capture and camera photo capture
+- Extensible architecture for custom/server-backed tools
 
-### Agentic
-- **Agentic Loop**: Autonomous task execution with tool calling - receive task → call LLM with tools → execute tool calls → return results → repeat until complete
-- **A²A Basic Protocol**: Supports a2A basic protocol for agent card endpoint
+### 1.2 Agentic Execution
 
-### LLM Provider support
-- **Multi-Provider Support**: Works with Anthropic Claude, Kimi, Google Gemini, LM Studio, and custom OpenAI-compatible endpoints
-- **Auto-Router**: Intelligent provider fallback - automatically switches to backup providers on failure
+- Agentic loop: task -> LLM with tools -> tool execution -> result feedback -> repeat
+- A2A basic protocol support via agent-card endpoint
 
+### 1.3 LLM Provider Support
 
-### Session Management
-- **SQLite Persistence**: All sessions, messages, and metadata stored in SQLite database
-- **Session Resumption**: Continue previous work exactly where you left off
-- **Session Relationships**: Parent/child sessions and recurring-job sessions
-- **Project Organization**: Group sessions by project
-- **Recurring Jobs**: Schedule and execute automated tasks
-- **In-Session Model Switching**: Change LLM provider/model mid-conversation without losing context (web-app)
+- Multi-provider support: Anthropic Claude, Kimi, Google Gemini, LM Studio, OpenAI-compatible endpoints
+- Auto-router and fallback chain support for reliability
+- In-session provider/model switching support (web app flow)
 
-### Beautiful TUI Interface
-- **Modern Design**: Clean, minimal interface with ASCII art welcome screen
-- **Real-time Status**: 
-  - Model name display at center top
-  - Token usage and context window percentage
-  - Current working directory
-  - Session timer
-- **Enhanced Input Area**: 
-  - Dark gray background with white text
-  - Light blue left border
-  - Multi-line support (Alt+Enter for new line)
-- **Smart Layout**: Keyboard shortcuts on the right, path on the left
-- **Live Metrics**: Real-time token tracking and memory usage
+### 1.4 Session and Persistence
 
-### HTTP API
-- **Web Integration**: Full REST API for web-app integration
-- **Voice Support**: Speech-to-text with Whisper integration
-- **Notifications**: Push notifications support
-- **Session Management**: Create, list, resume, and manage sessions via API
+- SQLite persistence for sessions, messages, jobs, integrations, and app settings
+- Session resumption and parent/child session relationships
+- Recurring jobs and project-aware session organization
 
-### Performance & Reliability
-- **Lightweight**: Minimal memory footprint compared to alternatives. Uses ~10MB of RAM.
-- **Context Management**: Automatic context window tracking and compaction
-- **Error Recovery**: Graceful error handling and provider fallback
-- **File Logging**: Detailed logging for debugging and monitoring
+### 1.5 TUI Experience
 
-## Quick Start
+- Interactive terminal UI with status bar, model display, token/context metrics, and session timer
+- Multi-line input and command palette behavior
+- Live message stream with tool call/result rendering
+
+### 1.6 HTTP API and Integrations
+
+- REST API for web-app integration
+- Session management endpoints (create/list/resume/manage)
+- Speech and integration plumbing (including Whisper-related flows)
+
+### 1.7 Reliability and Performance
+
+- Lightweight runtime footprint
+- Context window tracking and management
+- Structured logging and practical failure handling
+
+## 2. Prerequisites
+
+- Go 1.24+
+- `just` command runner ([install](https://github.com/casey/just#installation))
+- API key for at least one remote provider (unless you use local LM Studio)
+- macOS camera features: Xcode Command Line Tools (`xcode-select --install`)
+
+## 3. Quick Start
 
 ```bash
-# 1. Clone the repository
 git clone https://github.com/A2gent/brute.git
 cd brute
 
-# 2. Set your API key (choose one provider)
+# pick one provider key
 export ANTHROPIC_API_KEY=sk-ant-...
 # or
 export KIMI_API_KEY=sk-kimi-...
 # or
 export GEMINI_API_KEY=...
+
+just start
 ```
 
-### Run in Docker (isolated)
+## 4. Run Modes
+
+### 4.1 Native (recommended for local TUI)
+
+```bash
+# build + run (TUI + API)
+just start
+
+# build only
+just build
+
+# API only
+just server
+```
+
+### 4.2 Docker
 
 Build image:
 
@@ -89,7 +101,7 @@ Build image:
 docker build -t a2gent-brute:latest -f Dockerfile .
 ```
 
-Run with explicit writable mounts only:
+Run directly:
 
 ```bash
 docker run --rm -it \
@@ -97,461 +109,235 @@ docker run --rm -it \
   --read-only \
   --tmpfs /tmp:exec,size=256m \
   -p 8080:8080 \
-  -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
   -v "$PWD":/workspace \
   -v "$HOME/.a2gent-data":/data \
   a2gent-brute:latest
 ```
 
-Or run with Docker Compose:
+Run with compose helpers:
 
 ```bash
-# Start interactive TUI + API server
-docker compose up --build
+# API mode
+just docker-api
 
-# Stop and remove container
-docker compose down
+# API mode with explicit LM Studio endpoint (useful for Tailscale IP)
+just docker-api-lmstudio http://100.x.y.z:1234/v1
+
+# interactive TUI mode (must run in a real terminal)
+just docker-tui
+
+# stop
+just docker-api-down
+# or
+just docker-stop
 ```
 
-Notes:
-- `/workspace` is the only project folder the agent can access.
-- `/data` stores SQLite DB, logs, and config (`AAGENT_DATA_PATH=/data` in the image).
-- You can restrict access further by mounting only specific folders instead of the full project, for example:
-  `-v "$PWD/docs":/workspace/docs:ro -v "$PWD/src":/workspace/src:rw`.
-- For Compose, edit `docker-compose.yml` volumes similarly, for example:
-  `- ./docs:/workspace/docs:ro` and `- ./src:/workspace/src:rw`.
-- To run a one-off task: append it to the command, for example `a2gent-brute:latest "Summarize this repository"`.
+Docker notes:
 
-### Run natively
+- `/workspace` is the agent-visible project tree.
+- `/data` stores DB, logs, and config (`AAGENT_DATA_PATH=/data`).
+- Runtime image is Alpine-based and includes `ffmpeg`.
+- Default LM Studio URL in compose is `http://host.docker.internal:1234/v1`.
+- For Tailscale-hosted LM Studio, prefer direct Tailscale IP over MagicDNS hostname.
+
+### 4.3 Apple Container (macOS)
+
+Requirement: install Apple container CLI: [github.com/apple/container](https://github.com/apple/container)
 
 ```bash
-# Build and run (builds binary, then launches TUI + API server)
-just start
+# build image
+just apple-build
 
-# Or build once and run directly
-just build
-./a2
+# API mode
+just apple-api
+
+# API mode with explicit LM Studio endpoint (recommended for Tailscale)
+LM_STUDIO_BASE_URL=http://100.x.y.z:1234/v1 just apple-api
+
+# interactive TUI mode
+just apple-tui
+
+# stop running brute containers
+just apple-stop
+
+# stop Apple container runtime VM
+just apple-system-stop
 ```
 
-## Session Model (Important)
+## 5. Configuration
 
-- Sessions are persisted in a single SQLite store (`AAGENT_DATA_PATH` / `config.data_path`).
-- A session has `id`, `agent_id`, `title`, `status`, timestamps, and optional `parent_id` / `job_id`.
-- Session metadata exists internally, but there is currently no first-class `project` or `folder` field in the HTTP session API.
-- The HTTP `/sessions` list endpoint does not support grouping or filtering by project/folder today.
+### 5.1 Config Files
 
-Current scope:
-- Supported grouping: sub-sessions via `parent_id`, job-related sessions via `job_id`.
-- Not currently implemented: project-based session grouping tied to filesystem folders in the frontend/API.
-
-## Installation
-
-### Prerequisites
-
-- **Go 1.24+** - [Download Go](https://golang.org/dl/)
-- **just** (command runner) - `cargo install just` or [other install methods](https://github.com/casey/just#installation)
-- **Xcode Command Line Tools** (macOS only) - Required for cgo/camera features:
-  ```bash
-  xcode-select --install
-  ```
-- **API Key** - Choose your provider:
-  - [Anthropic Claude](https://console.anthropic.com/) (recommended)
-  - [Kimi](https://kimi.com)
-  - [Google Gemini](https://ai.google.dev/)
-  - [LM Studio](https://lmstudio.ai/) (local models)
-  - Any OpenAI-compatible endpoint
-
-### Build from Source
-
-```bash
-# Clone the repository
-git clone https://github.com/A2gent/brute.git
-cd brute
-
-# Build and run (builds the binary, then executes it)
-just start
-
-# Or build only
-just build
-
-# Or install to GOPATH/bin (makes 'a2' available globally)
-just install
-```
-
-### One-liner Install
-
-```bash
-# Clone, build, and run in one command
-git clone https://github.com/A2gent/brute.git && cd brute && just start
-```
-
-## Usage
-
-### Environment Setup
-
-Set your API key for your chosen provider (or add to `.env` file in your project or home directory):
-
-```bash
-# Anthropic Claude (recommended)
-export ANTHROPIC_API_KEY=sk-ant-...
-
-# Or Kimi
-export KIMI_API_KEY=sk-kimi-...
-
-# Or Google Gemini
-export GEMINI_API_KEY=...
-
-# Or LM Studio (local)
-export LM_STUDIO_BASE_URL=http://localhost:1234/v1
-```
-
-### Common Commands
-
-| Command | Description |
-|---------|-------------|
-| `a2` | Launch interactive TUI mode |
-| `a2 "<task>"` | Run with an initial task |
-| `a2 --continue <session-id>` | Resume a previous session |
-| `a2 session list` | List all sessions |
-| `a2 logs` | View session logs |
-| `a2 logs -f` | Follow logs in real-time |
-
-### Examples
-
-```bash
-# Interactive mode
-a2
-
-# Run a specific task
-a2 "Refactor the auth module to use JWT tokens"
-
-# Continue previous work
-a2 session list                    # Find your session ID
-a2 --continue abc123-def456-789   # Resume from where you left off
-```
-
-## TUI Interface
-
-The TUI provides a beautiful, modern interactive interface with:
-
-- **Top Bar**: 
-  - Left: Session title and ID
-  - Center: Currently selected model (⚡ model-name)
-  - Right: Token usage, context percentage, memory usage, timer, and status
-- **Welcome Screen**: ASCII art "A² BRUTE" logo with sword when starting fresh
-- **Message History**: Scrollable view of all conversation messages with color-coded tool calls and timestamps
-- **Input Area**: 
-  - Dark gray background with white text
-  - Light blue left border (│) for visual distinction
-  - Multi-line support (3 lines, Alt+Enter for new line)
-- **Bottom Bar**:
-  - Left: Current working directory path
-  - Right: Context-aware keyboard shortcuts
-- **Keyboard Shortcuts**:
-  - `esc`: Quit
-  - `enter`: Send message
-  - `alt+enter`: Insert new line in input
-  - `ctrl+c`: Cancel current operation (or force quit)
-  - `/`: Open command menu
-
-## Configuration
-
-### Config Files
-
-Configuration is loaded in order (later overrides earlier):
+Loaded in order (later overrides earlier):
 
 | Location | Scope |
-|----------|-------|
-| `.aagent/config.json` | Project-level |
-| `~/.config/aagent/config.json` | User-level |
+|---|---|
+| `.aagent/config.json` | project-level |
+| `~/.config/aagent/config.json` | user-level |
 
-### Environment Files
+### 5.2 `.env` Loading
 
-`.env` files are loaded from:
-- Current directory
-- Home directory (`~/.env`)
+The app loads `.env` from:
 
-### Environment Variables
+- current directory
+- `~/.env`
 
-#### Required (choose one)
+### 5.3 Environment Variables
+
+Required (choose one for remote providers):
 
 | Variable | Description |
-|----------|-------------|
-| `ANTHROPIC_API_KEY` | Anthropic Claude API key (recommended) |
-| `KIMI_API_KEY` | Kimi API key |
-| `GEMINI_API_KEY` | Google Gemini API key |
-| `OPENAI_API_KEY` | OpenAI API key (or compatible) |
+|---|---|
+| `ANTHROPIC_API_KEY` | Anthropic key |
+| `KIMI_API_KEY` | Kimi key |
+| `GEMINI_API_KEY` | Gemini key |
+| `OPENAI_API_KEY` | OpenAI-compatible key |
 
-#### Optional
+Common optional variables:
 
 | Variable | Default | Description |
-|----------|---------|-------------|
-| `AAGENT_PROVIDER` | `auto` | LLM provider: `anthropic`, `kimi`, `gemini`, `lmstudio`, `auto-router` |
-| `AAGENT_MODEL` | Provider-specific | Model name (e.g., `claude-sonnet-4`, `kimi-for-coding`) |
-| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Anthropic API endpoint |
-| `KIMI_BASE_URL` | `https://api.kimi.com/coding/v1` | Kimi API endpoint |
-| `GEMINI_BASE_URL` | `https://generativelanguage.googleapis.com` | Gemini API endpoint |
+|---|---|---|
+| `AAGENT_PROVIDER` | `auto` | active provider (`anthropic`, `kimi`, `gemini`, `lmstudio`, `auto-router`) |
+| `AAGENT_MODEL` | provider-specific | model override |
+| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Anthropic endpoint |
+| `KIMI_BASE_URL` | `https://api.kimi.com/coding/v1` | Kimi endpoint |
+| `GEMINI_BASE_URL` | `https://generativelanguage.googleapis.com` | Gemini endpoint |
 | `LM_STUDIO_BASE_URL` | `http://localhost:1234/v1` | LM Studio endpoint |
-| `AAGENT_DATA_PATH` | `~/.local/share/aagent` | Data storage directory |
-| `AAGENT_FALLBACK_PROVIDERS` | - | Comma-separated list of fallback providers |
+| `AAGENT_DATA_PATH` | `~/.local/share/aagent` | data directory |
+| `AAGENT_FALLBACK_PROVIDERS` | - | fallback chain list |
 
-#### Speech-to-Text (Whisper)
+## 6. Common Commands
 
-| Variable | Description |
-|----------|-------------|
-| `AAGENT_WHISPER_BIN` | Path to `whisper-cli` binary |
-| `AAGENT_WHISPER_MODEL` | Model file (e.g., `ggml-base.bin`) |
-| `AAGENT_WHISPER_LANGUAGE` | STT language: `auto`, `en`, `ru`, etc. |
-| `AAGENT_WHISPER_TRANSLATE` | `true` to translate to English |
-| `AAGENT_WHISPER_THREADS` | Thread count for transcription |
-| `AAGENT_WHISPER_AUTO_SETUP` | Auto-build whisper-cli (default: enabled) |
-| `AAGENT_WHISPER_AUTO_DOWNLOAD` | Auto-download model (default: enabled) |
-| `AAGENT_WHISPER_SOURCE` | Path to whisper.cpp source |
+| Command | Description |
+|---|---|
+| `a2` | launch TUI |
+| `a2 "<task>"` | start with an initial task |
+| `a2 --continue <session-id>` | resume session |
+| `a2 session list` | list sessions |
+| `a2 logs` | show logs |
+| `a2 logs -f` | follow logs |
 
-## Database
+## 7. Session Model
 
-The agent uses SQLite for persistent storage of sessions, messages, recurring jobs, and settings.
+- Sessions are persisted in a single SQLite DB (`AAGENT_DATA_PATH/aagent.db`).
+- Session fields include `id`, `agent_id`, `title`, `status`, timestamps, optional `parent_id` and `job_id`.
+- Grouping available now: parent/child sessions and job sessions.
+- Not currently in HTTP session API: first-class project/folder filtering.
 
-### Database Location
+## 8. Database
 
-The SQLite database is stored at:
+DB path:
 
-```
+```bash
 ~/.local/share/aagent/aagent.db
-```
-
-Or if `AAGENT_DATA_PATH` is set:
-
-```
+# or
 $AAGENT_DATA_PATH/aagent.db
 ```
 
-### Database Schema
+Main tables:
 
-The database contains the following main tables:
+- `sessions`
+- `messages`
+- `recurring_jobs`
+- `job_executions`
+- `app_settings`
+- `integrations`
+- `mcp_servers`
+- `projects`
 
-- **sessions** - Session metadata (id, agent_id, parent_id, job_id, project_id, title, status, timestamps)
-- **messages** - Conversation messages with tool calls and results
-- **recurring_jobs** - Scheduled recurring tasks
-- **job_executions** - Execution history for recurring jobs
-- **app_settings** - Application settings and API keys
-- **integrations** - External integrations (Telegram, Slack, etc.)
-- **mcp_servers** - MCP server registry
-- **projects** - Project groupings for sessions
-
-### Accessing the Database
-
-You can query the database directly using `sqlite3`:
+Quick query:
 
 ```bash
 sqlite3 ~/.local/share/aagent/aagent.db
-
-# Example queries
 SELECT id, title, status, created_at FROM sessions ORDER BY created_at DESC LIMIT 10;
-SELECT COUNT(*) FROM messages WHERE session_id = 'your-session-id';
 ```
 
-## Tools
-
-| Tool | Description |
-|------|-------------|
-| `bash` | Execute shell commands |
-| `read` | Read file contents with line range support |
-| `write` | Create or overwrite files |
-| `edit` | String replacement edits in files |
-| `replace_lines` | Replace exact line ranges in files |
-| `glob` | Find files by pattern |
-| `find_files` | Find files with include/exclude filters |
-| `grep` | Search file contents with regex |
-| `take_screenshot_tool` | Capture screenshots (main/all/specific display/area) with configurable output path and Tools UI defaults |
-| `take_camera_photo_tool` | Capture camera photos with configurable camera index/output path and optional inline image metadata for multimodal handoff (macOS uses native AVFoundation via cgo) |
-
-## Project Structure
-
-```
-aagent/
-├── cmd/aagent/         # CLI entry point
-├── internal/
-│   ├── agent/          # Agent orchestrator and loop
-│   ├── config/         # Configuration management
-│   ├── llm/            # LLM client interfaces
-│   │   ├── anthropic/  # Anthropic/Kimi Code implementation
-│   │   └── kimi/       # Kimi K2.5 (OpenAI-compatible, legacy)
-│   ├── logging/        # File-based logging
-│   ├── session/        # Session management
-│   ├── storage/        # SQLite persistence
-│   ├── tools/          # Tool implementations
-│   └── tui/            # Terminal user interface (Bubble Tea)
-├── go.mod
-├── justfile
-└── README.md
-```
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## Development
+## 9. Development
 
 ```bash
-# Run directly (faster for development)
-just run
-
-# Run backend API server only
-just server
-
-# Install hot-reload tool once
-just install-air
-
-# Hot reload backend API server (restarts only after successful build)
-just dev
-
-# Build
-just build
-
-# Run tests
-just test
-
-# Format code
-just fmt
-
-# Lint
-just lint
-
-# View logs
-just logs
-
-# Follow logs
-just logs-follow
+just run         # run with go run
+just dev         # API hot reload (air)
+just build       # build binary
+just test        # run tests
+just fmt         # go fmt
+just lint        # go vet
 ```
 
-Hot reload details:
-- Uses `air` with project config at `.air.toml`.
-- `stop_on_error = false` keeps the previous healthy process running when a code change fails to compile.
-- The server restarts only after a successful `go build`, which avoids replacing a working backend with a broken one during self-edits.
-
-## Testing
-
-The project uses Go's standard testing framework. Tests are automatically run on every push and pull request via GitHub Actions.
-
-### Running Tests
+## 10. Testing
 
 ```bash
-# Run all tests
+# all tests
 just test
 
-# Run tests with coverage
+# with race + coverage
 go test -v -race -coverprofile=coverage.out ./...
 
-# Run tests for a specific package
+# one package
 go test -v ./internal/tools/...
-
-# Run a specific test
-go test -v ./internal/tools/... -run TestFindFilesTool
 ```
 
-### Writing Tests
+## 11. Troubleshooting
 
-Tests follow Go conventions and are located in `*_test.go` files alongside the code they test. See `internal/tools/find_files_test.go` for a comprehensive example that demonstrates:
+### 11.1 API key missing
 
-- **Table-driven tests** using `t.Run()` for sub-tests
-- **Temporary directories** with `t.TempDir()` for isolated test environments
-- **Helper functions** for common assertions and setup
-- **Test coverage** for success cases, error cases, and edge cases
+Set one provider key:
 
-Example test structure:
-
-```go
-func TestFindFilesTool_Execute(t *testing.T) {
-    tempDir := t.TempDir()
-    // Create test files...
-
-    tool := NewFindFilesTool(tempDir)
-
-    t.Run("find all markdown files", func(t *testing.T) {
-        params := map[string]interface{}{"pattern": "*.md"}
-        result := executeTool(t, tool, params)
-
-        assertSuccess(t, result)
-        assertContains(t, result.Output, "readme.md")
-    })
-}
-```
-
-## Troubleshooting
-
-### API Key Issues
-
-**Error:** API key not set
-
-**Solution:** 
 ```bash
-# Set the appropriate API key for your provider
-export ANTHROPIC_API_KEY=sk-ant-your-key-here
-# or
-export KIMI_API_KEY=sk-kimi-your-key-here
-# or
-export GEMINI_API_KEY=your-key-here
+export ANTHROPIC_API_KEY=sk-ant-...
+# or KIMI_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY
 ```
-Or create a `.env` file in your project directory with your chosen provider's key.
 
-### Provider Issues
+### 11.2 Provider not available
 
-**Error:** Provider not available
-
-**Solution:** Use auto-router for automatic fallback:
 ```bash
 export AAGENT_PROVIDER=auto-router
 export AAGENT_FALLBACK_PROVIDERS=anthropic,kimi,gemini
 ```
 
-### Build Issues
+### 11.3 TUI in container fails with `/dev/tty`
 
-**Error:** `command not found: just`
+Run TUI from a real interactive terminal (`just docker-tui`) or use API mode (`just docker-api`).
 
-**Solution:** Install `just` command runner:
+### 11.4 LM Studio + Tailscale in container
+
+Use Tailscale IP, not MagicDNS hostname, e.g.:
+
 ```bash
-cargo install just
+just docker-api-lmstudio http://100.x.y.z:1234/v1
 ```
 
-**Error:** Build fails with Go version error
+## 12. Project Structure
 
-**Solution:** Ensure you have Go 1.21+ installed:
-```bash
-go version
+```text
+aagent/
+├── cmd/aagent/         # CLI entry point
+├── internal/
+│   ├── agent/          # orchestrator and loop
+│   ├── config/         # config management
+│   ├── llm/            # provider clients
+│   ├── logging/        # logs
+│   ├── session/        # session model + manager
+│   ├── storage/        # SQLite store
+│   ├── tools/          # built-in tools
+│   └── tui/            # Bubble Tea UI
+├── justfile
+└── README.md
 ```
 
-### Session Issues
+## 13. Contributing
 
-**Error:** Cannot resume session
+1. Fork the repository.
+2. Create a branch (`git checkout -b feature/your-change`).
+3. Commit and push changes.
+4. Open a pull request.
 
-**Solution:** List available sessions and check the ID:
-```bash
-a2 session list
-```
+## 14. License and Support
 
-### Logs
+License: MIT
 
-View detailed logs for debugging:
-```bash
-a2 logs -f
-```
-
-## License
-
-MIT
-
-## 📞 Support
-
-|Channel|Link|
-|--|--|
-| 📱 Founder Telegram | @tot_ra |
-| 🐦 X / Twitter | @tot_ra |
-| 📅 Schedule Demo | https://calendly.com/artkurapov/30min | 
-| ✉️ Email | artkurapov at gmail.com |
+| Channel | Contact |
+|---|---|
+| Founder Telegram | `@tot_ra` |
+| X / Twitter | `@tot_ra` |
+| Schedule Demo | `https://calendly.com/artkurapov/30min` |
+| Email | `artkurapov at gmail.com` |

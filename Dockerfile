@@ -10,24 +10,24 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/a2 ./cmd/aagent
 
-FROM debian:bookworm-slim
+FROM alpine:3.21
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apk add --no-cache \
     bash \
     ca-certificates \
+    ffmpeg \
     git \
     ripgrep \
-    tini \
-    && rm -rf /var/lib/apt/lists/*
+    tini
 
-RUN groupadd --system --gid 10001 aagent \
-    && useradd --system --uid 10001 --gid aagent --create-home --home-dir /home/aagent aagent \
-    && mkdir -p /workspace /data /data/home/.config/aagent \
+RUN addgroup -S -g 10001 aagent \
+    && adduser -S -D -u 10001 -G aagent -h /home/aagent aagent \
+    && mkdir -p /workspace /data /data/.config/aagent \
     && chown -R aagent:aagent /workspace /data /home/aagent
 
 COPY --from=builder /out/a2 /usr/local/bin/a2
 
-ENV HOME=/data/home \
+ENV HOME=/data \
     AAGENT_DATA_PATH=/data
 
 WORKDIR /workspace
@@ -35,5 +35,5 @@ USER aagent
 
 EXPOSE 8080
 
-ENTRYPOINT ["/usr/bin/tini", "--", "a2"]
+ENTRYPOINT ["/sbin/tini", "--", "a2"]
 CMD []

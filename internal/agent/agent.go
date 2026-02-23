@@ -965,6 +965,7 @@ Guidelines:
 Available tools allow you to:
 - Execute shell commands (bash)
 - Execute secure Python data processing snippets (code_execution)
+- Chain multiple tools in one sequential call (pipeline)
 - Read file contents (read)
 - Write new files (write)
 - Edit existing files with string replacement (edit)
@@ -973,6 +974,7 @@ Available tools allow you to:
 - Find files by pattern (glob)
 - Find files with include/exclude filters (find_files)
 - Search file contents (grep)
+- Filter text/file content to reduce context (filter)
 
 Be concise but thorough. Complete the user's task step by step.`
 

@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -10,14 +11,65 @@ import (
 )
 
 func (s *Server) handleA2AMessageSend(w http.ResponseWriter, r *http.Request) {
-	var req a2atunnel.InboundPayload
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+	response, err := s.processA2AMessageRequest(r)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if len(req.Content) == 0 {
-		s.errorResponse(w, http.StatusBadRequest, "A2A messages endpoint requires canonical content[]")
+	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"status":  "completed",
+		"message": response,
+	})
+}
+
+func (s *Server) handleA2AMessageSendStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		s.errorResponse(w, http.StatusInternalServerError, "streaming not supported")
 		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	writeEvent := func(eventType string, payload interface{}) bool {
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return false
+		}
+		if _, err := fmt.Fprintf(w, "event: %s\n", eventType); err != nil {
+			return false
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", body); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+
+	if !writeEvent("status", map[string]interface{}{"state": "accepted"}) {
+		return
+	}
+
+	response, err := s.processA2AMessageRequest(r)
+	if err != nil {
+		_ = writeEvent("status", map[string]interface{}{"state": "failed", "error": err.Error()})
+		return
+	}
+	_ = writeEvent("message", map[string]interface{}{
+		"state":   "completed",
+		"message": response,
+	})
+}
+
+func (s *Server) processA2AMessageRequest(r *http.Request) (*a2atunnel.OutboundPayload, error) {
+	var req a2atunnel.InboundPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return nil, fmt.Errorf("invalid request body: %w", err)
+	}
+	if len(req.Content) == 0 {
+		return nil, fmt.Errorf("A2A messages endpoint requires canonical content[]")
 	}
 
 	derivedText, derivedImages := a2atunnel.LegacyFromA2AContent(req.Content)
@@ -44,8 +96,7 @@ func (s *Server) handleA2AMessageSend(w http.ResponseWriter, r *http.Request) {
 
 	payload, err := json.Marshal(req)
 	if err != nil {
-		s.errorResponse(w, http.StatusInternalServerError, "Failed to encode canonical payload: "+err.Error())
-		return
+		return nil, fmt.Errorf("failed to encode canonical payload: %w", err)
 	}
 
 	handler := a2atunnel.NewInboundHandler(
@@ -62,14 +113,12 @@ func (s *Server) handleA2AMessageSend(w http.ResponseWriter, r *http.Request) {
 		Payload:   payload,
 	})
 	if err != nil {
-		s.errorResponse(w, http.StatusBadGateway, "A2A message handling failed: "+err.Error())
-		return
+		return nil, fmt.Errorf("A2A message handling failed: %w", err)
 	}
 
 	var response a2atunnel.OutboundPayload
 	if err := json.Unmarshal(respPayload, &response); err != nil {
-		s.errorResponse(w, http.StatusInternalServerError, "Failed to decode response payload: "+err.Error())
-		return
+		return nil, fmt.Errorf("failed to decode response payload: %w", err)
 	}
 	if len(response.Content) == 0 {
 		response.Content = a2atunnel.BuildA2AContent(response.Result, response.Images)
@@ -80,9 +129,5 @@ func (s *Server) handleA2AMessageSend(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(response.MessageID) == "" {
 		response.MessageID = uuid.NewString()
 	}
-
-	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"status":  "completed",
-		"message": response,
-	})
+	return &response, nil
 }

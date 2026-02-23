@@ -269,8 +269,10 @@ func (s *Server) setupRoutes() {
 	// A2A outbound chat (local session -> remote agent via tunnel).
 	r.Route("/a2a", func(r chi.Router) {
 		r.Post("/messages/send", s.handleA2AMessageSend)
+		r.Post("/messages/send/stream", s.handleA2AMessageSendStream)
 		r.Post("/outbound/sessions", s.handleCreateA2AOutboundSession)
 		r.Post("/outbound/sessions/{sessionID}/chat", s.handleA2AOutboundChat)
+		r.Post("/outbound/sessions/{sessionID}/chat/stream", s.handleA2AOutboundChatStream)
 	})
 
 	// App settings (tokens/secrets/runtime options)

@@ -62,40 +62,110 @@ func (s *Server) handleCreateA2AOutboundSession(w http.ResponseWriter, r *http.R
 
 func (s *Server) handleA2AOutboundChat(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionID")
+	resp, err := s.processA2AOutboundChat(r.Context(), sessionID, r)
+	if err != nil {
+		s.errorResponse(w, err.status, err.message)
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, *resp)
+}
 
+func (s *Server) handleA2AOutboundChatStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		s.errorResponse(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	writeEvent := func(eventType string, payload interface{}) bool {
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return false
+		}
+		if _, err := fmt.Fprintf(w, "event: %s\n", eventType); err != nil {
+			return false
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", body); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+
+	if !writeEvent("status", map[string]interface{}{"state": "accepted"}) {
+		return
+	}
+	sessionID := chi.URLParam(r, "sessionID")
+
+	type streamResult struct {
+		resp *ChatResponse
+		err  *a2aChatHTTPError
+	}
+	done := make(chan streamResult, 1)
+	go func() {
+		resp, chatErr := s.processA2AOutboundChat(r.Context(), sessionID, r)
+		done <- streamResult{resp: resp, err: chatErr}
+	}()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case result := <-done:
+			if result.err != nil {
+				_ = writeEvent("status", map[string]interface{}{"state": "failed", "error": result.err.message, "http_status": result.err.status})
+				return
+			}
+			_ = writeEvent("response", *result.resp)
+			return
+		case <-ticker.C:
+			if !writeEvent("status", map[string]interface{}{"state": "running"}) {
+				return
+			}
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
+type a2aChatHTTPError struct {
+	status  int
+	message string
+}
+
+func (s *Server) processA2AOutboundChat(ctx context.Context, sessionID string, r *http.Request) (*ChatResponse, *a2aChatHTTPError) {
 	var req ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
-		return
+		return nil, &a2aChatHTTPError{status: http.StatusBadRequest, message: "Invalid request body: " + err.Error()}
 	}
 	message := strings.TrimSpace(req.Message)
 	images, err := normalizeIncomingImages(req.Images)
 	if err != nil {
-		s.errorResponse(w, http.StatusBadRequest, "Invalid images payload: "+err.Error())
-		return
+		return nil, &a2aChatHTTPError{status: http.StatusBadRequest, message: "Invalid images payload: " + err.Error()}
 	}
 	if message == "" && len(images) == 0 {
-		s.errorResponse(w, http.StatusBadRequest, "Message or images are required")
-		return
+		return nil, &a2aChatHTTPError{status: http.StatusBadRequest, message: "Message or images are required"}
 	}
 
 	sess, err := s.sessionManager.Get(sessionID)
 	if err != nil {
-		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
-		return
+		return nil, &a2aChatHTTPError{status: http.StatusNotFound, message: "Session not found: " + err.Error()}
 	}
 	isOutbound, targetAgentID, _ := sessionA2AOutboundMeta(sess)
 	if !isOutbound || strings.TrimSpace(targetAgentID) == "" {
-		s.errorResponse(w, http.StatusBadRequest, "Session is not an A2A outbound session")
-		return
+		return nil, &a2aChatHTTPError{status: http.StatusBadRequest, message: "Session is not an A2A outbound session"}
 	}
 
 	s.tunnelMu.Lock()
 	client := s.tunnelClient
 	s.tunnelMu.Unlock()
 	if client == nil || !client.IsConnected() {
-		s.errorResponse(w, http.StatusConflict, "A2A tunnel is not connected")
-		return
+		return nil, &a2aChatHTTPError{status: http.StatusConflict, message: "A2A tunnel is not connected"}
 	}
 
 	conversationID, _ := sess.Metadata[a2aConversationIDKey].(string)
@@ -126,34 +196,30 @@ func (s *Server) handleA2AOutboundChat(w http.ResponseWriter, r *http.Request) {
 		Images:          sessionImagesToA2A(images),
 	})
 	if err != nil {
-		s.errorResponse(w, http.StatusInternalServerError, "Failed to encode outbound payload: "+err.Error())
-		return
+		return nil, &a2aChatHTTPError{status: http.StatusInternalServerError, message: "Failed to encode outbound payload: " + err.Error()}
 	}
 
 	sess.AddUserMessageWithImages(message, images)
 	sess.SetStatus(session.StatusRunning)
 	if err := s.sessionManager.Save(sess); err != nil {
-		s.errorResponse(w, http.StatusInternalServerError, "Failed to update session: "+err.Error())
-		return
+		return nil, &a2aChatHTTPError{status: http.StatusInternalServerError, message: "Failed to update session: " + err.Error()}
 	}
 
-	callCtx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	callCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	respPayload, err := client.Call(callCtx, strings.TrimSpace(targetAgentID), payload)
 	if err != nil {
 		sess.AddAssistantMessage(fmt.Sprintf("Remote call failed: %v", err), nil)
 		sess.SetStatus(session.StatusFailed)
 		_ = s.sessionManager.Save(sess)
-		s.errorResponse(w, http.StatusBadGateway, "Remote call failed: "+err.Error())
-		return
+		return nil, &a2aChatHTTPError{status: http.StatusBadGateway, message: "Remote call failed: " + err.Error()}
 	}
 
 	result, resultImages := decodeA2AOutboundResult(respPayload)
 	sess.AddAssistantMessageWithImagesAndMetadata(result, resultImages, nil, nil)
 	sess.SetStatus(session.StatusCompleted)
 	if err := s.sessionManager.Save(sess); err != nil {
-		s.errorResponse(w, http.StatusInternalServerError, "Failed to persist session response: "+err.Error())
-		return
+		return nil, &a2aChatHTTPError{status: http.StatusInternalServerError, message: "Failed to persist session response: " + err.Error()}
 	}
 
 	resp := ChatResponse{
@@ -161,7 +227,7 @@ func (s *Server) handleA2AOutboundChat(w http.ResponseWriter, r *http.Request) {
 		Messages: s.messagesToResponse(sess.Messages),
 		Status:   string(sess.Status),
 	}
-	s.jsonResponse(w, http.StatusOK, resp)
+	return &resp, nil
 }
 
 func decodeA2AOutboundResult(payload []byte) (string, []session.ImageAttachment) {

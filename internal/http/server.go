@@ -145,6 +145,7 @@ const integrationSkillsInstructionBlockType = "integration_skills"
 const externalMarkdownSkillsInstructionBlockType = "external_markdown_skills"
 const mcpServersInstructionBlockType = "mcp_servers"
 const skillsFolderSettingKey = "AAGENT_SKILLS_FOLDER"
+const externalMarkdownDisabledSkillsSettingKey = "A2GENT_EXTERNAL_MARKDOWN_DISABLED_SKILLS"
 const defaultDynamicInstructionFile = "AGENTS.md"
 const maxDynamicInstructionBytes = 32 * 1024
 const sessionSystemPromptSnapshotMetadataKey = "system_prompt_snapshot"
@@ -3694,11 +3695,16 @@ func (s *Server) resolveExternalMarkdownSkillsSection(settings map[string]string
 		return "", 0, "No markdown skills discovered in configured skills folder."
 	}
 
+	disabledSkills := resolveDisabledExternalMarkdownSkillPaths(settings, resolvedFolder)
+
 	// Separate skills by strategy
 	alwaysSkills := make([]*skillsLoader.Skill, 0)
 	onDemandSkills := make([]*skillsLoader.Skill, 0)
 
 	for _, skill := range allSkills {
+		if _, isDisabled := disabledSkills[filepath.Clean(strings.TrimSpace(skill.Path))]; isDisabled {
+			continue
+		}
 		if skill.Strategy == skillsLoader.StrategyDisabled {
 			continue
 		}
@@ -3767,6 +3773,41 @@ func (s *Server) resolveExternalMarkdownSkillsSection(settings map[string]string
 	}
 
 	return builder.String(), totalEstimatedTokens, ""
+}
+
+func resolveDisabledExternalMarkdownSkillPaths(settings map[string]string, skillsFolder string) map[string]struct{} {
+	disabled := make(map[string]struct{})
+	if settings == nil {
+		return disabled
+	}
+
+	raw := strings.TrimSpace(settings[externalMarkdownDisabledSkillsSettingKey])
+	if raw == "" {
+		return disabled
+	}
+
+	entries := make([]string, 0)
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		entries = strings.FieldsFunc(raw, func(r rune) bool {
+			return r == ',' || r == '\n'
+		})
+	}
+
+	for _, entry := range entries {
+		candidate := strings.TrimSpace(entry)
+		if candidate == "" {
+			continue
+		}
+		if !filepath.IsAbs(candidate) {
+			candidate = filepath.Join(skillsFolder, candidate)
+		}
+		resolved, err := filepath.Abs(candidate)
+		if err != nil {
+			continue
+		}
+		disabled[filepath.Clean(resolved)] = struct{}{}
+	}
+	return disabled
 }
 
 func syncSettingsToEnv(previous map[string]string, next map[string]string) {

@@ -9,17 +9,18 @@ run:
 server:
     go run ./cmd/aagent server
 
-# Install air hot-reload tool
-install-air:
-    go install github.com/air-verse/air@latest
+install:
+  brew install cmake ffmpeg pkg-config
+  go install github.com/air-verse/air@latest
+  go install ./cmd/aagent
+
+build:
+    go build -o {{binary}} ./cmd/aagent
 
 # Run backend API server with hot reload (build must succeed before restart)
 dev:
+    go install github.com/air-verse/air@latest
     air -c .air.toml
-
-# Build the binary
-build:
-    go build -o {{binary}} ./cmd/aagent
 
 # Run the built binary
 start: build
@@ -33,10 +34,6 @@ clean:
 # Run tests
 test:
     go test -v ./...
-
-# Install to GOPATH/bin
-install:
-    go install ./cmd/aagent
 
 # Format code
 fmt:

@@ -61,6 +61,11 @@ Works best with [A²gent/caesar](https://github.com/A2gent/caesar) as control ap
 - `just` command runner ([install](https://github.com/casey/just#installation))
 - API key for at least one remote provider (unless you use local LM Studio)
 - macOS camera features: Xcode Command Line Tools (`xcode-select --install`)
+- For local audio in web-app (Whisper/Piper bootstrap):
+  - `cmake`
+  - `ffmpeg`
+  - `pkg-config`
+  - Install on macOS: `brew install cmake ffmpeg pkg-config`
 
 ## 3. Quick Start
 

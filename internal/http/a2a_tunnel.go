@@ -284,8 +284,12 @@ func (s *Server) handleA2ATunnelStatusStream(w http.ResponseWriter, r *http.Requ
 	var logCh chan struct{}
 	if client != nil {
 		logCh = client.SubscribeLog()
-		defer client.UnsubscribeLog(logCh)
 	}
+	defer func() {
+		if client != nil && logCh != nil {
+			client.UnsubscribeLog(logCh)
+		}
+	}()
 
 	keepalive := time.NewTicker(15 * time.Second)
 	defer keepalive.Stop()

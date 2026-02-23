@@ -170,6 +170,17 @@ func TestTunnelClientCallWebSocket(t *testing.T) {
 	}
 }
 
+func TestEventLogUnsubscribeIdempotent(t *testing.T) {
+	t.Parallel()
+
+	l := newEventLog(8)
+	ch := l.subscribe()
+
+	l.unsubscribe(ch)
+	l.unsubscribe(ch) // should be a no-op, not panic
+	l.unsubscribe(nil)
+}
+
 type grpcTunnelService interface {
 	Connect(grpcTunnelConnectServer) error
 }

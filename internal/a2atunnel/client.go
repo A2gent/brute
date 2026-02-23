@@ -37,8 +37,8 @@ import (
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"nhooyr.io/websocket"
@@ -177,15 +177,22 @@ func (l *eventLog) subscribe() chan struct{} {
 }
 
 func (l *eventLog) unsubscribe(ch chan struct{}) {
+	if ch == nil {
+		return
+	}
 	l.mu.Lock()
+	found := false
 	for i, s := range l.subs {
 		if s == ch {
 			l.subs = append(l.subs[:i], l.subs[i+1:]...)
+			found = true
 			break
 		}
 	}
 	l.mu.Unlock()
-	close(ch)
+	if found {
+		close(ch)
+	}
 }
 
 // ---- State ----

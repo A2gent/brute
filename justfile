@@ -15,6 +15,7 @@ install-air:
 
 # Run backend API server with hot reload (build must succeed before restart)
 dev:
+    go install github.com/air-verse/air@latest
     air -c .air.toml
 
 # Build the binary

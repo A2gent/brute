@@ -219,16 +219,37 @@ type Status struct {
 // InboundPayload is the JSON inside an inbound task's AgentRequest.Payload.
 // The calling agent (another brute instance) populates this.
 type InboundPayload struct {
-	Task            string `json:"task"`
-	SourceAgentID   string `json:"source_agent_id"`
-	SourceAgentName string `json:"source_agent_name"`
-	ConversationID  string `json:"conversation_id,omitempty"`
-	SourceSessionID string `json:"source_session_id,omitempty"`
+	A2AVersion     string                 `json:"a2a_version,omitempty"`
+	MessageID      string                 `json:"message_id,omitempty"`
+	ConversationID string                 `json:"conversation_id,omitempty"`
+	Sender         *A2AParty              `json:"sender,omitempty"`
+	Recipient      *A2AParty              `json:"recipient,omitempty"`
+	Content        []A2AContentPart       `json:"content,omitempty"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+
+	Task            string     `json:"task"`
+	SourceAgentID   string     `json:"source_agent_id"`
+	SourceAgentName string     `json:"source_agent_name"`
+	SourceSessionID string     `json:"source_session_id,omitempty"`
+	Images          []A2AImage `json:"images,omitempty"`
 }
 
 // OutboundPayload is what we put in AgentResponse.Payload for a task_response.
 type OutboundPayload struct {
-	Result string `json:"result"`
+	A2AVersion string                 `json:"a2a_version,omitempty"`
+	MessageID  string                 `json:"message_id,omitempty"`
+	Content    []A2AContentPart       `json:"content,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+	Result     string                 `json:"result"`
+	Images     []A2AImage             `json:"images,omitempty"`
+}
+
+// A2AImage carries image input/output in tunnel payloads.
+type A2AImage struct {
+	Name       string `json:"name,omitempty"`
+	MediaType  string `json:"media_type,omitempty"`
+	DataBase64 string `json:"data_base64,omitempty"`
+	URL        string `json:"url,omitempty"`
 }
 
 // CallPayload is what we send as the Payload of a call_request.

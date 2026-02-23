@@ -9,6 +9,7 @@ import (
 	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/tools"
+	"github.com/google/uuid"
 )
 
 // A2A metadata keys stored on sessions created from inbound requests.
@@ -69,9 +70,27 @@ func (h *InboundHandler) Handle(ctx context.Context, req *AgentRequest) ([]byte,
 	if err := json.Unmarshal(req.Payload, &p); err != nil {
 		return nil, fmt.Errorf("invalid inbound payload: %w", err)
 	}
-	if p.Task == "" {
-		return nil, fmt.Errorf("inbound payload missing 'task'")
+	if len(p.Content) > 0 {
+		derivedTask, derivedImages := LegacyFromA2AContent(p.Content)
+		if strings.TrimSpace(p.Task) == "" {
+			p.Task = derivedTask
+		}
+		if len(p.Images) == 0 {
+			p.Images = derivedImages
+		}
 	}
+	if p.Sender != nil {
+		if strings.TrimSpace(p.SourceAgentID) == "" {
+			p.SourceAgentID = strings.TrimSpace(p.Sender.AgentID)
+		}
+		if strings.TrimSpace(p.SourceAgentName) == "" {
+			p.SourceAgentName = strings.TrimSpace(p.Sender.Name)
+		}
+	}
+	if strings.TrimSpace(p.Task) == "" && len(p.Images) == 0 {
+		return nil, fmt.Errorf("inbound payload missing both 'task' and 'images'")
+	}
+	incomingImages := a2aImagesToSession(p.Images)
 
 	// 2. Resolve base project (dynamic — reads current settings).
 	projectID := h.inboundProjectID()
@@ -105,6 +124,9 @@ func (h *InboundHandler) Handle(ctx context.Context, req *AgentRequest) ([]byte,
 		delete(sess.Metadata, "sub_agent_name")
 	}
 	if pending, _ := h.sessionManager.GetPendingQuestion(sess.ID); pending != nil && sess.Status == session.StatusInputRequired {
+		if len(incomingImages) > 0 {
+			return nil, fmt.Errorf("agent is waiting for text input; image attachments are not supported for pending questions")
+		}
 		if err := h.sessionManager.AnswerQuestion(sess.ID, p.Task); err != nil {
 			return nil, fmt.Errorf("failed to answer pending question: %w", err)
 		}
@@ -113,7 +135,7 @@ func (h *InboundHandler) Handle(ctx context.Context, req *AgentRequest) ([]byte,
 			sess = reloaded
 		}
 	} else {
-		sess.AddUserMessage(p.Task)
+		sess.AddUserMessageWithImages(strings.TrimSpace(p.Task), incomingImages)
 		sess.SetStatus(session.StatusRunning)
 	}
 	beforeRunCount := len(sess.Messages)
@@ -123,12 +145,12 @@ func (h *InboundHandler) Handle(ctx context.Context, req *AgentRequest) ([]byte,
 
 	// 4. Build an agent scoped to this session and run the loop.
 	toolManager := h.toolManagerFactory(sess)
-	ag, err := h.agentFactory(ctx, sess, toolManager, p.Task)
+	ag, err := h.agentFactory(ctx, sess, toolManager, inboundPromptForRouting(p.Task, len(incomingImages)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure inbound execution target: %w", err)
 	}
 
-	result, _, runErr := ag.Run(ctx, sess, p.Task)
+	result, _, runErr := ag.Run(ctx, sess, strings.TrimSpace(p.Task))
 	if runErr != nil {
 		return nil, fmt.Errorf("agent run failed: %w", runErr)
 	}
@@ -136,7 +158,15 @@ func (h *InboundHandler) Handle(ctx context.Context, req *AgentRequest) ([]byte,
 		if question, qErr := h.sessionManager.GetPendingQuestion(sess.ID); qErr == nil && question != nil {
 			text := renderPendingQuestion(question)
 			if strings.TrimSpace(text) != "" {
-				out, encErr := json.Marshal(OutboundPayload{Result: text})
+				responseImages := []A2AImage(nil)
+				content := BuildA2AContent(text, responseImages)
+				out, encErr := json.Marshal(OutboundPayload{
+					A2AVersion: A2ABridgeVersion,
+					MessageID:  uuid.NewString(),
+					Content:    content,
+					Result:     text,
+					Images:     responseImages,
+				})
 				if encErr != nil {
 					return nil, fmt.Errorf("failed to encode question response: %w", encErr)
 				}
@@ -146,8 +176,9 @@ func (h *InboundHandler) Handle(ctx context.Context, req *AgentRequest) ([]byte,
 		}
 		return nil, fmt.Errorf("agent requires user input")
 	}
+	assistantContent, assistantImages := latestAssistantMessageSince(sess.Messages, beforeRunCount)
 	if strings.TrimSpace(result) == "" {
-		if fallback := latestAssistantMessageContentSince(sess.Messages, beforeRunCount); fallback != "" {
+		if fallback := strings.TrimSpace(assistantContent); fallback != "" {
 			result = fallback
 		} else {
 			return nil, fmt.Errorf("agent run produced no assistant response")
@@ -155,7 +186,14 @@ func (h *InboundHandler) Handle(ctx context.Context, req *AgentRequest) ([]byte,
 	}
 
 	// 5. Encode result.
-	out, err := json.Marshal(OutboundPayload{Result: result})
+	responseImages := sessionImagesToA2A(assistantImages)
+	out, err := json.Marshal(OutboundPayload{
+		A2AVersion: A2ABridgeVersion,
+		MessageID:  uuid.NewString(),
+		Content:    BuildA2AContent(result, responseImages),
+		Result:     result,
+		Images:     responseImages,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode response: %w", err)
 	}
@@ -212,6 +250,11 @@ func (h *InboundHandler) resolveSession(p InboundPayload) (*session.Session, err
 }
 
 func latestAssistantMessageContentSince(messages []session.Message, start int) string {
+	content, _ := latestAssistantMessageSince(messages, start)
+	return content
+}
+
+func latestAssistantMessageSince(messages []session.Message, start int) (string, []session.ImageAttachment) {
 	if start < 0 {
 		start = 0
 	}
@@ -223,11 +266,56 @@ func latestAssistantMessageContentSince(messages []session.Message, start int) s
 			continue
 		}
 		content := strings.TrimSpace(messages[i].Content)
-		if content != "" {
-			return content
+		if content != "" || len(messages[i].Images) > 0 {
+			images := make([]session.ImageAttachment, len(messages[i].Images))
+			copy(images, messages[i].Images)
+			return content, images
 		}
 	}
+	return "", nil
+}
+
+func inboundPromptForRouting(text string, imageCount int) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed != "" {
+		return trimmed
+	}
+	if imageCount > 0 {
+		return fmt.Sprintf("[User sent %d image(s)]", imageCount)
+	}
 	return ""
+}
+
+func a2aImagesToSession(images []A2AImage) []session.ImageAttachment {
+	if len(images) == 0 {
+		return nil
+	}
+	out := make([]session.ImageAttachment, 0, len(images))
+	for _, img := range images {
+		out = append(out, session.ImageAttachment{
+			Name:       strings.TrimSpace(img.Name),
+			MediaType:  strings.TrimSpace(img.MediaType),
+			DataBase64: strings.TrimSpace(img.DataBase64),
+			URL:        strings.TrimSpace(img.URL),
+		})
+	}
+	return out
+}
+
+func sessionImagesToA2A(images []session.ImageAttachment) []A2AImage {
+	if len(images) == 0 {
+		return nil
+	}
+	out := make([]A2AImage, 0, len(images))
+	for _, img := range images {
+		out = append(out, A2AImage{
+			Name:       strings.TrimSpace(img.Name),
+			MediaType:  strings.TrimSpace(img.MediaType),
+			DataBase64: strings.TrimSpace(img.DataBase64),
+			URL:        strings.TrimSpace(img.URL),
+		})
+	}
+	return out
 }
 
 func renderPendingQuestion(q *session.QuestionData) string {

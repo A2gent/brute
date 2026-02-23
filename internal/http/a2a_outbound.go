@@ -13,6 +13,7 @@ import (
 	"github.com/A2gent/brute/internal/a2atunnel"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 type createA2AOutboundSessionRequest struct {
@@ -68,8 +69,13 @@ func (s *Server) handleA2AOutboundChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	message := strings.TrimSpace(req.Message)
-	if message == "" {
-		s.errorResponse(w, http.StatusBadRequest, "Message is required")
+	images, err := normalizeIncomingImages(req.Images)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid images payload: "+err.Error())
+		return
+	}
+	if message == "" && len(images) == 0 {
+		s.errorResponse(w, http.StatusBadRequest, "Message or images are required")
 		return
 	}
 
@@ -101,18 +107,30 @@ func (s *Server) handleA2AOutboundChat(w http.ResponseWriter, r *http.Request) {
 	sourceAgentID := s.localA2ASourceAgentID()
 
 	payload, err := json.Marshal(a2atunnel.CallPayload{
+		A2AVersion:     a2atunnel.A2ABridgeVersion,
+		MessageID:      uuid.NewString(),
+		ConversationID: conversationID,
+		Sender: &a2atunnel.A2AParty{
+			AgentID: sourceAgentID,
+			Name:    sourceAgentName,
+		},
+		Recipient: &a2atunnel.A2AParty{
+			AgentID: strings.TrimSpace(targetAgentID),
+		},
+		Content: a2atunnel.BuildA2AContent(message, sessionImagesToA2A(images)),
+
 		Task:            message,
 		SourceAgentID:   sourceAgentID,
 		SourceAgentName: sourceAgentName,
-		ConversationID:  conversationID,
 		SourceSessionID: sess.ID,
+		Images:          sessionImagesToA2A(images),
 	})
 	if err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to encode outbound payload: "+err.Error())
 		return
 	}
 
-	sess.AddUserMessage(message)
+	sess.AddUserMessageWithImages(message, images)
 	sess.SetStatus(session.StatusRunning)
 	if err := s.sessionManager.Save(sess); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to update session: "+err.Error())
@@ -130,8 +148,8 @@ func (s *Server) handleA2AOutboundChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := decodeA2AOutboundResult(respPayload)
-	sess.AddAssistantMessage(result, nil)
+	result, resultImages := decodeA2AOutboundResult(respPayload)
+	sess.AddAssistantMessageWithImagesAndMetadata(result, resultImages, nil, nil)
 	sess.SetStatus(session.StatusCompleted)
 	if err := s.sessionManager.Save(sess); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to persist session response: "+err.Error())
@@ -146,24 +164,65 @@ func (s *Server) handleA2AOutboundChat(w http.ResponseWriter, r *http.Request) {
 	s.jsonResponse(w, http.StatusOK, resp)
 }
 
-func decodeA2AOutboundResult(payload []byte) string {
-	var structured struct {
-		Result string `json:"result"`
-	}
-	if err := json.Unmarshal(payload, &structured); err == nil && strings.TrimSpace(structured.Result) != "" {
-		return structured.Result
+func decodeA2AOutboundResult(payload []byte) (string, []session.ImageAttachment) {
+	var structured a2atunnel.OutboundPayload
+	if err := json.Unmarshal(payload, &structured); err == nil {
+		result := strings.TrimSpace(structured.Result)
+		images := structured.Images
+		if len(images) == 0 && len(structured.Content) > 0 {
+			derivedText, derivedImages := a2atunnel.LegacyFromA2AContent(structured.Content)
+			if result == "" {
+				result = strings.TrimSpace(derivedText)
+			}
+			images = derivedImages
+		}
+		if result != "" || len(images) > 0 {
+			return result, a2aImagesToSession(images)
+		}
 	}
 
 	var text string
 	if err := json.Unmarshal(payload, &text); err == nil && strings.TrimSpace(text) != "" {
-		return text
+		return text, nil
 	}
 
 	trimmed := strings.TrimSpace(string(payload))
 	if trimmed != "" {
-		return trimmed
+		return trimmed, nil
 	}
-	return "Remote agent returned an empty response."
+	return "Remote agent returned an empty response.", nil
+}
+
+func sessionImagesToA2A(images []session.ImageAttachment) []a2atunnel.A2AImage {
+	if len(images) == 0 {
+		return nil
+	}
+	out := make([]a2atunnel.A2AImage, 0, len(images))
+	for _, img := range images {
+		out = append(out, a2atunnel.A2AImage{
+			Name:       strings.TrimSpace(img.Name),
+			MediaType:  strings.TrimSpace(img.MediaType),
+			DataBase64: strings.TrimSpace(img.DataBase64),
+			URL:        strings.TrimSpace(img.URL),
+		})
+	}
+	return out
+}
+
+func a2aImagesToSession(images []a2atunnel.A2AImage) []session.ImageAttachment {
+	if len(images) == 0 {
+		return nil
+	}
+	out := make([]session.ImageAttachment, 0, len(images))
+	for _, img := range images {
+		out = append(out, session.ImageAttachment{
+			Name:       strings.TrimSpace(img.Name),
+			MediaType:  strings.TrimSpace(img.MediaType),
+			DataBase64: strings.TrimSpace(img.DataBase64),
+			URL:        strings.TrimSpace(img.URL),
+		})
+	}
+	return out
 }
 
 func (s *Server) localA2AAgentName() string {

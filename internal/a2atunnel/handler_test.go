@@ -28,6 +28,36 @@ func TestLatestAssistantMessageContentSince(t *testing.T) {
 	}
 }
 
+func TestLatestAssistantMessageSincePrefersImages(t *testing.T) {
+	t.Parallel()
+
+	msgs := []session.Message{
+		{Role: "user", Content: "first"},
+		{Role: "assistant", Content: "", Images: []session.ImageAttachment{{Name: "img-1", URL: "https://example.com/image.png"}}},
+	}
+	content, images := latestAssistantMessageSince(msgs, 0)
+	if content != "" {
+		t.Fatalf("expected empty assistant content, got %q", content)
+	}
+	if len(images) != 1 || images[0].URL != "https://example.com/image.png" {
+		t.Fatalf("expected one assistant image, got %#v", images)
+	}
+}
+
+func TestInboundPromptForRouting(t *testing.T) {
+	t.Parallel()
+
+	if got := inboundPromptForRouting(" hello ", 2); got != "hello" {
+		t.Fatalf("expected trimmed text prompt, got %q", got)
+	}
+	if got := inboundPromptForRouting("", 3); got != "[User sent 3 image(s)]" {
+		t.Fatalf("expected image routing hint, got %q", got)
+	}
+	if got := inboundPromptForRouting(" ", 0); got != "" {
+		t.Fatalf("expected empty routing prompt, got %q", got)
+	}
+}
+
 func TestResolveSessionByConversationContinuity(t *testing.T) {
 	t.Parallel()
 

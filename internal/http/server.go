@@ -501,6 +501,8 @@ type CreateSessionRequest struct {
 	AgentID    string                `json:"agent_id"`
 	Task       string                `json:"task,omitempty"`
 	Images     []MessageImagePayload `json:"images,omitempty"`
+	ParentID   string                `json:"parent_id,omitempty"`
+	LinkType   string                `json:"link_type,omitempty"`
 	Provider   string                `json:"provider,omitempty"`
 	Model      string                `json:"model,omitempty"`
 	ProjectID  string                `json:"project_id,omitempty"`
@@ -512,6 +514,8 @@ type CreateSessionRequest struct {
 type CreateSessionResponse struct {
 	ID        string    `json:"id"`
 	AgentID   string    `json:"agent_id"`
+	ParentID  string    `json:"parent_id,omitempty"`
+	LinkType  string    `json:"link_type,omitempty"`
 	ProjectID string    `json:"project_id,omitempty"`
 	Provider  string    `json:"provider,omitempty"`
 	Model     string    `json:"model,omitempty"`
@@ -524,6 +528,7 @@ type SessionResponse struct {
 	ID                   string                       `json:"id"`
 	AgentID              string                       `json:"agent_id"`
 	ParentID             string                       `json:"parent_id,omitempty"`
+	LinkType             string                       `json:"link_type,omitempty"`
 	ProjectID            string                       `json:"project_id,omitempty"`
 	Provider             string                       `json:"provider,omitempty"`
 	Model                string                       `json:"model,omitempty"`
@@ -687,6 +692,8 @@ type UsageResponse struct {
 type SessionListItem struct {
 	ID                 string    `json:"id"`
 	AgentID            string    `json:"agent_id"`
+	ParentID           string    `json:"parent_id,omitempty"`
+	LinkType           string    `json:"link_type,omitempty"`
 	ProjectID          string    `json:"project_id,omitempty"`
 	Provider           string    `json:"provider,omitempty"`
 	Model              string    `json:"model,omitempty"`
@@ -875,6 +882,11 @@ const agentNameSettingKey = "AAGENT_NAME"
 const sessionsFolderSettingKey = "AAGENT_SESSIONS_FOLDER"
 const repeatInitialPromptSettingKey = "AAGENT_REPEAT_INITIAL_PROMPT"
 const defaultAgentName = "A2gent"
+
+const (
+	sessionLinkTypeReview       = "review"
+	sessionLinkTypeContinuation = "continuation"
+)
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	agentName := defaultAgentName
@@ -1484,6 +1496,10 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		if filterA2A && !isInbound {
 			continue
 		}
+		parentID := ""
+		if sess.ParentID != nil {
+			parentID = *sess.ParentID
+		}
 		provider, model := sessionProviderAndModel(sess)
 		routedProvider, routedModel := sessionRoutedProviderAndModel(sess)
 		projectID := ""
@@ -1494,6 +1510,8 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		items = append(items, SessionListItem{
 			ID:                 sess.ID,
 			AgentID:            sess.AgentID,
+			ParentID:           parentID,
+			LinkType:           sessionLinkType(sess),
 			ProjectID:          projectID,
 			Provider:           provider,
 			Model:              model,
@@ -1527,6 +1545,28 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if req.AgentID == "" {
 		req.AgentID = "build" // Default agent
 	}
+	req.ParentID = strings.TrimSpace(req.ParentID)
+	linkType, err := normalizeSessionLinkType(req.LinkType)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.LinkType = linkType
+
+	var parentSession *session.Session
+	if req.ParentID != "" {
+		parentSession, err = s.sessionManager.Get(req.ParentID)
+		if err != nil {
+			s.errorResponse(w, http.StatusBadRequest, "Parent session not found: "+err.Error())
+			return
+		}
+		if req.ProjectID == "" && parentSession.ProjectID != nil {
+			req.ProjectID = strings.TrimSpace(*parentSession.ProjectID)
+		}
+		if req.LinkType == "" {
+			req.LinkType = sessionLinkTypeContinuation
+		}
+	}
 	images, imagesErr := normalizeIncomingImages(req.Images)
 	if imagesErr != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Invalid images payload: "+imagesErr.Error())
@@ -1542,8 +1582,20 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	// Create session based on queued flag
 	var sess *session.Session
-	var err error
-	if req.Queued {
+	if req.ParentID != "" {
+		sess, err = s.sessionManager.CreateWithParent(req.AgentID, req.ParentID)
+		if err != nil {
+			s.errorResponse(w, http.StatusInternalServerError, "Failed to create session: "+err.Error())
+			return
+		}
+		if req.Queued {
+			sess.SetStatus(session.StatusQueued)
+			if err := s.sessionManager.Save(sess); err != nil {
+				s.errorResponse(w, http.StatusInternalServerError, "Failed to create session: "+err.Error())
+				return
+			}
+		}
+	} else if req.Queued {
 		sess, err = s.sessionManager.CreateQueued(req.AgentID)
 	} else {
 		sess, err = s.sessionManager.Create(req.AgentID)
@@ -1603,6 +1655,9 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if model == "" {
 		model = s.resolveModelForProvider(config.ProviderType(providerType))
 	}
+	if req.LinkType != "" {
+		sess.Metadata["link_type"] = req.LinkType
+	}
 	sess.Metadata["provider"] = providerType
 	sess.Metadata["model"] = model
 	if err := s.sessionManager.Save(sess); err != nil {
@@ -1631,6 +1686,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	s.jsonResponse(w, http.StatusCreated, CreateSessionResponse{
 		ID:        sess.ID,
 		AgentID:   sess.AgentID,
+		ParentID:  req.ParentID,
+		LinkType:  req.LinkType,
 		ProjectID: projectID,
 		Provider:  providerType,
 		Model:     model,
@@ -2909,6 +2966,7 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		ID:                   sess.ID,
 		AgentID:              sess.AgentID,
 		ParentID:             parentID,
+		LinkType:             sessionLinkType(sess),
 		ProjectID:            projectID,
 		Provider:             provider,
 		Model:                model,
@@ -4402,6 +4460,34 @@ func sessionProviderAndModel(sess *session.Session) (string, string) {
 	}
 
 	return provider, model
+}
+
+func normalizeSessionLinkType(raw string) (string, error) {
+	normalized := strings.TrimSpace(strings.ToLower(raw))
+	if normalized == "" {
+		return "", nil
+	}
+	switch normalized {
+	case sessionLinkTypeReview, sessionLinkTypeContinuation:
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("invalid link_type: %s", raw)
+	}
+}
+
+func sessionLinkType(sess *session.Session) string {
+	if sess == nil || sess.Metadata == nil {
+		return ""
+	}
+	value, ok := sess.Metadata["link_type"].(string)
+	if !ok {
+		return ""
+	}
+	normalized, err := normalizeSessionLinkType(value)
+	if err != nil {
+		return ""
+	}
+	return normalized
 }
 
 func sessionRoutedProviderAndModel(sess *session.Session) (string, string) {

@@ -305,12 +305,6 @@ func (s *Server) handleListMindTree(w http.ResponseWriter, r *http.Request) {
 	respEntries := make([]MindTreeEntry, 0, len(entries))
 	for _, entry := range entries {
 		name := entry.Name()
-		if strings.HasPrefix(name, ".") {
-			continue
-		}
-		if !entry.IsDir() && !isMarkdownFile(name) {
-			continue
-		}
 
 		entryRelPath := name
 		if normalizedRelPath != "" {
@@ -572,15 +566,7 @@ func directoryHasChildren(path string) bool {
 	if err != nil {
 		return false
 	}
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		if entry.IsDir() || isMarkdownFile(entry.Name()) {
-			return true
-		}
-	}
-	return false
+	return len(entries) > 0
 }
 
 func (s *Server) handleMoveMindFile(w http.ResponseWriter, r *http.Request) {
@@ -864,12 +850,6 @@ func (s *Server) handleListProjectTree(w http.ResponseWriter, r *http.Request) {
 	respEntries := make([]MindTreeEntry, 0, len(entries))
 	for _, entry := range entries {
 		name := entry.Name()
-		if strings.HasPrefix(name, ".") {
-			continue
-		}
-		if !entry.IsDir() && !isMarkdownFile(name) {
-			continue
-		}
 
 		entryRelPath := name
 		if normalizedRelPath != "" {
@@ -1698,6 +1678,44 @@ func (s *Server) handleProjectGitStageFile(w http.ResponseWriter, r *http.Reques
 
 	if _, err := runGitCommand(targetRepoRoot, "add", "--", normalizedPath); err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Failed to stage file: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleProjectGitStageAllFiles(w http.ResponseWriter, r *http.Request) {
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+
+	resolvedRoot, err := s.resolveProjectRootFolder(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var req ProjectGitFileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	targetRepoRoot, err := resolveProjectGitTargetRoot(resolvedRoot, strings.TrimSpace(req.RepoPath))
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !projectHasGitMetadata(targetRepoRoot) {
+		s.errorResponse(w, http.StatusBadRequest, "Target folder does not contain a .git directory")
+		return
+	}
+
+	// Stage all changed files (modified and untracked)
+	if _, err := runGitCommand(targetRepoRoot, "add", "."); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to stage all files: "+err.Error())
 		return
 	}
 

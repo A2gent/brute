@@ -66,6 +66,11 @@ type createLocalDockerAgentRequest struct {
 	LMStudioBaseURL string `json:"lm_studio_base_url"`
 }
 
+type buildLocalDockerAgentImageRequest struct {
+	Image   string `json:"image"`
+	NoCache bool   `json:"no_cache"`
+}
+
 type removeLocalDockerAgentRequest struct {
 	Force bool `json:"force"`
 }
@@ -166,8 +171,11 @@ func (s *Server) handleCreateLocalDockerAgent(w http.ResponseWriter, r *http.Req
 	if lmStudioBaseURL == "" {
 		lmStudioBaseURL = strings.TrimSpace(os.Getenv("LM_STUDIO_BASE_URL"))
 	}
-	if lmStudioBaseURL == "" {
+	if lmStudioBaseURL == "" && !s.llmProxyEnabled() {
 		lmStudioBaseURL = "http://host.docker.internal:1234/v1"
+	}
+	if s.llmProxyEnabled() {
+		lmStudioBaseURL = fmt.Sprintf("http://host.docker.internal:%d/v1", s.port)
 	}
 
 	home, err := os.UserHomeDir()
@@ -183,19 +191,35 @@ func (s *Server) handleCreateLocalDockerAgent(w http.ResponseWriter, r *http.Req
 
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	_, err = runCommand(ctx, "docker",
+	proxyBaseURL := fmt.Sprintf("http://host.docker.internal:%d/v1", s.port)
+	args := []string{
 		"run", "-d",
 		"--name", name,
-		"--label", localAgentManagerLabelKey+"="+localAgentManagerLabelValue,
+		"--label", localAgentManagerLabelKey + "=" + localAgentManagerLabelValue,
 		"--label", "a2gent.role=brute",
 		"--publish", fmt.Sprintf("%d:8080", hostPort),
-		"--volume", dataDir+":/data",
+		"--volume", dataDir + ":/data",
 		"--env", "HOME=/data",
 		"--env", "AAGENT_DATA_PATH=/data",
-		"--env", "LM_STUDIO_BASE_URL="+lmStudioBaseURL,
-		image,
-		"server",
-	)
+		"--env", "LM_STUDIO_BASE_URL=" + lmStudioBaseURL,
+	}
+	if s.llmProxyEnabled() {
+		// Route child agent traffic through the parent's OpenAI-compatible proxy.
+		args = append(args,
+			"--env", "AAGENT_PROVIDER=lmstudio",
+			"--env", "A2GENT_PARENT_PROXY_URL="+proxyBaseURL,
+			"--env", "OPENAI_API_KEY=a2gent-proxy",
+			"--env", "OPENAI_BASE_URL="+proxyBaseURL+"/providers/openai",
+			"--env", "KIMI_API_KEY=a2gent-proxy",
+			"--env", "KIMI_BASE_URL="+proxyBaseURL+"/providers/kimi",
+			"--env", "GOOGLE_API_KEY=a2gent-proxy",
+			"--env", "GOOGLE_BASE_URL="+proxyBaseURL+"/providers/google",
+			"--env", "OPENROUTER_API_KEY=a2gent-proxy",
+			"--env", "OPENROUTER_BASE_URL="+proxyBaseURL+"/providers/openrouter",
+		)
+	}
+	args = append(args, image, "server")
+	_, err = runCommand(ctx, "docker", args...)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Failed to start local agent container: "+err.Error())
 		return
@@ -212,6 +236,50 @@ func (s *Server) handleCreateLocalDockerAgent(w http.ResponseWriter, r *http.Req
 	}
 
 	s.jsonResponse(w, http.StatusCreated, agent)
+}
+
+func (s *Server) handleBuildLocalDockerAgentImage(w http.ResponseWriter, r *http.Request) {
+	var req buildLocalDockerAgentImageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	image := strings.TrimSpace(req.Image)
+	if image == "" {
+		image = strings.TrimSpace(os.Getenv("A2GENT_LOCAL_AGENT_IMAGE"))
+	}
+	if image == "" {
+		image = defaultLocalAgentImage
+	}
+
+	dockerfilePath, contextDir, err := resolveLocalAgentDockerBuildPaths()
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to resolve Docker build configuration: "+err.Error())
+		return
+	}
+
+	args := []string{"build", "--tag", image, "--file", dockerfilePath}
+	if req.NoCache {
+		args = append(args, "--no-cache")
+	}
+	args = append(args, contextDir)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer cancel()
+	buildOutput, err := runCommand(ctx, "docker", args...)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to build local agent image: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"status":      "built",
+		"image":       image,
+		"dockerfile":  dockerfilePath,
+		"context_dir": contextDir,
+		"output":      buildOutput,
+	})
 }
 
 func (s *Server) handleStartLocalDockerAgent(w http.ResponseWriter, r *http.Request) {
@@ -492,6 +560,72 @@ func (s *Server) handleRegisterLocalDockerAgent(w http.ResponseWriter, r *http.R
 		ContainerTunnelState: containerTunnelState,
 		ContainerTunnelNote:  containerTunnelNote,
 	})
+}
+
+func resolveLocalAgentDockerBuildPaths() (string, string, error) {
+	if rawPath := strings.TrimSpace(os.Getenv("A2GENT_LOCAL_AGENT_DOCKERFILE")); rawPath != "" {
+		dockerfilePath := rawPath
+		if !filepath.IsAbs(dockerfilePath) {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return "", "", fmt.Errorf("failed to resolve current directory: %w", err)
+			}
+			dockerfilePath = filepath.Join(cwd, dockerfilePath)
+		}
+		dockerfilePath = filepath.Clean(dockerfilePath)
+		if !fileExists(dockerfilePath) {
+			return "", "", fmt.Errorf("dockerfile not found at %q", dockerfilePath)
+		}
+
+		contextDir := strings.TrimSpace(os.Getenv("A2GENT_LOCAL_AGENT_DOCKER_CONTEXT"))
+		if contextDir == "" {
+			contextDir = filepath.Dir(dockerfilePath)
+		}
+		if !filepath.IsAbs(contextDir) {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return "", "", fmt.Errorf("failed to resolve current directory: %w", err)
+			}
+			contextDir = filepath.Join(cwd, contextDir)
+		}
+		contextDir = filepath.Clean(contextDir)
+		if !dirExists(contextDir) {
+			return "", "", fmt.Errorf("docker build context directory not found at %q", contextDir)
+		}
+		return dockerfilePath, contextDir, nil
+	}
+
+	candidates := make([]string, 0, 4)
+	if cwd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, filepath.Join(cwd, "brute", "Dockerfile"))
+		candidates = append(candidates, filepath.Join(cwd, "Dockerfile"))
+	}
+	if executable, err := os.Executable(); err == nil {
+		execDir := filepath.Dir(executable)
+		candidates = append(candidates, filepath.Join(execDir, "..", "brute", "Dockerfile"))
+		candidates = append(candidates, filepath.Join(execDir, "Dockerfile"))
+	}
+
+	for _, candidate := range candidates {
+		cleaned := filepath.Clean(candidate)
+		if fileExists(cleaned) {
+			return cleaned, filepath.Dir(cleaned), nil
+		}
+	}
+
+	return "", "", fmt.Errorf(
+		"unable to find Dockerfile (checked default locations). Set A2GENT_LOCAL_AGENT_DOCKERFILE and optional A2GENT_LOCAL_AGENT_DOCKER_CONTEXT",
+	)
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func boolPtr(v bool) *bool {

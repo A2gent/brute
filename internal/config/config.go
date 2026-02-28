@@ -254,6 +254,9 @@ func Load() (*Config, error) {
 	cfg := DefaultConfig()
 
 	// Override with environment variables
+	if provider := NormalizeProviderRef(os.Getenv("AAGENT_PROVIDER")); provider != "" {
+		cfg.ActiveProvider = provider
+	}
 	if model := os.Getenv("AAGENT_MODEL"); model != "" {
 		cfg.DefaultModel = model
 	}

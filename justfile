@@ -1,5 +1,5 @@
 # Binary name
-binary := "a2"
+binary := "brute"
 
 # Run the agent with go run (faster for development)
 run:
@@ -24,7 +24,7 @@ dev:
 
 # Run the built binary
 start: build
-    ./{{binary}}
+    ./{{binary}} --port 5445
 
 # Clean build artifacts
 clean:

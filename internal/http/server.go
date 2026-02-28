@@ -186,6 +186,7 @@ func (s *Server) registerServerBackedTools(manager *tools.Manager) {
 const thinkingJobIDSettingKey = "A2GENT_THINKING_JOB_ID"
 const thinkingProjectID = "project-thinking"
 const thinkingProjectName = "Thinking"
+const llmProviderProxyEnabledSettingKey = "A2GENT_LLM_PROVIDER_PROXY_ENABLED"
 const thinkingSourceSettingKey = "A2GENT_THINKING_SOURCE"
 const thinkingTextSettingKey = "A2GENT_THINKING_TEXT"
 const thinkingFilePathSettingKey = "A2GENT_THINKING_FILE_PATH"
@@ -280,6 +281,14 @@ func (s *Server) setupRoutes() {
 	r.Put("/settings", s.handleUpdateSettings)
 	r.Post("/settings/instruction-estimate", s.handleEstimateInstructionPrompt)
 
+	// OpenAI-compatible proxy to this agent's configured providers.
+	r.Route("/v1", func(r chi.Router) {
+		r.Get("/models", s.handleLLMProxyModels)
+		r.Post("/chat/completions", s.handleLLMProxyChatCompletions)
+		r.Get("/providers/{providerRef}/models", s.handleLLMProxyProviderModels)
+		r.Post("/providers/{providerRef}/chat/completions", s.handleLLMProxyProviderChatCompletions)
+	})
+
 	// LLM provider configuration
 	r.Route("/providers", func(r chi.Router) {
 		r.Get("/", s.handleListProviders)
@@ -320,6 +329,7 @@ func (s *Server) setupRoutes() {
 		r.Post("/a2_registry/tunnel-reconnect", s.handleA2ATunnelReconnect)
 		r.Get("/a2_registry/local-agents", s.handleListLocalDockerAgents)
 		r.Post("/a2_registry/local-agents", s.handleCreateLocalDockerAgent)
+		r.Post("/a2_registry/local-agents/build-image", s.handleBuildLocalDockerAgentImage)
 		r.Post("/a2_registry/local-agents/{containerID}/start", s.handleStartLocalDockerAgent)
 		r.Post("/a2_registry/local-agents/{containerID}/stop", s.handleStopLocalDockerAgent)
 		r.Delete("/a2_registry/local-agents/{containerID}", s.handleRemoveLocalDockerAgent)

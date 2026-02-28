@@ -1713,8 +1713,8 @@ func (s *Server) handleProjectGitStageAllFiles(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Stage all changed files (modified and untracked)
-	if _, err := runGitCommand(targetRepoRoot, "add", "."); err != nil {
+	// Stage all tracked/untracked changes, including deletions.
+	if _, err := runGitCommand(targetRepoRoot, "add", "--all"); err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Failed to stage all files: "+err.Error())
 		return
 	}

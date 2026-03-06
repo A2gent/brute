@@ -916,8 +916,29 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 			agentName = v
 		}
 	}
+	dockerSafeMode := strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_URL")) != ""
+	containerized := dockerSafeMode || isRunningInContainer()
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "agent_name": agentName})
+	json.NewEncoder(w).Encode(map[string]any{
+		"status":          "ok",
+		"agent_name":      agentName,
+		"docker_safe_mode": dockerSafeMode,
+		"containerized":   containerized,
+	})
+}
+
+func isRunningInContainer() bool {
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	data, err := os.ReadFile("/proc/1/cgroup")
+	if err != nil {
+		return false
+	}
+	text := strings.ToLower(string(data))
+	return strings.Contains(text, "docker") ||
+		strings.Contains(text, "containerd") ||
+		strings.Contains(text, "kubepods")
 }
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {

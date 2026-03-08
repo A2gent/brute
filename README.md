@@ -89,6 +89,50 @@ cd brute
 - Context window tracking and management
 - Structured logging and practical failure handling
 
+## Workflow Definition YAML Standard
+
+Workflow files used by the web app are stored in the `system-soul` project under `workflows/*.yaml`.
+
+Minimal structure:
+
+```yaml
+id: custom-workflow
+name: Custom workflow
+description: Optional summary
+entryNodeId: user
+policy:
+  stopCondition: manual   # manual | max_turns | consensus | judge | timebox
+  maxTurns: 12
+  timeboxMinutes: 20
+  # required when stopCondition: judge
+  # judgeNodeId: critic
+nodes:
+  - id: user
+    label: User           # optional; defaults to id
+    kind: user            # optional; inferred when omitted
+  - id: worker_a
+    label: Research A
+    kind: subagent
+    ref: researcher-a     # sub-agent id/name (optional if label resolves)
+  - id: critic
+    label: Critic
+    kind: subagent
+    ref: critic-agent
+edges:
+  - from: user
+    to: worker_a
+  - from: worker_a
+    to: critic
+    mode: sequential      # optional; inferred as parallel for fan-out
+```
+
+Validation rules:
+- `nodes[].id` is required and must be unique.
+- `edges[].from` and `edges[].to` must reference existing node ids.
+- `policy.stopCondition: judge` requires `policy.judgeNodeId`.
+- `policy.judgeNodeId` must reference an existing node id.
+- `kind` and `ref` are optional, but agent nodes should resolve to configured agents.
+
 ## 4. Run Modes
 
 ### 4.1 Native (recommended for local TUI)

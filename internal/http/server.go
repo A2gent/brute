@@ -517,16 +517,17 @@ func (s *Server) Run(ctx context.Context) error {
 
 // CreateSessionRequest represents a request to create a new session
 type CreateSessionRequest struct {
-	AgentID    string                `json:"agent_id"`
-	Task       string                `json:"task,omitempty"`
-	Images     []MessageImagePayload `json:"images,omitempty"`
-	ParentID   string                `json:"parent_id,omitempty"`
-	LinkType   string                `json:"link_type,omitempty"`
-	Provider   string                `json:"provider,omitempty"`
-	Model      string                `json:"model,omitempty"`
-	ProjectID  string                `json:"project_id,omitempty"`
-	SubAgentID string                `json:"sub_agent_id,omitempty"` // Optional sub-agent to use for this session
-	Queued     bool                  `json:"queued,omitempty"`       // If true, create session without starting it
+	AgentID    string                 `json:"agent_id"`
+	Task       string                 `json:"task,omitempty"`
+	Images     []MessageImagePayload  `json:"images,omitempty"`
+	ParentID   string                 `json:"parent_id,omitempty"`
+	LinkType   string                 `json:"link_type,omitempty"`
+	Provider   string                 `json:"provider,omitempty"`
+	Model      string                 `json:"model,omitempty"`
+	ProjectID  string                 `json:"project_id,omitempty"`
+	SubAgentID string                 `json:"sub_agent_id,omitempty"` // Optional sub-agent to use for this session
+	Queued     bool                   `json:"queued,omitempty"`       // If true, create session without starting it
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // CreateSessionResponse represents a response after creating a session
@@ -566,6 +567,7 @@ type SessionResponse struct {
 	UpdatedAt            time.Time                    `json:"updated_at"`
 	Messages             []MessageResponse            `json:"messages"`
 	SystemPromptSnapshot *SystemPromptSnapshotPayload `json:"system_prompt_snapshot,omitempty"`
+	Metadata             map[string]interface{}       `json:"metadata,omitempty"`
 	// A2A outbound fields — set for sessions used to contact remote agents.
 	A2AOutbound        bool   `json:"a2a_outbound,omitempty"`
 	A2ATargetAgentID   string `json:"a2a_target_agent_id,omitempty"`
@@ -668,6 +670,7 @@ type ChatStreamEvent struct {
 	ToolCalls  []StreamToolCallEvent  `json:"tool_calls,omitempty"`
 	ToolResult *StreamToolResultEvent `json:"tool_result,omitempty"`
 	Provider   *StreamProviderEvent   `json:"provider,omitempty"`
+	Workflow   interface{}            `json:"workflow,omitempty"`
 	Step       int                    `json:"step,omitempty"`
 }
 
@@ -920,10 +923,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	containerized := dockerSafeMode || isRunningInContainer()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"status":          "ok",
-		"agent_name":      agentName,
+		"status":           "ok",
+		"agent_name":       agentName,
 		"docker_safe_mode": dockerSafeMode,
-		"containerized":   containerized,
+		"containerized":    containerized,
 	})
 }
 
@@ -1702,6 +1705,21 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to create session: "+err.Error())
 		return
 	}
+	if req.Metadata != nil {
+		if sess.Metadata == nil {
+			sess.Metadata = make(map[string]interface{})
+		}
+		for key, value := range req.Metadata {
+			k := strings.TrimSpace(key)
+			if k == "" {
+				continue
+			}
+			sess.Metadata[k] = value
+		}
+		if err := s.sessionManager.Save(sess); err != nil {
+			logging.Warn("Failed to persist session metadata: %v", err)
+		}
+	}
 
 	// If an initial task/images are provided, add them as the first message.
 	if req.Task != "" || len(images) > 0 {
@@ -2203,6 +2221,40 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		s.unregisterActiveSessionRun(sessionID, runID)
 	}()
 
+	if s.hasRunnableWorkflow(sess) {
+		content, usage, runErr := s.runWorkflowSession(runCtx, sess, req.Message, nil)
+		if runErr != nil {
+			if isCancellationError(runErr) {
+				sess.SetStatus(session.StatusPaused)
+				_ = s.sessionManager.Save(sess)
+				s.errorResponse(w, http.StatusConflict, "Request was canceled before completion")
+				return
+			}
+			sess.AddAssistantMessage(fmt.Sprintf("Workflow failed: %s", runErr.Error()), nil)
+			sess.SetStatus(session.StatusFailed)
+			_ = s.sessionManager.Save(sess)
+			s.errorResponse(w, http.StatusInternalServerError, "Workflow error: "+runErr.Error())
+			return
+		}
+		sess.AddAssistantMessage(content, nil)
+		sess.SetStatus(session.StatusCompleted)
+		if saveErr := s.sessionManager.Save(sess); saveErr != nil {
+			s.errorResponse(w, http.StatusInternalServerError, "Failed to save workflow response: "+saveErr.Error())
+			return
+		}
+		resp := ChatResponse{
+			Content:  content,
+			Messages: s.messagesToResponse(sess.Messages),
+			Status:   string(sess.Status),
+			Usage: UsageResponse{
+				InputTokens:  usage.InputTokens,
+				OutputTokens: usage.OutputTokens,
+			},
+		}
+		s.jsonResponse(w, http.StatusOK, resp)
+		return
+	}
+
 	providerType := s.resolveSessionProviderType(sess)
 	model := s.resolveSessionModel(sess, providerType)
 	routingPrompt := messageForRouting(req.Message, len(images))
@@ -2356,6 +2408,52 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !writeEvent(ChatStreamEvent{Type: "status", Status: string(sess.Status)}) {
+		return
+	}
+
+	if s.hasRunnableWorkflow(sess) {
+		content, usage, runErr := s.runWorkflowSession(runCtx, sess, req.Message, writeEvent)
+		if runErr != nil {
+			if isCancellationError(runErr) {
+				sess.SetStatus(session.StatusPaused)
+				_ = s.sessionManager.Save(sess)
+				_ = writeEvent(ChatStreamEvent{
+					Type:   "error",
+					Error:  "Request was canceled before completion",
+					Status: string(sess.Status),
+				})
+				return
+			}
+			sess.AddAssistantMessage(fmt.Sprintf("Workflow failed: %s", runErr.Error()), nil)
+			sess.SetStatus(session.StatusFailed)
+			_ = s.sessionManager.Save(sess)
+			_ = writeEvent(ChatStreamEvent{
+				Type:   "error",
+				Error:  "Workflow error: " + runErr.Error(),
+				Status: string(sess.Status),
+			})
+			return
+		}
+		sess.AddAssistantMessage(content, nil)
+		sess.SetStatus(session.StatusCompleted)
+		if saveErr := s.sessionManager.Save(sess); saveErr != nil {
+			_ = writeEvent(ChatStreamEvent{
+				Type:   "error",
+				Error:  "Failed to save workflow response: " + saveErr.Error(),
+				Status: string(sess.Status),
+			})
+			return
+		}
+		_ = writeEvent(ChatStreamEvent{
+			Type:     "done",
+			Content:  content,
+			Messages: s.messagesToResponse(sess.Messages),
+			Status:   string(sess.Status),
+			Usage: &UsageResponse{
+				InputTokens:  usage.InputTokens,
+				OutputTokens: usage.OutputTokens,
+			},
+		})
 		return
 	}
 
@@ -3083,6 +3181,7 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		UpdatedAt:            sess.UpdatedAt,
 		Messages:             s.messagesToResponse(sess.Messages),
 		SystemPromptSnapshot: snapshotPayload,
+		Metadata:             sess.Metadata,
 		A2AOutbound:          isOutbound,
 		A2ATargetAgentID:     targetAgentID,
 		A2ATargetAgentName:   targetAgentName,

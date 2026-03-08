@@ -28,7 +28,7 @@ dev:
 
 # Run the built binary
 start: build
-    ./{{binary}}
+    ./{{binary}} --port 5445
 
 # Clean build artifacts
 clean:

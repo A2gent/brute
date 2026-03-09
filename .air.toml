@@ -4,7 +4,7 @@ tmp_dir = "tmp"
 [build]
 cmd = "go build -o ./tmp/aagent ./cmd/aagent"
 bin = "./tmp/aagent"
-full_bin = "./tmp/aagent server --port 8080"
+full_bin = "./tmp/aagent server --port 5445"
 include_ext = ["go"]
 exclude_dir = ["tmp", "vendor", "web-app", "mind", ".git", ".gocache"]
 exclude_regex = ["_test.go"]

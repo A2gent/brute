@@ -404,12 +404,16 @@ func (s *Server) setupRoutes() {
 		r.Get("/git/status", s.handleProjectGitStatus)
 		r.Post("/git/init", s.handleProjectGitInit)
 		r.Get("/git/diff", s.handleProjectGitFileDiff)
+		r.Get("/git/history", s.handleProjectGitHistory)
+		r.Get("/git/commit-files", s.handleProjectGitCommitFiles)
+		r.Get("/git/commit-diff", s.handleProjectGitCommitDiff)
 		r.Post("/git/stage", s.handleProjectGitStageFile)
 		r.Post("/git/stage-all", s.handleProjectGitStageAllFiles)
 		r.Post("/git/unstage", s.handleProjectGitUnstageFile)
 		r.Post("/git/discard", s.handleProjectGitDiscardFile)
 		r.Post("/git/commit-message", s.handleProjectGitCommitMessageSuggestion)
 		r.Post("/git/push", s.handleProjectGitPush)
+		r.Post("/git/pull", s.handleProjectGitPull)
 		r.Post("/git/commit", s.handleProjectGitCommit)
 		r.Get("/file", s.handleGetProjectFile)
 		r.Get("/search", s.handleProjectSearch)
@@ -1947,7 +1951,42 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionID")
 
-	s.cancelActiveSessionRuns(sessionID)
+	sessionIDsToDelete := []string{sessionID}
+	allSessions, listErr := s.sessionManager.List()
+	if listErr != nil {
+		logging.Warn("Failed to list sessions before delete cascade for %s: %v", sessionID, listErr)
+	} else {
+		childrenByParent := make(map[string][]string)
+		for _, item := range allSessions {
+			if item.ParentID == nil {
+				continue
+			}
+			parentID := strings.TrimSpace(*item.ParentID)
+			if parentID == "" {
+				continue
+			}
+			childrenByParent[parentID] = append(childrenByParent[parentID], item.ID)
+		}
+
+		seen := map[string]struct{}{sessionID: {}}
+		queue := []string{sessionID}
+		for len(queue) > 0 {
+			current := queue[0]
+			queue = queue[1:]
+			for _, childID := range childrenByParent[current] {
+				if _, exists := seen[childID]; exists {
+					continue
+				}
+				seen[childID] = struct{}{}
+				sessionIDsToDelete = append(sessionIDsToDelete, childID)
+				queue = append(queue, childID)
+			}
+		}
+	}
+
+	for _, id := range sessionIDsToDelete {
+		s.cancelActiveSessionRuns(id)
+	}
 
 	sess, err := s.sessionManager.Get(sessionID)
 	if err == nil {
@@ -1956,6 +1995,18 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		if cleanupErr := s.deleteTelegramTopicForSession(cleanupCtx, sess); cleanupErr != nil {
 			logging.Warn("Telegram topic cleanup failed for session %s: %s", sessionID, sanitizeTelegramError(cleanupErr))
 		}
+	}
+
+	for _, childSessionID := range sessionIDsToDelete[1:] {
+		childSess, getErr := s.sessionManager.Get(childSessionID)
+		if getErr != nil {
+			continue
+		}
+		cleanupCtx, cleanupCancel := context.WithTimeout(r.Context(), 20*time.Second)
+		if cleanupErr := s.deleteTelegramTopicForSession(cleanupCtx, childSess); cleanupErr != nil {
+			logging.Warn("Telegram topic cleanup failed for session %s: %s", childSessionID, sanitizeTelegramError(cleanupErr))
+		}
+		cleanupCancel()
 	}
 
 	if err := s.sessionManager.Delete(sessionID); err != nil {

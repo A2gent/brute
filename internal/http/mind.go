@@ -134,11 +134,60 @@ type ProjectGitFileDiffResponse struct {
 	Preview string `json:"preview"`
 }
 
+type ProjectGitBranch struct {
+	Name    string `json:"name"`
+	Current bool   `json:"current"`
+	Remote  bool   `json:"remote"`
+	Ahead   int    `json:"ahead"`
+	Behind  int    `json:"behind"`
+}
+
+type ProjectGitHistoryCommit struct {
+	Hash       string   `json:"hash"`
+	ShortHash  string   `json:"short_hash"`
+	Subject    string   `json:"subject"`
+	AuthorName string   `json:"author_name"`
+	AuthoredAt string   `json:"authored_at"`
+	Refs       []string `json:"refs"`
+	Parents    []string `json:"parents"`
+	Branch     string   `json:"branch,omitempty"`
+}
+
+type ProjectGitHistoryResponse struct {
+	RootFolder    string                    `json:"root_folder"`
+	CurrentBranch string                    `json:"current_branch"`
+	Branches      []ProjectGitBranch        `json:"branches"`
+	Commits       []ProjectGitHistoryCommit `json:"commits"`
+}
+
+type ProjectGitCommitFile struct {
+	Path      string `json:"path"`
+	Status    string `json:"status"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Binary    bool   `json:"binary"`
+}
+
+type ProjectGitCommitFilesResponse struct {
+	Commit string                 `json:"commit"`
+	Files  []ProjectGitCommitFile `json:"files"`
+}
+
+type ProjectGitCommitDiffResponse struct {
+	Commit  string `json:"commit"`
+	Path    string `json:"path"`
+	Preview string `json:"preview"`
+}
+
 type ProjectGitCommitMessageResponse struct {
 	Message string `json:"message"`
 }
 
 type ProjectGitPushRequest struct {
+	RepoPath string `json:"repo_path,omitempty"`
+}
+
+type ProjectGitPullRequest struct {
 	RepoPath string `json:"repo_path,omitempty"`
 }
 
@@ -148,6 +197,10 @@ type ProjectGitInitRequest struct {
 }
 
 type ProjectGitPushResponse struct {
+	Output string `json:"output,omitempty"`
+}
+
+type ProjectGitPullResponse struct {
 	Output string `json:"output,omitempty"`
 }
 
@@ -1889,6 +1942,179 @@ func (s *Server) handleProjectGitFileDiff(w http.ResponseWriter, r *http.Request
 	})
 }
 
+func (s *Server) handleProjectGitHistory(w http.ResponseWriter, r *http.Request) {
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+
+	resolvedRoot, err := s.resolveProjectRootFolder(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	targetRepoRoot, err := resolveProjectGitTargetRoot(resolvedRoot, strings.TrimSpace(r.URL.Query().Get("repoPath")))
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !projectHasGitMetadata(targetRepoRoot) {
+		s.errorResponse(w, http.StatusBadRequest, "Target folder does not contain a .git directory")
+		return
+	}
+
+	limit := 120
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		parsedLimit, parseErr := strconv.Atoi(rawLimit)
+		if parseErr != nil || parsedLimit <= 0 {
+			s.errorResponse(w, http.StatusBadRequest, "limit must be a positive integer")
+			return
+		}
+		if parsedLimit > 500 {
+			parsedLimit = 500
+		}
+		limit = parsedLimit
+	}
+
+	currentBranch := ""
+	if value, branchErr := runGitCommand(targetRepoRoot, "rev-parse", "--abbrev-ref", "HEAD"); branchErr == nil {
+		currentBranch = strings.TrimSpace(value)
+	}
+
+	branches, err := buildProjectGitBranches(targetRepoRoot, currentBranch)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to read git branches: "+err.Error())
+		return
+	}
+
+	commitsOutput, err := runGitCommandPreserveLeading(
+		targetRepoRoot,
+		"log",
+		"--decorate=short",
+		"--date=iso-strict",
+		"--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%D%x1f%P",
+		"-n",
+		strconv.Itoa(limit),
+	)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to read git history: "+err.Error())
+		return
+	}
+
+	commits := parseProjectGitHistoryCommits(commitsOutput, currentBranch)
+	s.jsonResponse(w, http.StatusOK, ProjectGitHistoryResponse{
+		RootFolder:    targetRepoRoot,
+		CurrentBranch: currentBranch,
+		Branches:      branches,
+		Commits:       commits,
+	})
+}
+
+func (s *Server) handleProjectGitCommitFiles(w http.ResponseWriter, r *http.Request) {
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+
+	commitHash := strings.TrimSpace(r.URL.Query().Get("commit"))
+	if commitHash == "" {
+		s.errorResponse(w, http.StatusBadRequest, "commit is required")
+		return
+	}
+
+	resolvedRoot, err := s.resolveProjectRootFolder(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	targetRepoRoot, err := resolveProjectGitTargetRoot(resolvedRoot, strings.TrimSpace(r.URL.Query().Get("repoPath")))
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !projectHasGitMetadata(targetRepoRoot) {
+		s.errorResponse(w, http.StatusBadRequest, "Target folder does not contain a .git directory")
+		return
+	}
+
+	statusOutput, err := runGitCommandPreserveLeading(targetRepoRoot, "diff-tree", "--no-commit-id", "--name-status", "-r", "--root", commitHash)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to read commit files: "+err.Error())
+		return
+	}
+	statuses := parseProjectGitCommitFileStatuses(statusOutput)
+
+	statsOutput, err := runGitCommandPreserveLeading(targetRepoRoot, "show", "--numstat", "--format=", "--no-color", commitHash)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to read commit file stats: "+err.Error())
+		return
+	}
+	files := mergeProjectGitCommitFiles(statuses, statsOutput)
+
+	s.jsonResponse(w, http.StatusOK, ProjectGitCommitFilesResponse{
+		Commit: commitHash,
+		Files:  files,
+	})
+}
+
+func (s *Server) handleProjectGitCommitDiff(w http.ResponseWriter, r *http.Request) {
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+
+	commitHash := strings.TrimSpace(r.URL.Query().Get("commit"))
+	if commitHash == "" {
+		s.errorResponse(w, http.StatusBadRequest, "commit is required")
+		return
+	}
+
+	pathParam := strings.TrimSpace(r.URL.Query().Get("path"))
+	if pathParam == "" {
+		s.errorResponse(w, http.StatusBadRequest, "path is required")
+		return
+	}
+
+	resolvedRoot, err := s.resolveProjectRootFolder(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	targetRepoRoot, err := resolveProjectGitTargetRoot(resolvedRoot, strings.TrimSpace(r.URL.Query().Get("repoPath")))
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !projectHasGitMetadata(targetRepoRoot) {
+		s.errorResponse(w, http.StatusBadRequest, "Target folder does not contain a .git directory")
+		return
+	}
+
+	normalizedPath, err := resolveGitRepoFilePath(targetRepoRoot, pathParam)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	preview, err := runGitCommandPreserveLeading(targetRepoRoot, "show", "--no-color", "--pretty=format:", commitHash, "--", normalizedPath)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to read commit diff: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, ProjectGitCommitDiffResponse{
+		Commit:  commitHash,
+		Path:    normalizedPath,
+		Preview: preview,
+	})
+}
+
 func (s *Server) handleProjectGitCommitMessageSuggestion(w http.ResponseWriter, r *http.Request) {
 	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
 	if projectID == "" {
@@ -2083,6 +2309,60 @@ func (s *Server) handleProjectGitPush(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.jsonResponse(w, http.StatusOK, ProjectGitPushResponse{Output: output})
+}
+
+func (s *Server) handleProjectGitPull(w http.ResponseWriter, r *http.Request) {
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+
+	resolvedRoot, err := s.resolveProjectRootFolder(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var req ProjectGitPullRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	targetRepoRoot, err := resolveProjectGitTargetRoot(resolvedRoot, strings.TrimSpace(req.RepoPath))
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !projectHasGitMetadata(targetRepoRoot) {
+		s.errorResponse(w, http.StatusBadRequest, "Target folder does not contain a .git directory")
+		return
+	}
+
+	strategy := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("strategy")))
+	args := []string{"pull"}
+	switch strategy {
+	case "", "auto":
+		// default git pull strategy (respect repo config)
+	case "rebase":
+		args = append(args, "--rebase")
+	case "ff-only":
+		args = append(args, "--ff-only")
+	case "merge":
+		args = append(args, "--no-rebase")
+	default:
+		s.errorResponse(w, http.StatusBadRequest, "Unsupported pull strategy")
+		return
+	}
+
+	output, err := runGitCommand(targetRepoRoot, args...)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to pull: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, ProjectGitPullResponse{Output: output})
 }
 
 func (s *Server) handleProjectGitInit(w http.ResponseWriter, r *http.Request) {
@@ -2329,6 +2609,306 @@ func buildUntrackedFilePreview(repoRoot string, relPath string) string {
 		lines[i] = "+" + line
 	}
 	return strings.Join(lines, "\n")
+}
+
+func buildProjectGitBranches(repoRoot string, currentBranch string) ([]ProjectGitBranch, error) {
+	output, err := runGitCommandPreserveLeading(
+		repoRoot,
+		"for-each-ref",
+		"--format=%(refname:short)%x1f%(HEAD)%x1f%(upstream:track)%x1f%(refname)",
+		"refs/heads",
+		"refs/remotes",
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	branches := make([]ProjectGitBranch, 0)
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine == "" {
+			continue
+		}
+
+		parts := strings.Split(trimmedLine, "\x1f")
+		if len(parts) < 4 {
+			continue
+		}
+
+		name := strings.TrimSpace(parts[0])
+		if name == "" {
+			continue
+		}
+
+		refname := strings.TrimSpace(parts[3])
+		remote := strings.HasPrefix(refname, "refs/remotes/")
+		if remote && strings.HasSuffix(name, "/HEAD") {
+			continue
+		}
+
+		ahead, behind := parseGitAheadBehind(parts[2])
+		current := strings.TrimSpace(parts[1]) == "*" || (!remote && name == currentBranch)
+
+		branches = append(branches, ProjectGitBranch{
+			Name:    name,
+			Current: current,
+			Remote:  remote,
+			Ahead:   ahead,
+			Behind:  behind,
+		})
+	}
+
+	sort.SliceStable(branches, func(i, j int) bool {
+		left := branches[i]
+		right := branches[j]
+		if left.Current != right.Current {
+			return left.Current
+		}
+		if left.Remote != right.Remote {
+			return !left.Remote
+		}
+		return left.Name < right.Name
+	})
+
+	return branches, nil
+}
+
+func parseGitAheadBehind(track string) (int, int) {
+	trimmed := strings.TrimSpace(track)
+	if trimmed == "" {
+		return 0, 0
+	}
+
+	trimmed = strings.TrimPrefix(trimmed, "[")
+	trimmed = strings.TrimSuffix(trimmed, "]")
+
+	ahead := 0
+	behind := 0
+	parts := strings.Split(trimmed, ",")
+	for _, part := range parts {
+		item := strings.TrimSpace(part)
+		if strings.HasPrefix(item, "ahead ") {
+			if value, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(item, "ahead "))); err == nil {
+				ahead = value
+			}
+		}
+		if strings.HasPrefix(item, "behind ") {
+			if value, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(item, "behind "))); err == nil {
+				behind = value
+			}
+		}
+	}
+
+	return ahead, behind
+}
+
+func parseProjectGitHistoryCommits(output string, currentBranch string) []ProjectGitHistoryCommit {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	commits := make([]ProjectGitHistoryCommit, 0, len(lines))
+
+	for _, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine == "" {
+			continue
+		}
+		parts := strings.Split(trimmedLine, "\x1f")
+		if len(parts) < 7 {
+			continue
+		}
+
+		refs := parseProjectGitDecorations(parts[5])
+		branch := pickProjectGitPrimaryRef(refs, currentBranch)
+
+		parents := make([]string, 0)
+		for _, parent := range strings.Fields(strings.TrimSpace(parts[6])) {
+			if parent != "" {
+				parents = append(parents, parent)
+			}
+		}
+
+		commits = append(commits, ProjectGitHistoryCommit{
+			Hash:       strings.TrimSpace(parts[0]),
+			ShortHash:  strings.TrimSpace(parts[1]),
+			Subject:    strings.TrimSpace(parts[2]),
+			AuthorName: strings.TrimSpace(parts[3]),
+			AuthoredAt: strings.TrimSpace(parts[4]),
+			Refs:       refs,
+			Parents:    parents,
+			Branch:     branch,
+		})
+	}
+
+	return commits
+}
+
+func parseProjectGitDecorations(raw string) []string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+
+	segments := strings.Split(trimmed, ",")
+	refs := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		part := strings.TrimSpace(segment)
+		if part == "" {
+			continue
+		}
+		if strings.HasPrefix(part, "HEAD -> ") {
+			branch := strings.TrimSpace(strings.TrimPrefix(part, "HEAD -> "))
+			if branch != "" {
+				refs = append(refs, branch)
+			}
+			continue
+		}
+		if strings.HasPrefix(part, "tag: ") {
+			tagName := strings.TrimSpace(strings.TrimPrefix(part, "tag: "))
+			if tagName != "" {
+				refs = append(refs, tagName)
+			}
+			continue
+		}
+		refs = append(refs, part)
+	}
+
+	return refs
+}
+
+func pickProjectGitPrimaryRef(refs []string, currentBranch string) string {
+	trimmedCurrent := strings.TrimSpace(currentBranch)
+	if trimmedCurrent != "" {
+		for _, ref := range refs {
+			if strings.TrimSpace(ref) == trimmedCurrent {
+				return trimmedCurrent
+			}
+		}
+	}
+	for _, ref := range refs {
+		trimmedRef := strings.TrimSpace(ref)
+		if trimmedRef == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmedRef, "origin/") || strings.Contains(trimmedRef, "/") {
+			return trimmedRef
+		}
+		return trimmedRef
+	}
+	return ""
+}
+
+func parseProjectGitCommitFileStatuses(output string) map[string]string {
+	statuses := make(map[string]string)
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine == "" {
+			continue
+		}
+		parts := strings.Split(trimmedLine, "\t")
+		if len(parts) < 2 {
+			continue
+		}
+		status := strings.TrimSpace(parts[0])
+		if status == "" {
+			continue
+		}
+		path := strings.TrimSpace(parts[len(parts)-1])
+		if path == "" {
+			continue
+		}
+		path = decodeGitPath(path)
+		if path == "" {
+			continue
+		}
+		statuses[path] = status
+	}
+	return statuses
+}
+
+func mergeProjectGitCommitFiles(statuses map[string]string, statsOutput string) []ProjectGitCommitFile {
+	merged := make(map[string]*ProjectGitCommitFile, len(statuses))
+
+	for path, status := range statuses {
+		merged[path] = &ProjectGitCommitFile{
+			Path:   path,
+			Status: status,
+		}
+	}
+
+	lines := strings.Split(statsOutput, "\n")
+	for _, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine == "" {
+			continue
+		}
+		parts := strings.Split(trimmedLine, "\t")
+		if len(parts) < 3 {
+			continue
+		}
+
+		path := strings.TrimSpace(parts[2])
+		if path == "" {
+			continue
+		}
+		path = normalizeGitNumstatPath(path)
+		if path == "" {
+			continue
+		}
+
+		file := merged[path]
+		if file == nil {
+			file = &ProjectGitCommitFile{
+				Path:   path,
+				Status: "M",
+			}
+			merged[path] = file
+		}
+
+		additionsRaw := strings.TrimSpace(parts[0])
+		deletionsRaw := strings.TrimSpace(parts[1])
+		if additionsRaw == "-" || deletionsRaw == "-" {
+			file.Binary = true
+			file.Additions = 0
+			file.Deletions = 0
+			continue
+		}
+		if additions, err := strconv.Atoi(additionsRaw); err == nil {
+			file.Additions = additions
+		}
+		if deletions, err := strconv.Atoi(deletionsRaw); err == nil {
+			file.Deletions = deletions
+		}
+	}
+
+	files := make([]ProjectGitCommitFile, 0, len(merged))
+	for _, file := range merged {
+		files = append(files, *file)
+	}
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Path < files[j].Path
+	})
+	return files
+}
+
+func normalizeGitNumstatPath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.Contains(trimmed, "=>") {
+		parts := strings.Split(trimmed, "=>")
+		if len(parts) > 1 {
+			candidate := strings.TrimSpace(parts[len(parts)-1])
+			candidate = strings.TrimPrefix(candidate, "{")
+			candidate = strings.TrimSuffix(candidate, "}")
+			candidate = strings.TrimSpace(candidate)
+			if candidate != "" {
+				return decodeGitPath(candidate)
+			}
+		}
+	}
+	return decodeGitPath(trimmed)
 }
 
 type rankedFileNameMatch struct {

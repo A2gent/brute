@@ -570,8 +570,43 @@ func (s *SQLiteStore) ListSessionsByJob(jobID string) ([]*Session, error) {
 
 // DeleteSession deletes a session
 func (s *SQLiteStore) DeleteSession(id string) error {
-	_, err := s.db.Exec("DELETE FROM sessions WHERE id = ?", id)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Delete all descendant sessions recursively as well.
+	// Delete messages explicitly because SQLite foreign key cascades may be disabled.
+	if _, err := tx.Exec(`
+		WITH RECURSIVE descendants(id) AS (
+			SELECT id FROM sessions WHERE id = ?
+			UNION ALL
+			SELECT s.id
+			FROM sessions s
+			INNER JOIN descendants d ON s.parent_id = d.id
+		)
+		DELETE FROM messages
+		WHERE session_id IN (SELECT id FROM descendants)
+	`, id); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`
+		WITH RECURSIVE descendants(id) AS (
+			SELECT id FROM sessions WHERE id = ?
+			UNION ALL
+			SELECT s.id
+			FROM sessions s
+			INNER JOIN descendants d ON s.parent_id = d.id
+		)
+		DELETE FROM sessions
+		WHERE id IN (SELECT id FROM descendants)
+	`, id); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 // SaveProject saves a project to the database.

@@ -2082,7 +2082,73 @@ func (s *Server) handleAnswerQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.resumeSessionAfterQuestionAnswer(sessionID, req.Answer)
 	s.jsonResponse(w, http.StatusOK, map[string]interface{}{"status": "ok"})
+}
+
+func (s *Server) resumeSessionAfterQuestionAnswer(sessionID string, userAnswer string) {
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	runID := s.registerActiveSessionRun(sessionID, cancelRun)
+
+	go func() {
+		defer func() {
+			cancelRun()
+			s.unregisterActiveSessionRun(sessionID, runID)
+		}()
+
+		sess, err := s.sessionManager.Get(sessionID)
+		if err != nil {
+			logging.Warn("Failed to reload session after answer: session=%s error=%v", sessionID, err)
+			return
+		}
+		if sess.Status != session.StatusRunning {
+			return
+		}
+		defer s.queueTelegramSessionMessageSync(sess.ID)
+
+		providerType := s.resolveSessionProviderType(sess)
+		model := s.resolveSessionModel(sess, providerType)
+		routingPrompt := messageForRouting(userAnswer, 0)
+		target, err := s.resolveExecutionTarget(runCtx, providerType, model, routingPrompt, sess)
+		if err != nil {
+			sess.AddAssistantMessage(fmt.Sprintf("Unable to start request: %s", err.Error()), nil)
+			sess.SetStatus(session.StatusFailed)
+			_ = s.sessionManager.Save(sess)
+			logging.Warn("Provider resolution failed while resuming question answer: session=%s error=%v", sessionID, err)
+			return
+		}
+		if setSessionRoutedProviderAndModel(sess, providerType, target.ProviderType, target.Model) {
+			if err := s.sessionManager.Save(sess); err != nil {
+				logging.Warn("Failed to persist routed metadata while resuming session: %v", err)
+			}
+		}
+
+		agentConfig := agent.Config{
+			Name:          sess.AgentID,
+			Model:         target.Model,
+			SystemPrompt:  s.buildSystemPromptForSession(sess),
+			MaxSteps:      s.config.MaxSteps,
+			Temperature:   s.config.Temperature,
+			ContextWindow: target.ContextWindow,
+		}
+		ag := agent.New(agentConfig, target.Client, s.toolManagerForSession(sess), s.sessionManager)
+		_, _, err = ag.RunWithEvents(runCtx, sess, userAnswer, func(ev agent.Event) {
+			if ev.Type == agent.EventProviderTrace && ev.Provider != nil {
+				s.applyProviderTraceToSession(sess, target.ProviderType, ev.Provider)
+			}
+		})
+		if err != nil {
+			if isCancellationError(err) {
+				sess.SetStatus(session.StatusPaused)
+				_ = s.sessionManager.Save(sess)
+				return
+			}
+			adaptedErr := s.adaptProviderErrorMessage(target.ProviderType, err)
+			sess.AddAssistantMessage(fmt.Sprintf("Request failed: %s", adaptedErr.Error()), nil)
+			sess.SetStatus(session.StatusFailed)
+			_ = s.sessionManager.Save(sess)
+		}
+	}()
 }
 
 func (s *Server) registerActiveSessionRun(sessionID string, cancel context.CancelFunc) string {

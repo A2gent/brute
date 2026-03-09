@@ -36,6 +36,9 @@ type TakeScreenshotParams struct {
 	Format       string          `json:"format,omitempty"` // png | jpg | jpeg
 	Target       string          `json:"target,omitempty"` // main | all | display | area
 	DisplayIndex int             `json:"display_index,omitempty"`
+	Display      int             `json:"display,omitempty"`
+	Monitor      int             `json:"monitor,omitempty"`
+	MonitorIndex int             `json:"monitor_index,omitempty"`
 	Area         *ScreenshotArea `json:"area,omitempty"`
 }
 
@@ -88,6 +91,18 @@ func (t *TakeScreenshotTool) Schema() map[string]interface{} {
 				"type":        "integer",
 				"description": "1-based display index. Used when target=display (falls back to the configured default display when available).",
 			},
+			"display": map[string]interface{}{
+				"type":        "integer",
+				"description": "Alias of display_index.",
+			},
+			"monitor": map[string]interface{}{
+				"type":        "integer",
+				"description": "Alias of display_index.",
+			},
+			"monitor_index": map[string]interface{}{
+				"type":        "integer",
+				"description": "Alias of display_index.",
+			},
 			"area": map[string]interface{}{
 				"type":        "object",
 				"description": "Rectangle to capture. Required when target=area.",
@@ -119,6 +134,9 @@ func (t *TakeScreenshotTool) Execute(ctx context.Context, params json.RawMessage
 	var p TakeScreenshotParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid parameters: %w", err)
+	}
+	if err := normalizeScreenshotDisplayIndex(&p); err != nil {
+		return &Result{Success: false, Error: err.Error()}, nil
 	}
 
 	format, err := normalizeScreenshotFormat(p.Format, p.Filename, p.OutputPath)
@@ -231,6 +249,23 @@ func configuredDefaultDisplayIndex() int {
 		return 0
 	}
 	return idx
+}
+
+func normalizeScreenshotDisplayIndex(p *TakeScreenshotParams) error {
+	if p == nil {
+		return nil
+	}
+	aliases := []int{p.Display, p.Monitor, p.MonitorIndex}
+	for _, alias := range aliases {
+		if alias <= 0 {
+			continue
+		}
+		if p.DisplayIndex > 0 && p.DisplayIndex != alias {
+			return fmt.Errorf("conflicting display index parameters: display_index=%d, alias=%d", p.DisplayIndex, alias)
+		}
+		p.DisplayIndex = alias
+	}
+	return nil
 }
 
 func validateScreenshotTarget(target string, displayIndex int, area *ScreenshotArea) error {

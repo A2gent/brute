@@ -301,6 +301,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/openai/models", s.handleListOpenAIModels)
 		r.Get("/openai_codex/models", s.handleListOpenAICodexModels)
 		r.Get("/openrouter/models", s.handleListOpenRouterModels)
+		r.Get("/opencode_zen/models", s.handleListOpenCodeZenModels)
 		r.Get("/anthropic/models", s.handleListAnthropicModels)
 		r.Put("/{providerType}", s.handleUpdateProvider)
 		r.Delete("/{providerType}", s.handleDeleteProvider)
@@ -1487,6 +1488,10 @@ func (s *Server) handleListOpenRouterModels(w http.ResponseWriter, r *http.Reque
 	s.handleListOpenAICompatibleModels(w, r, config.ProviderOpenRouter, "OpenRouter")
 }
 
+func (s *Server) handleListOpenCodeZenModels(w http.ResponseWriter, r *http.Request) {
+	s.handleListOpenAICompatibleModels(w, r, config.ProviderOpenCodeZen, "OpenCode Zen")
+}
+
 func (s *Server) handleListAnthropicModels(w http.ResponseWriter, r *http.Request) {
 	if parentProxyURL := strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_URL")); parentProxyURL != "" {
 		baseURL := normalizeOpenAIBaseURL(strings.TrimRight(parentProxyURL, "/") + "/providers/anthropic")
@@ -1558,6 +1563,9 @@ func (s *Server) handleListOpenAICompatibleModels(w http.ResponseWriter, r *http
 	}
 	if apiKey == "" {
 		apiKey = s.apiKeyFromEnv(providerType)
+	}
+	if providerType == config.ProviderOpenCodeZen && apiKey == "" {
+		apiKey = "public"
 	}
 	if def != nil && def.RequiresKey && apiKey == "" {
 		s.errorResponse(w, http.StatusBadRequest, providerName+" API key is not configured")
@@ -5346,6 +5354,9 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 	if apiKey == "" {
 		apiKey = s.apiKeyFromEnv(providerType)
 	}
+	if providerType == config.ProviderOpenCodeZen && apiKey == "" {
+		apiKey = "public"
+	}
 
 	// Special handling for Anthropic: OAuth or API key
 	if providerType == config.ProviderAnthropic {
@@ -5376,7 +5387,7 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 		// Google Gemini uses a dedicated client with OpenAI-compatible API + Gemini extensions
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return gemini.NewClient(apiKey, modelName, baseURL), nil
-	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenAI:
+	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenAI, config.ProviderOpenCodeZen:
 		// Other OpenAI-compatible providers
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return lmstudio.NewClient(apiKey, modelName, baseURL), nil
@@ -5450,6 +5461,8 @@ func (s *Server) apiKeyEnvName(providerType config.ProviderType) string {
 		return "KIMI_API_KEY"
 	case config.ProviderOpenRouter:
 		return "OPENROUTER_API_KEY"
+	case config.ProviderOpenCodeZen:
+		return "OPENCODE_API_KEY"
 	case config.ProviderGoogle:
 		return "GOOGLE_API_KEY"
 	case config.ProviderOpenAI:

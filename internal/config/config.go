@@ -71,6 +71,7 @@ type ProviderType string
 const (
 	ProviderKimi        ProviderType = "kimi"
 	ProviderOpenRouter  ProviderType = "openrouter"
+	ProviderOpenCodeZen ProviderType = "opencode_zen"
 	ProviderLMStudio    ProviderType = "lmstudio"
 	ProviderAnthropic   ProviderType = "anthropic"
 	ProviderGoogle      ProviderType = "google"
@@ -123,6 +124,14 @@ func SupportedProviders() []ProviderDefinition {
 			DefaultURL:    "https://openrouter.ai/api/v1",
 			RequiresKey:   true,
 			DefaultModel:  "openrouter/auto",
+			ContextWindow: 128000,
+		},
+		{
+			Type:          ProviderOpenCodeZen,
+			DisplayName:   "OpenCode Zen",
+			DefaultURL:    "https://opencode.ai/zen/v1",
+			RequiresKey:   false,
+			DefaultModel:  "big-pickle",
 			ContextWindow: 128000,
 		},
 		{

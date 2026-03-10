@@ -57,6 +57,11 @@ func NewRegistry() *Registry {
 				Description: "Open live backend log view",
 				Aliases:     []string{"l"},
 			},
+			{
+				Name:        "a2a",
+				Description: "Manage A2 network (/a2a status|connect|disconnect)",
+				Aliases:     []string{"net"},
+			},
 		},
 	}
 }

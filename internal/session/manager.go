@@ -12,7 +12,7 @@ import (
 
 // Manager manages sessions
 type Manager struct {
-	store      storage.Store
+	store       storage.Store
 	jsonlWriter *JSONLWriter
 }
 
@@ -253,6 +253,21 @@ func (m *Manager) SetSessionTaskProgress(sessionID string, progress string) erro
 	}
 	sess.TaskProgress = progress
 	return m.Save(sess)
+}
+
+// ListIntegrations returns all configured integrations.
+func (m *Manager) ListIntegrations() ([]*storage.Integration, error) {
+	return m.store.ListIntegrations()
+}
+
+// SaveIntegration creates or updates an integration.
+func (m *Manager) SaveIntegration(integration *storage.Integration) error {
+	return m.store.SaveIntegration(integration)
+}
+
+// DeleteIntegration deletes an integration by ID.
+func (m *Manager) DeleteIntegration(id string) error {
+	return m.store.DeleteIntegration(id)
 }
 
 // Project represents a project for grouping sessions

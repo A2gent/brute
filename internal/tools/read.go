@@ -22,11 +22,12 @@ type ReadTool struct {
 
 // ReadParams defines parameters for the read tool
 type ReadParams struct {
-	Path      string `json:"path"`
-	Offset    int    `json:"offset,omitempty"`     // 0-based line offset
-	Limit     int    `json:"limit,omitempty"`      // Number of lines to read
-	StartLine int    `json:"start_line,omitempty"` // 1-based inclusive
-	EndLine   int    `json:"end_line,omitempty"`   // 1-based inclusive
+	Path               string `json:"path"`
+	Offset             int    `json:"offset,omitempty"`               // 0-based line offset
+	Limit              int    `json:"limit,omitempty"`                // Number of lines to read
+	StartLine          int    `json:"start_line,omitempty"`           // 1-based inclusive
+	EndLine            int    `json:"end_line,omitempty"`             // 1-based inclusive
+	IncludeLineNumbers bool   `json:"include_line_numbers,omitempty"` // Default false
 }
 
 // NewReadTool creates a new read tool
@@ -43,7 +44,7 @@ func (t *ReadTool) Description() string {
 By default reads up to 20 lines from the beginning.
 Use offset and limit for reading specific sections of large files.
 Use start_line and end_line for exact 1-based range reads.
-Line numbers in output start at 1.`
+Set include_line_numbers=true to prefix each line with its 1-based line number.`
 }
 
 func (t *ReadTool) Schema() map[string]interface{} {
@@ -69,6 +70,10 @@ func (t *ReadTool) Schema() map[string]interface{} {
 			"end_line": map[string]interface{}{
 				"type":        "integer",
 				"description": "1-based end line for exact range read (inclusive, optional)",
+			},
+			"include_line_numbers": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Whether to include 1-based line numbers in output (default: false)",
 			},
 		},
 		"required": []string{"path"},
@@ -173,8 +178,12 @@ func (t *ReadTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 			line = line[:maxLineLength] + "..."
 		}
 
-		// Format with line number (cat -n style)
-		lines = append(lines, fmt.Sprintf("%6d\t%s", lineNum, line))
+		if p.IncludeLineNumbers {
+			// Format with line number (cat -n style)
+			lines = append(lines, fmt.Sprintf("%6d\t%s", lineNum, line))
+		} else {
+			lines = append(lines, line)
+		}
 		linesRead++
 	}
 

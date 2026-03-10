@@ -799,7 +799,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.commandMenuIndex++
 				}
 				return m, nil
-			case tea.KeyEnter, tea.KeyTab:
+			case tea.KeyEnter:
+				input := strings.TrimSpace(m.textarea.Value())
+				if strings.HasPrefix(input, "/") {
+					raw := strings.TrimSpace(strings.TrimPrefix(input, "/"))
+					parts := strings.Fields(raw)
+					if len(parts) > 1 {
+						if cmd := m.commandRegistry.FindCommand(parts[0]); cmd != nil {
+							m.showCommandMenu = false
+							m.textarea.Reset()
+							return m.executeCommand(cmd.Name, parts[1:])
+						}
+					}
+				}
+				if len(m.filteredCommands) > 0 {
+					selectedCmd := m.filteredCommands[m.commandMenuIndex]
+					m.showCommandMenu = false
+					m.textarea.Reset()
+					return m.executeCommand(selectedCmd.Name, nil)
+				}
+				return m, nil
+			case tea.KeyTab:
 				if len(m.filteredCommands) > 0 {
 					selectedCmd := m.filteredCommands[m.commandMenuIndex]
 					m.showCommandMenu = false
@@ -818,8 +838,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.textarea, taCmd = m.textarea.Update(msg)
 				newInput := m.textarea.Value()
 				if strings.HasPrefix(newInput, "/") {
-					m.filteredCommands = m.commandRegistry.FilterCommands(newInput[1:])
-					m.commandMenuIndex = 0
+					raw := strings.TrimPrefix(newInput, "/")
+					if strings.ContainsAny(raw, " \t") {
+						m.showCommandMenu = false
+					} else {
+						m.filteredCommands = m.commandRegistry.FilterCommands(raw)
+						m.commandMenuIndex = 0
+					}
 				} else {
 					m.showCommandMenu = false
 				}
@@ -829,8 +854,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.textarea, taCmd = m.textarea.Update(msg)
 				input := m.textarea.Value()
 				if strings.HasPrefix(input, "/") {
-					m.filteredCommands = m.commandRegistry.FilterCommands(input[1:])
-					m.commandMenuIndex = 0
+					raw := strings.TrimPrefix(input, "/")
+					if strings.ContainsAny(raw, " \t") {
+						m.showCommandMenu = false
+					} else {
+						m.filteredCommands = m.commandRegistry.FilterCommands(raw)
+						m.commandMenuIndex = 0
+					}
 				} else {
 					m.showCommandMenu = false
 				}

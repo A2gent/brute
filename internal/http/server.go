@@ -179,6 +179,8 @@ func (s *Server) registerServerBackedTools(manager *tools.Manager) {
 	manager.Register(newRecurringJobsTool(s))
 	manager.Register(newMCPManageTool(s))
 	manager.Register(newDelegateToSubAgentTool(s))
+	manager.Register(newDelegateToExternalAgentTool(s))
+	manager.Register(newDiscoverExternalAgentsTool(s))
 	manager.RegisterQuestionTool(s.sessionManager)
 	manager.RegisterSessionTaskProgressTool(s.sessionManager)
 	logging.Debug("Server-backed tools registered. Total tools: %d", len(manager.GetDefinitions()))
@@ -3955,6 +3957,17 @@ func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, 
 			Enabled:         true,
 			ResolvedContent: subAgentsSection,
 			EstimatedTokens: subAgentsTokens,
+		})
+	}
+	externalAgentsSection, externalAgentsTokens := s.resolveExternalAgentsSection(settings)
+	if externalAgentsSection != "" {
+		appendSections = append(appendSections, externalAgentsSection)
+		resolvedBlocks = append(resolvedBlocks, systemPromptBlockSnapshot{
+			Type:            "external_agents",
+			Value:           "",
+			Enabled:         true,
+			ResolvedContent: externalAgentsSection,
+			EstimatedTokens: externalAgentsTokens,
 		})
 	}
 

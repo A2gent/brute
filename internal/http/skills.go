@@ -25,6 +25,7 @@ var integrationToolsByProvider = map[string][]string{
 	"elevenlabs":      {"elevenlabs_tts"},
 	"telegram":        {"telegram_send_message"},
 	"exa":             {"exa_search"},
+	"a2_registry":     {"delegate_to_external_agent", "discover_external_agents"},
 }
 
 var integrationToolNameSet = func() map[string]struct{} {

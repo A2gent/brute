@@ -35,9 +35,20 @@ clean:
     rm -f {{binary}}
     go clean
 
-# Run tests
-test:
-    go test -v ./...
+# Run unit tests (default test command used by local dev and CI)
+test: test-unit
+
+# Run unit tests
+test-unit:
+    go test -v -race ./...
+
+# Run integration tests (files with //go:build integration)
+test-integration:
+    go test -v -tags=integration ./...
+
+# Run unit tests with coverage profile
+test-coverage:
+    go test -v -race -covermode=atomic -coverprofile=coverage.out ./...
 
 # Format code
 fmt:

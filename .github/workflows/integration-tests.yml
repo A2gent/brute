@@ -1,0 +1,31 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
+
+jobs:
+  integration:
+    name: Integration
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Set up uv (for uvx-based MCP integration tests)
+        uses: astral-sh/setup-uv@v5
+
+      - name: Run integration tests
+        run: go test -v -tags=integration ./...

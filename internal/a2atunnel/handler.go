@@ -71,6 +71,9 @@ func (h *InboundHandler) Handle(ctx context.Context, req *AgentRequest) ([]byte,
 		return nil, fmt.Errorf("invalid inbound payload: %w", err)
 	}
 	if len(p.Content) > 0 {
+		if err := ValidateA2AContent(p.Content); err != nil {
+			return nil, fmt.Errorf("invalid content payload: %w", err)
+		}
 		derivedTask, derivedImages := LegacyFromA2AContent(p.Content)
 		if strings.TrimSpace(p.Task) == "" {
 			p.Task = derivedTask
@@ -89,6 +92,9 @@ func (h *InboundHandler) Handle(ctx context.Context, req *AgentRequest) ([]byte,
 	}
 	if strings.TrimSpace(p.Task) == "" && len(p.Images) == 0 {
 		return nil, fmt.Errorf("inbound payload missing both 'task' and 'images'")
+	}
+	if err := ValidateA2AImages(p.Images); err != nil {
+		return nil, fmt.Errorf("invalid images payload: %w", err)
 	}
 	incomingImages := a2aImagesToSession(p.Images)
 

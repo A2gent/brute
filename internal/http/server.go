@@ -3360,11 +3360,8 @@ func normalizeIncomingImages(images []MessageImagePayload) ([]session.ImageAttac
 	if len(images) == 0 {
 		return nil, nil
 	}
-	const maxImages = 8
-	if len(images) > maxImages {
-		return nil, fmt.Errorf("too many images: max %d", maxImages)
-	}
 	out := make([]session.ImageAttachment, 0, len(images))
+	bridgeImages := make([]a2atunnel.A2AImage, 0, len(images))
 	for idx, raw := range images {
 		img := session.ImageAttachment{
 			Name:       strings.TrimSpace(raw.Name),
@@ -3384,10 +3381,16 @@ func normalizeIncomingImages(images []MessageImagePayload) ([]session.ImageAttac
 		if img.MediaType == "" {
 			img.MediaType = "image/png"
 		}
-		if img.DataBase64 != "" && len(img.DataBase64) > 15*1024*1024 {
-			return nil, fmt.Errorf("image %d payload too large", idx+1)
-		}
+		bridgeImages = append(bridgeImages, a2atunnel.A2AImage{
+			Name:       img.Name,
+			MediaType:  img.MediaType,
+			DataBase64: img.DataBase64,
+			URL:        img.URL,
+		})
 		out = append(out, img)
+	}
+	if err := a2atunnel.ValidateA2AImages(bridgeImages); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

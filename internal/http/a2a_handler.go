@@ -74,8 +74,8 @@ func (s *Server) handleAgentCard(w http.ResponseWriter, r *http.Request) {
 			PushNotifications: false,
 			ExtendedAgentCard: false,
 		},
-		DefaultInputModes:  []string{"text/plain", "application/json"},
-		DefaultOutputModes: []string{"text/plain", "application/json"},
+		DefaultInputModes:  []string{"text/plain", "application/json", "image/png", "image/jpeg", "image/webp", "image/gif"},
+		DefaultOutputModes: []string{"text/plain", "application/json", "image/png", "image/jpeg", "image/webp", "image/gif"},
 		Tools:              agentTools,
 		Skills: []AgentSkill{
 			{

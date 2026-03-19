@@ -85,6 +85,9 @@ func (s *Server) processA2AMessageRequest(ctx context.Context, rawBody []byte) (
 	if len(req.Content) == 0 {
 		return nil, fmt.Errorf("A2A messages endpoint requires canonical content[]")
 	}
+	if err := a2atunnel.ValidateA2AContent(req.Content); err != nil {
+		return nil, fmt.Errorf("invalid content payload: %w", err)
+	}
 
 	derivedText, derivedImages := a2atunnel.LegacyFromA2AContent(req.Content)
 	if strings.TrimSpace(req.Task) == "" {
@@ -92,6 +95,9 @@ func (s *Server) processA2AMessageRequest(ctx context.Context, rawBody []byte) (
 	}
 	if len(req.Images) == 0 {
 		req.Images = derivedImages
+	}
+	if err := a2atunnel.ValidateA2AImages(req.Images); err != nil {
+		return nil, fmt.Errorf("invalid images payload: %w", err)
 	}
 	if req.Sender != nil {
 		if strings.TrimSpace(req.SourceAgentID) == "" {

@@ -2,6 +2,8 @@
 
 [![Go Version](https://img.shields.io/badge/go-1.24+-00ADD8.svg)](https://golang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Unit Tests](https://github.com/A2gent/brute/actions/workflows/tests.yml/badge.svg)](https://github.com/A2gent/brute/actions/workflows/tests.yml)
+[![Coverage](https://codecov.io/gh/A2gent/brute/graph/badge.svg)](https://codecov.io/gh/A2gent/brute)
 
 A Go-based autonomous AI coding agent with TUI + HTTP API.
 Works best with [A²gent/caesar](https://github.com/A2gent/caesar) as control app.
@@ -376,8 +378,14 @@ just lint        # go vet
 # all tests
 just test
 
-# with race + coverage
-go test -v -race -coverprofile=coverage.out ./...
+# unit tests (race-enabled)
+just test-unit
+
+# integration tests (separate pipeline)
+just test-integration
+
+# unit tests with coverage output
+just test-coverage
 
 # one package
 go test -v ./internal/tools/...

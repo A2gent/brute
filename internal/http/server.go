@@ -181,6 +181,7 @@ func (s *Server) registerServerBackedTools(manager *tools.Manager) {
 	manager.Register(newDelegateToSubAgentTool(s))
 	manager.Register(newDelegateToExternalAgentTool(s))
 	manager.Register(newDiscoverExternalAgentsTool(s))
+	manager.Register(newCreateLocalDockerAgentsBulkTool(s))
 	manager.RegisterQuestionTool(s.sessionManager)
 	manager.RegisterSessionTaskProgressTool(s.sessionManager)
 	logging.Debug("Server-backed tools registered. Total tools: %d", len(manager.GetDefinitions()))

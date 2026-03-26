@@ -75,3 +75,17 @@ func TestToolManagerForSession_SubAgentIgnoresGlobalDisabledTools(t *testing.T) 
 	}
 }
 
+func TestServerRegistersCreateLocalDockerAgentsBulkTool(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	sessionManager := session.NewManager(store)
+	server := NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
+
+	if _, ok := server.toolManager.Get("create_local_docker_agents_bulk"); !ok {
+		t.Fatalf("expected create_local_docker_agents_bulk to be registered")
+	}
+}

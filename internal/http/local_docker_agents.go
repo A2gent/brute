@@ -64,6 +64,15 @@ type createLocalDockerAgentRequest struct {
 	Image           string `json:"image"`
 	HostPort        int    `json:"host_port"`
 	LMStudioBaseURL string `json:"lm_studio_base_url"`
+	AgentKind       string `json:"agent_kind"`
+	SystemPrompt    string `json:"system_prompt"`
+	SessionID       string `json:"session_id"`
+}
+
+type localDockerAgentCreateResult struct {
+	Agent   *LocalDockerAgent
+	Name    string
+	Warning string
 }
 
 type buildLocalDockerAgentImageRequest struct {
@@ -136,13 +145,33 @@ func (s *Server) handleCreateLocalDockerAgent(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	result, statusCode, err := s.createLocalDockerAgent(r.Context(), req)
+	if err != nil {
+		s.errorResponse(w, statusCode, err.Error())
+		return
+	}
+	if result.Agent != nil {
+		s.jsonResponse(w, http.StatusCreated, result.Agent)
+		return
+	}
+	s.jsonResponse(w, http.StatusCreated, map[string]interface{}{
+		"name":    result.Name,
+		"status":  "started",
+		"warning": result.Warning,
+	})
+}
+
+func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDockerAgentRequest) (*localDockerAgentCreateResult, int, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = fmt.Sprintf("a2gent-local-%d", time.Now().Unix())
 	}
 	if !dockerContainerIDPattern.MatchString(name) {
-		s.errorResponse(w, http.StatusBadRequest, "Container name may contain only letters, numbers, ., _, and -")
-		return
+		return nil, http.StatusBadRequest, fmt.Errorf("container name may contain only letters, numbers, ., _, and -")
 	}
 
 	image := strings.TrimSpace(req.Image)
@@ -158,13 +187,11 @@ func (s *Server) handleCreateLocalDockerAgent(w http.ResponseWriter, r *http.Req
 		var err error
 		hostPort, err = findAvailablePort(defaultLocalAgentBasePort, defaultLocalAgentMaxPort)
 		if err != nil {
-			s.errorResponse(w, http.StatusInternalServerError, "No available host port found in local agent range")
-			return
+			return nil, http.StatusInternalServerError, fmt.Errorf("no available host port found in local agent range")
 		}
 	}
 	if hostPort < 1 || hostPort > 65535 {
-		s.errorResponse(w, http.StatusBadRequest, "host_port must be between 1 and 65535")
-		return
+		return nil, http.StatusBadRequest, fmt.Errorf("host_port must be between 1 and 65535")
 	}
 
 	lmStudioBaseURL := strings.TrimSpace(req.LMStudioBaseURL)
@@ -177,19 +204,22 @@ func (s *Server) handleCreateLocalDockerAgent(w http.ResponseWriter, r *http.Req
 	if s.llmProxyEnabled() {
 		lmStudioBaseURL = fmt.Sprintf("http://host.docker.internal:%d/v1", s.port)
 	}
+	agentKind := strings.TrimSpace(req.AgentKind)
+	agentKindLabel := sanitizeDockerLabelValue(agentKind)
+	systemPrompt := strings.TrimSpace(req.SystemPrompt)
+	sessionID := strings.TrimSpace(req.SessionID)
+	sessionIDLabel := sanitizeDockerLabelValue(sessionID)
 
 	home, err := os.UserHomeDir()
 	if err != nil {
-		s.errorResponse(w, http.StatusInternalServerError, "Failed to resolve home directory")
-		return
+		return nil, http.StatusInternalServerError, fmt.Errorf("failed to resolve home directory")
 	}
 	dataDir := filepath.Join(home, ".a2gent-data", "local-agents", name)
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		s.errorResponse(w, http.StatusInternalServerError, "Failed to prepare local agent data directory: "+err.Error())
-		return
+		return nil, http.StatusInternalServerError, fmt.Errorf("failed to prepare local agent data directory: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	runCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	proxyBaseURL := fmt.Sprintf("http://host.docker.internal:%d/v1", s.port)
 	args := []string{
@@ -202,6 +232,21 @@ func (s *Server) handleCreateLocalDockerAgent(w http.ResponseWriter, r *http.Req
 		"--env", "HOME=/data",
 		"--env", "AAGENT_DATA_PATH=/data",
 		"--env", "LM_STUDIO_BASE_URL=" + lmStudioBaseURL,
+	}
+	if agentKind != "" {
+		if agentKindLabel != "" {
+			args = append(args, "--label", "a2gent.agent_kind="+agentKindLabel)
+		}
+		args = append(args, "--env", "A2GENT_AGENT_KIND="+agentKind)
+	}
+	if systemPrompt != "" {
+		args = append(args, "--env", "AAGENT_SYSTEM_PROMPT="+systemPrompt)
+	}
+	if sessionID != "" {
+		if sessionIDLabel != "" {
+			args = append(args, "--label", "a2gent.session_id="+sessionIDLabel)
+		}
+		args = append(args, "--env", "A2GENT_PARENT_SESSION_ID="+sessionID)
 	}
 	if s.llmProxyEnabled() {
 		// Route child agent traffic through the parent's OpenAI-compatible proxy.
@@ -221,23 +266,19 @@ func (s *Server) handleCreateLocalDockerAgent(w http.ResponseWriter, r *http.Req
 		)
 	}
 	args = append(args, image, "server")
-	_, err = runCommand(ctx, "docker", args...)
+	_, err = runCommand(runCtx, "docker", args...)
 	if err != nil {
-		s.errorResponse(w, http.StatusBadRequest, "Failed to start local agent container: "+err.Error())
-		return
+		return nil, http.StatusBadRequest, fmt.Errorf("failed to start local agent container: %w", err)
 	}
 
-	agent, err := findLocalBruteContainer(r.Context(), name)
+	agent, err := findLocalBruteContainer(ctx, name)
 	if err != nil {
-		s.jsonResponse(w, http.StatusCreated, map[string]interface{}{
-			"name":    name,
-			"status":  "started",
-			"warning": "Container started but details could not be loaded: " + err.Error(),
-		})
-		return
+		return &localDockerAgentCreateResult{
+			Name:    name,
+			Warning: "Container started but details could not be loaded: " + err.Error(),
+		}, http.StatusCreated, nil
 	}
-
-	s.jsonResponse(w, http.StatusCreated, agent)
+	return &localDockerAgentCreateResult{Agent: agent}, http.StatusCreated, nil
 }
 
 func (s *Server) handleBuildLocalDockerAgentImage(w http.ResponseWriter, r *http.Request) {
@@ -780,6 +821,14 @@ func parseDockerLabels(raw string) map[string]string {
 		}
 	}
 	return labels
+}
+
+func sanitizeDockerLabelValue(value string) string {
+	if value == "" {
+		return ""
+	}
+	normalized := strings.NewReplacer(",", "_", "\n", " ", "\r", " ").Replace(value)
+	return strings.TrimSpace(normalized)
 }
 
 func parseHostPort(ports string) int {

@@ -365,6 +365,11 @@ func (s *Server) setupRoutes() {
 		r.Get("/clips/{clipID}", s.handleGetSpeechClip)
 	})
 
+	// Meeting capture persistence (audio + markdown notes).
+	r.Route("/meetings", func(r chi.Router) {
+		r.Post("/save", s.handleSaveMeetingArtifacts)
+	})
+
 	// Local assets exposed for session UI rendering.
 	r.Route("/assets", func(r chi.Router) {
 		r.Get("/images", s.handleGetImageAsset)

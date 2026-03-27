@@ -368,6 +368,9 @@ func (s *Server) setupRoutes() {
 	// Meeting capture persistence (audio + markdown notes).
 	r.Route("/meetings", func(r chi.Router) {
 		r.Post("/save", s.handleSaveMeetingArtifacts)
+		r.Get("/list", s.handleListMeetingArtifacts)
+		r.Get("/audio", s.handleGetMeetingAudio)
+		r.Post("/delete", s.handleDeleteMeetingArtifacts)
 	})
 
 	// Local assets exposed for session UI rendering.

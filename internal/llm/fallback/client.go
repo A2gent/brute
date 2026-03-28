@@ -442,8 +442,10 @@ func isRetryableError(ctx context.Context, err error) bool {
 	}
 
 	// Network and connection errors - worth retrying
-	if strings.Contains(msg, "context canceled") {
-		return false // User cancellation - don't retry
+	if strings.Contains(msg, "context canceled") || strings.Contains(msg, "context cancelled") {
+		// Local cancellation is already handled via ctx.Err() above. When context
+		// is still active, this usually indicates a transient upstream failure.
+		return true
 	}
 	if strings.Contains(msg, "context deadline exceeded") {
 		return true // Timeout - retry

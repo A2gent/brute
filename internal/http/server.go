@@ -2411,7 +2411,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runCtx, cancelRun := context.WithCancel(r.Context())
+	// Keep session execution independent from the HTTP request lifecycle so
+	// transient client disconnects do not cancel provider retries/fallback.
+	// Explicit cancellation remains available via /sessions/:id/cancel.
+	runCtx, cancelRun := context.WithCancel(context.Background())
 	runID := s.registerActiveSessionRun(sessionID, cancelRun)
 	defer func() {
 		cancelRun()
@@ -2562,7 +2565,10 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runCtx, cancelRun := context.WithCancel(r.Context())
+	// Keep session execution independent from the HTTP request lifecycle so
+	// transient client disconnects do not cancel provider retries/fallback.
+	// Explicit cancellation remains available via /sessions/:id/cancel.
+	runCtx, cancelRun := context.WithCancel(context.Background())
 	runID := s.registerActiveSessionRun(sessionID, cancelRun)
 	defer func() {
 		cancelRun()

@@ -203,6 +203,8 @@ const mcpServersInstructionBlockType = "mcp_servers"
 const skillsFolderSettingKey = "AAGENT_SKILLS_FOLDER"
 const externalMarkdownDisabledSkillsSettingKey = "A2GENT_EXTERNAL_MARKDOWN_DISABLED_SKILLS"
 const disabledToolsSettingKey = "A2GENT_DISABLED_TOOLS"
+const disableToolsByDefaultSettingKey = "A2GENT_DISABLE_TOOLS_BY_DEFAULT"
+const disableToolsByDefaultAppliedSettingKey = "A2GENT_DISABLE_TOOLS_BY_DEFAULT_APPLIED"
 const defaultDynamicInstructionFile = "AGENTS.md"
 const maxDynamicInstructionBytes = 32 * 1024
 const sessionSystemPromptSnapshotMetadataKey = "system_prompt_snapshot"
@@ -243,8 +245,58 @@ func NewServer(
 	}
 
 	s.registerServerBackedTools(s.toolManager)
+	s.bootstrapDisabledToolsByDefault()
 	s.setupRoutes()
 	return s
+}
+
+func (s *Server) bootstrapDisabledToolsByDefault() {
+	raw := strings.TrimSpace(strings.ToLower(os.Getenv(disableToolsByDefaultSettingKey)))
+	if raw == "" || raw == "0" || raw == "false" || raw == "off" || raw == "no" {
+		return
+	}
+
+	settings, err := s.store.GetSettings()
+	if err != nil {
+		logging.Warn("Failed to load settings for disabled-tools bootstrap: %v", err)
+		return
+	}
+	if settings == nil {
+		settings = map[string]string{}
+	}
+	if strings.TrimSpace(settings[disableToolsByDefaultAppliedSettingKey]) != "" {
+		return
+	}
+
+	previous := make(map[string]string, len(settings))
+	for key, value := range settings {
+		previous[key] = value
+	}
+
+	if strings.TrimSpace(settings[disabledToolsSettingKey]) == "" {
+		defs := s.toolManager.GetDefinitions()
+		names := make([]string, 0, len(defs))
+		for _, def := range defs {
+			name := strings.TrimSpace(def.Name)
+			if name != "" {
+				names = append(names, name)
+			}
+		}
+		sort.Strings(names)
+		encoded, err := json.Marshal(names)
+		if err != nil {
+			logging.Warn("Failed to encode disabled tools bootstrap value: %v", err)
+			return
+		}
+		settings[disabledToolsSettingKey] = string(encoded)
+	}
+
+	settings[disableToolsByDefaultAppliedSettingKey] = time.Now().UTC().Format(time.RFC3339)
+	if err := s.store.SaveSettings(settings); err != nil {
+		logging.Warn("Failed to save disabled-tools bootstrap setting: %v", err)
+		return
+	}
+	syncSettingsToEnv(previous, settings)
 }
 
 // setupRoutes configures all API routes

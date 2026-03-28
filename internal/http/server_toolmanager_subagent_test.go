@@ -1,6 +1,8 @@
 package http
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,5 +89,75 @@ func TestServerRegistersCreateLocalDockerAgentsBulkTool(t *testing.T) {
 
 	if _, ok := server.toolManager.Get("create_local_docker_agents_bulk"); !ok {
 		t.Fatalf("expected create_local_docker_agents_bulk to be registered")
+	}
+}
+
+func TestBootstrapDisabledToolsByDefault(t *testing.T) {
+	t.Setenv(disableToolsByDefaultSettingKey, "true")
+
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	sessionManager := session.NewManager(store)
+	server := NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
+
+	settings, err := store.GetSettings()
+	if err != nil {
+		t.Fatalf("failed to load settings: %v", err)
+	}
+
+	if strings.TrimSpace(settings[disableToolsByDefaultAppliedSettingKey]) == "" {
+		t.Fatalf("expected bootstrap applied marker to be set")
+	}
+
+	rawDisabled := settings[disabledToolsSettingKey]
+	if strings.TrimSpace(rawDisabled) == "" {
+		t.Fatalf("expected disabled tools setting to be initialized")
+	}
+
+	var disabled []string
+	if err := json.Unmarshal([]byte(rawDisabled), &disabled); err != nil {
+		t.Fatalf("failed to parse disabled tools: %v", err)
+	}
+
+	if len(disabled) != len(server.toolManager.GetDefinitions()) {
+		t.Fatalf("expected %d disabled tools, got %d", len(server.toolManager.GetDefinitions()), len(disabled))
+	}
+}
+
+func TestBootstrapDisabledToolsByDefault_DoesNotReapplyAfterMarker(t *testing.T) {
+	t.Setenv(disableToolsByDefaultSettingKey, "true")
+
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	sessionManager := session.NewManager(store)
+	_ = NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
+
+	settings, err := store.GetSettings()
+	if err != nil {
+		t.Fatalf("failed to load settings: %v", err)
+	}
+
+	delete(settings, disabledToolsSettingKey)
+	if err := store.SaveSettings(settings); err != nil {
+		t.Fatalf("failed to persist settings without disabled tools: %v", err)
+	}
+
+	_ = NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
+
+	after, err := store.GetSettings()
+	if err != nil {
+		t.Fatalf("failed to load settings after restart: %v", err)
+	}
+
+	if strings.TrimSpace(after[disabledToolsSettingKey]) != "" {
+		t.Fatalf("expected disabled tools not to be reapplied once bootstrap marker exists")
 	}
 }

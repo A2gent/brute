@@ -254,6 +254,7 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 		"--env", "HOME=/data",
 		"--env", "AAGENT_DATA_PATH=/data",
 		"--env", "LM_STUDIO_BASE_URL=" + lmStudioBaseURL,
+		"--env", disableToolsByDefaultSettingKey + "=true",
 	}
 	if projectID != "" {
 		projectIDLabel := sanitizeDockerLabelValue(projectID)

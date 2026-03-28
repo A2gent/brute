@@ -274,7 +274,7 @@ func (s *Server) buildSystemPromptForA2A() string {
 			}
 		}
 		if builtInEnabled {
-			if guidance, _ := resolveBuiltInToolsGuidance(settings); strings.TrimSpace(guidance) != "" {
+			if guidance, _ := s.resolveBuiltInToolsGuidance(settings); strings.TrimSpace(guidance) != "" {
 				return strings.TrimSpace(basePrompt) + "\n\nBuilt-in tools guidance:\n" + strings.TrimSpace(guidance)
 			}
 		}

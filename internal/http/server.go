@@ -197,7 +197,6 @@ const thinkingFilePathSettingKey = "A2GENT_THINKING_FILE_PATH"
 const thinkingInstructionBlocksSettingKey = "A2GENT_THINKING_INSTRUCTION_BLOCKS"
 const agentInstructionBlocksSettingKey = "A2GENT_AGENT_INSTRUCTION_BLOCKS"
 const agentBaseSystemPromptSettingKey = "A2GENT_AGENT_BASE_SYSTEM_PROMPT"
-const agentBuiltInToolsGuidanceSettingKey = "A2GENT_AGENT_BUILTIN_TOOLS_GUIDANCE"
 const builtInToolsInstructionBlockType = "builtin_tools"
 const integrationSkillsInstructionBlockType = "integration_skills"
 const externalMarkdownSkillsInstructionBlockType = "external_markdown_skills"
@@ -898,7 +897,6 @@ type SettingsResponse struct {
 	Settings                               map[string]string `json:"settings"`
 	DefaultSystemPrompt                    string            `json:"defaultSystemPrompt"`
 	DefaultSystemPromptWithoutBuiltInTools string            `json:"defaultSystemPromptWithoutBuiltInTools"`
-	DefaultBuiltInToolsGuidance            string            `json:"defaultBuiltInToolsGuidance"`
 }
 
 type UpdateSettingsRequest struct {
@@ -1067,7 +1065,6 @@ func settingsResponse(settings map[string]string) SettingsResponse {
 		Settings:                               settings,
 		DefaultSystemPrompt:                    agent.DefaultSystemPrompt(),
 		DefaultSystemPromptWithoutBuiltInTools: agent.DefaultSystemPromptWithoutBuiltInTools(),
-		DefaultBuiltInToolsGuidance:            agent.DefaultBuiltInToolsGuidance(),
 	}
 }
 
@@ -3827,7 +3824,7 @@ func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, 
 	}
 
 	basePrompt := resolveMainAgentBasePrompt(settings)
-	builtInGuidance, usingBuiltInDefaultGuidance := resolveBuiltInToolsGuidance(settings)
+	builtInGuidance, usingBuiltInDefaultGuidance := s.resolveBuiltInToolsGuidance(settings)
 	if basePrompt == "" {
 		return nil
 	}
@@ -4208,16 +4205,55 @@ func resolveMainAgentBasePrompt(settings map[string]string) string {
 	return agent.DefaultSystemPromptWithoutBuiltInTools()
 }
 
-func resolveBuiltInToolsGuidance(settings map[string]string) (string, bool) {
-	if settings != nil {
-		if configured := strings.TrimSpace(settings[agentBuiltInToolsGuidanceSettingKey]); configured != "" {
-			return configured, false
+func (s *Server) resolveBuiltInToolsGuidance(settings map[string]string) (string, bool) {
+	definitions := s.resolveEnabledToolDefinitions(settings)
+	if len(definitions) == 0 {
+		return "", true
+	}
+
+	lines := make([]string, 0, len(definitions)+1)
+	lines = append(lines, "Available tools allow you to:")
+	for _, definition := range definitions {
+		name := strings.TrimSpace(definition.Name)
+		description := strings.TrimSpace(definition.Description)
+		if name == "" {
+			continue
 		}
+		if description == "" {
+			lines = append(lines, fmt.Sprintf("- %s", name))
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- %s: %s", name, description))
 	}
-	if configured := strings.TrimSpace(os.Getenv(agentBuiltInToolsGuidanceSettingKey)); configured != "" {
-		return configured, false
+	if len(lines) <= 1 {
+		return "", true
 	}
-	return agent.DefaultBuiltInToolsGuidance(), true
+	return strings.Join(lines, "\n"), true
+}
+
+func (s *Server) resolveEnabledToolDefinitions(settings map[string]string) []llm.ToolDefinition {
+	definitions := s.toolManager.GetDefinitions()
+	if len(definitions) == 0 {
+		return []llm.ToolDefinition{}
+	}
+
+	disabledTools := resolveDisabledToolNames(settings)
+	filtered := make([]llm.ToolDefinition, 0, len(definitions))
+	for _, definition := range definitions {
+		name := strings.TrimSpace(definition.Name)
+		if name == "" {
+			continue
+		}
+		if _, disabled := disabledTools[name]; disabled {
+			continue
+		}
+		filtered = append(filtered, definition)
+	}
+
+	sort.Slice(filtered, func(i, j int) bool {
+		return strings.ToLower(strings.TrimSpace(filtered[i].Name)) < strings.ToLower(strings.TrimSpace(filtered[j].Name))
+	})
+	return filtered
 }
 
 func builtInToolsEstimatedTokens(enabled bool, usingBuiltInDefault bool, renderedSection string) int {

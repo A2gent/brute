@@ -950,6 +950,11 @@ func DefaultSystemPromptWithoutBuiltInTools() string {
 	return defaultSystemPromptWithoutBuiltInTools
 }
 
+// DefaultBuiltInToolsGuidance returns the built-in tools guidance section.
+func DefaultBuiltInToolsGuidance() string {
+	return defaultBuiltInToolsGuidance
+}
+
 // defaultSystemPrompt is the default system prompt for the agent
 const defaultSystemPrompt = `You are an AI coding assistant. You help users with software engineering tasks by using the available tools.
 
@@ -990,6 +995,20 @@ Guidelines:
 - If you encounter errors, try to understand and fix them
 
 Be concise but thorough. Complete the user's task step by step.`
+
+const defaultBuiltInToolsGuidance = `Available tools allow you to:
+- Execute shell commands (bash)
+- Execute secure Python data processing snippets (code_execution)
+- Chain multiple tools in one sequential call (pipeline)
+- Read file contents (read)
+- Write new files (write)
+- Edit existing files with string replacement (edit)
+- Replace exact line ranges (replace_lines)
+- Insert lines at specific positions (insert_lines)
+- Find files by pattern (glob)
+- Find files with include/exclude filters (find_files)
+- Search file contents (grep)
+- Filter text/file content to reduce context (filter)`
 
 func (a *Agent) buildCompactionRequestFromMessages(messagesToSummarize []session.Message, prompt string) *llm.ChatRequest {
 	var sb strings.Builder

@@ -254,12 +254,33 @@ func (s *Server) buildSystemPromptForA2ASession(sess *session.Session) string {
 // Falls back to the default agent system prompt.
 func (s *Server) buildSystemPromptForA2A() string {
 	settings, err := s.store.GetSettings()
-	if err == nil {
-		if p := strings.TrimSpace(settings["AAGENT_SYSTEM_PROMPT"]); p != "" {
-			return p
+	if err == nil && settings != nil {
+		basePrompt := resolveMainAgentBasePrompt(settings)
+		if basePrompt == "" {
+			basePrompt = agent.DefaultSystemPromptWithoutBuiltInTools()
 		}
+		builtInEnabled := true
+		rawBlocks := strings.TrimSpace(settings[agentInstructionBlocksSettingKey])
+		if rawBlocks != "" {
+			var blocks []configuredInstructionBlock
+			if parseErr := json.Unmarshal([]byte(rawBlocks), &blocks); parseErr == nil {
+				for _, block := range blocks {
+					if strings.TrimSpace(block.Type) != builtInToolsInstructionBlockType {
+						continue
+					}
+					builtInEnabled = block.Enabled == nil || *block.Enabled
+					break
+				}
+			}
+		}
+		if builtInEnabled {
+			if guidance, _ := resolveBuiltInToolsGuidance(settings); strings.TrimSpace(guidance) != "" {
+				return strings.TrimSpace(basePrompt) + "\n\nBuilt-in tools guidance:\n" + strings.TrimSpace(guidance)
+			}
+		}
+		return basePrompt
 	}
-	return agent.DefaultSystemPrompt()
+	return resolveMainAgentBasePrompt(nil)
 }
 
 // ---- HTTP handlers for tunnel status ----

@@ -196,6 +196,8 @@ const thinkingTextSettingKey = "A2GENT_THINKING_TEXT"
 const thinkingFilePathSettingKey = "A2GENT_THINKING_FILE_PATH"
 const thinkingInstructionBlocksSettingKey = "A2GENT_THINKING_INSTRUCTION_BLOCKS"
 const agentInstructionBlocksSettingKey = "A2GENT_AGENT_INSTRUCTION_BLOCKS"
+const agentBaseSystemPromptSettingKey = "A2GENT_AGENT_BASE_SYSTEM_PROMPT"
+const agentBuiltInToolsGuidanceSettingKey = "A2GENT_AGENT_BUILTIN_TOOLS_GUIDANCE"
 const builtInToolsInstructionBlockType = "builtin_tools"
 const integrationSkillsInstructionBlockType = "integration_skills"
 const externalMarkdownSkillsInstructionBlockType = "external_markdown_skills"
@@ -896,6 +898,7 @@ type SettingsResponse struct {
 	Settings                               map[string]string `json:"settings"`
 	DefaultSystemPrompt                    string            `json:"defaultSystemPrompt"`
 	DefaultSystemPromptWithoutBuiltInTools string            `json:"defaultSystemPromptWithoutBuiltInTools"`
+	DefaultBuiltInToolsGuidance            string            `json:"defaultBuiltInToolsGuidance"`
 }
 
 type UpdateSettingsRequest struct {
@@ -1064,6 +1067,7 @@ func settingsResponse(settings map[string]string) SettingsResponse {
 		Settings:                               settings,
 		DefaultSystemPrompt:                    agent.DefaultSystemPrompt(),
 		DefaultSystemPromptWithoutBuiltInTools: agent.DefaultSystemPromptWithoutBuiltInTools(),
+		DefaultBuiltInToolsGuidance:            agent.DefaultBuiltInToolsGuidance(),
 	}
 }
 
@@ -3822,27 +3826,28 @@ func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, 
 		break
 	}
 
-	basePrompt := strings.TrimSpace(os.Getenv("AAGENT_SYSTEM_PROMPT"))
-	if basePrompt == "" {
-		if builtInToolsEnabled {
-			basePrompt = agent.DefaultSystemPrompt()
-		} else {
-			basePrompt = agent.DefaultSystemPromptWithoutBuiltInTools()
-		}
-	}
+	basePrompt := resolveMainAgentBasePrompt(settings)
+	builtInGuidance, usingBuiltInDefaultGuidance := resolveBuiltInToolsGuidance(settings)
 	if basePrompt == "" {
 		return nil
 	}
 
 	resolvedBlocks := make([]systemPromptBlockSnapshot, 0, len(blocks))
+	builtInRendered := ""
+	if builtInToolsEnabled && strings.TrimSpace(builtInGuidance) != "" {
+		builtInRendered = fmt.Sprintf("Built-in tools guidance:\n%s", strings.TrimSpace(builtInGuidance))
+	}
 	resolvedBlocks = append(resolvedBlocks, systemPromptBlockSnapshot{
 		Type:            builtInToolsInstructionBlockType,
 		Value:           "",
 		Enabled:         builtInToolsEnabled,
-		ResolvedContent: "Controls whether built-in tool guidance is included in the base system prompt.",
-		EstimatedTokens: builtInToolsEstimatedTokens(basePrompt, builtInToolsEnabled),
+		ResolvedContent: strings.TrimSpace(builtInGuidance),
+		EstimatedTokens: builtInToolsEstimatedTokens(builtInToolsEnabled, usingBuiltInDefaultGuidance, builtInRendered),
 	})
 	appendSections := make([]string, 0, len(blocks))
+	if builtInRendered != "" {
+		appendSections = append(appendSections, builtInRendered)
+	}
 	sectionNumber := 0
 	for _, block := range blocks {
 		blockType := strings.TrimSpace(block.Type)
@@ -4188,21 +4193,44 @@ func snapshotHasThinkingBlocks(snapshot *systemPromptSnapshot) bool {
 	return false
 }
 
-func builtInToolsEstimatedTokens(basePrompt string, enabled bool) int {
+func resolveMainAgentBasePrompt(settings map[string]string) string {
+	if settings != nil {
+		if configured := strings.TrimSpace(settings[agentBaseSystemPromptSettingKey]); configured != "" {
+			return configured
+		}
+	}
+	if configured := strings.TrimSpace(os.Getenv("AAGENT_SYSTEM_PROMPT")); configured != "" {
+		return configured
+	}
+	if configured := strings.TrimSpace(os.Getenv(agentBaseSystemPromptSettingKey)); configured != "" {
+		return configured
+	}
+	return agent.DefaultSystemPromptWithoutBuiltInTools()
+}
+
+func resolveBuiltInToolsGuidance(settings map[string]string) (string, bool) {
+	if settings != nil {
+		if configured := strings.TrimSpace(settings[agentBuiltInToolsGuidanceSettingKey]); configured != "" {
+			return configured, false
+		}
+	}
+	if configured := strings.TrimSpace(os.Getenv(agentBuiltInToolsGuidanceSettingKey)); configured != "" {
+		return configured, false
+	}
+	return agent.DefaultBuiltInToolsGuidance(), true
+}
+
+func builtInToolsEstimatedTokens(enabled bool, usingBuiltInDefault bool, renderedSection string) int {
 	if !enabled {
 		return 0
 	}
-	if strings.TrimSpace(os.Getenv("AAGENT_SYSTEM_PROMPT")) != "" {
-		return 0
+	if strings.TrimSpace(renderedSection) != "" {
+		return estimateTokensApprox(renderedSection)
 	}
-	withTools := estimateTokensApprox(agent.DefaultSystemPrompt())
-	withoutTools := estimateTokensApprox(agent.DefaultSystemPromptWithoutBuiltInTools())
-	diff := withTools - withoutTools
-	if diff < 0 {
-		return 0
+	if usingBuiltInDefault {
+		return estimateTokensApprox(agent.DefaultBuiltInToolsGuidance())
 	}
-	_ = basePrompt
-	return diff
+	return 0
 }
 
 func estimateTokensApprox(text string) int {

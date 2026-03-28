@@ -10,23 +10,25 @@ import (
 	"strings"
 	"time"
 
+	"github.com/A2gent/brute/internal/logging"
+	"github.com/A2gent/brute/internal/tools"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/input"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
-	"github.com/A2gent/brute/internal/logging"
-	"github.com/A2gent/brute/internal/tools"
 )
 
 // BrowserChromeTool allows controlling a Chrome browser instance.
 type BrowserChromeTool struct {
-	browser      *rod.Browser
-	page         *rod.Page // Persistent page across calls
-	workDir      string
-	debugPort    string
-	userDataDir  string
-	headless     bool
-	capabilities []string
+	browser          *rod.Browser
+	page             *rod.Page // Persistent page across calls
+	workDir          string
+	debugPort        string
+	userDataDir      string
+	profileDir       string
+	profileDirectory string
+	headless         bool
+	capabilities     []string
 }
 
 // NewBrowserChromeTool creates a new instance of the browser tool.
@@ -36,36 +38,30 @@ func NewBrowserChromeTool(workDir string) *BrowserChromeTool {
 		debugPort = "9223"
 	}
 
-	userDataDir := os.Getenv("CHROME_USER_DATA_DIR")
+	userDataDir := strings.TrimSpace(os.Getenv("CHROME_USER_DATA_DIR"))
 	if userDataDir == "" {
-		userDataDir = getAgentChromeUserDataDir()
+		userDataDir = AgentChromeDebugUserDataDir()
+	}
+
+	profileDir := strings.TrimSpace(os.Getenv("CHROME_AGENT_PROFILE_DIR"))
+	if profileDir == "" {
+		profileDir = AgentChromeProfileDir()
+	}
+
+	profileDirectory := strings.TrimSpace(os.Getenv("CHROME_PROFILE_DIRECTORY"))
+	if profileDirectory == "" {
+		profileDirectory = AgentChromeProfileDirectoryName
 	}
 
 	return &BrowserChromeTool{
-		workDir:      workDir,
-		debugPort:    debugPort,
-		userDataDir:  userDataDir,
-		headless:     strings.ToLower(os.Getenv("CHROME_HEADLESS")) == "true",
-		capabilities: []string{"navigate", "click", "type", "scroll", "screenshot", "read_content", "eval"},
+		workDir:          workDir,
+		debugPort:        debugPort,
+		userDataDir:      userDataDir,
+		profileDir:       profileDir,
+		profileDirectory: profileDirectory,
+		headless:         strings.ToLower(os.Getenv("CHROME_HEADLESS")) == "true",
+		capabilities:     []string{"navigate", "click", "type", "scroll", "screenshot", "read_content", "eval"},
 	}
-}
-
-func getDefaultChromeUserDataDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, "Library", "Application Support", "Google", "Chrome")
-}
-
-func getAgentChromeUserDataDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	// Use a SEPARATE Chrome user-data directory (not inside default Chrome)
-	// This allows remote debugging AND preserves encrypted credentials
-	return filepath.Join(home, "Library", "Application Support", "Google", "ChromeAgent")
 }
 
 func (t *BrowserChromeTool) Name() string {
@@ -622,21 +618,23 @@ The agent will launch Chrome with remote debugging enabled.`)
 
 	logging.Info("No Chrome running, launching new instance...")
 
-	// Ensure the ChromeAgent directory exists
-	if err := os.MkdirAll(t.userDataDir, 0755); err != nil {
-		return fmt.Errorf("failed to create ChromeAgent directory: %w", err)
+	// Prepare launch layout:
+	// - persistent profile in default Chrome directory (switchable in regular Chrome)
+	// - separate debug user-data-dir to allow remote debugging.
+	if err := PrepareAgentChromeLaunchLayout(t.userDataDir, t.profileDir, t.profileDirectory); err != nil {
+		return err
 	}
 
-	// Launch Chrome with the dedicated agent user-data-dir
-	// This is NOT inside the default Chrome directory, so remote debugging works
-	// AND credentials are encrypted with keys specific to this directory (they persist!)
+	// Launch Chrome with dedicated debug user-data-dir and explicit profile directory.
 	chromePath := "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 	logging.Info("Launching Chrome with user-data-dir: %s", t.userDataDir)
+	logging.Info("Using Chrome profile directory: %s (path: %s)", t.profileDirectory, t.profileDir)
 	logging.Info("Headless mode: %v", t.headless)
 
 	args := []string{
 		"--user-data-dir=" + t.userDataDir,
+		"--profile-directory=" + t.profileDirectory,
 		"--remote-debugging-port=" + t.debugPort,
 		"--no-first-run",
 		"--no-default-browser-check",

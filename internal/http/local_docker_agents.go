@@ -60,13 +60,15 @@ type LocalDockerAgent struct {
 }
 
 type createLocalDockerAgentRequest struct {
-	Name            string `json:"name"`
-	Image           string `json:"image"`
-	HostPort        int    `json:"host_port"`
-	LMStudioBaseURL string `json:"lm_studio_base_url"`
-	AgentKind       string `json:"agent_kind"`
-	SystemPrompt    string `json:"system_prompt"`
-	SessionID       string `json:"session_id"`
+	Name             string `json:"name"`
+	Image            string `json:"image"`
+	HostPort         int    `json:"host_port"`
+	LMStudioBaseURL  string `json:"lm_studio_base_url"`
+	AgentKind        string `json:"agent_kind"`
+	SystemPrompt     string `json:"system_prompt"`
+	SessionID        string `json:"session_id"`
+	ProjectID        string `json:"project_id"`
+	ProjectMountMode string `json:"project_mount_mode"`
 }
 
 type localDockerAgentCreateResult struct {
@@ -209,6 +211,17 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 	systemPrompt := strings.TrimSpace(req.SystemPrompt)
 	sessionID := strings.TrimSpace(req.SessionID)
 	sessionIDLabel := sanitizeDockerLabelValue(sessionID)
+	projectID := strings.TrimSpace(req.ProjectID)
+	projectMountMode := strings.ToLower(strings.TrimSpace(req.ProjectMountMode))
+	if projectMountMode == "" {
+		projectMountMode = "ro"
+	}
+	if projectMountMode != "ro" && projectMountMode != "rw" {
+		return nil, http.StatusBadRequest, fmt.Errorf("project_mount_mode must be either ro or rw")
+	}
+	if projectID == "" && strings.TrimSpace(req.ProjectMountMode) != "" {
+		return nil, http.StatusBadRequest, fmt.Errorf("project_id is required when project_mount_mode is set")
+	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -217,6 +230,15 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 	dataDir := filepath.Join(home, ".a2gent-data", "local-agents", name)
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, http.StatusInternalServerError, fmt.Errorf("failed to prepare local agent data directory: %w", err)
+	}
+
+	projectRoot := ""
+	if projectID != "" {
+		resolvedRoot, err := s.resolveProjectRootFolder(projectID)
+		if err != nil {
+			return nil, http.StatusBadRequest, fmt.Errorf("invalid project_id: %w", err)
+		}
+		projectRoot = resolvedRoot
 	}
 
 	runCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -232,6 +254,18 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 		"--env", "HOME=/data",
 		"--env", "AAGENT_DATA_PATH=/data",
 		"--env", "LM_STUDIO_BASE_URL=" + lmStudioBaseURL,
+	}
+	if projectID != "" {
+		projectIDLabel := sanitizeDockerLabelValue(projectID)
+		if projectIDLabel != "" {
+			args = append(args, "--label", "a2gent.project_id="+projectIDLabel)
+		}
+		args = append(args, "--label", "a2gent.project_mount_mode="+projectMountMode)
+		projectMount := projectRoot + ":/workspace"
+		if projectMountMode == "ro" {
+			projectMount += ":ro"
+		}
+		args = append(args, "--volume", projectMount)
 	}
 	if agentKind != "" {
 		if agentKindLabel != "" {

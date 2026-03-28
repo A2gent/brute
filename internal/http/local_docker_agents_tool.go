@@ -15,13 +15,15 @@ type createLocalDockerAgentsBulkTool struct {
 }
 
 type createLocalDockerAgentsBulkParams struct {
-	Agents          []createLocalDockerAgentsBulkSpec `json:"agents"`
-	NamePrefix      string                            `json:"name_prefix,omitempty"`
-	StartPort       int                               `json:"start_port,omitempty"`
-	Image           string                            `json:"image,omitempty"`
-	LMStudioBaseURL string                            `json:"lm_studio_base_url,omitempty"`
-	SessionID       string                            `json:"session_id,omitempty"`
-	ContinueOnError *bool                             `json:"continue_on_error,omitempty"`
+	Agents           []createLocalDockerAgentsBulkSpec `json:"agents"`
+	NamePrefix       string                            `json:"name_prefix,omitempty"`
+	StartPort        int                               `json:"start_port,omitempty"`
+	Image            string                            `json:"image,omitempty"`
+	LMStudioBaseURL  string                            `json:"lm_studio_base_url,omitempty"`
+	SessionID        string                            `json:"session_id,omitempty"`
+	ProjectID        string                            `json:"project_id,omitempty"`
+	ProjectMountMode string                            `json:"project_mount_mode,omitempty"`
+	ContinueOnError  *bool                             `json:"continue_on_error,omitempty"`
 }
 
 type createLocalDockerAgentsBulkSpec struct {
@@ -92,6 +94,15 @@ func (t *createLocalDockerAgentsBulkTool) Schema() map[string]interface{} {
 				"type":        "string",
 				"description": "Optional parent session id label/env for all created agents.",
 			},
+			"project_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional project ID to mount as /workspace for all created agents.",
+			},
+			"project_mount_mode": map[string]interface{}{
+				"type":        "string",
+				"description": "Project mount mode when project_id is provided: ro (default) or rw.",
+				"enum":        []string{"ro", "rw"},
+			},
 			"continue_on_error": map[string]interface{}{
 				"type":        "boolean",
 				"description": "When true (default), continue creating other agents even if one fails.",
@@ -147,13 +158,15 @@ func (t *createLocalDockerAgentsBulkTool) Execute(ctx context.Context, params js
 		}
 
 		createReq := createLocalDockerAgentRequest{
-			Name:            name,
-			Image:           strings.TrimSpace(p.Image),
-			HostPort:        hostPort,
-			LMStudioBaseURL: strings.TrimSpace(p.LMStudioBaseURL),
-			AgentKind:       strings.TrimSpace(spec.AgentKind),
-			SystemPrompt:    strings.TrimSpace(spec.SystemPrompt),
-			SessionID:       strings.TrimSpace(p.SessionID),
+			Name:             name,
+			Image:            strings.TrimSpace(p.Image),
+			HostPort:         hostPort,
+			LMStudioBaseURL:  strings.TrimSpace(p.LMStudioBaseURL),
+			AgentKind:        strings.TrimSpace(spec.AgentKind),
+			SystemPrompt:     strings.TrimSpace(spec.SystemPrompt),
+			SessionID:        strings.TrimSpace(p.SessionID),
+			ProjectID:        strings.TrimSpace(p.ProjectID),
+			ProjectMountMode: strings.TrimSpace(p.ProjectMountMode),
 		}
 
 		result, _, err := t.server.createLocalDockerAgent(ctx, createReq)

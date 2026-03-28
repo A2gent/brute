@@ -265,7 +265,9 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 			"--env", "ANTHROPIC_API_KEY=a2gent-proxy",
 		)
 	}
-	args = append(args, image, "server")
+	// Docker port mapping publishes hostPort -> container:8080, so force the
+	// child server to bind to 8080 inside the container.
+	args = append(args, image, "server", "--port", "8080")
 	_, err = runCommand(runCtx, "docker", args...)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("failed to start local agent container: %w", err)

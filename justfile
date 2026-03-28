@@ -106,7 +106,7 @@ apple-build:
 # Run API-only with Apple container runtime
 apple-api:
     container system start
-    container run --rm --name a2gent-brute --publish 8080:8080 --volume ./:/workspace --volume ${HOME}/.a2gent-data:/data --env HOME=/data --env AAGENT_DATA_PATH=/data --env LM_STUDIO_BASE_URL=${LM_STUDIO_BASE_URL:-http://host.docker.internal:1234/v1} a2gent-brute:latest server
+    container run --rm --name a2gent-brute --publish 8080:8080 --volume ./:/workspace --volume ${HOME}/.a2gent-data:/data --env HOME=/data --env AAGENT_DATA_PATH=/data --env LM_STUDIO_BASE_URL=${LM_STUDIO_BASE_URL:-http://host.docker.internal:1234/v1} a2gent-brute:latest server --port 8080
 
 # Run interactive TUI with Apple container runtime
 apple-tui:

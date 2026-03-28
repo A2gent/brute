@@ -23,7 +23,7 @@ services:
   brute:
     <<: *brute-common
     container_name: a2gent-brute
-    command: ["server"]
+    command: ["server", "--port", "8080"]
     ports:
       - "8080:8080"
 

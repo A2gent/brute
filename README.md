@@ -174,7 +174,7 @@ docker run --rm -it \
   -p 8080:8080 \
   -v "$PWD":/workspace \
   -v "$HOME/.a2gent-data":/data \
-  a2gent-brute:latest
+  a2gent-brute:latest server --port 8080
 ```
 
 Run with compose helpers:

@@ -23,7 +23,7 @@ import (
 const mindRootFolderSettingKey = "AAGENT_MY_MIND_ROOT_FOLDER"
 const gitCommitProviderSettingKey = "AAGENT_GIT_COMMIT_PROVIDER"
 const gitCommitPromptTemplateSettingKey = "AAGENT_GIT_COMMIT_PROMPT_TEMPLATE"
-const defaultGitCommitPromptTemplate = "Generate one concise Git commit message in imperative mood.\nReturn only the commit message text, no quotes, no bullets, no explanation.\n\nChanged files:\n{{files}}\n\nDiff snippets:\n{{diffs}}"
+const defaultGitCommitPromptTemplate = "Generate a descriptive Git commit message based on provided files and diffs.\nReturn plain text only (no markdown, no code fences).\nFormat:\n1) First line: imperative summary (max 72 chars).\n2) Blank line.\n3) 2-4 bullet points with specific technical changes.\n\nChanged files:\n{{files}}\n\nDiff snippets:\n{{diffs}}"
 const projectSearchMaxResults = 5
 
 type MindConfigResponse struct {
@@ -2249,7 +2249,7 @@ func (s *Server) generateGitCommitMessageWithProvider(ctx context.Context, provi
 			{Role: "user", Content: prompt},
 		},
 		Temperature: 0.2,
-		MaxTokens:   80,
+		MaxTokens:   220,
 	})
 }
 
@@ -2982,29 +2982,48 @@ func sanitizeGeneratedCommitMessage(raw string) string {
 		return ""
 	}
 
-	trimmed = strings.Trim(trimmed, "`")
+	trimmed = strings.Trim(trimmed, "\"'`")
+	trimmed = strings.ReplaceAll(trimmed, "\r\n", "\n")
 	lines := strings.Split(trimmed, "\n")
-	message := ""
+	filteredLines := make([]string, 0, len(lines))
 	for _, line := range lines {
 		candidate := strings.TrimSpace(strings.Trim(line, "\"'`"))
-		if candidate != "" {
-			message = candidate
-			break
+		if candidate == "" {
+			if len(filteredLines) > 0 && filteredLines[len(filteredLines)-1] == "" {
+				continue
+			}
+			filteredLines = append(filteredLines, "")
+			continue
 		}
+		if candidate == "```" {
+			continue
+		}
+		filteredLines = append(filteredLines, candidate)
 	}
-	if message == "" {
+	for len(filteredLines) > 0 && filteredLines[0] == "" {
+		filteredLines = filteredLines[1:]
+	}
+	for len(filteredLines) > 0 && filteredLines[len(filteredLines)-1] == "" {
+		filteredLines = filteredLines[:len(filteredLines)-1]
+	}
+	if len(filteredLines) == 0 {
 		return ""
 	}
+	message := strings.Join(filteredLines, "\n")
 
-	lowered := strings.ToLower(message)
+	lowered := strings.ToLower(strings.TrimSpace(message))
 	if strings.HasPrefix(lowered, "commit message:") {
 		message = strings.TrimSpace(message[len("commit message:"):])
+		lowered = strings.ToLower(strings.TrimSpace(message))
 	}
 	if strings.HasPrefix(lowered, "message:") {
 		message = strings.TrimSpace(message[len("message:"):])
 	}
-
-	return truncateText(message, 120)
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return ""
+	}
+	return truncateText(message, 480)
 }
 
 func buildGitCommitPrompt(template string, files string, diffs string) string {

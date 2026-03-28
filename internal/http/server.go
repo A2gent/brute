@@ -256,12 +256,20 @@ func (s *Server) setupRoutes() {
 	r.Use(middleware.Timeout(5 * time.Minute))
 
 	// CORS configuration - allow all origins for flexibility
+	allowedOrigins := s.config.EffectiveCORSAllowedOrigins()
+	allowCredentials := true
+	for _, origin := range allowedOrigins {
+		if strings.TrimSpace(origin) == "*" {
+			allowCredentials = false // Must be false when wildcard origin is allowed.
+			break
+		}
+	}
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"*"},
+		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		ExposedHeaders:   []string{"Link"},
-		AllowCredentials: false, // Must be false when AllowedOrigins is "*"
+		AllowCredentials: allowCredentials,
 		MaxAge:           300,
 	}))
 

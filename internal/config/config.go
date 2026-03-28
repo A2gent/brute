@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // Config holds the application configuration
@@ -16,6 +17,7 @@ type Config struct {
 	LLMRetries         int                 `json:"llm_retries"` // Number of retries per LLM provider on transient errors (default 3)
 	DataPath           string              `json:"data_path"`
 	WorkDir            string              `json:"work_dir"`
+	CORSAllowedOrigins []string            `json:"cors_allowed_origins,omitempty"` // Allowed web origins for HTTP API CORS. Default: ["*"].
 	Providers          map[string]Provider `json:"providers"`
 	FallbackAggregates []FallbackAggregate `json:"fallback_aggregates,omitempty"`
 	Tools              ToolsConfig         `json:"tools"`
@@ -210,7 +212,10 @@ func DefaultConfig() *Config {
 		LLMRetries:     3,
 		DataPath:       resolveDataPath(),
 		WorkDir:        workDir,
-		Providers:      make(map[string]Provider),
+		CORSAllowedOrigins: []string{
+			"*",
+		},
+		Providers: make(map[string]Provider),
 		Tools: ToolsConfig{
 			Bash:  "allow",
 			Read:  "allow",
@@ -277,6 +282,11 @@ func Load() (*Config, error) {
 			cfg.LLMRetries = retries
 		}
 	}
+	if origins := normalizeCORSAllowedOrigins(os.Getenv("A2GENT_CORS_ALLOWED_ORIGINS")); len(origins) > 0 {
+		cfg.CORSAllowedOrigins = origins
+	} else if origin := strings.TrimSpace(os.Getenv("A2GENT_CORS_ALLOWED_ORIGIN")); origin != "" {
+		cfg.CORSAllowedOrigins = []string{origin}
+	}
 
 	// Try to load from config file. Prefer single-folder location next to DB
 	// while retaining legacy paths for backward compatibility.
@@ -300,8 +310,43 @@ func Load() (*Config, error) {
 	if err := os.MkdirAll(cfg.DataPath, 0755); err != nil {
 		return nil, err
 	}
+	cfg.CORSAllowedOrigins = normalizeCORSAllowedOriginsOrDefault(cfg.CORSAllowedOrigins)
 
 	return cfg, nil
+}
+
+// EffectiveCORSAllowedOrigins returns normalized configured origins, or wildcard fallback.
+func (c *Config) EffectiveCORSAllowedOrigins() []string {
+	if c == nil {
+		return []string{"*"}
+	}
+	return normalizeCORSAllowedOriginsOrDefault(c.CORSAllowedOrigins)
+}
+
+func normalizeCORSAllowedOriginsOrDefault(origins []string) []string {
+	normalized := normalizeCORSAllowedOrigins(strings.Join(origins, ","))
+	if len(normalized) == 0 {
+		return []string{"*"}
+	}
+	return normalized
+}
+
+func normalizeCORSAllowedOrigins(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		origin := strings.TrimSpace(part)
+		if origin == "" {
+			continue
+		}
+		if _, exists := seen[origin]; exists {
+			continue
+		}
+		seen[origin] = struct{}{}
+		out = append(out, origin)
+	}
+	return out
 }
 
 // Save saves configuration to file

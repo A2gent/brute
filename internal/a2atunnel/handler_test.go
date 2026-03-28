@@ -125,3 +125,99 @@ func TestResolveSessionByConversationContinuity(t *testing.T) {
 		t.Fatalf("expected different session for different conversation, got same %s", third.ID)
 	}
 }
+
+func TestResolveSessionByConversationWithoutSourceAgent(t *testing.T) {
+	t.Parallel()
+
+	tempDir, err := os.MkdirTemp("", "a2a-handler-no-source-*")
+	if err != nil {
+		t.Fatalf("mkdir temp: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	store, err := storage.NewSQLiteStore(tempDir)
+	if err != nil {
+		t.Fatalf("new sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	manager := session.NewManager(store)
+	handler := &InboundHandler{
+		agentID:        "brute",
+		sessionManager: manager,
+	}
+
+	first, err := handler.resolveSession(InboundPayload{
+		Task:           "one",
+		SourceAgentID:  "agent-source-1",
+		ConversationID: "conv-only",
+	})
+	if err != nil {
+		t.Fatalf("first resolveSession failed: %v", err)
+	}
+	first.Metadata[MetaA2AInbound] = true
+	first.Metadata[MetaA2ASourceAgentID] = "agent-source-1"
+	first.Metadata[MetaA2AConversationID] = "conv-only"
+	if err := manager.Save(first); err != nil {
+		t.Fatalf("save first failed: %v", err)
+	}
+
+	second, err := handler.resolveSession(InboundPayload{
+		Task:           "two",
+		ConversationID: "conv-only",
+	})
+	if err != nil {
+		t.Fatalf("second resolveSession failed: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("expected same session ID when only conversation_id is present, got %s vs %s", second.ID, first.ID)
+	}
+}
+
+func TestResolveSessionBySourceSessionIDFallback(t *testing.T) {
+	t.Parallel()
+
+	tempDir, err := os.MkdirTemp("", "a2a-handler-source-session-*")
+	if err != nil {
+		t.Fatalf("mkdir temp: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	store, err := storage.NewSQLiteStore(tempDir)
+	if err != nil {
+		t.Fatalf("new sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	manager := session.NewManager(store)
+	handler := &InboundHandler{
+		agentID:        "brute",
+		sessionManager: manager,
+	}
+
+	first, err := handler.resolveSession(InboundPayload{
+		Task:            "one",
+		SourceAgentID:   "agent-source-1",
+		SourceSessionID: "src-session-1",
+	})
+	if err != nil {
+		t.Fatalf("first resolveSession failed: %v", err)
+	}
+	first.Metadata[MetaA2AInbound] = true
+	first.Metadata[MetaA2ASourceAgentID] = "agent-source-1"
+	first.Metadata[MetaA2ASourceSessionID] = "src-session-1"
+	if err := manager.Save(first); err != nil {
+		t.Fatalf("save first failed: %v", err)
+	}
+
+	second, err := handler.resolveSession(InboundPayload{
+		Task:            "two",
+		SourceSessionID: "src-session-1",
+	})
+	if err != nil {
+		t.Fatalf("second resolveSession failed: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("expected same session ID when matching source_session_id, got %s vs %s", second.ID, first.ID)
+	}
+}

@@ -17,6 +17,7 @@ const (
 	MetaA2AInbound         = "a2a_inbound"
 	MetaA2ASourceAgentID   = "a2a_source_agent_id"
 	MetaA2ASourceAgentName = "a2a_source_agent_name"
+	MetaA2ASourceSessionID = "a2a_source_session_id"
 	MetaA2ARequestID       = "a2a_request_id"
 	MetaA2AConversationID  = "a2a_conversation_id"
 )
@@ -116,6 +117,9 @@ func (h *InboundHandler) Handle(ctx context.Context, req *AgentRequest) ([]byte,
 	sess.Metadata[MetaA2AInbound] = true
 	sess.Metadata[MetaA2ASourceAgentID] = p.SourceAgentID
 	sess.Metadata[MetaA2ASourceAgentName] = p.SourceAgentName
+	if strings.TrimSpace(p.SourceSessionID) != "" {
+		sess.Metadata[MetaA2ASourceSessionID] = strings.TrimSpace(p.SourceSessionID)
+	}
 	sess.Metadata[MetaA2ARequestID] = req.RequestID
 	if strings.TrimSpace(p.ConversationID) != "" {
 		sess.Metadata[MetaA2AConversationID] = strings.TrimSpace(p.ConversationID)
@@ -212,7 +216,8 @@ var _ Handler = (*InboundHandler)(nil)
 func (h *InboundHandler) resolveSession(p InboundPayload) (*session.Session, error) {
 	conversationID := strings.TrimSpace(p.ConversationID)
 	sourceAgentID := strings.TrimSpace(p.SourceAgentID)
-	if conversationID == "" || sourceAgentID == "" {
+	sourceSessionID := strings.TrimSpace(p.SourceSessionID)
+	if conversationID == "" && sourceSessionID == "" {
 		sess, err := h.sessionManager.Create(h.agentID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create session: %w", err)
@@ -223,20 +228,24 @@ func (h *InboundHandler) resolveSession(p InboundPayload) (*session.Session, err
 	sessions, err := h.sessionManager.List()
 	if err == nil {
 		var candidate *session.Session
+		bestScore := -1
 		for _, sess := range sessions {
 			if sess == nil || sess.Metadata == nil {
 				continue
 			}
-			inbound, _ := sess.Metadata[MetaA2AInbound].(bool)
-			if !inbound {
+			if !metadataBool(sess.Metadata, MetaA2AInbound) {
 				continue
 			}
-			metaSource, _ := sess.Metadata[MetaA2ASourceAgentID].(string)
-			metaConversation, _ := sess.Metadata[MetaA2AConversationID].(string)
-			if strings.TrimSpace(metaSource) == sourceAgentID && strings.TrimSpace(metaConversation) == conversationID {
-				if candidate == nil || sess.UpdatedAt.After(candidate.UpdatedAt) {
-					candidate = sess
-				}
+			metaSource := metadataString(sess.Metadata, MetaA2ASourceAgentID)
+			metaConversation := metadataString(sess.Metadata, MetaA2AConversationID)
+			metaSourceSession := metadataString(sess.Metadata, MetaA2ASourceSessionID)
+			score, matched := inboundSessionMatchScore(conversationID, sourceAgentID, sourceSessionID, metaConversation, metaSource, metaSourceSession)
+			if !matched {
+				continue
+			}
+			if score > bestScore || (score == bestScore && (candidate == nil || sess.UpdatedAt.After(candidate.UpdatedAt))) {
+				candidate = sess
+				bestScore = score
 			}
 		}
 		if candidate != nil {
@@ -253,6 +262,57 @@ func (h *InboundHandler) resolveSession(p InboundPayload) (*session.Session, err
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 	return sess, nil
+}
+
+func inboundSessionMatchScore(
+	conversationID string,
+	sourceAgentID string,
+	sourceSessionID string,
+	metaConversation string,
+	metaSource string,
+	metaSourceSession string,
+) (int, bool) {
+	if conversationID != "" && metaConversation == conversationID {
+		score := 100
+		if sourceAgentID != "" && metaSource == sourceAgentID {
+			score += 10
+		}
+		if sourceSessionID != "" && metaSourceSession == sourceSessionID {
+			score += 5
+		}
+		return score, true
+	}
+	if sourceSessionID != "" && metaSourceSession == sourceSessionID {
+		score := 60
+		if sourceAgentID != "" && metaSource == sourceAgentID {
+			score += 10
+		}
+		return score, true
+	}
+	return 0, false
+}
+
+func metadataString(metadata map[string]interface{}, key string) string {
+	if metadata == nil {
+		return ""
+	}
+	value, ok := metadata[key]
+	if !ok || value == nil {
+		return ""
+	}
+	if asString, ok := value.(string); ok {
+		return strings.TrimSpace(asString)
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func metadataBool(metadata map[string]interface{}, key string) bool {
+	switch strings.ToLower(metadataString(metadata, key)) {
+	case "true", "1", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 func latestAssistantMessageContentSince(messages []session.Message, start int) string {

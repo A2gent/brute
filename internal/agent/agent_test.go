@@ -26,6 +26,9 @@ func (m *MockLLM) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.Chat
 }
 
 func TestMaybeCompactContext(t *testing.T) {
+	os.Unsetenv("AAGENT_CONTEXT_COMPACTION_TRIGGER_PERCENT")
+	os.Unsetenv("AAGENT_CONTEXT_COMPACTION_PROMPT")
+
 	// Setup temporary session storage
 	tmpDir, err := os.MkdirTemp("", "session_test")
 	if err != nil {

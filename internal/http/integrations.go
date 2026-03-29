@@ -2279,8 +2279,9 @@ func (s *Server) syncHTTPCreatedSessionToTelegram(ctx context.Context, sessionID
 	}
 
 	chatID := strings.TrimSpace(selected.Config["default_chat_id"])
+	scope := strings.ToLower(strings.TrimSpace(selected.Config["session_scope"]))
 	if chatID == "" {
-		chatID = s.inferTelegramChatIDForIntegration(selected.ID)
+		chatID = s.inferTelegramChatIDForIntegration(selected.ID, scope)
 	}
 	if chatID == "" {
 		logging.Info("Telegram outbound sync skipped for session %s: no default_chat_id and no inferred chat for integration %s", sessionID, selected.ID)
@@ -2288,17 +2289,16 @@ func (s *Server) syncHTTPCreatedSessionToTelegram(ctx context.Context, sessionID
 	}
 
 	threadID := int64(0)
-	scope := strings.ToLower(strings.TrimSpace(selected.Config["session_scope"]))
 	if scope != "chat" {
 		topicName := telegramTopicNameForSession(sess, initialTask)
 		createdThreadID, createErr := s.createTelegramForumTopic(ctx, botToken, chatID, topicName)
 		if createErr != nil {
 			logging.Warn("Telegram topic create failed for session %s: %s", sessionID, sanitizeTelegramError(createErr))
+			return
 		} else {
 			threadID = createdThreadID
 		}
 	}
-
 	if sess.Metadata == nil {
 		sess.Metadata = map[string]interface{}{}
 	}
@@ -2324,7 +2324,7 @@ func (s *Server) syncHTTPCreatedSessionToTelegram(ctx context.Context, sessionID
 	}
 }
 
-func (s *Server) inferTelegramChatIDForIntegration(integrationID string) string {
+func (s *Server) inferTelegramChatIDForIntegration(integrationID string, scope string) string {
 	sessions, err := s.sessionManager.List()
 	if err != nil {
 		return ""
@@ -2344,6 +2344,11 @@ func (s *Server) inferTelegramChatIDForIntegration(integrationID string) string 
 		candidate := metadataString(sess.Metadata["telegram_chat_id"])
 		if candidate == "" {
 			continue
+		}
+		if scope != "chat" {
+			if metadataString(sess.Metadata["telegram_thread_id"]) == "" {
+				continue
+			}
 		}
 		if chatID == "" || sess.UpdatedAt.After(latest) {
 			chatID = candidate

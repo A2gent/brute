@@ -302,7 +302,9 @@ func firstNonEmpty(values ...string) string {
 
 const codeExecutionRunnerScript = `
 import ast
+import builtins
 import json
+import os
 import sys
 import traceback
 
@@ -365,7 +367,6 @@ BLOCKED_BUILTINS = {
     "help",
     "input",
     "locals",
-    "open",
     "setattr",
     "getattr",
     "delattr",
@@ -426,6 +427,24 @@ def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
     raise RuntimeError(f"import '{name}' is not allowed")
 
 SAFE_BUILTINS["__import__"] = safe_import
+
+def safe_open(file, mode="r", buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
+    if opener is not None:
+        raise RuntimeError("custom file openers are not allowed")
+    if not isinstance(file, (str, bytes)):
+        raise RuntimeError("open path must be a string")
+
+    cwd = os.path.realpath(os.getcwd())
+    target = os.path.realpath(os.path.join(cwd, file) if not os.path.isabs(file) else file)
+    try:
+        if os.path.commonpath([cwd, target]) != cwd:
+            raise RuntimeError("open path is outside the workspace")
+    except ValueError:
+        raise RuntimeError("open path is outside the workspace")
+
+    return builtins.open(target, mode, buffering, encoding, errors, newline, closefd)
+
+SAFE_BUILTINS["open"] = safe_open
 
 def emit(obj):
     sys.stdout.write(json.dumps(obj, ensure_ascii=False))

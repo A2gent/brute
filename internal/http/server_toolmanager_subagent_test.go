@@ -77,6 +77,57 @@ func TestToolManagerForSession_SubAgentIgnoresGlobalDisabledTools(t *testing.T) 
 	}
 }
 
+func TestBuildSystemPromptForSession_UsesSubAgentInstructions(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now()
+	subAgent := &storage.SubAgent{
+		ID:       "sa-planner",
+		Name:     "Planner",
+		Provider: "",
+		Model:    "",
+		EnabledTools: []string{
+			"read",
+		},
+		InstructionBlocks: `[{"type":"text","value":"You are planner only. Never edit files.","enabled":true}]`,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+	if err := store.SaveSubAgent(subAgent); err != nil {
+		t.Fatalf("failed to save sub-agent: %v", err)
+	}
+
+	sessionManager := session.NewManager(store)
+	server := NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
+
+	subSess, err := sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("failed to create sub-agent session: %v", err)
+	}
+	if subSess.Metadata == nil {
+		subSess.Metadata = map[string]interface{}{}
+	}
+	subSess.Metadata["sub_agent_id"] = subAgent.ID
+	if err := sessionManager.Save(subSess); err != nil {
+		t.Fatalf("failed to save sub-agent session: %v", err)
+	}
+
+	systemPrompt := server.buildSystemPromptForSession(subSess)
+	if !strings.Contains(systemPrompt, `You are a sub-agent named "Planner".`) {
+		t.Fatalf("expected sub-agent identity prompt, got: %q", systemPrompt)
+	}
+	if !strings.Contains(systemPrompt, "You are planner only. Never edit files.") {
+		t.Fatalf("expected sub-agent instruction block in prompt, got: %q", systemPrompt)
+	}
+	if strings.Contains(systemPrompt, "Available sub-agents for delegation:") {
+		t.Fatalf("expected sub-agent prompt to omit main-agent sub-agent listing")
+	}
+}
+
 func TestServerRegistersCreateLocalDockerAgentsBulkTool(t *testing.T) {
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	if err != nil {

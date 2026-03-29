@@ -3688,6 +3688,21 @@ func (s *Server) ensureSessionSystemPromptSnapshot(sess *session.Session) *syste
 		return nil
 	}
 
+	var resolvedSubAgent *storage.SubAgent
+	if sess.Metadata != nil {
+		if rawSubAgentID, ok := sess.Metadata["sub_agent_id"].(string); ok {
+			subAgentID := strings.TrimSpace(rawSubAgentID)
+			if subAgentID != "" {
+				sa, saErr := s.store.GetSubAgent(subAgentID)
+				if saErr != nil {
+					logging.Warn("Failed to load sub-agent %s for session %s system prompt composition: %v", subAgentID, sess.ID, saErr)
+				} else {
+					resolvedSubAgent = sa
+				}
+			}
+		}
+	}
+
 	settings, err := s.store.GetSettings()
 	if err != nil {
 		logging.Warn("Failed to load settings for system prompt composition: %v", err)
@@ -3696,12 +3711,22 @@ func (s *Server) ensureSessionSystemPromptSnapshot(sess *session.Session) *syste
 	thinkingBlocks := resolveThinkingInstructionBlocksFromSettings(settings)
 
 	if snapshot := sessionSystemPromptSnapshot(sess); snapshot != nil {
-		if !isThinkingSessionWithSettings(sess, settings) || len(thinkingBlocks) == 0 || snapshotHasThinkingBlocks(snapshot) {
+		if resolvedSubAgent != nil {
+			subAgentIdentity := fmt.Sprintf(`You are a sub-agent named "%s".`, strings.TrimSpace(resolvedSubAgent.Name))
+			if strings.Contains(snapshot.BasePrompt, subAgentIdentity) || strings.Contains(snapshot.CombinedPrompt, subAgentIdentity) {
+				return snapshot
+			}
+		} else if !isThinkingSessionWithSettings(sess, settings) || len(thinkingBlocks) == 0 || snapshotHasThinkingBlocks(snapshot) {
 			return snapshot
 		}
 	}
 
-	snapshot := s.composeSystemPromptSnapshotWithSettings(sess, settings)
+	var snapshot *systemPromptSnapshot
+	if resolvedSubAgent != nil {
+		snapshot = s.composeSubAgentSystemPromptSnapshot(resolvedSubAgent, sess)
+	} else {
+		snapshot = s.composeSystemPromptSnapshotWithSettings(sess, settings)
+	}
 	if snapshot == nil {
 		return nil
 	}

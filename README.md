@@ -134,6 +134,9 @@ Validation rules:
 - `policy.stopCondition: judge` requires `policy.judgeNodeId`.
 - `policy.judgeNodeId` must reference an existing node id.
 - `kind` and `ref` are optional, but agent nodes should resolve to configured agents.
+- Loops are supported (for example `developer -> critic -> developer`).
+- For looped graphs, use `policy.maxTurns` and/or `policy.timeboxMinutes` to cap iterations.
+- For `stopCondition: judge`, the judge node should emit `VERDICT: APPROVED` to end early; otherwise the loop continues until limits are reached.
 
 ## 4. Run Modes
 

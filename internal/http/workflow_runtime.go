@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -50,6 +51,8 @@ type workflowEdgeRuntime struct {
 type workflowPolicyRuntime struct {
 	StopCondition string
 	JudgeNodeID   string
+	MaxTurns      int
+	TimeboxMins   int
 }
 
 type workflowRuntimeNodeState struct {
@@ -75,6 +78,11 @@ type workflowNodeResult struct {
 	childSessionID string
 	output         string
 	err            error
+}
+
+type workflowTurnNodeState struct {
+	RunCount          int
+	LastConsumedByDep map[string]int
 }
 
 func (s *Server) hasRunnableWorkflow(sess *session.Session) bool {
@@ -156,6 +164,8 @@ func (s *Server) runWorkflowSession(
 		preds[to] = append(preds[to], from)
 		succ[from] = append(succ[from], to)
 	}
+	sccByNode, sccSize := workflowSCC(def.Nodes, succ)
+	hasCycle := workflowHasCycle(def.Nodes, succ, sccByNode, sccSize)
 
 	state := &workflowRuntimeState{
 		WorkflowID:   def.ID,
@@ -178,64 +188,87 @@ func (s *Server) runWorkflowSession(
 	}
 
 	outputs := map[string]string{}
-	completed := map[string]bool{}
+	runVersion := map[string]int{}
+	nodeTurnState := map[string]*workflowTurnNodeState{}
+	actionable := map[string]workflowNodeRuntime{}
 	for _, node := range def.Nodes {
 		if strings.EqualFold(node.Kind, "user") {
-			completed[node.ID] = true
 			outputs[node.ID] = userMessage
-		}
-	}
-	pending := map[string]workflowNodeRuntime{}
-	for _, node := range def.Nodes {
-		if strings.EqualFold(node.Kind, "user") {
+			runVersion[node.ID] = 1
 			continue
 		}
-		pending[node.ID] = node
+		actionable[node.ID] = node
+		nodeTurnState[node.ID] = &workflowTurnNodeState{
+			LastConsumedByDep: make(map[string]int),
+		}
 	}
 
-	for len(pending) > 0 {
-		ready := make([]workflowNodeRuntime, 0, len(pending))
-		for nodeID, node := range pending {
-			nodeReady := true
-			for _, dep := range preds[nodeID] {
-				if !completed[dep] {
-					nodeReady = false
-					break
-				}
-			}
-			if nodeReady {
-				ready = append(ready, node)
-			}
+	maxTurns := workflowMaxTurns(def)
+	turnsUsed := 0
+	deadline := time.Now().Add(time.Duration(workflowTimeboxMinutes(def)) * time.Minute)
+	judgeID := strings.TrimSpace(def.Policy.JudgeNodeID)
+	stopCondition := strings.ToLower(strings.TrimSpace(def.Policy.StopCondition))
+	enforceTurnCap := hasCycle || stopCondition == "max_turns"
+	exitReason := "no_ready"
+	for len(actionable) > 0 {
+		if time.Now().After(deadline) {
+			exitReason = "timebox"
+			break
 		}
+		if enforceTurnCap && turnsUsed >= maxTurns {
+			exitReason = "turn_cap"
+			break
+		}
+		ready := workflowReadyNodes(actionable, preds, runVersion, nodeTurnState, sccByNode)
 		if len(ready) == 0 {
-			state.Status = "failed"
-			_ = s.persistWorkflowState(sess, state, emit)
-			return "", llm.TokenUsage{}, fmt.Errorf("workflow graph has a cycle or unsatisfied dependencies")
+			exitReason = "no_ready"
+			break
 		}
-
+		turnsUsed++
 		sort.Slice(ready, func(i, j int) bool { return ready[i].ID < ready[j].ID })
 		results := make(chan workflowNodeResult, len(ready))
 		var wg sync.WaitGroup
 		for _, node := range ready {
 			node := node
+			ts := nodeTurnState[node.ID]
 			st := state.Nodes[node.ID]
 			if st != nil {
 				st.Status = "running"
 				st.StartedAt = time.Now().UTC().Format(time.RFC3339)
+				st.Error = ""
 			}
 			upstream := make([]string, 0, len(preds[node.ID]))
 			for _, dep := range preds[node.ID] {
+				if version := runVersion[dep]; version > 0 && ts != nil {
+					ts.LastConsumedByDep[dep] = version
+				}
 				if output := strings.TrimSpace(outputs[dep]); output != "" {
 					upstream = append(upstream, output)
 				}
+			}
+			child, childErr := s.createWorkflowNodeChildSession(sess, def, node)
+			if childErr != nil {
+				if st == nil {
+					st = &workflowRuntimeNodeState{}
+					state.Nodes[node.ID] = st
+				}
+				st.Status = "failed"
+				st.Error = childErr.Error()
+				st.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+				state.Status = "failed"
+				_ = s.persistWorkflowState(sess, state, emit)
+				return "", llm.TokenUsage{}, fmt.Errorf("node %q failed: %w", node.Label, childErr)
+			}
+			if st != nil {
+				st.ChildSessionID = child.ID
 			}
 			if err := s.persistWorkflowState(sess, state, emit); err != nil {
 				return "", llm.TokenUsage{}, err
 			}
 			wg.Add(1)
-			go func() {
+			go func(child *session.Session, upstream []string) {
 				defer wg.Done()
-				output, childSessionID, err := s.executeWorkflowNode(ctx, sess, def, node, userMessage, upstream)
+				output, childSessionID, err := s.executeWorkflowNode(ctx, sess, def, node, userMessage, upstream, child)
 				results <- workflowNodeResult{
 					nodeID:         node.ID,
 					nodeLabel:      node.Label,
@@ -243,7 +276,7 @@ func (s *Server) runWorkflowSession(
 					output:         output,
 					err:            err,
 				}
-			}()
+			}(child, upstream)
 		}
 		wg.Wait()
 		close(results)
@@ -266,13 +299,40 @@ func (s *Server) runWorkflowSession(
 			st.Status = "completed"
 			st.CompletedAt = time.Now().UTC().Format(time.RFC3339)
 			st.OutputPreview = preview(result.output, 220)
-			completed[result.nodeID] = true
 			outputs[result.nodeID] = result.output
-			delete(pending, result.nodeID)
+			runVersion[result.nodeID]++
+			if ts := nodeTurnState[result.nodeID]; ts != nil {
+				ts.RunCount++
+			}
 		}
 		if err := s.persistWorkflowState(sess, state, emit); err != nil {
 			return "", llm.TokenUsage{}, err
 		}
+		if stopCondition == "judge" && judgeID != "" {
+			if workflowJudgeApproved(outputs[judgeID]) {
+				exitReason = "judge_approved"
+				break
+			}
+		}
+	}
+
+	unreachable := workflowUnreachedActionableNodes(actionable, runVersion)
+	if exitReason == "no_ready" && len(unreachable) > 0 {
+		diagnostic := workflowPendingDependencyDiagnostic(unreachable, preds, runVersion, sccByNode)
+		now := time.Now().UTC().Format(time.RFC3339)
+		for _, nodeID := range unreachable {
+			st := state.Nodes[nodeID]
+			if st == nil {
+				st = &workflowRuntimeNodeState{}
+				state.Nodes[nodeID] = st
+			}
+			st.Status = "failed"
+			st.CompletedAt = now
+			st.Error = diagnostic
+		}
+		state.Status = "failed"
+		_ = s.persistWorkflowState(sess, state, emit)
+		return "", llm.TokenUsage{}, errors.New(diagnostic)
 	}
 
 	final := workflowFinalOutput(def, outputs, succ)
@@ -305,31 +365,10 @@ func (s *Server) executeWorkflowNode(
 	node workflowNodeRuntime,
 	userMessage string,
 	upstreamOutputs []string,
+	child *session.Session,
 ) (string, string, error) {
-	child, err := s.sessionManager.CreateWithParent(parent.AgentID, parent.ID)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to create child session: %w", err)
-	}
-	if parent.ProjectID != nil {
-		projectID := strings.TrimSpace(*parent.ProjectID)
-		if projectID != "" {
-			child.ProjectID = &projectID
-		}
-	}
-	if child.Metadata == nil {
-		child.Metadata = make(map[string]interface{})
-	}
-	child.Metadata["workflow_child"] = true
-	child.Metadata["workflow_parent_id"] = parent.ID
-	child.Metadata["workflow_node_id"] = node.ID
-	child.Metadata["workflow_node_label"] = node.Label
-	child.Metadata["workflow_name"] = def.Name
-
-	if err := s.applyNodeRoutingMetadata(child, parent, node); err != nil {
-		return "", child.ID, err
-	}
-	if err := s.sessionManager.Save(child); err != nil {
-		return "", child.ID, fmt.Errorf("failed to save child session: %w", err)
+	if child == nil {
+		return "", "", fmt.Errorf("workflow child session is nil")
 	}
 
 	nodePrompt := composeWorkflowNodePrompt(def, node, userMessage, upstreamOutputs)
@@ -356,7 +395,7 @@ func (s *Server) executeWorkflowNode(
 	agentConfig := agent.Config{
 		Name:          child.AgentID,
 		Model:         target.Model,
-		SystemPrompt:  s.buildSystemPromptForSession(child),
+		SystemPrompt:  s.buildSystemPromptForWorkflowNode(child, node),
 		MaxSteps:      s.config.MaxSteps,
 		Temperature:   s.config.Temperature,
 		ContextWindow: target.ContextWindow,
@@ -379,6 +418,54 @@ func (s *Server) executeWorkflowNode(
 		_ = s.sessionManager.Save(child)
 	}
 	return strings.TrimSpace(content), child.ID, nil
+}
+
+func (s *Server) buildSystemPromptForWorkflowNode(child *session.Session, node workflowNodeRuntime) string {
+	if strings.EqualFold(strings.TrimSpace(node.Kind), "subagent") {
+		if sa, err := s.resolveWorkflowSubAgent(node); err == nil && sa != nil {
+			if snapshot := s.composeSubAgentSystemPromptSnapshot(sa, child); snapshot != nil && strings.TrimSpace(snapshot.CombinedPrompt) != "" {
+				attachSessionSystemPromptSnapshot(child, snapshot)
+				if saveErr := s.sessionManager.Save(child); saveErr != nil {
+					return strings.TrimSpace(snapshot.CombinedPrompt)
+				}
+				return strings.TrimSpace(snapshot.CombinedPrompt)
+			}
+		}
+	}
+	return s.buildSystemPromptForSession(child)
+}
+
+func (s *Server) createWorkflowNodeChildSession(
+	parent *session.Session,
+	def *workflowDefinitionRuntime,
+	node workflowNodeRuntime,
+) (*session.Session, error) {
+	child, err := s.sessionManager.CreateWithParent(parent.AgentID, parent.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create child session: %w", err)
+	}
+	if parent.ProjectID != nil {
+		projectID := strings.TrimSpace(*parent.ProjectID)
+		if projectID != "" {
+			child.ProjectID = &projectID
+		}
+	}
+	if child.Metadata == nil {
+		child.Metadata = make(map[string]interface{})
+	}
+	child.Metadata["workflow_child"] = true
+	child.Metadata["workflow_parent_id"] = parent.ID
+	child.Metadata["workflow_node_id"] = node.ID
+	child.Metadata["workflow_node_label"] = node.Label
+	child.Metadata["workflow_name"] = def.Name
+
+	if err := s.applyNodeRoutingMetadata(child, parent, node); err != nil {
+		return child, err
+	}
+	if err := s.sessionManager.Save(child); err != nil {
+		return child, fmt.Errorf("failed to save child session: %w", err)
+	}
+	return child, nil
 }
 
 func (s *Server) applyNodeRoutingMetadata(child *session.Session, parent *session.Session, node workflowNodeRuntime) error {
@@ -474,6 +561,8 @@ func workflowDefinitionFromMetadata(sess *session.Session) (*workflowDefinitionR
 		def.Policy = workflowPolicyRuntime{
 			StopCondition: asWorkflowString(policyRaw["stopCondition"]),
 			JudgeNodeID:   asWorkflowString(policyRaw["judgeNodeId"]),
+			MaxTurns:      asWorkflowInt(policyRaw["maxTurns"]),
+			TimeboxMins:   asWorkflowInt(policyRaw["timeboxMinutes"]),
 		}
 	}
 	for _, item := range nodesRaw {
@@ -608,6 +697,13 @@ func composeWorkflowNodePrompt(def *workflowDefinitionRuntime, node workflowNode
 			b.WriteString(fmt.Sprintf("\n[%d]\n%s\n", idx+1, strings.TrimSpace(item)))
 		}
 	}
+	if def != nil && strings.EqualFold(strings.TrimSpace(def.Policy.StopCondition), "judge") {
+		judgeID := strings.TrimSpace(def.Policy.JudgeNodeID)
+		if judgeID != "" && judgeID == strings.TrimSpace(node.ID) {
+			b.WriteString("\nJudge node instruction:\n")
+			b.WriteString("Add a final line exactly as `VERDICT: APPROVED` when work is acceptable, otherwise `VERDICT: REVISE`.\n")
+		}
+	}
 	b.WriteString("\nReturn only this node's output.")
 	return b.String()
 }
@@ -625,4 +721,205 @@ func asWorkflowString(raw interface{}) string {
 		return v
 	}
 	return ""
+}
+
+func asWorkflowInt(raw interface{}) int {
+	switch v := raw.(type) {
+	case int:
+		return v
+	case int32:
+		return int(v)
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	default:
+		return 0
+	}
+}
+
+func workflowMaxTurns(def *workflowDefinitionRuntime) int {
+	if def == nil || def.Policy.MaxTurns <= 0 {
+		return 12
+	}
+	return def.Policy.MaxTurns
+}
+
+func workflowTimeboxMinutes(def *workflowDefinitionRuntime) int {
+	if def == nil || def.Policy.TimeboxMins <= 0 {
+		return 20
+	}
+	return def.Policy.TimeboxMins
+}
+
+func workflowJudgeApproved(output string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(output))
+	if upper == "" {
+		return false
+	}
+	if strings.Contains(upper, "VERDICT: APPROVED") {
+		return true
+	}
+	return strings.Contains(upper, "LGTM")
+}
+
+func workflowSCC(nodes []workflowNodeRuntime, succ map[string][]string) (map[string]int, map[int]int) {
+	index := 0
+	stack := make([]string, 0, len(nodes))
+	onStack := make(map[string]bool, len(nodes))
+	indexByNode := make(map[string]int, len(nodes))
+	lowLink := make(map[string]int, len(nodes))
+	sccByNode := make(map[string]int, len(nodes))
+	sccSize := map[int]int{}
+
+	var strongConnect func(nodeID string)
+	strongConnect = func(nodeID string) {
+		indexByNode[nodeID] = index
+		lowLink[nodeID] = index
+		index++
+		stack = append(stack, nodeID)
+		onStack[nodeID] = true
+
+		for _, nextID := range succ[nodeID] {
+			if _, seen := indexByNode[nextID]; !seen {
+				strongConnect(nextID)
+				if lowLink[nextID] < lowLink[nodeID] {
+					lowLink[nodeID] = lowLink[nextID]
+				}
+			} else if onStack[nextID] && indexByNode[nextID] < lowLink[nodeID] {
+				lowLink[nodeID] = indexByNode[nextID]
+			}
+		}
+
+		if lowLink[nodeID] == indexByNode[nodeID] {
+			sccID := len(sccSize)
+			for {
+				last := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				onStack[last] = false
+				sccByNode[last] = sccID
+				sccSize[sccID]++
+				if last == nodeID {
+					break
+				}
+			}
+		}
+	}
+
+	for _, node := range nodes {
+		if _, seen := indexByNode[node.ID]; seen {
+			continue
+		}
+		strongConnect(node.ID)
+	}
+	return sccByNode, sccSize
+}
+
+func workflowHasCycle(
+	nodes []workflowNodeRuntime,
+	succ map[string][]string,
+	sccByNode map[string]int,
+	sccSize map[int]int,
+) bool {
+	for _, size := range sccSize {
+		if size > 1 {
+			return true
+		}
+	}
+	for _, node := range nodes {
+		for _, nextID := range succ[node.ID] {
+			if nextID == node.ID && sccByNode[nextID] == sccByNode[node.ID] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func workflowReadyNodes(
+	actionable map[string]workflowNodeRuntime,
+	preds map[string][]string,
+	runVersion map[string]int,
+	nodeTurnState map[string]*workflowTurnNodeState,
+	sccByNode map[string]int,
+) []workflowNodeRuntime {
+	ready := make([]workflowNodeRuntime, 0, len(actionable))
+	for nodeID, node := range actionable {
+		ts := nodeTurnState[nodeID]
+		if ts == nil {
+			continue
+		}
+		readyForRun := true
+		hasInput := len(preds[nodeID]) == 0
+		hasNewInput := false
+
+		for _, dep := range preds[nodeID] {
+			depVersion := runVersion[dep]
+			if depVersion > 0 {
+				hasInput = true
+			}
+			if sccByNode[dep] != sccByNode[nodeID] && depVersion == 0 {
+				readyForRun = false
+				break
+			}
+			lastConsumed := ts.LastConsumedByDep[dep]
+			if depVersion > lastConsumed {
+				hasNewInput = true
+			}
+		}
+		if !readyForRun {
+			continue
+		}
+		if ts.RunCount == 0 {
+			if hasInput {
+				ready = append(ready, node)
+			}
+			continue
+		}
+		if hasNewInput {
+			ready = append(ready, node)
+		}
+	}
+	return ready
+}
+
+func workflowUnreachedActionableNodes(actionable map[string]workflowNodeRuntime, runVersion map[string]int) []string {
+	ids := make([]string, 0, len(actionable))
+	for nodeID := range actionable {
+		if runVersion[nodeID] == 0 {
+			ids = append(ids, nodeID)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func workflowPendingDependencyDiagnostic(
+	unreached []string,
+	preds map[string][]string,
+	runVersion map[string]int,
+	sccByNode map[string]int,
+) string {
+	if len(unreached) == 0 {
+		return "workflow graph stalled: no runnable nodes remain"
+	}
+	details := make([]string, 0, len(unreached))
+	for _, nodeID := range unreached {
+		missingExternal := make([]string, 0)
+		for _, dep := range preds[nodeID] {
+			if sccByNode[dep] == sccByNode[nodeID] {
+				continue
+			}
+			if runVersion[dep] == 0 {
+				missingExternal = append(missingExternal, dep)
+			}
+		}
+		if len(missingExternal) == 0 {
+			details = append(details, nodeID+"<-none")
+			continue
+		}
+		sort.Strings(missingExternal)
+		details = append(details, nodeID+"<-"+strings.Join(missingExternal, "|"))
+	}
+	return "workflow graph stalled: no runnable nodes remain; blocked external dependencies: " + strings.Join(details, "; ")
 }

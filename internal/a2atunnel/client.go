@@ -236,9 +236,10 @@ type InboundPayload struct {
 
 // OutboundPayload is what we put in AgentResponse.Payload for a task_response.
 type OutboundPayload struct {
-	A2AVersion string                 `json:"a2a_version,omitempty"`
-	MessageID  string                 `json:"message_id,omitempty"`
-	Content    []A2AContentPart       `json:"content,omitempty"`
+	A2AVersion     string                 `json:"a2a_version,omitempty"`
+	MessageID      string                 `json:"message_id,omitempty"`
+	ConversationID string                 `json:"conversation_id,omitempty"`
+	Content        []A2AContentPart       `json:"content,omitempty"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 	Result     string                 `json:"result"`
 	Images     []A2AImage             `json:"images,omitempty"`

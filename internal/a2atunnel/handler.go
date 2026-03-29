@@ -171,14 +171,15 @@ func (h *InboundHandler) Handle(ctx context.Context, req *AgentRequest) ([]byte,
 				responseImages := []A2AImage(nil)
 				content := BuildA2AContent(text, responseImages)
 				out, encErr := json.Marshal(OutboundPayload{
-					A2AVersion: A2ABridgeVersion,
-					MessageID:  uuid.NewString(),
-					Content:    content,
-					Result:     text,
-					Images:     responseImages,
+					A2AVersion:     A2ABridgeVersion,
+					MessageID:      uuid.NewString(),
+					ConversationID: sess.ID,
+					Content:        content,
+					Result:         text,
+					Images:         responseImages,
 				})
 				if encErr != nil {
-					return nil, fmt.Errorf("failed to encode question response: %w", encErr)
+					return nil, fmt.Errorf("failed to encode pending question response: %w", encErr)
 				}
 				return out, nil
 			}
@@ -198,11 +199,12 @@ func (h *InboundHandler) Handle(ctx context.Context, req *AgentRequest) ([]byte,
 	// 5. Encode result.
 	responseImages := sessionImagesToA2A(assistantImages)
 	out, err := json.Marshal(OutboundPayload{
-		A2AVersion: A2ABridgeVersion,
-		MessageID:  uuid.NewString(),
-		Content:    BuildA2AContent(result, responseImages),
-		Result:     result,
-		Images:     responseImages,
+		A2AVersion:     A2ABridgeVersion,
+		MessageID:      uuid.NewString(),
+		ConversationID: sess.ID,
+		Content:        BuildA2AContent(result, responseImages),
+		Result:         result,
+		Images:         responseImages,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode response: %w", err)
@@ -217,6 +219,15 @@ func (h *InboundHandler) resolveSession(p InboundPayload) (*session.Session, err
 	conversationID := strings.TrimSpace(p.ConversationID)
 	sourceAgentID := strings.TrimSpace(p.SourceAgentID)
 	sourceSessionID := strings.TrimSpace(p.SourceSessionID)
+
+	// Fast-path for echoed local conversation IDs: if Square/brute already
+	// propagated our internal session ID, load it directly.
+	if conversationID != "" {
+		if existing, err := h.sessionManager.Get(conversationID); err == nil && existing != nil {
+			return existing, nil
+		}
+	}
+
 	if conversationID == "" && sourceSessionID == "" {
 		sess, err := h.sessionManager.Create(h.agentID)
 		if err != nil {

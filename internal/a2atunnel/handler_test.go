@@ -174,6 +174,51 @@ func TestResolveSessionByConversationWithoutSourceAgent(t *testing.T) {
 	}
 }
 
+func TestResolveSessionDirectByLocalSessionID(t *testing.T) {
+	t.Parallel()
+
+	tempDir, err := os.MkdirTemp("", "a2a-handler-local-id-*")
+	if err != nil {
+		t.Fatalf("mkdir temp: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	store, err := storage.NewSQLiteStore(tempDir)
+	if err != nil {
+		t.Fatalf("new sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	manager := session.NewManager(store)
+	handler := &InboundHandler{
+		agentID:        "brute",
+		sessionManager: manager,
+	}
+
+	created, err := manager.Create("brute")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	created.AddAssistantMessage("history", nil)
+	if err := manager.Save(created); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	resolved, err := handler.resolveSession(InboundPayload{
+		Task:           "follow-up",
+		ConversationID: created.ID,
+	})
+	if err != nil {
+		t.Fatalf("resolveSession failed: %v", err)
+	}
+	if resolved.ID != created.ID {
+		t.Fatalf("expected local session ID reuse, got %s vs %s", resolved.ID, created.ID)
+	}
+	if len(resolved.Messages) == 0 {
+		t.Fatalf("expected existing session messages to be loaded, got none")
+	}
+}
+
 func TestResolveSessionBySourceSessionIDFallback(t *testing.T) {
 	t.Parallel()
 

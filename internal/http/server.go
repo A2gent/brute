@@ -54,6 +54,7 @@ type Server struct {
 	router         chi.Router
 	port           int
 	speechClips    *speechcache.Store
+	runParentCtx   context.Context
 	activeRunsMu   sync.Mutex
 	activeRuns     map[string]map[string]context.CancelFunc
 
@@ -232,6 +233,7 @@ func NewServer(
 		store:          store,
 		port:           port,
 		speechClips:    speechClips,
+		runParentCtx:   context.Background(),
 		activeRuns:     make(map[string]map[string]context.CancelFunc),
 	}
 
@@ -559,6 +561,11 @@ func (s *Server) setupRoutes() {
 
 // Run starts the HTTP server
 func (s *Server) Run(ctx context.Context) error {
+	// Session runs are detached from request contexts to survive client disconnects,
+	// but should still be canceled when the server is shutting down.
+	if ctx != nil {
+		s.runParentCtx = ctx
+	}
 	addr := fmt.Sprintf("0.0.0.0:%d", s.port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -588,6 +595,13 @@ func (s *Server) Run(ctx context.Context) error {
 	}()
 
 	return server.Serve(listener)
+}
+
+func (s *Server) sessionRunParentContext() context.Context {
+	if s == nil || s.runParentCtx == nil {
+		return context.Background()
+	}
+	return s.runParentCtx
 }
 
 // --- Request/Response types ---
@@ -2218,7 +2232,7 @@ func (s *Server) handleAnswerQuestion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) resumeSessionAfterQuestionAnswer(sessionID string, userAnswer string) {
-	runCtx, cancelRun := context.WithCancel(context.Background())
+	runCtx, cancelRun := context.WithCancel(s.sessionRunParentContext())
 	runID := s.registerActiveSessionRun(sessionID, cancelRun)
 
 	go func() {
@@ -2411,10 +2425,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Keep session execution independent from the HTTP request lifecycle so
-	// transient client disconnects do not cancel provider retries/fallback.
-	// Explicit cancellation remains available via /sessions/:id/cancel.
-	runCtx, cancelRun := context.WithCancel(context.Background())
+	// Keep session execution independent from request cancellation, but still
+	// terminate cleanly when the server shuts down.
+	runCtx, cancelRun := context.WithCancel(s.sessionRunParentContext())
 	runID := s.registerActiveSessionRun(sessionID, cancelRun)
 	defer func() {
 		cancelRun()
@@ -2565,10 +2578,9 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Keep session execution independent from the HTTP request lifecycle so
-	// transient client disconnects do not cancel provider retries/fallback.
-	// Explicit cancellation remains available via /sessions/:id/cancel.
-	runCtx, cancelRun := context.WithCancel(context.Background())
+	// Keep session execution independent from request cancellation, but still
+	// terminate cleanly when the server shuts down.
+	runCtx, cancelRun := context.WithCancel(s.sessionRunParentContext())
 	runID := s.registerActiveSessionRun(sessionID, cancelRun)
 	defer func() {
 		cancelRun()

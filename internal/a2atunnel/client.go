@@ -104,6 +104,8 @@ func (s *connectClientStream) Recv() (*AgentRequest, error) {
 
 const tunnelMethodPath = "/square.tunnel.v1.TunnelService/Connect"
 const inboundTaskTimeout = 2 * time.Minute
+const wsKeepaliveInterval = 4 * time.Minute
+const wsKeepaliveTimeout = 15 * time.Second
 
 type websocketClientStream struct {
 	conn *websocket.Conn
@@ -240,9 +242,9 @@ type OutboundPayload struct {
 	MessageID      string                 `json:"message_id,omitempty"`
 	ConversationID string                 `json:"conversation_id,omitempty"`
 	Content        []A2AContentPart       `json:"content,omitempty"`
-	Metadata   map[string]interface{} `json:"metadata,omitempty"`
-	Result     string                 `json:"result"`
-	Images     []A2AImage             `json:"images,omitempty"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+	Result         string                 `json:"result"`
+	Images         []A2AImage             `json:"images,omitempty"`
 }
 
 // A2AImage carries image input/output in tunnel payloads.
@@ -542,11 +544,36 @@ func (c *TunnelClient) runWebSocketStream(ctx context.Context) error {
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "bye")
 
+	keepaliveCtx, keepaliveCancel := context.WithCancel(ctx)
+	defer keepaliveCancel()
+	go c.runWebSocketKeepalive(keepaliveCtx, conn)
+
 	as := newActiveStream(&websocketClientStream{conn: conn})
 	c.setActive(as)
 	c.setState(StateConnected)
 	c.logf("WebSocket stream established — awaiting first server message/auth confirmation")
 	return c.runRecvLoop(ctx, as)
+}
+
+func (c *TunnelClient) runWebSocketKeepalive(ctx context.Context, conn *websocket.Conn) {
+	ticker := time.NewTicker(wsKeepaliveInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pingCtx, cancel := context.WithTimeout(ctx, wsKeepaliveTimeout)
+			err := conn.Ping(pingCtx)
+			cancel()
+			if err != nil {
+				c.logf("WebSocket keepalive failed (%s): %v", classifyConnectivityError(err), err)
+				_ = conn.CloseNow()
+				return
+			}
+		}
+	}
 }
 
 func (c *TunnelClient) runRecvLoop(ctx context.Context, as *activeStream) error {

@@ -179,6 +179,25 @@ func (s *SQLiteStore) migrate() error {
 			updated_at TIMESTAMP NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_integrations_provider ON integrations(provider)`,
+		// Leonardo async generations
+		`CREATE TABLE IF NOT EXISTS leonardo_generations (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			tool_call_id TEXT NOT NULL,
+			integration_id TEXT NOT NULL,
+			generation_id TEXT NOT NULL UNIQUE,
+			status TEXT NOT NULL,
+			prompt TEXT NOT NULL DEFAULT '',
+			request_json TEXT NOT NULL DEFAULT '',
+			response_json TEXT NOT NULL DEFAULT '',
+			error TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL,
+			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+			FOREIGN KEY (integration_id) REFERENCES integrations(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_leonardo_generations_generation_id ON leonardo_generations(generation_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_leonardo_generations_session_id ON leonardo_generations(session_id)`,
 		// MCP server registry
 		`CREATE TABLE IF NOT EXISTS mcp_servers (
 			id TEXT PRIMARY KEY,
@@ -1117,6 +1136,68 @@ func (s *SQLiteStore) ListIntegrations() ([]*Integration, error) {
 func (s *SQLiteStore) DeleteIntegration(id string) error {
 	_, err := s.db.Exec(`DELETE FROM integrations WHERE id = ?`, id)
 	return err
+}
+
+// SaveLeonardoGeneration upserts an async Leonardo generation record.
+func (s *SQLiteStore) SaveLeonardoGeneration(generation *LeonardoGeneration) error {
+	if generation == nil {
+		return fmt.Errorf("generation is nil")
+	}
+
+	_, err := s.db.Exec(`
+		INSERT INTO leonardo_generations (
+			id, session_id, tool_call_id, integration_id, generation_id, status,
+			prompt, request_json, response_json, error, created_at, updated_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			session_id = excluded.session_id,
+			tool_call_id = excluded.tool_call_id,
+			integration_id = excluded.integration_id,
+			generation_id = excluded.generation_id,
+			status = excluded.status,
+			prompt = excluded.prompt,
+			request_json = excluded.request_json,
+			response_json = excluded.response_json,
+			error = excluded.error,
+			updated_at = excluded.updated_at
+	`, generation.ID, generation.SessionID, generation.ToolCallID, generation.IntegrationID, generation.GenerationID, generation.Status, generation.Prompt, generation.RequestJSON, generation.ResponseJSON, generation.Error, generation.CreatedAt, generation.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("failed to save leonardo generation: %w", err)
+	}
+	return nil
+}
+
+// GetLeonardoGenerationByGenerationID returns a Leonardo generation by provider generation ID.
+func (s *SQLiteStore) GetLeonardoGenerationByGenerationID(generationID string) (*LeonardoGeneration, error) {
+	var generation LeonardoGeneration
+
+	err := s.db.QueryRow(`
+		SELECT id, session_id, tool_call_id, integration_id, generation_id, status,
+		       prompt, request_json, response_json, error, created_at, updated_at
+		FROM leonardo_generations
+		WHERE generation_id = ?
+	`, generationID).Scan(
+		&generation.ID,
+		&generation.SessionID,
+		&generation.ToolCallID,
+		&generation.IntegrationID,
+		&generation.GenerationID,
+		&generation.Status,
+		&generation.Prompt,
+		&generation.RequestJSON,
+		&generation.ResponseJSON,
+		&generation.Error,
+		&generation.CreatedAt,
+		&generation.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("leonardo generation not found: %s", generationID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to load leonardo generation: %w", err)
+	}
+	return &generation, nil
 }
 
 // SaveMCPServer saves an MCP server to the database.

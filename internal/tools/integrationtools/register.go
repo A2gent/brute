@@ -1,13 +1,14 @@
 package integrationtools
 
 import (
+	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/speechcache"
 	"github.com/A2gent/brute/internal/storage"
 	"github.com/A2gent/brute/internal/tools"
 )
 
 // Register wires integration-backed tools into the tool manager.
-func Register(manager *tools.Manager, store storage.Store, clipStore *speechcache.Store) {
+func Register(manager *tools.Manager, store storage.Store, clipStore *speechcache.Store, sessionManager *session.Manager) {
 	if manager == nil || store == nil {
 		return
 	}
@@ -23,4 +24,5 @@ func Register(manager *tools.Manager, store storage.Store, clipStore *speechcach
 	manager.Register(NewExaSearchQueryTool(store))
 	manager.Register(NewFetchURLTool())
 	manager.Register(NewBrowserChromeTool(manager.WorkDir()))
+	manager.Register(NewLeonardoGenerateImageTool(store, sessionManager))
 }

@@ -56,15 +56,21 @@ func (m *memStore) GetIntegration(string) (*storage.Integration, error) {
 }
 func (m *memStore) ListIntegrations() ([]*storage.Integration, error) { return nil, nil }
 func (m *memStore) DeleteIntegration(string) error                    { return nil }
-func (m *memStore) SaveMCPServer(*storage.MCPServer) error            { return nil }
-func (m *memStore) GetMCPServer(string) (*storage.MCPServer, error)   { return nil, nil }
-func (m *memStore) ListMCPServers() ([]*storage.MCPServer, error)     { return nil, nil }
-func (m *memStore) DeleteMCPServer(string) error                      { return nil }
-func (m *memStore) SaveSubAgent(*storage.SubAgent) error              { return nil }
-func (m *memStore) GetSubAgent(string) (*storage.SubAgent, error)     { return nil, nil }
-func (m *memStore) ListSubAgents() ([]*storage.SubAgent, error)       { return nil, nil }
-func (m *memStore) DeleteSubAgent(string) error                       { return nil }
-func (m *memStore) Close() error                                      { return nil }
+func (m *memStore) SaveLeonardoGeneration(*storage.LeonardoGeneration) error {
+	return nil
+}
+func (m *memStore) GetLeonardoGenerationByGenerationID(string) (*storage.LeonardoGeneration, error) {
+	return nil, nil
+}
+func (m *memStore) SaveMCPServer(*storage.MCPServer) error          { return nil }
+func (m *memStore) GetMCPServer(string) (*storage.MCPServer, error) { return nil, nil }
+func (m *memStore) ListMCPServers() ([]*storage.MCPServer, error)   { return nil, nil }
+func (m *memStore) DeleteMCPServer(string) error                    { return nil }
+func (m *memStore) SaveSubAgent(*storage.SubAgent) error            { return nil }
+func (m *memStore) GetSubAgent(string) (*storage.SubAgent, error)   { return nil, nil }
+func (m *memStore) ListSubAgents() ([]*storage.SubAgent, error)     { return nil, nil }
+func (m *memStore) DeleteSubAgent(string) error                     { return nil }
+func (m *memStore) Close() error                                    { return nil }
 
 // --- helpers ---
 

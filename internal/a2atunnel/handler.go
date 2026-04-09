@@ -29,6 +29,10 @@ type AgentRunnerBuilder func(ctx context.Context, sess *session.Session, toolMan
 // ToolManagerFactory creates a tool manager scoped to a session's project.
 type ToolManagerFactory func(sess *session.Session) *tools.Manager
 
+// InternalEventHandler processes non-agent inbound events bridged through Square,
+// such as provider webhooks, and returns the affected session ID.
+type InternalEventHandler func(ctx context.Context, payload json.RawMessage) (string, error)
+
 // InboundHandler implements Handler. It creates a new session per inbound
 // A2A request, runs the agent loop synchronously, and returns the result.
 // Multiple calls may run concurrently — it is goroutine-safe.
@@ -42,7 +46,8 @@ type InboundHandler struct {
 	inboundProjectID func() string
 	// inboundSubAgentID returns the sub-agent ID to assign to inbound sessions.
 	// Called on each request so changes to settings take effect immediately.
-	inboundSubAgentID func() string
+	inboundSubAgentID    func() string
+	internalEventHandler InternalEventHandler
 }
 
 // NewInboundHandler constructs an InboundHandler.
@@ -53,14 +58,16 @@ func NewInboundHandler(
 	toolManagerFactory ToolManagerFactory,
 	inboundProjectID func() string,
 	inboundSubAgentID func() string,
+	internalEventHandler InternalEventHandler,
 ) *InboundHandler {
 	return &InboundHandler{
-		agentID:            agentID,
-		sessionManager:     sessionManager,
-		agentFactory:       agentFactory,
-		toolManagerFactory: toolManagerFactory,
-		inboundProjectID:   inboundProjectID,
-		inboundSubAgentID:  inboundSubAgentID,
+		agentID:              agentID,
+		sessionManager:       sessionManager,
+		agentFactory:         agentFactory,
+		toolManagerFactory:   toolManagerFactory,
+		inboundProjectID:     inboundProjectID,
+		inboundSubAgentID:    inboundSubAgentID,
+		internalEventHandler: internalEventHandler,
 	}
 }
 
@@ -92,6 +99,9 @@ func (h *InboundHandler) Handle(ctx context.Context, req *AgentRequest) ([]byte,
 		}
 	}
 	if strings.TrimSpace(p.Task) == "" && len(p.Images) == 0 {
+		if eventType := metadataStringValue(p.Metadata, "internal_event"); eventType != "" {
+			return h.handleInternalEvent(ctx, eventType, req.Payload)
+		}
 		return nil, fmt.Errorf("inbound payload missing both 'task' and 'images'")
 	}
 	if err := ValidateA2AImages(p.Images); err != nil {
@@ -215,6 +225,27 @@ func (h *InboundHandler) Handle(ctx context.Context, req *AgentRequest) ([]byte,
 // compile-time assertion that InboundHandler satisfies Handler.
 var _ Handler = (*InboundHandler)(nil)
 
+func (h *InboundHandler) handleInternalEvent(ctx context.Context, eventType string, payload json.RawMessage) ([]byte, error) {
+	if h.internalEventHandler == nil {
+		return nil, fmt.Errorf("internal event %q is not configured", eventType)
+	}
+	sessionID, err := h.internalEventHandler(ctx, payload)
+	if err != nil {
+		return nil, err
+	}
+	out, err := json.Marshal(OutboundPayload{
+		A2AVersion:     A2ABridgeVersion,
+		MessageID:      uuid.NewString(),
+		ConversationID: strings.TrimSpace(sessionID),
+		Result:         fmt.Sprintf("internal event %s processed", eventType),
+		Content:        BuildA2AContent(fmt.Sprintf("internal event %s processed", eventType), nil),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode internal event response: %w", err)
+	}
+	return out, nil
+}
+
 func (h *InboundHandler) resolveSession(p InboundPayload) (*session.Session, error) {
 	conversationID := strings.TrimSpace(p.ConversationID)
 	sourceAgentID := strings.TrimSpace(p.SourceAgentID)
@@ -273,6 +304,18 @@ func (h *InboundHandler) resolveSession(p InboundPayload) (*session.Session, err
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 	return sess, nil
+}
+
+func metadataStringValue(metadata map[string]interface{}, key string) string {
+	if metadata == nil {
+		return ""
+	}
+	raw, ok := metadata[key]
+	if !ok {
+		return ""
+	}
+	value, _ := raw.(string)
+	return strings.TrimSpace(value)
 }
 
 func inboundSessionMatchScore(

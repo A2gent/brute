@@ -41,6 +41,7 @@ var supportedIntegrationProviders = map[string]struct{}{
 	"perplexity":      {},
 	"brave_search":    {},
 	"exa":             {},
+	"leonardo":        {},
 	"a2_registry":     {},
 }
 
@@ -61,6 +62,7 @@ var requiredConfigFields = map[string][]string{
 	"perplexity":      {"api_key"},
 	"brave_search":    {"api_key"},
 	"exa":             {"api_key"},
+	"leonardo":        {"api_key"},
 	"a2_registry":     {"api_key"},
 }
 

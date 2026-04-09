@@ -126,6 +126,7 @@ func (s *Server) processA2AMessageRequest(ctx context.Context, rawBody []byte) (
 		s.toolManagerForSession,
 		s.getA2AInboundProjectID,
 		s.getA2AInboundSubAgentID,
+		s.handleA2AInternalEvent,
 	)
 	respPayload, err := handler.Handle(ctx, &a2atunnel.AgentRequest{
 		Kind:      a2atunnel.KindTask,

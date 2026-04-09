@@ -63,6 +63,7 @@ const (
 	metadataCompactionCount      = "compaction_count"
 	metadataLastCompactionAt     = "last_compaction_at"
 	messageMetadataCompaction    = "context_compaction"
+	toolMetadataExternalWait     = "external_wait"
 	defaultCompactionTriggerPct  = 80.0
 	defaultCompactionPrompt      = `You are compacting a coding-agent conversation because context usage is high.
 
@@ -323,6 +324,18 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 				}
 				return "", totalUsage, nil
 			}
+			if freshSess.Status == session.StatusWaitingExternal || hasExternalWaitResult(sessionResults) {
+				logging.Info("Session %s is waiting for external callback, parking agent loop", sess.ID)
+				sess.Status = session.StatusWaitingExternal
+				sess.Metadata = freshSess.Metadata
+				sess.TaskProgress = freshSess.TaskProgress
+				sess.UpdatedAt = freshSess.UpdatedAt
+				if onEvent != nil {
+					onEvent(Event{Type: EventToolCompleted, Step: step})
+					onEvent(Event{Type: EventStepCompleted, Step: step})
+				}
+				return "", totalUsage, nil
+			}
 		}
 
 		// Save session after each step
@@ -336,6 +349,29 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			onEvent(Event{Type: EventStepCompleted, Step: step})
 		}
 	}
+}
+
+func hasExternalWaitResult(results []session.ToolResult) bool {
+	for _, result := range results {
+		if result.Metadata == nil {
+			continue
+		}
+		raw, ok := result.Metadata[toolMetadataExternalWait]
+		if !ok {
+			continue
+		}
+		switch value := raw.(type) {
+		case bool:
+			if value {
+				return true
+			}
+		case string:
+			if strings.EqualFold(strings.TrimSpace(value), "true") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (a *Agent) fallbackAssistantContentFromRecentTools(sess *session.Session) string {

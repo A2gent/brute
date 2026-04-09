@@ -143,7 +143,7 @@ func (s *Server) toolManagerForSession(sess *session.Session) *tools.Manager {
 		manager = s.toolManager.Clone()
 	} else {
 		manager = tools.NewManager(workDir)
-		integrationtools.Register(manager, s.store, s.speechClips)
+		integrationtools.Register(manager, s.store, s.speechClips, s.sessionManager)
 		s.registerServerBackedTools(manager)
 	}
 

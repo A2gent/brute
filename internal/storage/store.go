@@ -73,6 +73,23 @@ type Integration struct {
 	UpdatedAt time.Time
 }
 
+// LeonardoGeneration tracks an async Leonardo image generation request
+// initiated from a session tool call and later completed through webhook relay.
+type LeonardoGeneration struct {
+	ID            string
+	SessionID     string
+	ToolCallID    string
+	IntegrationID string
+	GenerationID  string
+	Status        string // "pending" | "completed" | "failed"
+	Prompt        string
+	RequestJSON   string
+	ResponseJSON  string
+	Error         string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
 // MCPServer represents a configured MCP server endpoint.
 type MCPServer struct {
 	ID                  string
@@ -147,6 +164,10 @@ type Store interface {
 	GetIntegration(id string) (*Integration, error)
 	ListIntegrations() ([]*Integration, error)
 	DeleteIntegration(id string) error
+
+	// Leonardo async image generation operations
+	SaveLeonardoGeneration(generation *LeonardoGeneration) error
+	GetLeonardoGenerationByGenerationID(generationID string) (*LeonardoGeneration, error)
 
 	// MCP server operations
 	SaveMCPServer(server *MCPServer) error

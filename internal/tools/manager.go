@@ -148,7 +148,8 @@ func (m *Manager) ExecuteParallel(ctx context.Context, calls []llm.ToolCall) []l
 			defer wg.Done()
 
 			start := time.Now()
-			result, err := m.Execute(ctx, tc.Name, json.RawMessage(tc.Input))
+			callCtx := context.WithValue(ctx, "tool_call_id", tc.ID)
+			result, err := m.Execute(callCtx, tc.Name, json.RawMessage(tc.Input))
 			duration := time.Since(start)
 
 			tr := llm.ToolResult{

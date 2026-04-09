@@ -13,12 +13,13 @@ import (
 type Status string
 
 const (
-	StatusQueued        Status = "queued" // Session created but not started
-	StatusRunning       Status = "running"
-	StatusPaused        Status = "paused"
-	StatusInputRequired Status = "input_required" // Agent is waiting for user input
-	StatusCompleted     Status = "completed"
-	StatusFailed        Status = "failed"
+	StatusQueued          Status = "queued" // Session created but not started
+	StatusRunning         Status = "running"
+	StatusPaused          Status = "paused"
+	StatusWaitingExternal Status = "waiting_external" // Agent is waiting for an external webhook/tool callback
+	StatusInputRequired   Status = "input_required"   // Agent is waiting for user input
+	StatusCompleted       Status = "completed"
+	StatusFailed          Status = "failed"
 )
 
 // Session represents an agent session

@@ -143,13 +143,13 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 		llmClient = anthropic.NewClientWithBaseURL("", cfg.DefaultModel, "https://api.kimi.com/coding/v1")
 	}
 
+	// Initialize session manager
+	sessionManager := session.NewManager(store)
+
 	// Initialize tool manager
 	toolManager := tools.NewManager(cfg.WorkDir)
 	clipStore := speechcache.New(0)
-	integrationtools.Register(toolManager, store, clipStore)
-
-	// Initialize session manager
-	sessionManager := session.NewManager(store)
+	integrationtools.Register(toolManager, store, clipStore, sessionManager)
 
 	// Start HTTP server in background
 	ctx, cancel := context.WithCancel(context.Background())
@@ -300,11 +300,6 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	logging.Info("Using LLM API: %s model=%s", baseURL, cfg.DefaultModel)
 	llmClient = anthropic.NewClientWithBaseURL(apiKey, cfg.DefaultModel, baseURL)
 
-	// Initialize tool manager
-	toolManager := tools.NewManager(cfg.WorkDir)
-	clipStore := speechcache.New(0)
-	integrationtools.Register(toolManager, store, clipStore)
-
 	// Initialize session manager
 	sessionManager := session.NewManager(store)
 	if settings, err2 := store.GetSettings(); err2 == nil {
@@ -314,6 +309,11 @@ func runAgent(cmd *cobra.Command, args []string) error {
 		}
 		sessionManager.SetJSONLFolder(folder)
 	}
+
+	// Initialize tool manager
+	toolManager := tools.NewManager(cfg.WorkDir)
+	clipStore := speechcache.New(0)
+	integrationtools.Register(toolManager, store, clipStore, sessionManager)
 	// Create or resume session
 	var sess *session.Session
 	if continueFlag != "" {
@@ -420,13 +420,13 @@ func runServer(cmd *cobra.Command, args []string) error {
 		llmClient = anthropic.NewClientWithBaseURL("", cfg.DefaultModel, "https://api.kimi.com/coding/v1")
 	}
 
+	// Initialize session manager
+	sessionManager := session.NewManager(store)
+
 	// Initialize tool manager
 	toolManager := tools.NewManager(cfg.WorkDir)
 	clipStore := speechcache.New(0)
-	integrationtools.Register(toolManager, store, clipStore)
-
-	// Initialize session manager
-	sessionManager := session.NewManager(store)
+	integrationtools.Register(toolManager, store, clipStore, sessionManager)
 
 	// Create HTTP server
 	server := httpserver.NewServer(cfg, llmClient, toolManager, sessionManager, store, clipStore, portFlag)

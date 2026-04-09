@@ -26,6 +26,7 @@ import (
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/tools"
+	"github.com/A2gent/brute/internal/tools/integrationtools"
 )
 
 const (
@@ -76,6 +77,7 @@ func (s *Server) startA2ATunnel(apiKey, transport, squareAddr string) {
 		s.toolManagerForSession,
 		s.getA2AInboundProjectID,
 		s.getA2AInboundSubAgentID,
+		s.handleA2AInternalEvent,
 	)
 
 	client := a2atunnel.NewWithTransport(squareAddr, apiKey, handler, a2atunnel.Transport(transport))
@@ -511,4 +513,105 @@ func sessionA2AOutboundMeta(sess *session.Session) (isOutbound bool, targetAgent
 		targetAgentName, _ = v.(string)
 	}
 	return
+}
+
+func (s *Server) handleA2AInternalEvent(ctx context.Context, payload json.RawMessage) (string, error) {
+	var envelope struct {
+		Metadata map[string]interface{} `json:"metadata"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		return "", fmt.Errorf("failed to decode internal event envelope: %w", err)
+	}
+
+	eventType := ""
+	if envelope.Metadata != nil {
+		if raw, ok := envelope.Metadata["internal_event"].(string); ok {
+			eventType = strings.TrimSpace(raw)
+		}
+	}
+
+	switch eventType {
+	case "leonardo_webhook":
+		processor := integrationtools.NewLeonardoWebhookProcessor(s.store, s.sessionManager, s.config.DataPath)
+		sessionID, err := processor.HandleWebhook(ctx, payload)
+		if err != nil {
+			return "", err
+		}
+		s.resumeSessionAfterExternalToolResult(sessionID)
+		return sessionID, nil
+	case "webhook_inbound":
+		processor := integrationtools.NewLeonardoWebhookProcessor(s.store, s.sessionManager, s.config.DataPath)
+		sessionID, err := processor.HandleWebhook(ctx, payload)
+		if err != nil {
+			return "", err
+		}
+		s.resumeSessionAfterExternalToolResult(sessionID)
+		return sessionID, nil
+	default:
+		return "", fmt.Errorf("unsupported internal event: %s", eventType)
+	}
+}
+
+func (s *Server) resumeSessionAfterExternalToolResult(sessionID string) {
+	runCtx, cancelRun := context.WithCancel(s.sessionRunParentContext())
+	runID := s.registerActiveSessionRun(sessionID, cancelRun)
+
+	go func() {
+		defer func() {
+			cancelRun()
+			s.unregisterActiveSessionRun(sessionID, runID)
+		}()
+
+		sess, err := s.sessionManager.Get(sessionID)
+		if err != nil {
+			logging.Warn("Failed to reload session after external tool result: session=%s error=%v", sessionID, err)
+			return
+		}
+		if sess.Status != session.StatusRunning {
+			return
+		}
+		defer s.queueTelegramSessionMessageSync(sess.ID)
+
+		providerType := s.resolveSessionProviderType(sess)
+		model := s.resolveSessionModel(sess, providerType)
+		target, err := s.resolveExecutionTarget(runCtx, providerType, model, "External callback completed.", sess)
+		if err != nil {
+			sess.AddAssistantMessage(fmt.Sprintf("Unable to resume request: %s", err.Error()), nil)
+			sess.SetStatus(session.StatusFailed)
+			_ = s.sessionManager.Save(sess)
+			logging.Warn("Provider resolution failed while resuming external tool result: session=%s error=%v", sessionID, err)
+			return
+		}
+		if setSessionRoutedProviderAndModel(sess, providerType, target.ProviderType, target.Model) {
+			if err := s.sessionManager.Save(sess); err != nil {
+				logging.Warn("Failed to persist routed metadata while resuming external tool result: %v", err)
+			}
+		}
+
+		agentConfig := agent.Config{
+			Name:          sess.AgentID,
+			Model:         target.Model,
+			SystemPrompt:  s.buildSystemPromptForSession(sess),
+			MaxSteps:      s.config.MaxSteps,
+			Temperature:   s.config.Temperature,
+			ContextWindow: target.ContextWindow,
+		}
+		ag := agent.New(agentConfig, target.Client, s.toolManagerForSession(sess), s.sessionManager)
+		_, _, err = ag.RunWithEvents(runCtx, sess, "", func(ev agent.Event) {
+			if ev.Type == agent.EventProviderTrace && ev.Provider != nil {
+				s.applyProviderTraceToSession(sess, target.ProviderType, ev.Provider)
+			}
+		})
+		if err != nil {
+			if isCancellationError(err) {
+				sess.SetStatus(session.StatusPaused)
+				_ = s.sessionManager.Save(sess)
+				return
+			}
+			adaptedErr := s.adaptProviderErrorMessage(target.ProviderType, err)
+			sess.AddAssistantMessage(fmt.Sprintf("Request failed: %s", adaptedErr.Error()), nil)
+			sess.SetStatus(session.StatusFailed)
+			_ = s.sessionManager.Save(sess)
+		}
+	}()
 }

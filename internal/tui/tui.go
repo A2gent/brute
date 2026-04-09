@@ -1733,6 +1733,8 @@ func (m Model) renderTopBar() string {
 		statusIcon = statusRunningStyle.Render("●")
 	case session.StatusPaused:
 		statusIcon = statusPausedStyle.Render("⏸")
+	case session.StatusWaitingExternal:
+		statusIcon = statusPausedStyle.Render("…")
 	case session.StatusCompleted:
 		statusIcon = statusCompletedStyle.Render("✓")
 	case session.StatusFailed:

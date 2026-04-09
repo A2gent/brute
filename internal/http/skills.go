@@ -23,6 +23,7 @@ var integrationToolsByProvider = map[string][]string{
 	"google_calendar": {"google_calendar_query"},
 	"brave_search":    {"brave_search_query"},
 	"elevenlabs":      {"elevenlabs_tts"},
+	"leonardo":        {"leonardo_generate_image"},
 	"telegram":        {"telegram_send_message"},
 	"exa":             {"exa_search"},
 	"a2_registry":     {"delegate_to_external_agent", "discover_external_agents"},

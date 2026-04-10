@@ -390,6 +390,7 @@ func (s *Server) setupRoutes() {
 	r.Route("/integrations", func(r chi.Router) {
 		r.Get("/", s.handleListIntegrations)
 		r.Post("/", s.handleCreateIntegration)
+		r.Post("/leonardo/models", s.handleListLeonardoModels)
 		r.Post("/telegram/chat-ids", s.handleDiscoverTelegramChats)
 		// A2A tunnel status endpoints (no integrationID in path)
 		r.Get("/a2_registry/tunnel-status", s.handleA2ATunnelStatus)

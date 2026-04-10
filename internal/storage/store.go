@@ -168,6 +168,7 @@ type Store interface {
 	// Leonardo async image generation operations
 	SaveLeonardoGeneration(generation *LeonardoGeneration) error
 	GetLeonardoGenerationByGenerationID(generationID string) (*LeonardoGeneration, error)
+	ClaimLeonardoGenerationByGenerationID(generationID string, fromStatus string, toStatus string) (*LeonardoGeneration, bool, error)
 
 	// MCP server operations
 	SaveMCPServer(server *MCPServer) error

@@ -537,7 +537,9 @@ func (s *Server) handleA2AInternalEvent(ctx context.Context, payload json.RawMes
 		if err != nil {
 			return "", err
 		}
-		s.resumeSessionAfterExternalToolResult(sessionID)
+		if strings.TrimSpace(sessionID) != "" {
+			s.resumeSessionAfterExternalToolResult(sessionID)
+		}
 		return sessionID, nil
 	case "webhook_inbound":
 		processor := integrationtools.NewLeonardoWebhookProcessor(s.store, s.sessionManager, s.config.DataPath)
@@ -545,7 +547,9 @@ func (s *Server) handleA2AInternalEvent(ctx context.Context, payload json.RawMes
 		if err != nil {
 			return "", err
 		}
-		s.resumeSessionAfterExternalToolResult(sessionID)
+		if strings.TrimSpace(sessionID) != "" {
+			s.resumeSessionAfterExternalToolResult(sessionID)
+		}
 		return sessionID, nil
 	default:
 		return "", fmt.Errorf("unsupported internal event: %s", eventType)

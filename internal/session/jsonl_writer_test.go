@@ -62,6 +62,9 @@ func (m *memStore) SaveLeonardoGeneration(*storage.LeonardoGeneration) error {
 func (m *memStore) GetLeonardoGenerationByGenerationID(string) (*storage.LeonardoGeneration, error) {
 	return nil, nil
 }
+func (m *memStore) ClaimLeonardoGenerationByGenerationID(string, string, string) (*storage.LeonardoGeneration, bool, error) {
+	return nil, false, nil
+}
 func (m *memStore) SaveMCPServer(*storage.MCPServer) error          { return nil }
 func (m *memStore) GetMCPServer(string) (*storage.MCPServer, error) { return nil, nil }
 func (m *memStore) ListMCPServers() ([]*storage.MCPServer, error)   { return nil, nil }

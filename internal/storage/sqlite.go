@@ -1200,6 +1200,80 @@ func (s *SQLiteStore) GetLeonardoGenerationByGenerationID(generationID string) (
 	return &generation, nil
 }
 
+// ClaimLeonardoGenerationByGenerationID atomically transitions a generation
+// from one status to another and returns the claimed row. This prevents
+// duplicate webhook deliveries from processing the same generation in parallel.
+func (s *SQLiteStore) ClaimLeonardoGenerationByGenerationID(generationID string, fromStatus string, toStatus string) (*LeonardoGeneration, bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to begin leonardo claim transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	var generation LeonardoGeneration
+	err = tx.QueryRow(`
+		SELECT id, session_id, tool_call_id, integration_id, generation_id, status,
+		       prompt, request_json, response_json, error, created_at, updated_at
+		FROM leonardo_generations
+		WHERE generation_id = ?
+	`, generationID).Scan(
+		&generation.ID,
+		&generation.SessionID,
+		&generation.ToolCallID,
+		&generation.IntegrationID,
+		&generation.GenerationID,
+		&generation.Status,
+		&generation.Prompt,
+		&generation.RequestJSON,
+		&generation.ResponseJSON,
+		&generation.Error,
+		&generation.CreatedAt,
+		&generation.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, false, fmt.Errorf("leonardo generation not found: %s", generationID)
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to load leonardo generation for claim: %w", err)
+	}
+
+	if generation.Status != fromStatus {
+		if err := tx.Commit(); err != nil {
+			return nil, false, fmt.Errorf("failed to finalize leonardo claim transaction: %w", err)
+		}
+		return &generation, false, nil
+	}
+
+	now := time.Now()
+	res, err := tx.Exec(`
+		UPDATE leonardo_generations
+		SET status = ?, updated_at = ?
+		WHERE generation_id = ? AND status = ?
+	`, toStatus, now, generationID, fromStatus)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to claim leonardo generation: %w", err)
+	}
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to inspect leonardo claim result: %w", err)
+	}
+	if rowsAffected == 0 {
+		if err := tx.Commit(); err != nil {
+			return nil, false, fmt.Errorf("failed to finalize leonardo claim transaction: %w", err)
+		}
+		return &generation, false, nil
+	}
+
+	generation.Status = toStatus
+	generation.UpdatedAt = now
+	if err := tx.Commit(); err != nil {
+		return nil, false, fmt.Errorf("failed to commit leonardo claim transaction: %w", err)
+	}
+	return &generation, true, nil
+}
+
 // SaveMCPServer saves an MCP server to the database.
 func (s *SQLiteStore) SaveMCPServer(server *MCPServer) error {
 	if server.Config == nil {

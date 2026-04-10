@@ -22,10 +22,14 @@ import (
 )
 
 const (
-	leonardoAPIBaseURL             = "https://cloud.leonardo.ai/api/rest/v1"
-	leonardoGenerationStatusFailed = "failed"
-	leonardoGenerationStatusDone   = "completed"
-	leonardoGenerationStatusWait   = "pending"
+	leonardoAPIBaseURL                 = "https://cloud.leonardo.ai/api/rest/v1"
+	leonardoGenerationStatusFailed     = "failed"
+	leonardoGenerationStatusDone       = "completed"
+	leonardoGenerationStatusProcessing = "processing"
+	leonardoGenerationStatusWait       = "pending"
+	defaultLeonardoWidth               = 1344
+	defaultLeonardoHeight              = 768
+	defaultLeonardoNumImages           = 1
 )
 
 type LeonardoGenerateImageTool struct {
@@ -186,13 +190,17 @@ func (t *LeonardoGenerateImageTool) Execute(ctx context.Context, params json.Raw
 	if width <= 0 {
 		width = parsePositiveInt(integration.Config["width"])
 	}
-	if width > 0 {
-		requestBody["width"] = width
-	}
 	height := p.Height
 	if height <= 0 {
 		height = parsePositiveInt(integration.Config["height"])
 	}
+	if width <= 0 {
+		width = defaultLeonardoWidth
+	}
+	if height <= 0 {
+		height = defaultLeonardoHeight
+	}
+	requestBody["width"] = width
 	if height > 0 {
 		requestBody["height"] = height
 	}
@@ -200,9 +208,10 @@ func (t *LeonardoGenerateImageTool) Execute(ctx context.Context, params json.Raw
 	if numImages <= 0 {
 		numImages = parsePositiveInt(integration.Config["num_images"])
 	}
-	if numImages > 0 {
-		requestBody["num_images"] = numImages
+	if numImages <= 0 {
+		numImages = defaultLeonardoNumImages
 	}
+	requestBody["num_images"] = numImages
 
 	body, err := json.Marshal(requestBody)
 	if err != nil {
@@ -280,7 +289,7 @@ func (t *LeonardoGenerateImageTool) Execute(ctx context.Context, params json.Raw
 	}, nil
 }
 
-func (p *LeonardoWebhookProcessor) HandleWebhook(ctx context.Context, payload json.RawMessage) (string, error) {
+func (p *LeonardoWebhookProcessor) HandleWebhook(ctx context.Context, payload json.RawMessage) (sessionID string, retErr error) {
 	effectivePayload, err := unwrapLeonardoWebhookPayload(payload)
 	if err != nil {
 		return "", err
@@ -291,13 +300,28 @@ func (p *LeonardoWebhookProcessor) HandleWebhook(ctx context.Context, payload js
 		return "", fmt.Errorf("leonardo webhook payload did not include a generation id")
 	}
 
-	record, err := p.store.GetLeonardoGenerationByGenerationID(generationID)
+	record, claimed, err := p.store.ClaimLeonardoGenerationByGenerationID(
+		generationID,
+		leonardoGenerationStatusWait,
+		leonardoGenerationStatusProcessing,
+	)
 	if err != nil {
 		return "", err
 	}
-	if record.Status == leonardoGenerationStatusDone || record.Status == leonardoGenerationStatusFailed {
-		return record.SessionID, nil
+	if !claimed {
+		return "", nil
 	}
+	defer func() {
+		if retErr == nil || record == nil || record.Status != leonardoGenerationStatusProcessing {
+			return
+		}
+		record.Status = leonardoGenerationStatusWait
+		record.Error = ""
+		record.UpdatedAt = time.Now()
+		if saveErr := p.store.SaveLeonardoGeneration(record); saveErr != nil {
+			retErr = fmt.Errorf("%w (and failed to restore leonardo generation to pending: %v)", retErr, saveErr)
+		}
+	}()
 
 	sess, err := p.sessionManager.Get(record.SessionID)
 	if err != nil {

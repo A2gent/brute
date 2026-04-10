@@ -271,6 +271,12 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 
 		// Add assistant message with tool calls
 		sess.AddAssistantMessageWithImagesAndMetadata(response.Content, llmImagesToSession(response.Images), sessionToolCalls, nil)
+		// Persist the assistant tool-call message before executing tools so
+		// async tools that park the session (for example webhook-backed image
+		// generation) still leave behind a valid transcript for resume.
+		if err := a.sessionManager.Save(sess); err != nil {
+			_ = err
+		}
 
 		// Execute tools
 		if onEvent != nil {

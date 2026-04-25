@@ -91,6 +91,12 @@ type responsesOutputItem struct {
 	} `json:"content,omitempty"`
 }
 
+type streamToolState struct {
+	id    string
+	name  string
+	input strings.Builder
+}
+
 func NewClient(accessToken, model, baseURL string) *Client {
 	normalizedBaseURL := strings.TrimSpace(baseURL)
 	if normalizedBaseURL == "" {
@@ -199,13 +205,21 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 
 func parseStreamResponse(body []byte) (*llm.ChatResponse, error) {
 	var completed *responsesResponse
+	streamedItems := make([]responsesOutputItem, 0)
 	var textFallback strings.Builder
-	type toolState struct {
-		id    string
-		name  string
-		input strings.Builder
+	tools := map[string]*streamToolState{}
+	toolOrder := make([]string, 0)
+
+	ensureToolState := func(id string) *streamToolState {
+		state := tools[id]
+		if state != nil {
+			return state
+		}
+		state = &streamToolState{id: id}
+		tools[id] = state
+		toolOrder = append(toolOrder, id)
+		return state
 	}
-	tools := map[string]*toolState{}
 
 	scanner := bufio.NewScanner(bytes.NewReader(body))
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
@@ -239,11 +253,7 @@ func parseStreamResponse(body []byte) (*llm.ChatResponse, error) {
 			if id == "" {
 				id = fmt.Sprintf("tool_%d", ev.OutputIx)
 			}
-			state := tools[id]
-			if state == nil {
-				state = &toolState{id: id}
-				tools[id] = state
-			}
+			state := ensureToolState(id)
 			state.input.WriteString(ev.Delta)
 		case "response.output_item.done":
 			if len(ev.Item) == 0 {
@@ -253,26 +263,22 @@ func parseStreamResponse(body []byte) (*llm.ChatResponse, error) {
 			if err := json.Unmarshal(ev.Item, &item); err != nil {
 				continue
 			}
-			if item.Type != "function_call" {
-				continue
-			}
-			id := strings.TrimSpace(item.CallID)
-			if id == "" {
-				id = strings.TrimSpace(item.ID)
-			}
-			if id == "" {
-				id = fmt.Sprintf("tool_%d", ev.OutputIx)
-			}
-			state := tools[id]
-			if state == nil {
-				state = &toolState{id: id}
-				tools[id] = state
-			}
-			if strings.TrimSpace(item.Name) != "" {
-				state.name = strings.TrimSpace(item.Name)
-			}
-			if strings.TrimSpace(item.Arguments) != "" && state.input.Len() == 0 {
-				state.input.WriteString(strings.TrimSpace(item.Arguments))
+			streamedItems = append(streamedItems, item)
+			if item.Type == "function_call" {
+				id := strings.TrimSpace(item.CallID)
+				if id == "" {
+					id = strings.TrimSpace(item.ID)
+				}
+				if id == "" {
+					id = fmt.Sprintf("tool_%d", ev.OutputIx)
+				}
+				state := ensureToolState(id)
+				if strings.TrimSpace(item.Name) != "" {
+					state.name = strings.TrimSpace(item.Name)
+				}
+				if strings.TrimSpace(item.Arguments) != "" && state.input.Len() == 0 {
+					state.input.WriteString(strings.TrimSpace(item.Arguments))
+				}
 			}
 		case "response.completed":
 			if len(ev.Response) == 0 {
@@ -289,23 +295,43 @@ func parseStreamResponse(body []byte) (*llm.ChatResponse, error) {
 	}
 
 	if completed != nil {
-		return parseResponseObject(*completed)
+		if len(completed.Output) == 0 && len(streamedItems) > 0 {
+			completed.Output = append(completed.Output, streamedItems...)
+		}
+		result, err := parseResponseObject(*completed)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(result.Content) == "" {
+			result.Content = strings.TrimSpace(textFallback.String())
+		}
+		if len(result.ToolCalls) == 0 && len(toolOrder) > 0 {
+			result.ToolCalls = toolCallsFromStates(toolOrder, tools)
+		}
+		return result, nil
 	}
 
 	result := &llm.ChatResponse{
 		Content: strings.TrimSpace(textFallback.String()),
 	}
-	for _, state := range tools {
-		if strings.TrimSpace(state.name) == "" {
+	result.ToolCalls = toolCallsFromStates(toolOrder, tools)
+	return result, nil
+}
+
+func toolCallsFromStates(order []string, tools map[string]*streamToolState) []llm.ToolCall {
+	result := make([]llm.ToolCall, 0, len(order))
+	for _, id := range order {
+		state := tools[id]
+		if state == nil || strings.TrimSpace(state.name) == "" {
 			continue
 		}
-		result.ToolCalls = append(result.ToolCalls, llm.ToolCall{
+		result = append(result, llm.ToolCall{
 			ID:    state.id,
 			Name:  state.name,
 			Input: strings.TrimSpace(state.input.String()),
 		})
 	}
-	return result, nil
+	return result
 }
 
 func parseResponseObject(parsed responsesResponse) (*llm.ChatResponse, error) {

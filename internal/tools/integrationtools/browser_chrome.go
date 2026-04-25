@@ -561,7 +561,8 @@ func keyFromString(key string) input.Key {
 	}
 }
 
-// isChromeRunning checks if Chrome is currently running
+// isChromeRunning reports whether any Google Chrome process is currently running.
+// Integration tests use this to decide whether they can safely launch a throwaway instance.
 func isChromeRunning() bool {
 	cmd := exec.Command("pgrep", "-x", "Google Chrome")
 	err := cmd.Run()
@@ -603,20 +604,7 @@ func (t *BrowserChromeTool) ensureBrowser() error {
 		}
 	}
 
-	// Chrome not running with debugging, check if any Chrome is open
-	if isChromeRunning() {
-		return fmt.Errorf(`Chrome is already running without remote debugging.
-
-On macOS, you cannot have multiple Chrome instances open simultaneously.
-
-To use browser_chrome:
-1. Close Chrome completely (Cmd+Q)
-2. Click "Open Agent Profile" in the UI, OR run the agent again
-
-The agent will launch Chrome with remote debugging enabled.`)
-	}
-
-	logging.Info("No Chrome running, launching new instance...")
+	logging.Info("No debuggable Chrome instance found on port %s, launching agent Chrome...", t.debugPort)
 
 	// Prepare launch layout:
 	// - persistent profile in default Chrome directory (switchable in regular Chrome)
@@ -636,8 +624,10 @@ The agent will launch Chrome with remote debugging enabled.`)
 		"--user-data-dir=" + t.userDataDir,
 		"--profile-directory=" + t.profileDirectory,
 		"--remote-debugging-port=" + t.debugPort,
+		"--remote-debugging-address=127.0.0.1",
 		"--no-first-run",
 		"--no-default-browser-check",
+		"--new-window",
 	}
 
 	if t.headless {

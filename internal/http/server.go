@@ -5940,17 +5940,6 @@ func (s *Server) handleBrowserChromeLaunch(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Chrome startup arguments are ignored if a non-debug Chrome instance is already running.
-	// Block here to avoid false "launch success" responses.
-	if isChromeRunningWithoutDebugPort() {
-		http.Error(
-			w,
-			`{"error":"Chrome is already running. Please fully quit Chrome (Cmd+Q) and try again so it can be started with agent debugging enabled."}`,
-			http.StatusConflict,
-		)
-		return
-	}
-
 	debugPort := strings.TrimSpace(os.Getenv("CHROME_DEBUG_PORT"))
 	if debugPort == "" {
 		debugPort = "9223"
@@ -5963,8 +5952,10 @@ func (s *Server) handleBrowserChromeLaunch(w http.ResponseWriter, r *http.Reques
 		"--user-data-dir=" + debugUserDataDir,
 		"--profile-directory=" + integrationtools.AgentChromeProfileDirectoryName,
 		"--remote-debugging-port=" + debugPort,
+		"--remote-debugging-address=127.0.0.1",
 		"--no-first-run",
 		"--no-default-browser-check",
+		"--new-window",
 	}
 
 	logging.Info("Launching Chrome with user-data-dir: %s", debugUserDataDir)
@@ -5992,11 +5983,6 @@ func (s *Server) handleBrowserChromeLaunch(w http.ResponseWriter, r *http.Reques
 		"profile":       agentProfileDir,
 		"profileExists": profileExists,
 	})
-}
-
-func isChromeRunningWithoutDebugPort() bool {
-	cmd := exec.Command("pgrep", "-x", "Google Chrome")
-	return cmd.Run() == nil
 }
 
 // ProviderTestResponse represents the response from testing a provider

@@ -93,14 +93,6 @@ func (s *Server) hasRunnableWorkflow(sess *session.Session) bool {
 	if isSimpleUserMainWorkflow(def) {
 		return false
 	}
-	// Workflows are launched from the parent session as an initial fan-out.
-	// Follow-up user turns should continue in the parent session context rather than
-	// re-spawning fresh workflow child sessions that only see the latest message.
-	for _, msg := range sess.Messages {
-		if strings.EqualFold(strings.TrimSpace(msg.Role), "assistant") {
-			return false
-		}
-	}
 	actionable := 0
 	for _, node := range def.Nodes {
 		if strings.ToLower(strings.TrimSpace(node.Kind)) != "user" {

@@ -46,7 +46,7 @@ func TestHasRunnableWorkflow(t *testing.T) {
 		}
 	})
 
-	t.Run("does not rerun workflow after assistant has responded", func(t *testing.T) {
+	t.Run("reruns workflow after assistant has responded", func(t *testing.T) {
 		sess := session.New("build")
 		sess.Metadata = map[string]interface{}{
 			"workflow_definition": map[string]interface{}{
@@ -62,8 +62,8 @@ func TestHasRunnableWorkflow(t *testing.T) {
 		sess.AddAssistantMessage("workflow result", nil)
 		sess.AddUserMessage("follow-up question")
 
-		if srv.hasRunnableWorkflow(sess) {
-			t.Fatalf("expected workflow fan-out to be skipped on follow-up turns")
+		if !srv.hasRunnableWorkflow(sess) {
+			t.Fatalf("expected workflow fan-out to run on follow-up turns")
 		}
 	})
 

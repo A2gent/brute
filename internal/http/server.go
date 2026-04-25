@@ -2588,23 +2588,6 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		s.unregisterActiveSessionRun(sessionID, runID)
 	}()
 
-	providerType := s.resolveSessionProviderType(sess)
-	model := s.resolveSessionModel(sess, providerType)
-	routingPrompt := messageForRouting(req.Message, len(images))
-	target, err := s.resolveExecutionTarget(runCtx, providerType, model, routingPrompt, sess)
-	if err != nil {
-		sess.AddAssistantMessage(fmt.Sprintf("Unable to start request: %s", err.Error()), nil)
-		sess.SetStatus(session.StatusFailed)
-		s.sessionManager.Save(sess)
-		s.errorResponse(w, http.StatusBadRequest, "Provider configuration error: "+err.Error())
-		return
-	}
-	if setSessionRoutedProviderAndModel(sess, providerType, target.ProviderType, target.Model) {
-		if err := s.sessionManager.Save(sess); err != nil {
-			logging.Warn("Failed to persist session routed target metadata: %v", err)
-		}
-	}
-
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -2671,6 +2654,27 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 		return
+	}
+
+	providerType := s.resolveSessionProviderType(sess)
+	model := s.resolveSessionModel(sess, providerType)
+	routingPrompt := messageForRouting(req.Message, len(images))
+	target, err := s.resolveExecutionTarget(runCtx, providerType, model, routingPrompt, sess)
+	if err != nil {
+		sess.AddAssistantMessage(fmt.Sprintf("Unable to start request: %s", err.Error()), nil)
+		sess.SetStatus(session.StatusFailed)
+		s.sessionManager.Save(sess)
+		_ = writeEvent(ChatStreamEvent{
+			Type:   "error",
+			Error:  "Provider configuration error: " + err.Error(),
+			Status: string(sess.Status),
+		})
+		return
+	}
+	if setSessionRoutedProviderAndModel(sess, providerType, target.ProviderType, target.Model) {
+		if err := s.sessionManager.Save(sess); err != nil {
+			logging.Warn("Failed to persist session routed target metadata: %v", err)
+		}
 	}
 
 	agentConfig := agent.Config{

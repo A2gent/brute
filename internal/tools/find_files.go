@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"io/fs"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -130,21 +130,26 @@ func (t *FindFilesTool) Execute(ctx context.Context, params json.RawMessage) (*R
 		pageSize = 100
 	}
 
-	// Handle max_results for backwards compatibility
-	limit := p.MaxResults
-	if limit <= 0 {
-		limit = maxFindFilesLimit // Use max to collect all files for pagination
-	}
-	if limit > maxFindFilesLimit {
-		limit = maxFindFilesLimit
-	}
-
 	sortMode := strings.ToLower(strings.TrimSpace(p.Sort))
 	if sortMode == "" {
 		sortMode = "path"
 	}
 	if sortMode != "none" && sortMode != "path" && sortMode != "mtime" {
 		return &Result{Success: false, Error: "sort must be one of: none, path, mtime"}, nil
+	}
+
+	// Handle max_results for backwards compatibility
+	limit := p.MaxResults
+	if limit <= 0 {
+		if sortMode == "none" {
+			// If not sorting, we only need enough results to satisfy the requested page
+			limit = page * pageSize
+		} else {
+			limit = maxFindFilesLimit // Use max to collect all files for sorting and pagination
+		}
+	}
+	if limit > maxFindFilesLimit {
+		limit = maxFindFilesLimit
 	}
 
 	results, _, err := collectFileMatches(ctx, basePath, pattern, p.Exclude, p.ShowHidden, limit)
@@ -182,10 +187,17 @@ func (t *FindFilesTool) Execute(ctx context.Context, params json.RawMessage) (*R
 	output := strings.Join(lines, "\n")
 
 	// Add pagination info
-	if totalPages > 1 {
-		output += fmt.Sprintf("\n\nPage %d of %d (showing %d-%d of %d files)",
-			page, totalPages, startIdx+1, endIdx, totalResults)
-		if page < totalPages {
+	hasMore := limit > 0 && totalResults == limit && sortMode == "none"
+
+	if totalPages > 1 || hasMore {
+		displayedTotal := totalPages
+		if hasMore {
+			displayedTotal = totalPages + 1 // hint at least one more page
+		}
+
+		output += fmt.Sprintf("\n\nPage %d of %d+ (showing %d-%d of %d+ files)",
+			page, displayedTotal, startIdx+1, endIdx, totalResults)
+		if page < displayedTotal {
 			output += fmt.Sprintf("\nUse page=%d for next page", page+1)
 		}
 	} else if totalResults > 0 {
@@ -206,51 +218,76 @@ func resolveToolPath(workDir, path string) string {
 }
 
 func collectFileMatches(ctx context.Context, basePath, pattern string, exclude []string, showHidden bool, limit int) ([]fileSearchResult, int, error) {
-	opts := []doublestar.GlobOption{doublestar.WithFilesOnly()}
-	if !showHidden {
-		opts = append(opts, doublestar.WithNoHidden())
-	}
-
-	matches, err := doublestar.FilepathGlob(filepath.Join(basePath, pattern), opts...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("glob error: %w", err)
-	}
-
-	if limit <= 0 {
-		limit = len(matches)
-	}
-	results := make([]fileSearchResult, 0, min(limit, len(matches)))
+	var results []fileSearchResult
 	totalIncluded := 0
 
-	for _, match := range matches {
+	err := filepath.WalkDir(basePath, func(path string, d fs.DirEntry, err error) error {
 		if ctx.Err() != nil {
-			return nil, totalIncluded, ctx.Err()
+			return ctx.Err()
 		}
-
-		rel, err := filepath.Rel(basePath, match)
 		if err != nil {
-			rel = match
+			return nil // ignore access errors
 		}
 
-		if isExcluded(rel, exclude) {
-			continue
-		}
-		if !showHidden && isHiddenPath(rel) {
-			continue
+		rel, err := filepath.Rel(basePath, path)
+		if err != nil {
+			rel = filepath.Base(path)
 		}
 
-		info, err := os.Stat(match)
-		if err != nil || info.IsDir() {
-			continue
+		if rel == "." {
+			return nil
+		}
+
+		relSlash := filepath.ToSlash(rel)
+
+		// Directory pruning
+		if d.IsDir() {
+			if !showHidden && isHiddenPath(relSlash) {
+				return filepath.SkipDir
+			}
+			if isExcluded(relSlash, exclude) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// File filtering
+		if !showHidden && isHiddenPath(relSlash) {
+			return nil
+		}
+		if isExcluded(relSlash, exclude) {
+			return nil
+		}
+
+		// Pattern matching
+		matched, _ := doublestar.PathMatch(pattern, relSlash)
+		if !matched {
+			return nil
 		}
 
 		totalIncluded++
-		if len(results) < limit {
-			results = append(results, fileSearchResult{path: rel, modTime: info.ModTime().UnixNano()})
+		if limit <= 0 || len(results) < limit {
+			info, err := d.Info()
+			modTime := int64(0)
+			if err == nil {
+				modTime = info.ModTime().UnixNano()
+			}
+			results = append(results, fileSearchResult{path: relSlash, modTime: modTime})
 		}
+
+		if limit > 0 && len(results) >= limit {
+			// Early stop
+			return fmt.Errorf("stop walk")
+		}
+
+		return nil
+	})
+
+	if err != nil && err.Error() != "stop walk" {
+		return results, totalIncluded, err
 	}
 
-	return results, totalIncluded, nil
+	return results, totalIncluded, err
 }
 
 func sortFileResults(results []fileSearchResult, sortMode string) {

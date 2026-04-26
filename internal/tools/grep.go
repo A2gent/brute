@@ -2,14 +2,19 @@ package tools
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/bmatcuk/doublestar/v4"
 )
@@ -137,16 +142,11 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 		filePattern = "**/" + p.Include
 	}
 
-	// Find files to search (follows symlinks by default)
-	pattern := filepath.Join(basePath, filePattern)
-	files, err := doublestar.FilepathGlob(pattern)
-	if err != nil {
-		return nil, fmt.Errorf("glob error: %w", err)
-	}
-
 	// Search files
 	var matches []grepMatch
 	fileCounts := make(map[string]int)
+	var mu sync.Mutex
+
 	maxResults := p.MaxResults
 	if maxResults <= 0 {
 		maxResults = maxGrepResults
@@ -156,43 +156,105 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 	}
 	maxPerFile := p.MaxMatchesPerFile
 
-	for _, file := range files {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
-		// FilepathGlob returns absolute paths
-		fullPath := file
-		info, err := os.Stat(fullPath)
-		if err != nil || info.IsDir() {
-			continue
-		}
-
-		// Skip binary files (simple heuristic)
-		if isBinaryFile(fullPath) {
-			continue
-		}
-
-		// Get relative path for display
-		relPath, err := filepath.Rel(basePath, fullPath)
-		if err != nil {
-			relPath = file
-		}
-		if isExcluded(relPath, p.Exclude) {
-			continue
-		}
-
-		fileMatches, totalCount := t.searchFile(fullPath, relPath, re, info.ModTime().UnixNano(), maxPerFile, mode == "files")
-		if totalCount > 0 {
-			fileCounts[relPath] = totalCount
-		}
-		matches = append(matches, fileMatches...)
-
-		if len(matches) >= maxResults {
-			break
-		}
+	type grepTask struct {
+		path    string
+		relPath string
+		modTime int64
 	}
 
+	taskChan := make(chan grepTask, 100)
+	var wg sync.WaitGroup
+
+	workerCtx, workerCancel := context.WithCancel(ctx)
+	defer workerCancel()
+
+	numWorkers := runtime.NumCPU()
+	if numWorkers < 2 {
+		numWorkers = 2
+	} else if numWorkers > 16 {
+		numWorkers = 16
+	}
+
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for task := range taskChan {
+				if workerCtx.Err() != nil {
+					continue
+				}
+
+				fileMatches, totalCount := t.searchFile(task.path, task.relPath, re, task.modTime, maxPerFile, mode == "files")
+
+				if totalCount > 0 {
+					mu.Lock()
+					fileCounts[task.relPath] = totalCount
+					matches = append(matches, fileMatches...)
+					if len(matches) >= maxResults {
+						workerCancel()
+					}
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+
+	errStopWalk := fmt.Errorf("stop walk")
+	err = filepath.WalkDir(basePath, func(path string, d fs.DirEntry, err error) error {
+		if workerCtx.Err() != nil {
+			return errStopWalk
+		}
+		if err != nil {
+			return nil
+		}
+
+		relPath, err := filepath.Rel(basePath, path)
+		if err != nil {
+			relPath = filepath.Base(path)
+		}
+
+		if relPath == "." {
+			return nil
+		}
+		relSlash := filepath.ToSlash(relPath)
+
+		if d.IsDir() {
+			if isExcluded(relSlash, p.Exclude) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if isExcluded(relSlash, p.Exclude) {
+			return nil
+		}
+
+		matched, _ := doublestar.PathMatch(filePattern, relSlash)
+		if !matched {
+			return nil
+		}
+
+		info, err := d.Info()
+		modTime := int64(0)
+		if err == nil {
+			modTime = info.ModTime().UnixNano()
+		}
+
+		select {
+		case taskChan <- grepTask{path: path, relPath: relPath, modTime: modTime}:
+		case <-workerCtx.Done():
+			return errStopWalk
+		}
+
+		return nil
+	})
+
+	close(taskChan)
+	wg.Wait()
+
+	if err != nil && err != errStopWalk {
+		return nil, fmt.Errorf("walk error: %w", err)
+	}
 	if len(matches) == 0 && len(fileCounts) == 0 {
 		return &Result{
 			Success: true,
@@ -256,8 +318,23 @@ func (t *GrepTool) searchFile(fullPath, relPath string, re *regexp.Regexp, modTi
 	}
 	defer file.Close()
 
+	// Read first 512 bytes to check for binary
+	buf := make([]byte, 512)
+	n, err := file.Read(buf)
+	if err != nil && err != io.EOF {
+		return nil, 0
+	}
+
+	for i := 0; i < n; i++ {
+		if buf[i] == 0 {
+			// File is binary
+			return nil, 0
+		}
+	}
+
 	var matches []grepMatch
-	scanner := bufio.NewScanner(file)
+	reader := io.MultiReader(bytes.NewReader(buf[:n]), file)
+	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	lineNum := 0
 	totalCount := 0
@@ -283,31 +360,6 @@ func (t *GrepTool) searchFile(fullPath, relPath string, re *regexp.Regexp, modTi
 	}
 
 	return matches, totalCount
-}
-
-// isBinaryFile checks if a file appears to be binary
-func isBinaryFile(path string) bool {
-	file, err := os.Open(path)
-	if err != nil {
-		return true
-	}
-	defer file.Close()
-
-	// Read first 512 bytes
-	buf := make([]byte, 512)
-	n, err := file.Read(buf)
-	if err != nil {
-		return true
-	}
-
-	// Check for null bytes (common in binary files)
-	for i := 0; i < n; i++ {
-		if buf[i] == 0 {
-			return true
-		}
-	}
-
-	return false
 }
 
 // Ensure GrepTool implements Tool

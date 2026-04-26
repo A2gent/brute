@@ -188,6 +188,77 @@ func TestComposeWorkflowNodePromptSkipsToolInstructionForResearch(t *testing.T) 
 	}
 }
 
+func TestComposeWorkflowNodePromptUsesParentContextForToolEvidence(t *testing.T) {
+	parent := session.New("parent")
+	parent.AddUserMessage("please implement tracing in go code")
+	parent.AddAssistantMessage("Workflow paused before completing.", nil)
+	parent.AddUserMessage("check /Users/artjom/git/a2gent/brute")
+
+	def := &workflowDefinitionRuntime{Name: "build-review"}
+	node := workflowNodeRuntime{
+		ID:    "review-loop__worker",
+		Label: "developer",
+		Kind:  "subagent",
+	}
+
+	prompt := composeWorkflowNodePrompt(parent, def, node, "check /Users/artjom/git/a2gent/brute", nil, "")
+
+	if !strings.Contains(prompt, "For implementation nodes, use the available tools") {
+		t.Fatalf("expected implementation tool guidance from parent context, got: %s", prompt)
+	}
+}
+
+func TestComposeWorkflowNodeDeltaPromptSkipsStableContext(t *testing.T) {
+	parent := session.New("parent")
+	parent.AddUserMessage("please implement tracing in go code")
+	parent.AddAssistantMessage("large orchestration handoff", nil)
+	child := session.New("build")
+	child.Metadata = map[string]interface{}{workflowContextSeededKey: true}
+	child.AddUserMessage("Initial full workflow prompt: please implement tracing in go code")
+
+	def := &workflowDefinitionRuntime{Name: "build-review"}
+	node := workflowNodeRuntime{
+		ID:    "review-loop__worker",
+		Label: "developer",
+		Kind:  "subagent",
+	}
+
+	prompt := composeWorkflowNodePromptForChild(parent, def, node, "continue", []string{"critic feedback only"}, "status-only retry", child, false)
+
+	if strings.Contains(prompt, "Parent session context:") || strings.Contains(prompt, "Node instructions:") || strings.Contains(prompt, "large orchestration handoff") {
+		t.Fatalf("expected delta prompt to skip stable context, got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "Stable workflow context and node instructions were already provided earlier") {
+		t.Fatalf("expected delta prompt marker, got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "critic feedback only") {
+		t.Fatalf("expected new feedback in delta prompt, got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "For implementation nodes, use the available tools") {
+		t.Fatalf("expected tool guidance to use child history evidence, got: %s", prompt)
+	}
+}
+
+func TestComposeWorkflowNodePromptGuidesOrchestratorNode(t *testing.T) {
+	parent := session.New("parent")
+	def := &workflowDefinitionRuntime{Name: "build-review"}
+	node := workflowNodeRuntime{
+		ID:          "n-main",
+		Label:       "Main agent",
+		Kind:        "main",
+		Instruction: "Your role is orchestrating user's task with other sub-agents.",
+	}
+
+	prompt := composeWorkflowNodePrompt(parent, def, node, "please implement tracing in go code", nil, "")
+
+	if strings.Contains(prompt, "inspect relevant files") {
+		t.Fatalf("did not expect implementation tool instruction for orchestrator prompt, got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "For an orchestration node, create the handoff/plan needed by downstream workflow nodes") {
+		t.Fatalf("expected orchestration handoff guidance, got: %s", prompt)
+	}
+}
+
 func TestWorkflowReadyNodesWaitsForCompleteUpstream(t *testing.T) {
 	nodes := []workflowNodeRuntime{
 		{ID: "user", Kind: "user"},
@@ -303,6 +374,22 @@ func TestWorkflowNodeWorkStatusForSessionRequiresBuilderToolEvidence(t *testing.
 	}
 }
 
+func TestWorkflowNodeWorkStatusForSessionAllowsOrchestratorWithoutToolEvidence(t *testing.T) {
+	node := workflowNodeRuntime{
+		ID:          "n-main",
+		Label:       "Main agent",
+		Kind:        "main",
+		Instruction: "Your role is orchestrating user's task with other sub-agents.",
+	}
+	child := session.New("build")
+	child.AddUserMessage("plan the implementation")
+	child.AddAssistantMessage("Developer should add timing around tool execution and expose duration in the UI.\nNODE_STATUS: COMPLETE", nil)
+
+	if got := workflowNodeWorkStatusForSession(node, "Developer should add timing around tool execution and expose duration in the UI.\nNODE_STATUS: COMPLETE", child, "please implement tracing in go code"); got != "complete" {
+		t.Fatalf("expected orchestrator handoff without modification activity to be complete, got %q", got)
+	}
+}
+
 func TestWorkflowNodeWorkStatusForSessionRequiresDeveloperModificationEvidence(t *testing.T) {
 	node := workflowNodeRuntime{
 		ID:    "review-loop__worker",
@@ -321,6 +408,21 @@ func TestWorkflowNodeWorkStatusForSessionRequiresDeveloperModificationEvidence(t
 	child.AddAssistantMessage("", []session.ToolCall{{ID: "tc-2", Name: "replace_lines"}})
 	if got := workflowNodeWorkStatusForSession(node, "Done.\nNODE_STATUS: COMPLETE", child, "implement tracing in code"); got != "complete" {
 		t.Fatalf("expected developer with modification-capable activity to be complete, got %q", got)
+	}
+}
+
+func TestWorkflowNodeWorkStatusForSessionUsesWorkflowPromptForToolEvidence(t *testing.T) {
+	node := workflowNodeRuntime{
+		ID:    "review-loop__worker",
+		Label: "developer",
+		Kind:  "subagent",
+	}
+	child := session.New("build")
+	child.AddUserMessage("Original task: please implement tracing in go code.\n\nCurrent user request:\ncheck /Users/artjom/git/a2gent/brute")
+	child.AddAssistantMessage("Path exists.\nNODE_STATUS: COMPLETE", nil)
+
+	if got := workflowNodeWorkStatusForSession(node, "Path exists.\nNODE_STATUS: COMPLETE", child, "check /Users/artjom/git/a2gent/brute"); got != "in_progress" {
+		t.Fatalf("expected developer without modification activity to remain in_progress from workflow prompt context, got %q", got)
 	}
 }
 
@@ -363,6 +465,34 @@ func TestWorkflowStateHasBlockedOrInProgressNode(t *testing.T) {
 	}
 	if !workflowStateHasBlockedOrInProgressNode(state) {
 		t.Fatal("expected in-progress node to keep workflow unfinished")
+	}
+}
+
+func TestWorkflowBlockedFinalOutputExplainsPausedWorkflow(t *testing.T) {
+	def := &workflowDefinitionRuntime{
+		Nodes: []workflowNodeRuntime{
+			{ID: "main", Label: "Main agent"},
+			{ID: "worker", Label: "Developer"},
+		},
+	}
+	state := &workflowRuntimeState{
+		Nodes: map[string]*workflowRuntimeNodeState{
+			"main":   {Status: "in_progress"},
+			"worker": {Status: "pending"},
+		},
+	}
+
+	got := workflowBlockedFinalOutput(def, state)
+	if !strings.Contains(got, "Workflow paused before completing") || !strings.Contains(got, "Main agent (in_progress)") {
+		t.Fatalf("unexpected blocked final output: %s", got)
+	}
+}
+
+func TestWorkflowBareStatusRetryPromptGuidesContinuation(t *testing.T) {
+	got := workflowBareStatusRetryPrompt(workflowNodeRuntime{ID: "worker", Label: "Developer"})
+
+	if !strings.Contains(got, "previously returned only workflow status") || !strings.Contains(got, "editing tools") {
+		t.Fatalf("unexpected retry prompt: %s", got)
 	}
 }
 

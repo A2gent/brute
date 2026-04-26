@@ -21,6 +21,7 @@ import (
 const (
 	workflowDefinitionMetadataKey = "workflow_definition"
 	workflowStateMetadataKey      = "workflow_state"
+	workflowContextSeededKey      = "workflow_context_seeded"
 )
 
 type workflowDefinitionRuntime struct {
@@ -246,16 +247,24 @@ func (s *Server) runWorkflowSession(
 			}
 			upstream := make([]string, 0, len(preds[node.ID]))
 			for _, dep := range preds[node.ID] {
-				if version := completeVersion[dep]; version > 0 && ts != nil {
+				version := completeVersion[dep]
+				lastConsumed := 0
+				if ts != nil {
+					lastConsumed = ts.LastConsumedByDep[dep]
+				}
+				if version > 0 && ts != nil {
 					ts.LastConsumedByDep[dep] = version
 				}
-				if output := strings.TrimSpace(outputs[dep]); output != "" {
+				if output := strings.TrimSpace(outputs[dep]); output != "" && version > lastConsumed {
 					upstream = append(upstream, output)
 				}
 			}
 			previousNodeOutput := ""
 			if wasRetry {
 				previousNodeOutput = strings.TrimSpace(outputs[node.ID])
+				if previousNodeOutput == "" {
+					previousNodeOutput = workflowBareStatusRetryPrompt(node)
+				}
 			}
 			child, childErr := s.workflowNodeChildSession(sess, def, node, st)
 			if childErr != nil {
@@ -311,8 +320,13 @@ func (s *Server) runWorkflowSession(
 			}
 			switch result.workStatus {
 			case "in_progress":
-				st.Status = "in_progress"
-				retryRequested[result.nodeID] = true
+				if strings.TrimSpace(result.output) == "" && nodeTurnState[result.nodeID] != nil && nodeTurnState[result.nodeID].RunCount > 0 {
+					st.Status = "blocked"
+					st.Error = "Node returned only workflow status without producing a usable handoff."
+				} else {
+					st.Status = "in_progress"
+					retryRequested[result.nodeID] = true
+				}
 			case "blocked":
 				st.Status = "blocked"
 			default:
@@ -372,6 +386,9 @@ func (s *Server) runWorkflowSession(
 	} else {
 		state.Status = "completed"
 	}
+	if strings.EqualFold(state.Status, "blocked") {
+		final = workflowBlockedFinalOutput(def, state)
+	}
 	if err := s.persistWorkflowState(sess, state, emit); err != nil {
 		return "", llm.TokenUsage{}, err
 	}
@@ -407,8 +424,13 @@ func (s *Server) executeWorkflowNode(
 		return "", "", fmt.Errorf("workflow child session is nil")
 	}
 
-	nodePrompt := composeWorkflowNodePrompt(parent, def, node, userMessage, upstreamOutputs, previousNodeOutput)
+	fullContext := !workflowChildContextSeeded(child)
+	nodePrompt := composeWorkflowNodePromptForChild(parent, def, node, userMessage, upstreamOutputs, previousNodeOutput, child, fullContext)
 	child.AddUserMessageWithImagesAndMetadata(nodePrompt, nil, workflowNodePromptMessageMetadata(parent, def, node))
+	if child.Metadata == nil {
+		child.Metadata = make(map[string]interface{})
+	}
+	child.Metadata[workflowContextSeededKey] = true
 	child.SetStatus(session.StatusRunning)
 	if err := s.sessionManager.Save(child); err != nil {
 		return "", child.ID, fmt.Errorf("failed to save child prompt: %w", err)
@@ -850,23 +872,90 @@ func workflowFinalOutput(def *workflowDefinitionRuntime, outputs map[string]stri
 	return strings.Join(parts, "\n\n")
 }
 
+func workflowBareStatusRetryPrompt(node workflowNodeRuntime) string {
+	label := strings.TrimSpace(node.Label)
+	if label == "" {
+		label = strings.TrimSpace(node.ID)
+	}
+	if label == "" {
+		label = "this node"
+	}
+	return fmt.Sprintf("%s previously returned only workflow status without a usable handoff. Continue the actual work now. If this node is responsible for implementation, call the editing tools needed to make changes before returning a final status.", label)
+}
+
+func workflowBlockedFinalOutput(def *workflowDefinitionRuntime, state *workflowRuntimeState) string {
+	if state == nil || len(state.Nodes) == 0 {
+		return "Workflow paused before completing."
+	}
+	labels := map[string]string{}
+	if def != nil {
+		for _, node := range def.Nodes {
+			if id := strings.TrimSpace(node.ID); id != "" {
+				labels[id] = strings.TrimSpace(node.Label)
+			}
+		}
+	}
+	blocked := make([]string, 0)
+	for nodeID, node := range state.Nodes {
+		if node == nil {
+			continue
+		}
+		status := strings.ToLower(strings.TrimSpace(node.Status))
+		if status != "blocked" && status != "in_progress" && status != "running" {
+			continue
+		}
+		label := strings.TrimSpace(labels[nodeID])
+		if label == "" {
+			label = nodeID
+		}
+		blocked = append(blocked, fmt.Sprintf("%s (%s)", label, status))
+	}
+	sort.Strings(blocked)
+	if len(blocked) == 0 {
+		return "Workflow paused before completing."
+	}
+	return "Workflow paused before completing. Waiting on: " + strings.Join(blocked, ", ") + "."
+}
+
 func composeWorkflowNodePrompt(parent *session.Session, def *workflowDefinitionRuntime, node workflowNodeRuntime, userMessage string, upstreamOutputs []string, previousNodeOutput string) string {
+	contextText := workflowParentSessionContext(parent, userMessage, 12, 12000)
+	toolEvidenceText := strings.TrimSpace(userMessage + "\n" + contextText)
+	return composeWorkflowNodePromptWithContext(def, node, userMessage, upstreamOutputs, previousNodeOutput, contextText, true, workflowNodeRequiresToolEvidence(node, toolEvidenceText))
+}
+
+func composeWorkflowNodePromptForChild(parent *session.Session, def *workflowDefinitionRuntime, node workflowNodeRuntime, userMessage string, upstreamOutputs []string, previousNodeOutput string, child *session.Session, fullContext bool) string {
+	if fullContext {
+		return composeWorkflowNodePrompt(parent, def, node, userMessage, upstreamOutputs, previousNodeOutput)
+	}
+	return composeWorkflowNodePromptWithContext(def, node, userMessage, upstreamOutputs, previousNodeOutput, "", false, workflowNodeRequiresToolEvidence(node, workflowToolEvidenceText(child, userMessage)))
+}
+
+func composeWorkflowNodePromptWithContext(def *workflowDefinitionRuntime, node workflowNodeRuntime, userMessage string, upstreamOutputs []string, previousNodeOutput string, contextText string, fullContext bool, requiresToolEvidence bool) string {
 	name := strings.TrimSpace(def.Name)
 	if name == "" {
 		name = strings.TrimSpace(def.ID)
 	}
 	var b strings.Builder
-	b.WriteString("You are executing one node in a multi-agent workflow.\n")
+	if fullContext {
+		b.WriteString("You are executing one node in a multi-agent workflow.\n")
+	} else {
+		b.WriteString("You are continuing the same workflow node. Stable workflow context and node instructions were already provided earlier in this child session.\n")
+	}
 	if name != "" {
 		b.WriteString("Workflow: " + name + "\n")
 	}
 	b.WriteString("Node: " + strings.TrimSpace(node.Label) + "\n")
-	if inst := strings.TrimSpace(node.Instruction); inst != "" {
-		b.WriteString("\nNode instructions:\n")
-		b.WriteString(inst)
-		b.WriteString("\n")
+	if fullContext {
+		if inst := strings.TrimSpace(node.Instruction); inst != "" {
+			b.WriteString("\nNode instructions:\n")
+			b.WriteString(inst)
+			b.WriteString("\n")
+			if workflowNodeInstructionLooksLikeOrchestrator(inst) {
+				b.WriteString("For an orchestration node, create the handoff/plan needed by downstream workflow nodes. Do not implement downstream work yourself. Mark complete when the handoff is ready.\n")
+			}
+		}
 	}
-	if contextText := workflowParentSessionContext(parent, userMessage, 12, 12000); contextText != "" {
+	if contextText != "" {
 		b.WriteString("\nParent session context:\n")
 		b.WriteString(contextText)
 		b.WriteString("\n")
@@ -875,7 +964,11 @@ func composeWorkflowNodePrompt(parent *session.Session, def *workflowDefinitionR
 	b.WriteString(strings.TrimSpace(userMessage))
 	b.WriteString("\n")
 	if len(upstreamOutputs) > 0 {
-		b.WriteString("\nInputs from previous nodes:\n")
+		if fullContext {
+			b.WriteString("\nInputs from previous nodes:\n")
+		} else {
+			b.WriteString("\nNew inputs or review feedback since your last turn:\n")
+		}
 		for idx, item := range upstreamOutputs {
 			item = workflowCleanNodeOutputForHandoff(item)
 			if strings.TrimSpace(item) == "" {
@@ -890,7 +983,7 @@ func composeWorkflowNodePrompt(parent *session.Session, def *workflowDefinitionR
 		b.WriteString(strings.TrimSpace(previousNodeOutput))
 		b.WriteString("\n")
 		b.WriteString("Continue from that state. Do not repeat the same progress update; perform the remaining work or explain the concrete blocker.\n")
-		if workflowNodeRequiresToolEvidence(node, userMessage) {
+		if requiresToolEvidence {
 			b.WriteString("Tools are available in this workflow node. If code changes are still needed, call the relevant tools now; do not report that you cannot edit merely because the previous response did not include tool calls.\n")
 		}
 	}
@@ -903,7 +996,7 @@ func composeWorkflowNodePrompt(parent *session.Session, def *workflowDefinitionR
 	}
 	b.WriteString("\nWorkflow handoff status:\n")
 	b.WriteString("Do the node's actual work before handing off. A plan, intention, summary of what you will do, or request to start work is not complete.\n")
-	if workflowNodeRequiresToolEvidence(node, userMessage) {
+	if requiresToolEvidence {
 		b.WriteString("For implementation nodes, use the available tools to inspect relevant files and make any needed edits before marking complete. You may call tools before producing this node's final textual output. If code changes are requested and you did not use a file editing tool, you must use `NODE_STATUS: IN_PROGRESS` unless there is a real external blocker. A response containing only `NODE_STATUS` is not useful progress; call tools or explain the concrete blocker.\n")
 	}
 	b.WriteString("End your response with a final line exactly `NODE_STATUS: COMPLETE` only when this node's concrete deliverable is ready for downstream review or use.\n")
@@ -926,9 +1019,26 @@ func workflowCleanNodeOutputForHandoff(output string) string {
 	return strings.TrimSpace(strings.Join(cleaned, "\n"))
 }
 
+func workflowChildContextSeeded(child *session.Session) bool {
+	if child == nil || child.Metadata == nil {
+		return false
+	}
+	value, ok := child.Metadata[workflowContextSeededKey]
+	if !ok {
+		return false
+	}
+	if seeded, ok := value.(bool); ok {
+		return seeded
+	}
+	if seeded, ok := value.(string); ok {
+		return strings.EqualFold(strings.TrimSpace(seeded), "true")
+	}
+	return false
+}
+
 func workflowNodeWorkStatusForSession(node workflowNodeRuntime, output string, child *session.Session, userMessage string) string {
 	status := workflowNodeWorkStatus(output)
-	if !workflowNodeRequiresToolEvidence(node, userMessage) {
+	if !workflowNodeRequiresToolEvidence(node, workflowToolEvidenceText(child, userMessage)) {
 		return status
 	}
 	hasModificationActivity := workflowSessionHasModificationActivity(child)
@@ -946,8 +1056,28 @@ func workflowNodeWorkStatusForSession(node workflowNodeRuntime, output string, c
 	return "in_progress"
 }
 
+func workflowToolEvidenceText(sess *session.Session, userMessage string) string {
+	parts := []string{strings.TrimSpace(userMessage)}
+	if sess != nil {
+		for _, msg := range sess.Messages {
+			if !strings.EqualFold(strings.TrimSpace(msg.Role), "user") {
+				continue
+			}
+			content := strings.TrimSpace(msg.Content)
+			if content == "" {
+				continue
+			}
+			parts = append(parts, content)
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
+}
+
 func workflowNodeRequiresToolEvidence(node workflowNodeRuntime, userMessage string) bool {
 	if !workflowRequestLooksLikeToolWork(userMessage) {
+		return false
+	}
+	if workflowNodeInstructionLooksLikeOrchestrator(node.Instruction) {
 		return false
 	}
 	kind := strings.ToLower(strings.TrimSpace(node.Kind))
@@ -963,6 +1093,28 @@ func workflowNodeRequiresToolEvidence(node workflowNodeRuntime, userMessage stri
 		strings.Contains(identity, "implement") ||
 		strings.Contains(identity, "worker") ||
 		strings.Contains(identity, "main")
+}
+
+func workflowNodeInstructionLooksLikeOrchestrator(instruction string) bool {
+	text := strings.ToLower(strings.TrimSpace(instruction))
+	if text == "" {
+		return false
+	}
+	orchestrationSignals := []string{
+		"orchestrat",
+		"coordinate",
+		"delegate",
+		"handoff",
+		"hand off",
+		"route",
+		"routing",
+	}
+	for _, signal := range orchestrationSignals {
+		if strings.Contains(text, signal) {
+			return true
+		}
+	}
+	return false
 }
 
 func workflowRequestLooksLikeToolWork(userMessage string) bool {

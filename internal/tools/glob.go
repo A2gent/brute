@@ -4,12 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"sort"
 	"strings"
-
-	"github.com/bmatcuk/doublestar/v4"
 )
 
 const maxGlobResults = 1000
@@ -37,6 +32,7 @@ func (t *GlobTool) Name() string {
 func (t *GlobTool) Description() string {
 	return `Find files by pattern matching using glob patterns.
 Supports patterns like "**/*.go", "src/**/*.ts", "*.json".
+Compatibility wrapper around find_files for simple pattern searches.
 Returns matching file paths sorted by modification time (newest first).`
 }
 
@@ -67,77 +63,20 @@ func (t *GlobTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 		return &Result{Success: false, Error: "pattern is required"}, nil
 	}
 
-	// Determine base path
-	basePath := t.workDir
-	if p.Path != "" {
-		if filepath.IsAbs(p.Path) {
-			basePath = p.Path
-		} else {
-			basePath = filepath.Join(t.workDir, p.Path)
-		}
-	}
-
-	// Use filesystem for globbing (follows symlinks by default)
-	pattern := filepath.Join(basePath, p.Pattern)
-	matches, err := doublestar.FilepathGlob(pattern)
+	basePath := resolveToolPath(t.workDir, p.Path)
+	files, total, err := collectFileMatches(ctx, basePath, p.Pattern, nil, true, maxGlobResults)
 	if err != nil {
-		return nil, fmt.Errorf("glob error: %w", err)
+		return nil, err
 	}
 
-	// Convert absolute paths to relative paths from basePath
-	for i, match := range matches {
-		rel, err := filepath.Rel(basePath, match)
-		if err != nil {
-			rel = match
-		}
-		matches[i] = rel
-	}
-
-	if len(matches) == 0 {
+	if len(files) == 0 {
 		return &Result{
 			Success: true,
 			Output:  "No files found matching pattern",
 		}, nil
 	}
 
-	// Get file info for sorting
-	type fileInfo struct {
-		path    string
-		modTime int64
-	}
-	files := make([]fileInfo, 0, len(matches))
-
-	for _, match := range matches {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
-		fullPath := filepath.Join(basePath, match)
-		info, err := os.Stat(fullPath)
-		if err != nil {
-			continue
-		}
-
-		// Skip directories
-		if info.IsDir() {
-			continue
-		}
-
-		files = append(files, fileInfo{
-			path:    match,
-			modTime: info.ModTime().UnixNano(),
-		})
-	}
-
-	// Sort by modification time (newest first)
-	sort.Slice(files, func(i, j int) bool {
-		return files[i].modTime > files[j].modTime
-	})
-
-	// Limit results
-	if len(files) > maxGlobResults {
-		files = files[:maxGlobResults]
-	}
+	sortFileResults(files, "mtime")
 
 	// Build output
 	var paths []string
@@ -146,8 +85,8 @@ func (t *GlobTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 	}
 
 	output := strings.Join(paths, "\n")
-	if len(matches) > maxGlobResults {
-		output += fmt.Sprintf("\n\n(showing %d of %d matches)", maxGlobResults, len(matches))
+	if total > maxGlobResults {
+		output += fmt.Sprintf("\n\n(showing %d of %d matches)", maxGlobResults, total)
 	}
 
 	return &Result{

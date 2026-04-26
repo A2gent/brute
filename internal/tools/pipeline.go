@@ -250,7 +250,7 @@ func truncateWithFlag(s string, limit int) (string, bool) {
 	if len(runes) <= limit {
 		return s, false
 	}
-	return string(runes[:limit]) + "\n... (pipeline output truncated)", true
+	return string(runes[:limit]) + "\n... (output truncated)", true
 }
 
 // Ensure PipelineTool implements Tool.

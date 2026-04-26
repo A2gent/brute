@@ -86,6 +86,7 @@ func NewManager(workDir string) *Manager {
 	m.Register(NewTakeScreenshotTool(workDir))
 	m.Register(NewTakeCameraPhotoTool(workDir))
 	m.Register(NewPipelineTool(m))
+	m.Register(NewParallelTool(m))
 
 	return m
 }
@@ -154,11 +155,11 @@ func (m *Manager) ExecuteParallel(ctx context.Context, calls []llm.ToolCall) []l
 			result, err := m.Execute(callCtx, tc.Name, json.RawMessage(tc.Input))
 			duration := time.Since(start)
 
-				tr := llm.ToolResult{
-					ToolCallID: tc.ID,
-					Name:       tc.Name,
-					DurationMs: duration.Milliseconds(),
-				}
+			tr := llm.ToolResult{
+				ToolCallID: tc.ID,
+				Name:       tc.Name,
+				DurationMs: duration.Milliseconds(),
+			}
 
 			if err != nil {
 				tr.Content = fmt.Sprintf("Error: %v", err)

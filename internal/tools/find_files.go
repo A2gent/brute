@@ -35,6 +35,11 @@ type FindFilesParams struct {
 	ShowHidden bool     `json:"show_hidden,omitempty"` // include hidden files/folders (default: false)
 }
 
+type fileSearchResult struct {
+	path    string
+	modTime int64
+}
+
 // NewFindFilesTool creates a new find_files tool.
 func NewFindFilesTool(workDir string) *FindFilesTool {
 	return &FindFilesTool{workDir: workDir}
@@ -104,14 +109,7 @@ func (t *FindFilesTool) Execute(ctx context.Context, params json.RawMessage) (*R
 		return nil, fmt.Errorf("invalid parameters: %w", err)
 	}
 
-	basePath := t.workDir
-	if p.Path != "" {
-		if filepath.IsAbs(p.Path) {
-			basePath = p.Path
-		} else {
-			basePath = filepath.Join(t.workDir, p.Path)
-		}
-	}
+	basePath := resolveToolPath(t.workDir, p.Path)
 
 	pattern := p.Pattern
 	if strings.TrimSpace(pattern) == "" {
@@ -149,60 +147,12 @@ func (t *FindFilesTool) Execute(ctx context.Context, params json.RawMessage) (*R
 		return &Result{Success: false, Error: "sort must be one of: none, path, mtime"}, nil
 	}
 
-	globPattern := filepath.Join(basePath, pattern)
-	matches, err := doublestar.FilepathGlob(globPattern)
+	results, _, err := collectFileMatches(ctx, basePath, pattern, p.Exclude, p.ShowHidden, limit)
 	if err != nil {
-		return nil, fmt.Errorf("glob error: %w", err)
+		return nil, err
 	}
 
-	type fileResult struct {
-		path    string
-		modTime int64
-	}
-	results := make([]fileResult, 0, min(limit, len(matches)))
-	totalIncluded := 0
-
-	for _, match := range matches {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
-		info, err := os.Stat(match)
-		if err != nil || info.IsDir() {
-			continue
-		}
-
-		rel, err := filepath.Rel(basePath, match)
-		if err != nil {
-			rel = match
-		}
-
-		if isExcluded(rel, p.Exclude) {
-			continue
-		}
-
-		// Skip hidden files unless explicitly requested
-		if !p.ShowHidden && isHiddenPath(rel) {
-			continue
-		}
-
-		totalIncluded++
-		if len(results) < limit {
-			results = append(results, fileResult{path: rel, modTime: info.ModTime().UnixNano()})
-		}
-	}
-
-	// Sort all results first
-	switch sortMode {
-	case "path":
-		sort.Slice(results, func(i, j int) bool {
-			return results[i].path < results[j].path
-		})
-	case "mtime":
-		sort.Slice(results, func(i, j int) bool {
-			return results[i].modTime > results[j].modTime
-		})
-	}
+	sortFileResults(results, sortMode)
 
 	if len(results) == 0 {
 		return &Result{Success: true, Output: "No files found"}, nil
@@ -243,6 +193,77 @@ func (t *FindFilesTool) Execute(ctx context.Context, params json.RawMessage) (*R
 	}
 
 	return &Result{Success: true, Output: output}, nil
+}
+
+func resolveToolPath(workDir, path string) string {
+	if path == "" {
+		return workDir
+	}
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(workDir, path)
+}
+
+func collectFileMatches(ctx context.Context, basePath, pattern string, exclude []string, showHidden bool, limit int) ([]fileSearchResult, int, error) {
+	opts := []doublestar.GlobOption{doublestar.WithFilesOnly()}
+	if !showHidden {
+		opts = append(opts, doublestar.WithNoHidden())
+	}
+
+	matches, err := doublestar.FilepathGlob(filepath.Join(basePath, pattern), opts...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("glob error: %w", err)
+	}
+
+	if limit <= 0 {
+		limit = len(matches)
+	}
+	results := make([]fileSearchResult, 0, min(limit, len(matches)))
+	totalIncluded := 0
+
+	for _, match := range matches {
+		if ctx.Err() != nil {
+			return nil, totalIncluded, ctx.Err()
+		}
+
+		rel, err := filepath.Rel(basePath, match)
+		if err != nil {
+			rel = match
+		}
+
+		if isExcluded(rel, exclude) {
+			continue
+		}
+		if !showHidden && isHiddenPath(rel) {
+			continue
+		}
+
+		info, err := os.Stat(match)
+		if err != nil || info.IsDir() {
+			continue
+		}
+
+		totalIncluded++
+		if len(results) < limit {
+			results = append(results, fileSearchResult{path: rel, modTime: info.ModTime().UnixNano()})
+		}
+	}
+
+	return results, totalIncluded, nil
+}
+
+func sortFileResults(results []fileSearchResult, sortMode string) {
+	switch sortMode {
+	case "path":
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].path < results[j].path
+		})
+	case "mtime":
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].modTime > results[j].modTime
+		})
+	}
 }
 
 func isExcluded(path string, patterns []string) bool {

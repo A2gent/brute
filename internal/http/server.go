@@ -736,6 +736,7 @@ type ToolResultResponse struct {
 	IsError    bool                   `json:"is_error"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 	Name       string                 `json:"name,omitempty"` // Tool name (required by Gemini)
+	DurationMs int64                  `json:"duration_ms,omitempty"`
 }
 
 // ChatRequest represents a chat message request
@@ -2039,6 +2040,7 @@ func (s *Server) handleUpdateSessionProvider(w http.ResponseWriter, r *http.Requ
 
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionID")
+	includeMessages := r.URL.Query().Get("include_messages") != "false"
 
 	sess, err := s.sessionManager.Get(sessionID)
 	if err != nil {
@@ -2046,8 +2048,14 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = s.ensureSessionSystemPromptSnapshot(sess)
+	if includeMessages {
+		_ = s.ensureSessionSystemPromptSnapshot(sess)
+	}
 	resp := s.sessionToResponse(sess)
+	if !includeMessages {
+		resp.Messages = nil
+		resp.SystemPromptSnapshot = nil
+	}
 	s.jsonResponse(w, http.StatusOK, resp)
 }
 
@@ -3448,6 +3456,7 @@ func (s *Server) messagesToResponse(messages []session.Message) []MessageRespons
 					IsError:    tr.IsError,
 					Metadata:   tr.Metadata,
 					Name:       tr.Name,
+					DurationMs: tr.DurationMs,
 				}
 			}
 		}

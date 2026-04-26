@@ -28,8 +28,9 @@ type ParallelParams struct {
 }
 
 type ParallelStep struct {
-	Tool string          `json:"tool"`
-	Args json.RawMessage `json:"args,omitempty"`
+	Tool       string                     `json:"tool"`
+	Args       json.RawMessage            `json:"args,omitempty"`
+	InlineArgs map[string]json.RawMessage `json:"-"`
 }
 
 type parallelStepOutput struct {
@@ -70,7 +71,7 @@ func (t *ParallelTool) Schema() map[string]interface{} {
 						},
 						"args": map[string]interface{}{
 							"type":        "object",
-							"description": "Arguments for the step tool.",
+							"description": "Arguments for the step tool. For convenience, tool arguments may also be placed directly on the step object.",
 						},
 					},
 					"required": []string{"tool"},
@@ -131,7 +132,7 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 		if toolName == t.Name() {
 			return &Result{Success: false, Error: fmt.Sprintf("step %d: recursive parallel call is not allowed", i+1)}, nil
 		}
-		args, err := decodeStageArgs(step.Args)
+		args, err := decodeParallelStepArgs(step)
 		if err != nil {
 			return &Result{Success: false, Error: fmt.Sprintf("step %d: %v", i+1, err)}, nil
 		}
@@ -211,6 +212,51 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 			"output_truncated_by": "per_step",
 		},
 	}, nil
+}
+
+func (s *ParallelStep) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if raw == nil {
+		return nil
+	}
+	if toolRaw, ok := raw["tool"]; ok {
+		if err := json.Unmarshal(toolRaw, &s.Tool); err != nil {
+			return fmt.Errorf("tool must be a string: %w", err)
+		}
+	}
+	if argsRaw, ok := raw["args"]; ok {
+		s.Args = argsRaw
+	}
+
+	inline := make(map[string]json.RawMessage, len(raw))
+	for key, value := range raw {
+		if key == "tool" || key == "args" {
+			continue
+		}
+		inline[key] = value
+	}
+	if len(inline) > 0 {
+		s.InlineArgs = inline
+	}
+	return nil
+}
+
+func decodeParallelStepArgs(step ParallelStep) (map[string]interface{}, error) {
+	if len(step.Args) > 0 {
+		return decodeStageArgs(step.Args)
+	}
+	if len(step.InlineArgs) == 0 {
+		return map[string]interface{}{}, nil
+	}
+
+	raw, err := json.Marshal(step.InlineArgs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode inline args: %w", err)
+	}
+	return decodeStageArgs(raw)
 }
 
 // Ensure ParallelTool implements Tool.

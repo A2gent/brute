@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -18,6 +19,23 @@ const (
 	defaultFindFilesPageSize = 30
 )
 
+var errStopWalk = errors.New("stop walk")
+
+var defaultPrunedDirs = map[string]struct{}{
+	".cache":       {},
+	".git":         {},
+	".hg":          {},
+	".next":        {},
+	".nuxt":        {},
+	".svn":         {},
+	"build":        {},
+	"coverage":     {},
+	"dist":         {},
+	"node_modules": {},
+	"target":       {},
+	"vendor":       {},
+}
+
 // FindFilesTool finds files with include/exclude filters.
 type FindFilesTool struct {
 	workDir string
@@ -25,14 +43,15 @@ type FindFilesTool struct {
 
 // FindFilesParams defines parameters for the find_files tool.
 type FindFilesParams struct {
-	Path       string   `json:"path,omitempty"`
-	Pattern    string   `json:"pattern,omitempty"`
-	Exclude    []string `json:"exclude,omitempty"`
-	MaxResults int      `json:"max_results,omitempty"`
-	Sort       string   `json:"sort,omitempty"`        // none|path|mtime
-	Page       int      `json:"page,omitempty"`        // page number (1-based, default: 1)
-	PageSize   int      `json:"page_size,omitempty"`   // items per page (default: 30)
-	ShowHidden bool     `json:"show_hidden,omitempty"` // include hidden files/folders (default: false)
+	Path               string   `json:"path,omitempty"`
+	Pattern            string   `json:"pattern,omitempty"`
+	Exclude            []string `json:"exclude,omitempty"`
+	MaxResults         int      `json:"max_results,omitempty"`
+	Sort               string   `json:"sort,omitempty"`        // none|path|mtime
+	Page               int      `json:"page,omitempty"`        // page number (1-based, default: 1)
+	PageSize           int      `json:"page_size,omitempty"`   // items per page (default: 30)
+	ShowHidden         bool     `json:"show_hidden,omitempty"` // include hidden files/folders (default: false)
+	UseDefaultExcludes *bool    `json:"use_default_excludes,omitempty"`
 }
 
 type fileSearchResult struct {
@@ -99,6 +118,10 @@ func (t *FindFilesTool) Schema() map[string]interface{} {
 				"type":        "boolean",
 				"description": "Include hidden files and folders (default: false)",
 			},
+			"use_default_excludes": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Skip common heavy folders such as .git, node_modules, dist, build, and vendor (default: true)",
+			},
 		},
 	}
 }
@@ -152,7 +175,12 @@ func (t *FindFilesTool) Execute(ctx context.Context, params json.RawMessage) (*R
 		limit = maxFindFilesLimit
 	}
 
-	results, _, err := collectFileMatches(ctx, basePath, pattern, p.Exclude, p.ShowHidden, limit)
+	useDefaultExcludes := true
+	if p.UseDefaultExcludes != nil {
+		useDefaultExcludes = *p.UseDefaultExcludes
+	}
+
+	results, _, err := collectFileMatches(ctx, basePath, pattern, p.Exclude, p.ShowHidden, useDefaultExcludes, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +245,7 @@ func resolveToolPath(workDir, path string) string {
 	return filepath.Join(workDir, path)
 }
 
-func collectFileMatches(ctx context.Context, basePath, pattern string, exclude []string, showHidden bool, limit int) ([]fileSearchResult, int, error) {
+func collectFileMatches(ctx context.Context, basePath, pattern string, exclude []string, showHidden bool, useDefaultExcludes bool, limit int) ([]fileSearchResult, int, error) {
 	var results []fileSearchResult
 	totalIncluded := 0
 
@@ -242,6 +270,9 @@ func collectFileMatches(ctx context.Context, basePath, pattern string, exclude [
 
 		// Directory pruning
 		if d.IsDir() {
+			if useDefaultExcludes && isDefaultPrunedDir(relSlash) {
+				return filepath.SkipDir
+			}
 			if !showHidden && isHiddenPath(relSlash) {
 				return filepath.SkipDir
 			}
@@ -276,18 +307,20 @@ func collectFileMatches(ctx context.Context, basePath, pattern string, exclude [
 		}
 
 		if limit > 0 && len(results) >= limit {
-			// Early stop
-			return fmt.Errorf("stop walk")
+			return errStopWalk
 		}
 
 		return nil
 	})
 
-	if err != nil && err.Error() != "stop walk" {
+	if errors.Is(err, errStopWalk) {
+		return results, totalIncluded, nil
+	}
+	if err != nil {
 		return results, totalIncluded, err
 	}
 
-	return results, totalIncluded, err
+	return results, totalIncluded, nil
 }
 
 func sortFileResults(results []fileSearchResult, sortMode string) {
@@ -324,9 +357,15 @@ func isExcluded(path string, patterns []string) bool {
 	return false
 }
 
+func isDefaultPrunedDir(path string) bool {
+	name := filepath.Base(filepath.FromSlash(path))
+	_, ok := defaultPrunedDirs[name]
+	return ok
+}
+
 // isHiddenPath checks if any component of the path is hidden (starts with '.')
 func isHiddenPath(path string) bool {
-	parts := strings.Split(filepath.Clean(path), string(filepath.Separator))
+	parts := strings.Split(filepath.ToSlash(filepath.Clean(path)), "/")
 	for _, part := range parts {
 		if strings.HasPrefix(part, ".") && part != "." && part != ".." {
 			return true

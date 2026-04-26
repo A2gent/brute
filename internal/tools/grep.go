@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -31,13 +32,14 @@ type GrepTool struct {
 
 // GrepParams defines parameters for the grep tool
 type GrepParams struct {
-	Pattern           string   `json:"pattern"`
-	Path              string   `json:"path,omitempty"`
-	Include           string   `json:"include,omitempty"` // File pattern filter
-	Exclude           []string `json:"exclude,omitempty"` // Relative path filters
-	MaxResults        int      `json:"max_results,omitempty"`
-	MaxMatchesPerFile int      `json:"max_matches_per_file,omitempty"`
-	Mode              string   `json:"mode,omitempty"` // lines|files|count
+	Pattern            string   `json:"pattern"`
+	Path               string   `json:"path,omitempty"`
+	Include            string   `json:"include,omitempty"` // File pattern filter
+	Exclude            []string `json:"exclude,omitempty"` // Relative path filters
+	MaxResults         int      `json:"max_results,omitempty"`
+	MaxMatchesPerFile  int      `json:"max_matches_per_file,omitempty"`
+	Mode               string   `json:"mode,omitempty"` // lines|files|count
+	UseDefaultExcludes *bool    `json:"use_default_excludes,omitempty"`
 }
 
 // NewGrepTool creates a new grep tool
@@ -90,6 +92,10 @@ func (t *GrepTool) Schema() map[string]interface{} {
 				"type":        "string",
 				"description": "Output mode: lines (default), files, count",
 				"enum":        []string{"lines", "files", "count"},
+			},
+			"use_default_excludes": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Skip common heavy folders such as .git, node_modules, dist, build, and vendor (default: true)",
 			},
 		},
 		"required": []string{"pattern"},
@@ -155,6 +161,10 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 		maxResults = maxGrepResults
 	}
 	maxPerFile := p.MaxMatchesPerFile
+	useDefaultExcludes := true
+	if p.UseDefaultExcludes != nil {
+		useDefaultExcludes = *p.UseDefaultExcludes
+	}
 
 	type grepTask struct {
 		path    string
@@ -199,7 +209,6 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 		}()
 	}
 
-	errStopWalk := fmt.Errorf("stop walk")
 	err = filepath.WalkDir(basePath, func(path string, d fs.DirEntry, err error) error {
 		if workerCtx.Err() != nil {
 			return errStopWalk
@@ -219,6 +228,9 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 		relSlash := filepath.ToSlash(relPath)
 
 		if d.IsDir() {
+			if useDefaultExcludes && isDefaultPrunedDir(relSlash) {
+				return filepath.SkipDir
+			}
 			if isExcluded(relSlash, p.Exclude) {
 				return filepath.SkipDir
 			}
@@ -252,7 +264,7 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 	close(taskChan)
 	wg.Wait()
 
-	if err != nil && err != errStopWalk {
+	if err != nil && !errors.Is(err, errStopWalk) {
 		return nil, fmt.Errorf("walk error: %w", err)
 	}
 	if len(matches) == 0 && len(fileCounts) == 0 {

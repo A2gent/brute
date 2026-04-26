@@ -127,6 +127,55 @@ func TestFindFilesTool_Pagination(t *testing.T) {
 	})
 }
 
+func TestFindFilesTool_EarlyStopIsSuccessful(t *testing.T) {
+	tempDir := t.TempDir()
+	for i := 0; i < 3; i++ {
+		createTestFile(t, tempDir, filepath.Join("files", string('a'+byte(i))+".txt"), "content")
+	}
+
+	tool := NewFindFilesTool(tempDir)
+	result := executeTool(t, tool, map[string]interface{}{
+		"pattern":     "files/*.txt",
+		"sort":        "none",
+		"max_results": 1,
+	})
+
+	assertSuccess(t, result)
+	assertContains(t, result.Output, "files/a.txt")
+	assertNotContains(t, result.Output, "stop walk")
+}
+
+func TestFindFilesTool_DefaultExcludes(t *testing.T) {
+	tempDir := t.TempDir()
+	createTestFile(t, tempDir, "src/main.go", "package main")
+	createTestFile(t, tempDir, "node_modules/pkg/index.js", "module.exports = true")
+	createTestFile(t, tempDir, "dist/bundle.js", "bundle")
+
+	tool := NewFindFilesTool(tempDir)
+
+	t.Run("skips heavy directories by default", func(t *testing.T) {
+		result := executeTool(t, tool, map[string]interface{}{
+			"pattern": "**/*",
+		})
+
+		assertSuccess(t, result)
+		assertContains(t, result.Output, "src/main.go")
+		assertNotContains(t, result.Output, "node_modules")
+		assertNotContains(t, result.Output, "dist/bundle.js")
+	})
+
+	t.Run("can disable default excludes", func(t *testing.T) {
+		result := executeTool(t, tool, map[string]interface{}{
+			"pattern":              "**/*",
+			"use_default_excludes": false,
+		})
+
+		assertSuccess(t, result)
+		assertContains(t, result.Output, "node_modules/pkg/index.js")
+		assertContains(t, result.Output, "dist/bundle.js")
+	})
+}
+
 func TestFindFilesTool_Sorting(t *testing.T) {
 	tempDir := t.TempDir()
 

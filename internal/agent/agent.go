@@ -225,11 +225,16 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		request := a.buildRequest(sess)
 
 		// Call LLM (streaming when supported)
+		llmStart := time.Now()
 		response, err := a.callLLM(ctx, request, step, onEvent)
+		llmDurationMs := time.Since(llmStart).Milliseconds()
 		if err != nil {
 			sess.SetStatus(session.StatusFailed)
 			a.sessionManager.Save(sess)
 			return "", totalUsage, fmt.Errorf("LLM error: %w", err)
+		}
+		assistantMetadata := map[string]interface{}{
+			"llm_duration_ms": llmDurationMs,
 		}
 
 		// Accumulate token usage
@@ -244,7 +249,7 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			if finalContent == "" {
 				finalContent = a.fallbackAssistantContentFromRecentTools(sess)
 			}
-			sess.AddAssistantMessageWithImagesAndMetadata(finalContent, llmImagesToSession(response.Images), nil, nil)
+			sess.AddAssistantMessageWithImagesAndMetadata(finalContent, llmImagesToSession(response.Images), nil, assistantMetadata)
 			sess.SetStatus(session.StatusCompleted)
 			a.sessionManager.Save(sess)
 			if onEvent != nil {
@@ -271,7 +276,7 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		}
 
 		// Add assistant message with tool calls
-		sess.AddAssistantMessageWithImagesAndMetadata(response.Content, llmImagesToSession(response.Images), sessionToolCalls, nil)
+		sess.AddAssistantMessageWithImagesAndMetadata(response.Content, llmImagesToSession(response.Images), sessionToolCalls, assistantMetadata)
 		// Persist the assistant tool-call message before executing tools so
 		// async tools that park the session (for example webhook-backed image
 		// generation) still leave behind a valid transcript for resume.

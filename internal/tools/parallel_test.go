@@ -103,6 +103,44 @@ func TestParallelTool_Execute(t *testing.T) {
 		}
 	})
 
+	t.Run("accepts inline step arguments", func(t *testing.T) {
+		params := map[string]interface{}{
+			"steps": []map[string]interface{}{
+				{"tool": "test_emit", "text": "inline"},
+			},
+		}
+		raw, _ := json.Marshal(params)
+		result, err := parallel.Execute(context.Background(), raw)
+		if err != nil {
+			t.Fatalf("Execute returned error: %v", err)
+		}
+		if !result.Success {
+			t.Fatalf("expected success, got error: %s", result.Error)
+		}
+		if !strings.Contains(result.Output, `"output": "inline"`) {
+			t.Fatalf("expected inline arg output, got: %s", result.Output)
+		}
+	})
+
+	t.Run("args takes precedence over inline arguments", func(t *testing.T) {
+		params := map[string]interface{}{
+			"steps": []map[string]interface{}{
+				{"tool": "test_emit", "text": "inline", "args": map[string]interface{}{"text": "nested"}},
+			},
+		}
+		raw, _ := json.Marshal(params)
+		result, err := parallel.Execute(context.Background(), raw)
+		if err != nil {
+			t.Fatalf("Execute returned error: %v", err)
+		}
+		if !result.Success {
+			t.Fatalf("expected success, got error: %s", result.Error)
+		}
+		if !strings.Contains(result.Output, `"output": "nested"`) {
+			t.Fatalf("expected nested args to win, got: %s", result.Output)
+		}
+	})
+
 	t.Run("invalid step args", func(t *testing.T) {
 		params := `{"steps":[{"tool":"test_emit","args":["not","object"]}]}`
 		result, err := parallel.Execute(context.Background(), json.RawMessage(params))

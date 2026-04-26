@@ -16,8 +16,9 @@ type GlobTool struct {
 
 // GlobParams defines parameters for the glob tool
 type GlobParams struct {
-	Pattern string `json:"pattern"`
-	Path    string `json:"path,omitempty"`
+	Pattern            string `json:"pattern"`
+	Path               string `json:"path,omitempty"`
+	UseDefaultExcludes *bool  `json:"use_default_excludes,omitempty"`
 }
 
 // NewGlobTool creates a new glob tool
@@ -48,6 +49,10 @@ func (t *GlobTool) Schema() map[string]interface{} {
 				"type":        "string",
 				"description": "Base directory to search in (optional, defaults to working directory)",
 			},
+			"use_default_excludes": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Skip common heavy folders such as .git, node_modules, dist, build, and vendor (default: true)",
+			},
 		},
 		"required": []string{"pattern"},
 	}
@@ -64,7 +69,11 @@ func (t *GlobTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 	}
 
 	basePath := resolveToolPath(t.workDir, p.Path)
-	files, total, err := collectFileMatches(ctx, basePath, p.Pattern, nil, true, maxGlobResults)
+	useDefaultExcludes := true
+	if p.UseDefaultExcludes != nil {
+		useDefaultExcludes = *p.UseDefaultExcludes
+	}
+	files, total, err := collectFileMatches(ctx, basePath, p.Pattern, nil, true, useDefaultExcludes, maxGlobResults)
 	if err != nil {
 		return nil, err
 	}

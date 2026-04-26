@@ -357,7 +357,17 @@ func (s *Server) runWorkflowSession(
 	}
 
 	final := workflowFinalOutput(def, outputs, succ)
-	state.Status = "completed"
+	if stopCondition == "judge" && judgeID != "" && !workflowJudgeApproved(outputs[judgeID]) {
+		if workflowStateHasBlockedNode(state) {
+			state.Status = "blocked"
+		} else {
+			state.Status = "failed"
+		}
+	} else if workflowStateHasBlockedNode(state) {
+		state.Status = "blocked"
+	} else {
+		state.Status = "completed"
+	}
 	if err := s.persistWorkflowState(sess, state, emit); err != nil {
 		return "", llm.TokenUsage{}, err
 	}
@@ -846,8 +856,8 @@ func composeWorkflowNodePrompt(parent *session.Session, def *workflowDefinitionR
 	}
 	b.WriteString("\nWorkflow handoff status:\n")
 	b.WriteString("Do the node's actual work before handing off. A plan, intention, summary of what you will do, or request to start work is not complete.\n")
-	if strings.EqualFold(strings.TrimSpace(node.Kind), "main") && workflowRequestLooksLikeToolWork(userMessage) {
-		b.WriteString("For Builder/Main nodes, use the available tools to inspect relevant files and make any needed edits before marking complete. If code changes are requested and you did not inspect or edit files, you must use `NODE_STATUS: IN_PROGRESS` or `NODE_STATUS: BLOCKED`.\n")
+	if workflowNodeRequiresToolEvidence(node, userMessage) {
+		b.WriteString("For implementation nodes, use the available tools to inspect relevant files and make any needed edits before marking complete. If code changes are requested and you did not use a file editing tool, you must use `NODE_STATUS: IN_PROGRESS` or `NODE_STATUS: BLOCKED`.\n")
 	}
 	b.WriteString("End your response with a final line exactly `NODE_STATUS: COMPLETE` only when this node's concrete deliverable is ready for downstream review or use.\n")
 	b.WriteString("Use `NODE_STATUS: IN_PROGRESS` if more implementation work remains, or `NODE_STATUS: BLOCKED` if you cannot proceed without user input or an external dependency.\n")
@@ -863,7 +873,7 @@ func workflowNodeWorkStatusForSession(node workflowNodeRuntime, output string, c
 	if !workflowNodeRequiresToolEvidence(node, userMessage) {
 		return status
 	}
-	if workflowSessionHasToolActivity(child) {
+	if workflowSessionHasModificationActivity(child) {
 		return status
 	}
 	return "in_progress"
@@ -874,17 +884,18 @@ func workflowNodeRequiresToolEvidence(node workflowNodeRuntime, userMessage stri
 		return false
 	}
 	kind := strings.ToLower(strings.TrimSpace(node.Kind))
-	if kind != "main" {
+	if kind != "main" && kind != "subagent" {
 		return false
 	}
-	label := strings.ToLower(strings.TrimSpace(node.Label))
-	if label == "" {
+	identity := strings.ToLower(strings.TrimSpace(node.Label + " " + node.ID + " " + node.Ref))
+	if identity == "" {
 		return true
 	}
-	return strings.Contains(label, "build") ||
-		strings.Contains(label, "developer") ||
-		strings.Contains(label, "implement") ||
-		strings.Contains(label, "main")
+	return strings.Contains(identity, "build") ||
+		strings.Contains(identity, "developer") ||
+		strings.Contains(identity, "implement") ||
+		strings.Contains(identity, "worker") ||
+		strings.Contains(identity, "main")
 }
 
 func workflowRequestLooksLikeToolWork(userMessage string) bool {
@@ -931,15 +942,40 @@ func workflowRequestLooksLikeToolWork(userMessage string) bool {
 	return false
 }
 
-func workflowSessionHasToolActivity(sess *session.Session) bool {
+func workflowSessionHasModificationActivity(sess *session.Session) bool {
 	if sess == nil {
 		return false
 	}
 	for _, msg := range sess.Messages {
-		if len(msg.ToolCalls) > 0 || len(msg.ToolResults) > 0 {
-			return true
+		for _, call := range msg.ToolCalls {
+			if workflowToolCanModifyFiles(call.Name) {
+				return true
+			}
 		}
-		if strings.EqualFold(strings.TrimSpace(msg.Role), "tool") {
+		for _, result := range msg.ToolResults {
+			if workflowToolCanModifyFiles(result.Name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func workflowToolCanModifyFiles(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "edit", "replace_lines", "insert_lines", "write":
+		return true
+	default:
+		return false
+	}
+}
+
+func workflowStateHasBlockedNode(state *workflowRuntimeState) bool {
+	if state == nil {
+		return false
+	}
+	for _, node := range state.Nodes {
+		if node != nil && strings.EqualFold(strings.TrimSpace(node.Status), "blocked") {
 			return true
 		}
 	}

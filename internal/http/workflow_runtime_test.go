@@ -245,8 +245,34 @@ func TestWorkflowNodeWorkStatusForSessionRequiresBuilderToolEvidence(t *testing.
 	}
 
 	child.AddAssistantMessage("", []session.ToolCall{{ID: "tc-1", Name: "read"}})
+	if got := workflowNodeWorkStatusForSession(node, "Done.\nNODE_STATUS: COMPLETE", child, "please fix the button code"); got != "in_progress" {
+		t.Fatalf("expected builder with read-only activity to remain in_progress, got %q", got)
+	}
+
+	child.AddAssistantMessage("", []session.ToolCall{{ID: "tc-2", Name: "edit"}})
 	if got := workflowNodeWorkStatusForSession(node, "Done.\nNODE_STATUS: COMPLETE", child, "please fix the button code"); got != "complete" {
-		t.Fatalf("expected builder with tool activity to be complete, got %q", got)
+		t.Fatalf("expected builder with modification activity to be complete, got %q", got)
+	}
+}
+
+func TestWorkflowNodeWorkStatusForSessionRequiresDeveloperModificationEvidence(t *testing.T) {
+	node := workflowNodeRuntime{
+		ID:    "review-loop__worker",
+		Label: "developer",
+		Kind:  "subagent",
+	}
+	child := session.New("build")
+	child.AddUserMessage("implement it")
+	child.AddAssistantMessage("", []session.ToolCall{{ID: "tc-1", Name: "find_files"}})
+	child.AddAssistantMessage("Done.\nNODE_STATUS: COMPLETE", nil)
+
+	if got := workflowNodeWorkStatusForSession(node, "Done.\nNODE_STATUS: COMPLETE", child, "implement tracing in code"); got != "in_progress" {
+		t.Fatalf("expected developer without modification activity to be in_progress, got %q", got)
+	}
+
+	child.AddAssistantMessage("", []session.ToolCall{{ID: "tc-2", Name: "replace_lines"}})
+	if got := workflowNodeWorkStatusForSession(node, "Done.\nNODE_STATUS: COMPLETE", child, "implement tracing in code"); got != "complete" {
+		t.Fatalf("expected developer with modification-capable activity to be complete, got %q", got)
 	}
 }
 

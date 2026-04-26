@@ -276,6 +276,22 @@ func TestWorkflowNodeWorkStatusForSessionRequiresDeveloperModificationEvidence(t
 	}
 }
 
+func TestWorkflowNodeWorkStatusForSessionRetriesFalseToolAccessBlocker(t *testing.T) {
+	node := workflowNodeRuntime{
+		ID:    "n-main",
+		Label: "Main agent",
+		Kind:  "main",
+	}
+	child := session.New("build")
+	child.AddUserMessage("implement it")
+	child.AddAssistantMessage("", []session.ToolCall{{ID: "tc-1", Name: "find_files"}})
+
+	output := "Не могу выполнить доработку: не было ни одного tool-вызова для чтения/редактирования файлов.\n\nNODE_STATUS: BLOCKED"
+	if got := workflowNodeWorkStatusForSession(node, output, child, "please implement tracing in go code"); got != "in_progress" {
+		t.Fatalf("expected false tool-access blocker to be retried, got %q", got)
+	}
+}
+
 func TestWorkflowNodeWorkStatusForSessionAllowsNonCodeMainWithoutTools(t *testing.T) {
 	node := workflowNodeRuntime{
 		ID:    "n-main",

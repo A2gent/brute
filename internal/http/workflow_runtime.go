@@ -846,6 +846,9 @@ func composeWorkflowNodePrompt(parent *session.Session, def *workflowDefinitionR
 		b.WriteString(strings.TrimSpace(previousNodeOutput))
 		b.WriteString("\n")
 		b.WriteString("Continue from that state. Do not repeat the same progress update; perform the remaining work or explain the concrete blocker.\n")
+		if workflowNodeRequiresToolEvidence(node, userMessage) {
+			b.WriteString("Tools are available in this workflow node. If code changes are still needed, call the relevant tools now; do not report that you cannot edit merely because the previous response did not include tool calls.\n")
+		}
 	}
 	if def != nil && strings.EqualFold(strings.TrimSpace(def.Policy.StopCondition), "judge") {
 		judgeID := strings.TrimSpace(def.Policy.JudgeNodeID)
@@ -857,7 +860,7 @@ func composeWorkflowNodePrompt(parent *session.Session, def *workflowDefinitionR
 	b.WriteString("\nWorkflow handoff status:\n")
 	b.WriteString("Do the node's actual work before handing off. A plan, intention, summary of what you will do, or request to start work is not complete.\n")
 	if workflowNodeRequiresToolEvidence(node, userMessage) {
-		b.WriteString("For implementation nodes, use the available tools to inspect relevant files and make any needed edits before marking complete. If code changes are requested and you did not use a file editing tool, you must use `NODE_STATUS: IN_PROGRESS` or `NODE_STATUS: BLOCKED`.\n")
+		b.WriteString("For implementation nodes, use the available tools to inspect relevant files and make any needed edits before marking complete. You may call tools before producing this node's final textual output. If code changes are requested and you did not use a file editing tool, you must use `NODE_STATUS: IN_PROGRESS` unless there is a real external blocker.\n")
 	}
 	b.WriteString("End your response with a final line exactly `NODE_STATUS: COMPLETE` only when this node's concrete deliverable is ready for downstream review or use.\n")
 	b.WriteString("Use `NODE_STATUS: IN_PROGRESS` if more implementation work remains, or `NODE_STATUS: BLOCKED` if you cannot proceed without user input or an external dependency.\n")
@@ -867,13 +870,17 @@ func composeWorkflowNodePrompt(parent *session.Session, def *workflowDefinitionR
 
 func workflowNodeWorkStatusForSession(node workflowNodeRuntime, output string, child *session.Session, userMessage string) string {
 	status := workflowNodeWorkStatus(output)
-	if status != "complete" {
-		return status
-	}
 	if !workflowNodeRequiresToolEvidence(node, userMessage) {
 		return status
 	}
-	if workflowSessionHasModificationActivity(child) {
+	hasModificationActivity := workflowSessionHasModificationActivity(child)
+	if status == "blocked" && !hasModificationActivity && workflowOutputLooksLikeToolAvailabilityConfusion(output) {
+		return "in_progress"
+	}
+	if status != "complete" {
+		return status
+	}
+	if hasModificationActivity {
 		return status
 	}
 	return "in_progress"
@@ -968,6 +975,30 @@ func workflowToolCanModifyFiles(name string) bool {
 	default:
 		return false
 	}
+}
+
+func workflowOutputLooksLikeToolAvailabilityConfusion(output string) bool {
+	text := strings.ToLower(strings.TrimSpace(output))
+	if text == "" {
+		return false
+	}
+	toolMentions := []string{
+		"no tool call",
+		"no tool-call",
+		"no tool calls",
+		"no tool-calls",
+		"не было ни одного tool",
+		"не было tool",
+		"нужен запуск инструмент",
+		"нужны инструменты",
+		"нет tool",
+	}
+	for _, mention := range toolMentions {
+		if strings.Contains(text, mention) {
+			return true
+		}
+	}
+	return false
 }
 
 func workflowStateHasBlockedNode(state *workflowRuntimeState) bool {

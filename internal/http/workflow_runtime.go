@@ -77,6 +77,7 @@ type workflowNodeResult struct {
 	nodeLabel      string
 	childSessionID string
 	output         string
+	workStatus     string
 	err            error
 }
 
@@ -181,12 +182,14 @@ func (s *Server) runWorkflowSession(
 
 	outputs := map[string]string{}
 	runVersion := map[string]int{}
+	completeVersion := map[string]int{}
 	nodeTurnState := map[string]*workflowTurnNodeState{}
 	actionable := map[string]workflowNodeRuntime{}
 	for _, node := range def.Nodes {
 		if strings.EqualFold(node.Kind, "user") {
 			outputs[node.ID] = userMessage
 			runVersion[node.ID] = 1
+			completeVersion[node.ID] = 1
 			continue
 		}
 		actionable[node.ID] = node
@@ -211,7 +214,7 @@ func (s *Server) runWorkflowSession(
 			exitReason = "turn_cap"
 			break
 		}
-		ready := workflowReadyNodes(actionable, preds, runVersion, nodeTurnState, sccByNode)
+		ready := workflowReadyNodes(actionable, preds, completeVersion, nodeTurnState, sccByNode)
 		if len(ready) == 0 {
 			exitReason = "no_ready"
 			break
@@ -231,7 +234,7 @@ func (s *Server) runWorkflowSession(
 			}
 			upstream := make([]string, 0, len(preds[node.ID]))
 			for _, dep := range preds[node.ID] {
-				if version := runVersion[dep]; version > 0 && ts != nil {
+				if version := completeVersion[dep]; version > 0 && ts != nil {
 					ts.LastConsumedByDep[dep] = version
 				}
 				if output := strings.TrimSpace(outputs[dep]); output != "" {
@@ -266,6 +269,7 @@ func (s *Server) runWorkflowSession(
 					nodeLabel:      node.Label,
 					childSessionID: childSessionID,
 					output:         output,
+					workStatus:     workflowNodeWorkStatus(output),
 					err:            err,
 				}
 			}(child, upstream)
@@ -293,6 +297,9 @@ func (s *Server) runWorkflowSession(
 			st.OutputPreview = preview(result.output, 220)
 			outputs[result.nodeID] = result.output
 			runVersion[result.nodeID]++
+			if result.workStatus == "complete" {
+				completeVersion[result.nodeID]++
+			}
 			if ts := nodeTurnState[result.nodeID]; ts != nil {
 				ts.RunCount++
 			}
@@ -309,10 +316,11 @@ func (s *Server) runWorkflowSession(
 	}
 
 	unreachable := workflowUnreachedActionableNodes(actionable, runVersion)
-	if exitReason == "no_ready" && len(unreachable) > 0 {
-		diagnostic := workflowPendingDependencyDiagnostic(unreachable, preds, runVersion, sccByNode)
+	blockedByNeverRunDeps := workflowNodesBlockedByNeverRunDeps(unreachable, preds, runVersion, sccByNode)
+	if exitReason == "no_ready" && len(blockedByNeverRunDeps) > 0 {
+		diagnostic := workflowPendingDependencyDiagnostic(blockedByNeverRunDeps, preds, runVersion, sccByNode)
 		now := time.Now().UTC().Format(time.RFC3339)
-		for _, nodeID := range unreachable {
+		for _, nodeID := range blockedByNeverRunDeps {
 			st := state.Nodes[nodeID]
 			if st == nil {
 				st = &workflowRuntimeNodeState{}
@@ -363,7 +371,7 @@ func (s *Server) executeWorkflowNode(
 		return "", "", fmt.Errorf("workflow child session is nil")
 	}
 
-	nodePrompt := composeWorkflowNodePrompt(def, node, userMessage, upstreamOutputs)
+	nodePrompt := composeWorkflowNodePrompt(parent, def, node, userMessage, upstreamOutputs)
 	child.AddUserMessage(nodePrompt)
 	child.SetStatus(session.StatusRunning)
 	if err := s.sessionManager.Save(child); err != nil {
@@ -661,7 +669,7 @@ func workflowFinalOutput(def *workflowDefinitionRuntime, outputs map[string]stri
 	return strings.Join(parts, "\n\n")
 }
 
-func composeWorkflowNodePrompt(def *workflowDefinitionRuntime, node workflowNodeRuntime, userMessage string, upstreamOutputs []string) string {
+func composeWorkflowNodePrompt(parent *session.Session, def *workflowDefinitionRuntime, node workflowNodeRuntime, userMessage string, upstreamOutputs []string) string {
 	name := strings.TrimSpace(def.Name)
 	if name == "" {
 		name = strings.TrimSpace(def.ID)
@@ -677,7 +685,12 @@ func composeWorkflowNodePrompt(def *workflowDefinitionRuntime, node workflowNode
 		b.WriteString(inst)
 		b.WriteString("\n")
 	}
-	b.WriteString("\nOriginal user request:\n")
+	if contextText := workflowParentSessionContext(parent, userMessage, 12, 12000); contextText != "" {
+		b.WriteString("\nParent session context:\n")
+		b.WriteString(contextText)
+		b.WriteString("\n")
+	}
+	b.WriteString("\nCurrent user request:\n")
 	b.WriteString(strings.TrimSpace(userMessage))
 	b.WriteString("\n")
 	if len(upstreamOutputs) > 0 {
@@ -696,8 +709,85 @@ func composeWorkflowNodePrompt(def *workflowDefinitionRuntime, node workflowNode
 			b.WriteString("Add a final line exactly as `VERDICT: APPROVED` when work is acceptable, otherwise `VERDICT: REVISE`.\n")
 		}
 	}
+	b.WriteString("\nWorkflow handoff status:\n")
+	b.WriteString("Do the node's actual work before handing off. Do not return only a plan or progress update unless you are blocked.\n")
+	b.WriteString("End your response with a final line exactly `NODE_STATUS: COMPLETE` only when this node's deliverable is ready for downstream review or use.\n")
+	b.WriteString("Use `NODE_STATUS: IN_PROGRESS` if more implementation work remains, or `NODE_STATUS: BLOCKED` if you cannot proceed without user input or an external dependency.\n")
 	b.WriteString("\nReturn only this node's output.")
 	return b.String()
+}
+
+func workflowNodeWorkStatus(output string) string {
+	lines := strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		upper := strings.ToUpper(line)
+		if strings.HasPrefix(upper, "NODE_STATUS:") {
+			value := strings.TrimSpace(line[len("NODE_STATUS:"):])
+			switch strings.ToUpper(value) {
+			case "COMPLETE", "COMPLETED", "DONE":
+				return "complete"
+			case "IN_PROGRESS", "IN PROGRESS", "PROGRESS", "WORKING":
+				return "in_progress"
+			case "BLOCKED", "WAITING", "NEEDS_INPUT", "NEEDS INPUT":
+				return "blocked"
+			default:
+				return "in_progress"
+			}
+		}
+		break
+	}
+	return "complete"
+}
+
+func workflowParentSessionContext(parent *session.Session, currentUserMessage string, maxMessages int, maxChars int) string {
+	if parent == nil || len(parent.Messages) == 0 || maxMessages <= 0 || maxChars <= 0 {
+		return ""
+	}
+	messages := parent.Messages
+	if len(messages) > 0 {
+		last := messages[len(messages)-1]
+		if strings.EqualFold(strings.TrimSpace(last.Role), "user") && strings.TrimSpace(last.Content) == strings.TrimSpace(currentUserMessage) {
+			messages = messages[:len(messages)-1]
+		}
+	}
+	if len(messages) == 0 {
+		return ""
+	}
+	start := len(messages) - maxMessages
+	if start < 0 {
+		start = 0
+	}
+	parts := make([]string, 0, len(messages)-start)
+	for _, msg := range messages[start:] {
+		role := strings.TrimSpace(msg.Role)
+		content := strings.TrimSpace(msg.Content)
+		if role == "" || content == "" {
+			continue
+		}
+		switch strings.ToLower(role) {
+		case "user":
+			role = "User"
+		case "assistant":
+			role = "Assistant"
+		case "system":
+			role = "System"
+		default:
+			role = strings.ToUpper(role[:1]) + role[1:]
+		}
+		parts = append(parts, fmt.Sprintf("%s: %s", role, content))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	text := strings.Join(parts, "\n\n")
+	if len(text) <= maxChars {
+		return text
+	}
+	return strings.TrimSpace(text[len(text)-maxChars:])
 }
 
 func preview(text string, max int) string {
@@ -884,6 +974,28 @@ func workflowUnreachedActionableNodes(actionable map[string]workflowNodeRuntime,
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+func workflowNodesBlockedByNeverRunDeps(
+	unreached []string,
+	preds map[string][]string,
+	runVersion map[string]int,
+	sccByNode map[string]int,
+) []string {
+	blocked := make([]string, 0, len(unreached))
+	for _, nodeID := range unreached {
+		for _, dep := range preds[nodeID] {
+			if sccByNode[dep] == sccByNode[nodeID] {
+				continue
+			}
+			if runVersion[dep] == 0 {
+				blocked = append(blocked, nodeID)
+				break
+			}
+		}
+	}
+	sort.Strings(blocked)
+	return blocked
 }
 
 func workflowPendingDependencyDiagnostic(

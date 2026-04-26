@@ -73,6 +73,7 @@ type ToolResult struct {
 	IsError    bool                   `json:"is_error,omitempty"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 	Name       string                 `json:"name,omitempty"` // Tool name (required by Gemini)
+	DurationMs int64                  `json:"duration_ms,omitempty"`
 }
 
 // New creates a new session

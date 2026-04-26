@@ -112,6 +112,7 @@ type ToolResultEvent struct {
 	Name       string
 	Content    string
 	IsError    bool
+	DurationMs int64
 }
 
 type ProviderTraceEvent struct {
@@ -296,13 +297,14 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		// Convert results
 		sessionResults := make([]session.ToolResult, len(toolResults))
 		for i, tr := range toolResults {
-			sessionResults[i] = session.ToolResult{
-				ToolCallID: tr.ToolCallID,
-				Content:    tr.Content,
-				IsError:    tr.IsError,
-				Metadata:   tr.Metadata,
-				Name:       tr.Name,
-			}
+				sessionResults[i] = session.ToolResult{
+					ToolCallID: tr.ToolCallID,
+					Content:    tr.Content,
+					IsError:    tr.IsError,
+					Metadata:   tr.Metadata,
+					Name:       tr.Name,
+					DurationMs: tr.DurationMs,
+				}
 		}
 
 		// Add tool results to session

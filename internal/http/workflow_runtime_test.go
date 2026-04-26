@@ -124,6 +124,54 @@ func TestComposeWorkflowNodePromptIncludesParentContext(t *testing.T) {
 	}
 }
 
+func TestComposeWorkflowNodePromptStripsControlLinesFromInputs(t *testing.T) {
+	parent := session.New("build")
+	parent.AddUserMessage("build the feature")
+	parent.AddAssistantMessage("implemented first pass\nNODE_STATUS: COMPLETE", nil)
+	parent.AddUserMessage("please review")
+
+	def := &workflowDefinitionRuntime{Name: "review"}
+	node := workflowNodeRuntime{
+		ID:    "critic",
+		Label: "Critic",
+		Kind:  "subagent",
+	}
+
+	prompt := composeWorkflowNodePrompt(
+		parent,
+		def,
+		node,
+		"please review",
+		[]string{"worker output\nNODE_STATUS: COMPLETE\nVERDICT: APPROVED"},
+		"previous try\nNODE_STATUS: IN_PROGRESS",
+	)
+
+	if strings.Contains(prompt, "implemented first pass\nNODE_STATUS: COMPLETE") {
+		t.Fatalf("expected parent assistant status line to be stripped, got: %s", prompt)
+	}
+	if strings.Contains(prompt, "worker output\nNODE_STATUS: COMPLETE") || strings.Contains(prompt, "VERDICT: APPROVED") {
+		t.Fatalf("expected upstream control lines to be stripped, got: %s", prompt)
+	}
+	if strings.Contains(prompt, "previous try\nNODE_STATUS: IN_PROGRESS") {
+		t.Fatalf("expected previous output status line to be stripped, got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "implemented first pass") || !strings.Contains(prompt, "worker output") || !strings.Contains(prompt, "previous try") {
+		t.Fatalf("expected semantic output to remain, got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "End your response with a final line exactly `NODE_STATUS: COMPLETE`") {
+		t.Fatalf("expected status contract instructions to remain, got: %s", prompt)
+	}
+}
+
+func TestWorkflowCleanNodeOutputForHandoffStripsControlLines(t *testing.T) {
+	output := "work done\nNODE_STATUS: COMPLETE\n\nVERDICT: APPROVED\nnext detail"
+	clean := workflowCleanNodeOutputForHandoff(output)
+
+	if clean != "work done\n\nnext detail" {
+		t.Fatalf("unexpected cleaned output: %q", clean)
+	}
+}
+
 func TestComposeWorkflowNodePromptSkipsToolInstructionForResearch(t *testing.T) {
 	parent := session.New("parent")
 	def := &workflowDefinitionRuntime{Name: "research"}

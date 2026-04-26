@@ -154,10 +154,11 @@ func (m *Manager) ExecuteParallel(ctx context.Context, calls []llm.ToolCall) []l
 			result, err := m.Execute(callCtx, tc.Name, json.RawMessage(tc.Input))
 			duration := time.Since(start)
 
-			tr := llm.ToolResult{
-				ToolCallID: tc.ID,
-				Name:       tc.Name,
-			}
+				tr := llm.ToolResult{
+					ToolCallID: tc.ID,
+					Name:       tc.Name,
+					DurationMs: duration.Milliseconds(),
+				}
 
 			if err != nil {
 				tr.Content = fmt.Sprintf("Error: %v", err)

@@ -34,19 +34,21 @@ type workflowDefinitionRuntime struct {
 }
 
 type workflowNodeRuntime struct {
-	ID                 string
-	Label              string
-	Kind               string
-	Ref                string
-	SubAgentID         string
-	LocalAgentID       string
-	ExternalAgentID    string
-	Instruction        string
-	WorkerSubAgentID   string
-	WorkerLabel        string
-	ReviewerSubAgentID string
-	ReviewerLabel      string
-	LoopMaxTurns       int
+	ID                  string
+	Label               string
+	Kind                string
+	Ref                 string
+	SubAgentID          string
+	LocalAgentID        string
+	ExternalAgentID     string
+	Instruction         string
+	WorkerSubAgentID    string
+	WorkerLabel         string
+	WorkerInstruction   string
+	ReviewerSubAgentID  string
+	ReviewerLabel       string
+	ReviewerInstruction string
+	LoopMaxTurns        int
 }
 
 type workflowEdgeRuntime struct {
@@ -278,11 +280,12 @@ func (s *Server) runWorkflowSession(
 			go func(child *session.Session, upstream []string, previousNodeOutput string) {
 				defer wg.Done()
 				output, childSessionID, err := s.executeWorkflowNode(ctx, sess, def, node, userMessage, upstream, previousNodeOutput, child)
+				cleanOutput := workflowCleanNodeOutputForHandoff(output)
 				results <- workflowNodeResult{
 					nodeID:         node.ID,
 					nodeLabel:      node.Label,
 					childSessionID: childSessionID,
-					output:         output,
+					output:         cleanOutput,
 					workStatus:     workflowNodeWorkStatusForSession(node, output, child, userMessage),
 					err:            err,
 				}
@@ -654,19 +657,21 @@ func workflowDefinitionFromMetadata(sess *session.Session) (*workflowDefinitionR
 			kind = "main"
 		}
 		def.Nodes = append(def.Nodes, workflowNodeRuntime{
-			ID:                 id,
-			Label:              label,
-			Kind:               kind,
-			Ref:                strings.TrimSpace(asWorkflowString(row["ref"])),
-			SubAgentID:         strings.TrimSpace(asWorkflowString(row["subAgentId"])),
-			LocalAgentID:       strings.TrimSpace(asWorkflowString(row["localAgentId"])),
-			ExternalAgentID:    strings.TrimSpace(asWorkflowString(row["externalAgentId"])),
-			Instruction:        strings.TrimSpace(asWorkflowString(row["instruction"])),
-			WorkerSubAgentID:   strings.TrimSpace(asWorkflowString(row["workerSubAgentId"])),
-			WorkerLabel:        strings.TrimSpace(asWorkflowString(row["workerLabel"])),
-			ReviewerSubAgentID: strings.TrimSpace(asWorkflowString(row["reviewerSubAgentId"])),
-			ReviewerLabel:      strings.TrimSpace(asWorkflowString(row["reviewerLabel"])),
-			LoopMaxTurns:       asWorkflowInt(row["loopMaxTurns"]),
+			ID:                  id,
+			Label:               label,
+			Kind:                kind,
+			Ref:                 strings.TrimSpace(asWorkflowString(row["ref"])),
+			SubAgentID:          strings.TrimSpace(asWorkflowString(row["subAgentId"])),
+			LocalAgentID:        strings.TrimSpace(asWorkflowString(row["localAgentId"])),
+			ExternalAgentID:     strings.TrimSpace(asWorkflowString(row["externalAgentId"])),
+			Instruction:         strings.TrimSpace(asWorkflowString(row["instruction"])),
+			WorkerSubAgentID:    strings.TrimSpace(asWorkflowString(row["workerSubAgentId"])),
+			WorkerLabel:         strings.TrimSpace(asWorkflowString(row["workerLabel"])),
+			WorkerInstruction:   strings.TrimSpace(asWorkflowString(row["workerInstruction"])),
+			ReviewerSubAgentID:  strings.TrimSpace(asWorkflowString(row["reviewerSubAgentId"])),
+			ReviewerLabel:       strings.TrimSpace(asWorkflowString(row["reviewerLabel"])),
+			ReviewerInstruction: strings.TrimSpace(asWorkflowString(row["reviewerInstruction"])),
+			LoopMaxTurns:        asWorkflowInt(row["loopMaxTurns"]),
 		})
 	}
 	if edgesRaw, ok := root["edges"].([]interface{}); ok {
@@ -729,14 +734,14 @@ func expandReviewLoopNodes(def *workflowDefinitionRuntime) {
 				Label:       workerLabel,
 				Kind:        "subagent",
 				SubAgentID:  strings.TrimSpace(loop.WorkerSubAgentID),
-				Instruction: "Produce the requested work for the review loop. Incorporate critic feedback from prior loop turns before handing off.",
+				Instruction: workflowReviewLoopWorkerInstruction(loop),
 			},
 			workflowNodeRuntime{
 				ID:          reviewerID,
 				Label:       reviewerLabel,
 				Kind:        "subagent",
 				SubAgentID:  strings.TrimSpace(loop.ReviewerSubAgentID),
-				Instruction: "Review the worker output. If it is acceptable, end with VERDICT: APPROVED. Otherwise give concrete revision feedback and end with VERDICT: REVISE.",
+				Instruction: workflowReviewLoopReviewerInstruction(loop),
 			},
 		)
 		nextEdges = append(nextEdges,
@@ -775,6 +780,23 @@ func expandReviewLoopNodes(def *workflowDefinitionRuntime) {
 	}
 	def.Nodes = nextNodes
 	def.Edges = nextEdges
+}
+
+func workflowReviewLoopWorkerInstruction(loop workflowNodeRuntime) string {
+	if inst := strings.TrimSpace(loop.WorkerInstruction); inst != "" {
+		return inst
+	}
+	if inst := strings.TrimSpace(loop.Instruction); inst != "" {
+		return inst
+	}
+	return "Produce the requested work for the review loop. Incorporate critic feedback from prior loop turns before handing off."
+}
+
+func workflowReviewLoopReviewerInstruction(loop workflowNodeRuntime) string {
+	if inst := strings.TrimSpace(loop.ReviewerInstruction); inst != "" {
+		return inst + "\n\nEnd with VERDICT: APPROVED when work is acceptable, otherwise VERDICT: REVISE."
+	}
+	return "Review the worker output. If it is acceptable, end with VERDICT: APPROVED. Otherwise give concrete revision feedback and end with VERDICT: REVISE."
 }
 
 func workflowFinalOutput(def *workflowDefinitionRuntime, outputs map[string]string, succ map[string][]string) string {
@@ -855,12 +877,14 @@ func composeWorkflowNodePrompt(parent *session.Session, def *workflowDefinitionR
 	if len(upstreamOutputs) > 0 {
 		b.WriteString("\nInputs from previous nodes:\n")
 		for idx, item := range upstreamOutputs {
+			item = workflowCleanNodeOutputForHandoff(item)
 			if strings.TrimSpace(item) == "" {
 				continue
 			}
 			b.WriteString(fmt.Sprintf("\n[%d]\n%s\n", idx+1, strings.TrimSpace(item)))
 		}
 	}
+	previousNodeOutput = workflowCleanNodeOutputForHandoff(previousNodeOutput)
 	if strings.TrimSpace(previousNodeOutput) != "" {
 		b.WriteString("\nPrevious output from this same node that was not accepted as a complete handoff:\n")
 		b.WriteString(strings.TrimSpace(previousNodeOutput))
@@ -886,6 +910,20 @@ func composeWorkflowNodePrompt(parent *session.Session, def *workflowDefinitionR
 	b.WriteString("Use `NODE_STATUS: IN_PROGRESS` if more implementation work remains, or `NODE_STATUS: BLOCKED` if you cannot proceed without user input or an external dependency.\n")
 	b.WriteString("\nReturn only this node's output.")
 	return b.String()
+}
+
+func workflowCleanNodeOutputForHandoff(output string) string {
+	lines := strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n")
+	cleaned := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		upper := strings.ToUpper(trimmed)
+		if strings.HasPrefix(upper, "NODE_STATUS:") || strings.HasPrefix(upper, "VERDICT:") {
+			continue
+		}
+		cleaned = append(cleaned, line)
+	}
+	return strings.TrimSpace(strings.Join(cleaned, "\n"))
 }
 
 func workflowNodeWorkStatusForSession(node workflowNodeRuntime, output string, child *session.Session, userMessage string) string {
@@ -1134,6 +1172,10 @@ func workflowParentSessionContext(parent *session.Session, currentUserMessage st
 			role = "User"
 		case "assistant":
 			role = "Assistant"
+			content = workflowCleanNodeOutputForHandoff(content)
+			if strings.TrimSpace(content) == "" {
+				continue
+			}
 		case "system":
 			role = "System"
 		default:

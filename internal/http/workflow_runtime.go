@@ -12,6 +12,7 @@ import (
 	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/llm"
+	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/storage"
 )
@@ -183,6 +184,7 @@ func (s *Server) runWorkflowSession(
 	outputs := map[string]string{}
 	runVersion := map[string]int{}
 	completeVersion := map[string]int{}
+	retryRequested := map[string]bool{}
 	nodeTurnState := map[string]*workflowTurnNodeState{}
 	actionable := map[string]workflowNodeRuntime{}
 	for _, node := range def.Nodes {
@@ -210,11 +212,11 @@ func (s *Server) runWorkflowSession(
 			exitReason = "timebox"
 			break
 		}
-		if enforceTurnCap && turnsUsed >= maxTurns {
+		if (enforceTurnCap || len(retryRequested) > 0) && turnsUsed >= maxTurns {
 			exitReason = "turn_cap"
 			break
 		}
-		ready := workflowReadyNodes(actionable, preds, completeVersion, nodeTurnState, sccByNode)
+		ready := workflowReadyNodes(actionable, preds, completeVersion, retryRequested, nodeTurnState, sccByNode)
 		if len(ready) == 0 {
 			exitReason = "no_ready"
 			break
@@ -226,6 +228,8 @@ func (s *Server) runWorkflowSession(
 		for _, node := range ready {
 			node := node
 			ts := nodeTurnState[node.ID]
+			wasRetry := retryRequested[node.ID]
+			delete(retryRequested, node.ID)
 			st := state.Nodes[node.ID]
 			if st != nil {
 				st.Status = "running"
@@ -241,7 +245,11 @@ func (s *Server) runWorkflowSession(
 					upstream = append(upstream, output)
 				}
 			}
-			child, childErr := s.createWorkflowNodeChildSession(sess, def, node)
+			previousNodeOutput := ""
+			if wasRetry {
+				previousNodeOutput = strings.TrimSpace(outputs[node.ID])
+			}
+			child, childErr := s.workflowNodeChildSession(sess, def, node, st)
 			if childErr != nil {
 				if st == nil {
 					st = &workflowRuntimeNodeState{}
@@ -261,18 +269,18 @@ func (s *Server) runWorkflowSession(
 				return "", llm.TokenUsage{}, err
 			}
 			wg.Add(1)
-			go func(child *session.Session, upstream []string) {
+			go func(child *session.Session, upstream []string, previousNodeOutput string) {
 				defer wg.Done()
-				output, childSessionID, err := s.executeWorkflowNode(ctx, sess, def, node, userMessage, upstream, child)
+				output, childSessionID, err := s.executeWorkflowNode(ctx, sess, def, node, userMessage, upstream, previousNodeOutput, child)
 				results <- workflowNodeResult{
 					nodeID:         node.ID,
 					nodeLabel:      node.Label,
 					childSessionID: childSessionID,
 					output:         output,
-					workStatus:     workflowNodeWorkStatus(output),
+					workStatus:     workflowNodeWorkStatusForSession(node, output, child, userMessage),
 					err:            err,
 				}
-			}(child, upstream)
+			}(child, upstream, previousNodeOutput)
 		}
 		wg.Wait()
 		close(results)
@@ -292,7 +300,15 @@ func (s *Server) runWorkflowSession(
 				_ = s.persistWorkflowState(sess, state, emit)
 				return "", llm.TokenUsage{}, fmt.Errorf("node %q failed: %w", result.nodeLabel, result.err)
 			}
-			st.Status = "completed"
+			switch result.workStatus {
+			case "in_progress":
+				st.Status = "in_progress"
+				retryRequested[result.nodeID] = true
+			case "blocked":
+				st.Status = "blocked"
+			default:
+				st.Status = "completed"
+			}
 			st.CompletedAt = time.Now().UTC().Format(time.RFC3339)
 			st.OutputPreview = preview(result.output, 220)
 			outputs[result.nodeID] = result.output
@@ -365,13 +381,14 @@ func (s *Server) executeWorkflowNode(
 	node workflowNodeRuntime,
 	userMessage string,
 	upstreamOutputs []string,
+	previousNodeOutput string,
 	child *session.Session,
 ) (string, string, error) {
 	if child == nil {
 		return "", "", fmt.Errorf("workflow child session is nil")
 	}
 
-	nodePrompt := composeWorkflowNodePrompt(parent, def, node, userMessage, upstreamOutputs)
+	nodePrompt := composeWorkflowNodePrompt(parent, def, node, userMessage, upstreamOutputs, previousNodeOutput)
 	child.AddUserMessage(nodePrompt)
 	child.SetStatus(session.StatusRunning)
 	if err := s.sessionManager.Save(child); err != nil {
@@ -418,6 +435,25 @@ func (s *Server) executeWorkflowNode(
 		_ = s.sessionManager.Save(child)
 	}
 	return strings.TrimSpace(content), child.ID, nil
+}
+
+func (s *Server) workflowNodeChildSession(
+	parent *session.Session,
+	def *workflowDefinitionRuntime,
+	node workflowNodeRuntime,
+	st *workflowRuntimeNodeState,
+) (*session.Session, error) {
+	if st != nil {
+		childSessionID := strings.TrimSpace(st.ChildSessionID)
+		if childSessionID != "" {
+			child, err := s.sessionManager.Get(childSessionID)
+			if err == nil && child != nil {
+				return child, nil
+			}
+			logging.Warn("Workflow node %s child session %s could not be loaded; creating replacement: %v", node.ID, childSessionID, err)
+		}
+	}
+	return s.createWorkflowNodeChildSession(parent, def, node)
 }
 
 func (s *Server) buildSystemPromptForWorkflowNode(child *session.Session, node workflowNodeRuntime) string {
@@ -669,7 +705,7 @@ func workflowFinalOutput(def *workflowDefinitionRuntime, outputs map[string]stri
 	return strings.Join(parts, "\n\n")
 }
 
-func composeWorkflowNodePrompt(parent *session.Session, def *workflowDefinitionRuntime, node workflowNodeRuntime, userMessage string, upstreamOutputs []string) string {
+func composeWorkflowNodePrompt(parent *session.Session, def *workflowDefinitionRuntime, node workflowNodeRuntime, userMessage string, upstreamOutputs []string, previousNodeOutput string) string {
 	name := strings.TrimSpace(def.Name)
 	if name == "" {
 		name = strings.TrimSpace(def.ID)
@@ -702,6 +738,12 @@ func composeWorkflowNodePrompt(parent *session.Session, def *workflowDefinitionR
 			b.WriteString(fmt.Sprintf("\n[%d]\n%s\n", idx+1, strings.TrimSpace(item)))
 		}
 	}
+	if strings.TrimSpace(previousNodeOutput) != "" {
+		b.WriteString("\nPrevious output from this same node that was not accepted as a complete handoff:\n")
+		b.WriteString(strings.TrimSpace(previousNodeOutput))
+		b.WriteString("\n")
+		b.WriteString("Continue from that state. Do not repeat the same progress update; perform the remaining work or explain the concrete blocker.\n")
+	}
 	if def != nil && strings.EqualFold(strings.TrimSpace(def.Policy.StopCondition), "judge") {
 		judgeID := strings.TrimSpace(def.Policy.JudgeNodeID)
 		if judgeID != "" && judgeID == strings.TrimSpace(node.ID) {
@@ -710,11 +752,105 @@ func composeWorkflowNodePrompt(parent *session.Session, def *workflowDefinitionR
 		}
 	}
 	b.WriteString("\nWorkflow handoff status:\n")
-	b.WriteString("Do the node's actual work before handing off. Do not return only a plan or progress update unless you are blocked.\n")
-	b.WriteString("End your response with a final line exactly `NODE_STATUS: COMPLETE` only when this node's deliverable is ready for downstream review or use.\n")
+	b.WriteString("Do the node's actual work before handing off. A plan, intention, summary of what you will do, or request to start work is not complete.\n")
+	if strings.EqualFold(strings.TrimSpace(node.Kind), "main") && workflowRequestLooksLikeToolWork(userMessage) {
+		b.WriteString("For Builder/Main nodes, use the available tools to inspect relevant files and make any needed edits before marking complete. If code changes are requested and you did not inspect or edit files, you must use `NODE_STATUS: IN_PROGRESS` or `NODE_STATUS: BLOCKED`.\n")
+	}
+	b.WriteString("End your response with a final line exactly `NODE_STATUS: COMPLETE` only when this node's concrete deliverable is ready for downstream review or use.\n")
 	b.WriteString("Use `NODE_STATUS: IN_PROGRESS` if more implementation work remains, or `NODE_STATUS: BLOCKED` if you cannot proceed without user input or an external dependency.\n")
 	b.WriteString("\nReturn only this node's output.")
 	return b.String()
+}
+
+func workflowNodeWorkStatusForSession(node workflowNodeRuntime, output string, child *session.Session, userMessage string) string {
+	status := workflowNodeWorkStatus(output)
+	if status != "complete" {
+		return status
+	}
+	if !workflowNodeRequiresToolEvidence(node, userMessage) {
+		return status
+	}
+	if workflowSessionHasToolActivity(child) {
+		return status
+	}
+	return "in_progress"
+}
+
+func workflowNodeRequiresToolEvidence(node workflowNodeRuntime, userMessage string) bool {
+	if !workflowRequestLooksLikeToolWork(userMessage) {
+		return false
+	}
+	kind := strings.ToLower(strings.TrimSpace(node.Kind))
+	if kind != "main" {
+		return false
+	}
+	label := strings.ToLower(strings.TrimSpace(node.Label))
+	if label == "" {
+		return true
+	}
+	return strings.Contains(label, "build") ||
+		strings.Contains(label, "developer") ||
+		strings.Contains(label, "implement") ||
+		strings.Contains(label, "main")
+}
+
+func workflowRequestLooksLikeToolWork(userMessage string) bool {
+	text := strings.ToLower(strings.TrimSpace(userMessage))
+	if text == "" {
+		return false
+	}
+	indicators := []string{
+		"code",
+		"repo",
+		"repository",
+		"file",
+		"files",
+		"function",
+		"class",
+		"component",
+		"api",
+		"endpoint",
+		"database",
+		"migration",
+		"schema",
+		"test",
+		"tests",
+		"bug",
+		"fix",
+		"implement",
+		"refactor",
+		"patch",
+		"edit",
+		"update",
+		"typescript",
+		"javascript",
+		"react",
+		"golang",
+		"go ",
+		"css",
+		"html",
+	}
+	for _, indicator := range indicators {
+		if strings.Contains(text, indicator) {
+			return true
+		}
+	}
+	return false
+}
+
+func workflowSessionHasToolActivity(sess *session.Session) bool {
+	if sess == nil {
+		return false
+	}
+	for _, msg := range sess.Messages {
+		if len(msg.ToolCalls) > 0 || len(msg.ToolResults) > 0 {
+			return true
+		}
+		if strings.EqualFold(strings.TrimSpace(msg.Role), "tool") {
+			return true
+		}
+	}
+	return false
 }
 
 func workflowNodeWorkStatus(output string) string {
@@ -922,11 +1058,16 @@ func workflowReadyNodes(
 	actionable map[string]workflowNodeRuntime,
 	preds map[string][]string,
 	runVersion map[string]int,
+	retryRequested map[string]bool,
 	nodeTurnState map[string]*workflowTurnNodeState,
 	sccByNode map[string]int,
 ) []workflowNodeRuntime {
 	ready := make([]workflowNodeRuntime, 0, len(actionable))
 	for nodeID, node := range actionable {
+		if retryRequested[nodeID] {
+			ready = append(ready, node)
+			continue
+		}
 		ts := nodeTurnState[nodeID]
 		if ts == nil {
 			continue

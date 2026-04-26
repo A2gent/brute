@@ -98,6 +98,53 @@ type workflowTurnNodeState struct {
 	LastConsumedByDep map[string]int
 }
 
+type workflowGraph struct {
+	NodeByID  map[string]workflowNodeRuntime
+	Preds     map[string][]string
+	Succ      map[string][]string
+	SCCByNode map[string]int
+	SCCSize   map[int]int
+	HasCycle  bool
+}
+
+func newWorkflowGraph(def *workflowDefinitionRuntime) workflowGraph {
+	graph := workflowGraph{
+		NodeByID: make(map[string]workflowNodeRuntime),
+		Preds:    make(map[string][]string),
+		Succ:     make(map[string][]string),
+	}
+	if def == nil {
+		graph.SCCByNode, graph.SCCSize = workflowSCC(nil, graph.Succ)
+		return graph
+	}
+	for _, node := range def.Nodes {
+		nodeID := strings.TrimSpace(node.ID)
+		if nodeID == "" {
+			continue
+		}
+		node.ID = nodeID
+		graph.NodeByID[nodeID] = node
+	}
+	for _, edge := range def.Edges {
+		from := strings.TrimSpace(edge.From)
+		to := strings.TrimSpace(edge.To)
+		if from == "" || to == "" {
+			continue
+		}
+		if _, ok := graph.NodeByID[from]; !ok {
+			continue
+		}
+		if _, ok := graph.NodeByID[to]; !ok {
+			continue
+		}
+		graph.Preds[to] = append(graph.Preds[to], from)
+		graph.Succ[from] = append(graph.Succ[from], to)
+	}
+	graph.SCCByNode, graph.SCCSize = workflowSCC(def.Nodes, graph.Succ)
+	graph.HasCycle = workflowHasCycle(def.Nodes, graph.Succ, graph.SCCByNode, graph.SCCSize)
+	return graph
+}
+
 func (s *Server) hasRunnableWorkflow(sess *session.Session) bool {
 	def, ok := workflowDefinitionFromMetadata(sess)
 	if !ok {
@@ -148,29 +195,7 @@ func (s *Server) runWorkflowSession(
 	if !ok {
 		return "", llm.TokenUsage{}, fmt.Errorf("workflow metadata is missing")
 	}
-	nodeByID := make(map[string]workflowNodeRuntime, len(def.Nodes))
-	preds := make(map[string][]string)
-	succ := make(map[string][]string)
-	for _, node := range def.Nodes {
-		nodeByID[node.ID] = node
-	}
-	for _, edge := range def.Edges {
-		from := strings.TrimSpace(edge.From)
-		to := strings.TrimSpace(edge.To)
-		if from == "" || to == "" {
-			continue
-		}
-		if _, ok := nodeByID[from]; !ok {
-			continue
-		}
-		if _, ok := nodeByID[to]; !ok {
-			continue
-		}
-		preds[to] = append(preds[to], from)
-		succ[from] = append(succ[from], to)
-	}
-	sccByNode, sccSize := workflowSCC(def.Nodes, succ)
-	hasCycle := workflowHasCycle(def.Nodes, succ, sccByNode, sccSize)
+	graph := newWorkflowGraph(def)
 
 	state := &workflowRuntimeState{
 		WorkflowID:   def.ID,
@@ -216,7 +241,7 @@ func (s *Server) runWorkflowSession(
 	deadline := time.Now().Add(time.Duration(workflowTimeboxMinutes(def)) * time.Minute)
 	judgeID := strings.TrimSpace(def.Policy.JudgeNodeID)
 	stopCondition := strings.ToLower(strings.TrimSpace(def.Policy.StopCondition))
-	enforceTurnCap := hasCycle || stopCondition == "max_turns"
+	enforceTurnCap := graph.HasCycle || stopCondition == "max_turns"
 	exitReason := "no_ready"
 	for len(actionable) > 0 {
 		if time.Now().After(deadline) {
@@ -227,7 +252,7 @@ func (s *Server) runWorkflowSession(
 			exitReason = "turn_cap"
 			break
 		}
-		ready := workflowReadyNodes(actionable, preds, completeVersion, retryRequested, nodeTurnState, sccByNode)
+		ready := workflowReadyNodes(actionable, graph.Preds, completeVersion, retryRequested, nodeTurnState, graph.SCCByNode)
 		if len(ready) == 0 {
 			exitReason = "no_ready"
 			break
@@ -247,8 +272,8 @@ func (s *Server) runWorkflowSession(
 				st.StartedAt = time.Now().UTC().Format(time.RFC3339)
 				st.Error = ""
 			}
-			upstream := make([]string, 0, len(preds[node.ID]))
-			for _, dep := range preds[node.ID] {
+			upstream := make([]string, 0, len(graph.Preds[node.ID]))
+			for _, dep := range graph.Preds[node.ID] {
 				version := completeVersion[dep]
 				lastConsumed := 0
 				if ts != nil {
@@ -371,9 +396,9 @@ func (s *Server) runWorkflowSession(
 	workflowMarkUnfinishedNodesBlocked(state, exitReason)
 
 	unreachable := workflowUnreachedActionableNodes(actionable, runVersion)
-	blockedByNeverRunDeps := workflowNodesBlockedByNeverRunDeps(unreachable, preds, runVersion, sccByNode)
+	blockedByNeverRunDeps := workflowNodesBlockedByNeverRunDeps(unreachable, graph.Preds, runVersion, graph.SCCByNode)
 	if exitReason == "no_ready" && len(blockedByNeverRunDeps) > 0 {
-		diagnostic := workflowPendingDependencyDiagnostic(blockedByNeverRunDeps, preds, runVersion, sccByNode)
+		diagnostic := workflowPendingDependencyDiagnostic(blockedByNeverRunDeps, graph.Preds, runVersion, graph.SCCByNode)
 		now := time.Now().UTC().Format(time.RFC3339)
 		for _, nodeID := range blockedByNeverRunDeps {
 			st := state.Nodes[nodeID]
@@ -390,7 +415,7 @@ func (s *Server) runWorkflowSession(
 		return "", llm.TokenUsage{}, errors.New(diagnostic)
 	}
 
-	final := workflowFinalOutput(def, outputs, succ)
+	final := workflowFinalOutput(def, outputs, graph.Succ)
 	if stopCondition == "judge" && judgeID != "" && !workflowJudgeApproved(outputs[judgeID]) {
 		if workflowStateHasBlockedOrInProgressNode(state) {
 			state.Status = "blocked"
@@ -1020,8 +1045,11 @@ func composeWorkflowNodePromptForChild(parent *session.Session, def *workflowDef
 }
 
 func composeWorkflowNodePromptWithContext(def *workflowDefinitionRuntime, node workflowNodeRuntime, userMessage string, upstreamOutputs []string, previousNodeOutput string, contextText string, fullContext bool, requiresToolEvidence bool) string {
-	name := strings.TrimSpace(def.Name)
-	if name == "" {
+	name := ""
+	if def != nil {
+		name = strings.TrimSpace(def.Name)
+	}
+	if name == "" && def != nil {
 		name = strings.TrimSpace(def.ID)
 	}
 	var b strings.Builder
@@ -1589,7 +1617,7 @@ func workflowHasCycle(
 func workflowReadyNodes(
 	actionable map[string]workflowNodeRuntime,
 	preds map[string][]string,
-	runVersion map[string]int,
+	completedVersion map[string]int,
 	retryRequested map[string]bool,
 	nodeTurnState map[string]*workflowTurnNodeState,
 	sccByNode map[string]int,
@@ -1609,7 +1637,7 @@ func workflowReadyNodes(
 		hasNewInput := false
 
 		for _, dep := range preds[nodeID] {
-			depVersion := runVersion[dep]
+			depVersion := completedVersion[dep]
 			if depVersion > 0 {
 				hasInput = true
 			}

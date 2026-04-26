@@ -163,6 +163,23 @@ func TestComposeWorkflowNodePromptStripsControlLinesFromInputs(t *testing.T) {
 	}
 }
 
+func TestComposeWorkflowNodePromptWithContextAllowsNilDefinition(t *testing.T) {
+	node := workflowNodeRuntime{
+		ID:    "worker",
+		Label: "Worker",
+		Kind:  "main",
+	}
+
+	prompt := composeWorkflowNodePromptWithContext(nil, node, "summarize the plan", nil, "", "", false, false)
+
+	if !strings.Contains(prompt, "Node: Worker") {
+		t.Fatalf("expected prompt to include node label, got: %s", prompt)
+	}
+	if strings.Contains(prompt, "Workflow:") {
+		t.Fatalf("did not expect empty workflow heading for nil definition, got: %s", prompt)
+	}
+}
+
 func TestWorkflowCleanNodeOutputForHandoffStripsControlLines(t *testing.T) {
 	output := "work done\nNODE_STATUS: COMPLETE\n\nVERDICT: APPROVED\nnext detail"
 	clean := workflowCleanNodeOutputForHandoff(output)
@@ -259,6 +276,48 @@ func TestComposeWorkflowNodePromptGuidesOrchestratorNode(t *testing.T) {
 	}
 }
 
+func TestNewWorkflowGraphIgnoresMalformedEdges(t *testing.T) {
+	def := &workflowDefinitionRuntime{
+		Nodes: []workflowNodeRuntime{
+			{ID: "user", Kind: "user"},
+			{ID: "builder", Kind: "main"},
+			{ID: "critic", Kind: "subagent"},
+		},
+		Edges: []workflowEdgeRuntime{
+			{From: "user", To: "builder"},
+			{From: "builder", To: "critic"},
+			{From: "missing", To: "critic"},
+			{From: "builder", To: "missing"},
+			{From: "", To: "critic"},
+		},
+	}
+
+	graph := newWorkflowGraph(def)
+
+	if graph.HasCycle {
+		t.Fatal("did not expect an acyclic graph to report a cycle")
+	}
+	if got := graph.Preds["critic"]; len(got) != 1 || got[0] != "builder" {
+		t.Fatalf("expected only valid builder predecessor for critic, got %#v", got)
+	}
+	if got := graph.Succ["builder"]; len(got) != 1 || got[0] != "critic" {
+		t.Fatalf("expected only valid critic successor for builder, got %#v", got)
+	}
+}
+
+func TestNewWorkflowGraphDetectsSelfCycle(t *testing.T) {
+	def := &workflowDefinitionRuntime{
+		Nodes: []workflowNodeRuntime{{ID: "worker", Kind: "main"}},
+		Edges: []workflowEdgeRuntime{{From: "worker", To: "worker"}},
+	}
+
+	graph := newWorkflowGraph(def)
+
+	if !graph.HasCycle {
+		t.Fatal("expected self-edge to be detected as a cycle")
+	}
+}
+
 func TestWorkflowReadyNodesWaitsForCompleteUpstream(t *testing.T) {
 	nodes := []workflowNodeRuntime{
 		{ID: "user", Kind: "user"},
@@ -326,6 +385,31 @@ func TestWorkflowReadyNodesRetriesInProgressNode(t *testing.T) {
 	ready := workflowReadyNodes(actionable, preds, map[string]int{"user": 1}, map[string]bool{"builder": true}, turnState, sccByNode)
 	if len(ready) != 1 || ready[0].ID != "builder" {
 		t.Fatalf("expected in-progress builder to be retried, got %#v", ready)
+	}
+}
+
+func TestWorkflowNodesBlockedByNeverRunDepsIgnoresCycleInternalDeps(t *testing.T) {
+	unreached := []string{"worker", "critic", "reporter"}
+	preds := map[string][]string{
+		"worker":   {"critic"},
+		"critic":   {"worker"},
+		"reporter": {"never-ran"},
+	}
+	sccByNode := map[string]int{
+		"worker":    1,
+		"critic":    1,
+		"reporter":  2,
+		"never-ran": 3,
+	}
+
+	blocked := workflowNodesBlockedByNeverRunDeps(unreached, preds, map[string]int{"worker": 0, "critic": 0, "reporter": 0}, sccByNode)
+
+	if len(blocked) != 1 || blocked[0] != "reporter" {
+		t.Fatalf("expected only reporter to be blocked by an external never-run dep, got %#v", blocked)
+	}
+	diagnostic := workflowPendingDependencyDiagnostic(blocked, preds, map[string]int{}, sccByNode)
+	if !strings.Contains(diagnostic, "reporter<-never-ran") {
+		t.Fatalf("expected diagnostic to name missing dependency, got %q", diagnostic)
 	}
 }
 

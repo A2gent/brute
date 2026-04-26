@@ -1535,10 +1535,36 @@ func workflowJudgeApproved(output string) bool {
 	if upper == "" {
 		return false
 	}
+	rejectedPhrases := []string{
+		"VERDICT: REJECTED",
+		"NOT APPROVED",
+		"NEEDS CHANGES",
+		"CHANGES REQUESTED",
+		"REQUEST CHANGES",
+	}
+	for _, phrase := range rejectedPhrases {
+		if strings.Contains(upper, phrase) {
+			return false
+		}
+	}
 	if strings.Contains(upper, "VERDICT: APPROVED") {
 		return true
 	}
-	return strings.Contains(upper, "LGTM")
+	approvedPhrases := []string{
+		"LGTM",
+		"APPROVED",
+		"SUCCESSFULLY VERIFIED",
+		"VERIFIED AND CONFIRMED",
+		"CONFIRMED TO BUILD",
+		"BUILD CONFIRMED",
+		"NO BLOCKING ISSUES",
+	}
+	for _, phrase := range approvedPhrases {
+		if strings.Contains(upper, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 func workflowSCC(nodes []workflowNodeRuntime, succ map[string][]string) (map[string]int, map[int]int) {

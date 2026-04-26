@@ -685,3 +685,28 @@ func TestWorkflowNodeWorkStatusForSessionAllowsCriticWithoutTools(t *testing.T) 
 		t.Fatalf("expected critic completion without tool activity to be accepted, got %q", got)
 	}
 }
+
+func TestWorkflowJudgeApprovedAcceptsNaturalReviewSuccess(t *testing.T) {
+	output := "The implementation has been successfully verified, corrected for performance and layout issues, and confirmed to build."
+
+	if !workflowJudgeApproved(output) {
+		t.Fatal("expected natural review success text to approve the workflow")
+	}
+}
+
+func TestWorkflowJudgeApprovedRejectsExplicitChangeRequests(t *testing.T) {
+	cases := []string{
+		"VERDICT: REJECTED\nTests are failing.",
+		"Not approved: please fix the failing build.",
+		"Needs changes before this can land.",
+		"No blocking issues remain, but changes requested by product.",
+	}
+
+	for _, tc := range cases {
+		t.Run(tc, func(t *testing.T) {
+			if workflowJudgeApproved(tc) {
+				t.Fatalf("expected explicit rejection to remain unapproved: %q", tc)
+			}
+		})
+	}
+}

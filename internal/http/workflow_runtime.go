@@ -83,12 +83,14 @@ type workflowRuntimeState struct {
 }
 
 type workflowNodeResult struct {
-	nodeID         string
-	nodeLabel      string
-	childSessionID string
-	output         string
-	workStatus     string
-	err            error
+	nodeID                  string
+	nodeLabel               string
+	childSessionID          string
+	output                  string
+	emptyHandoff            bool
+	newModificationActivity bool
+	workStatus              string
+	err                     error
 }
 
 type workflowTurnNodeState struct {
@@ -288,15 +290,26 @@ func (s *Server) runWorkflowSession(
 			wg.Add(1)
 			go func(child *session.Session, upstream []string, previousNodeOutput string) {
 				defer wg.Done()
+				modificationActivityBefore := workflowSessionModificationActivityCount(child)
 				output, childSessionID, err := s.executeWorkflowNode(ctx, sess, def, node, userMessage, upstream, previousNodeOutput, child)
+				modificationActivityAfter := workflowSessionModificationActivityCount(child)
 				cleanOutput := workflowCleanNodeOutputForHandoff(output)
+				emptyHandoff := strings.TrimSpace(cleanOutput) == ""
+				if emptyHandoff {
+					cleanOutput = workflowLatestMeaningfulAssistantOutput(child)
+				}
+				if strings.TrimSpace(cleanOutput) == "" {
+					cleanOutput = workflowCleanNodeOutputForHandoff(previousNodeOutput)
+				}
 				results <- workflowNodeResult{
-					nodeID:         node.ID,
-					nodeLabel:      node.Label,
-					childSessionID: childSessionID,
-					output:         cleanOutput,
-					workStatus:     workflowNodeWorkStatusForSession(node, output, child, userMessage),
-					err:            err,
+					nodeID:                  node.ID,
+					nodeLabel:               node.Label,
+					childSessionID:          childSessionID,
+					output:                  cleanOutput,
+					emptyHandoff:            emptyHandoff,
+					newModificationActivity: modificationActivityAfter > modificationActivityBefore,
+					workStatus:              workflowNodeWorkStatusForSession(node, output, child, userMessage),
+					err:                     err,
 				}
 			}(child, upstream, previousNodeOutput)
 		}
@@ -320,9 +333,9 @@ func (s *Server) runWorkflowSession(
 			}
 			switch result.workStatus {
 			case "in_progress":
-				if strings.TrimSpace(result.output) == "" && nodeTurnState[result.nodeID] != nil && nodeTurnState[result.nodeID].RunCount > 0 {
+				if result.emptyHandoff && nodeTurnState[result.nodeID] != nil && nodeTurnState[result.nodeID].RunCount > 0 && !result.newModificationActivity {
 					st.Status = "blocked"
-					st.Error = "Node returned only workflow status without producing a usable handoff."
+					st.Error = "Node returned only workflow status on retry without producing a new usable handoff or file edit."
 				} else {
 					st.Status = "in_progress"
 					retryRequested[result.nodeID] = true
@@ -342,6 +355,7 @@ func (s *Server) runWorkflowSession(
 			if ts := nodeTurnState[result.nodeID]; ts != nil {
 				ts.RunCount++
 			}
+			s.syncWorkflowChildSessionStatus(result.childSessionID, st.Status)
 		}
 		if err := s.persistWorkflowState(sess, state, emit); err != nil {
 			return "", llm.TokenUsage{}, err
@@ -353,6 +367,8 @@ func (s *Server) runWorkflowSession(
 			}
 		}
 	}
+
+	workflowMarkUnfinishedNodesBlocked(state, exitReason)
 
 	unreachable := workflowUnreachedActionableNodes(actionable, runVersion)
 	blockedByNeverRunDeps := workflowNodesBlockedByNeverRunDeps(unreachable, preds, runVersion, sccByNode)
@@ -476,6 +492,29 @@ func (s *Server) executeWorkflowNode(
 		_ = s.sessionManager.Save(child)
 	}
 	return strings.TrimSpace(content), child.ID, nil
+}
+
+func (s *Server) syncWorkflowChildSessionStatus(childSessionID string, nodeStatus string) {
+	childSessionID = strings.TrimSpace(childSessionID)
+	if childSessionID == "" {
+		return
+	}
+	child, err := s.sessionManager.Get(childSessionID)
+	if err != nil || child == nil {
+		return
+	}
+	next := session.StatusCompleted
+	switch strings.ToLower(strings.TrimSpace(nodeStatus)) {
+	case "failed":
+		next = session.StatusFailed
+	case "blocked", "in_progress", "running":
+		next = session.StatusPaused
+	}
+	if child.Status == next {
+		return
+	}
+	child.SetStatus(next)
+	_ = s.sessionManager.Save(child)
 }
 
 func workflowNodePromptMessageMetadata(parent *session.Session, def *workflowDefinitionRuntime, node workflowNodeRuntime) map[string]interface{} {
@@ -896,6 +935,7 @@ func workflowBlockedFinalOutput(def *workflowDefinitionRuntime, state *workflowR
 		}
 	}
 	blocked := make([]string, 0)
+	details := make([]string, 0)
 	for nodeID, node := range state.Nodes {
 		if node == nil {
 			continue
@@ -909,12 +949,61 @@ func workflowBlockedFinalOutput(def *workflowDefinitionRuntime, state *workflowR
 			label = nodeID
 		}
 		blocked = append(blocked, fmt.Sprintf("%s (%s)", label, status))
+		if errText := strings.TrimSpace(node.Error); errText != "" {
+			details = append(details, fmt.Sprintf("%s: %s", label, errText))
+		}
+		if previewText := strings.TrimSpace(node.OutputPreview); previewText != "" {
+			details = append(details, fmt.Sprintf("%s last output: %s", label, preview(previewText, 500)))
+		}
 	}
 	sort.Strings(blocked)
 	if len(blocked) == 0 {
 		return "Workflow paused before completing."
 	}
-	return "Workflow paused before completing. Waiting on: " + strings.Join(blocked, ", ") + "."
+	sort.Strings(details)
+	message := "Workflow paused before completing. Waiting on: " + strings.Join(blocked, ", ") + "."
+	if len(details) > 0 {
+		message += "\n\n" + strings.Join(details, "\n")
+	}
+	return message
+}
+
+func workflowMarkUnfinishedNodesBlocked(state *workflowRuntimeState, exitReason string) {
+	if state == nil {
+		return
+	}
+	reason := workflowExitReasonMessage(exitReason)
+	if reason == "" {
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, node := range state.Nodes {
+		if node == nil {
+			continue
+		}
+		status := strings.ToLower(strings.TrimSpace(node.Status))
+		if status != "in_progress" && status != "running" {
+			continue
+		}
+		node.Status = "blocked"
+		node.CompletedAt = now
+		if strings.TrimSpace(node.Error) == "" {
+			node.Error = reason
+		}
+	}
+}
+
+func workflowExitReasonMessage(exitReason string) string {
+	switch strings.ToLower(strings.TrimSpace(exitReason)) {
+	case "turn_cap":
+		return "Workflow turn limit reached before this node produced a complete handoff."
+	case "timebox":
+		return "Workflow timebox expired before this node produced a complete handoff."
+	case "no_ready":
+		return "Workflow has no ready nodes left, but this node did not produce a complete handoff."
+	default:
+		return ""
+	}
 }
 
 func composeWorkflowNodePrompt(parent *session.Session, def *workflowDefinitionRuntime, node workflowNodeRuntime, userMessage string, upstreamOutputs []string, previousNodeOutput string) string {
@@ -982,9 +1071,11 @@ func composeWorkflowNodePromptWithContext(def *workflowDefinitionRuntime, node w
 		b.WriteString("\nPrevious output from this same node that was not accepted as a complete handoff:\n")
 		b.WriteString(strings.TrimSpace(previousNodeOutput))
 		b.WriteString("\n")
-		b.WriteString("Continue from that state. Do not repeat the same progress update; perform the remaining work or explain the concrete blocker.\n")
 		if requiresToolEvidence {
-			b.WriteString("Tools are available in this workflow node. If code changes are still needed, call the relevant tools now; do not report that you cannot edit merely because the previous response did not include tool calls.\n")
+			b.WriteString("Continue from that state. Do not repeat the same progress update and do not explain again that edits are needed. Your next step must be to call an editing-capable file tool (`edit`, `write`, `replace_lines`, or `insert_lines`) before returning any final handoff text, unless there is a concrete external blocker unrelated to tool availability.\n")
+			b.WriteString("Tools are available in this workflow node. Do not report that you cannot edit merely because the previous response did not include tool calls.\n")
+		} else {
+			b.WriteString("Continue from that state. Do not repeat the same progress update; perform the remaining work or explain the concrete blocker.\n")
 		}
 	}
 	if def != nil && strings.EqualFold(strings.TrimSpace(def.Policy.StopCondition), "judge") {
@@ -997,7 +1088,7 @@ func composeWorkflowNodePromptWithContext(def *workflowDefinitionRuntime, node w
 	b.WriteString("\nWorkflow handoff status:\n")
 	b.WriteString("Do the node's actual work before handing off. A plan, intention, summary of what you will do, or request to start work is not complete.\n")
 	if requiresToolEvidence {
-		b.WriteString("For implementation nodes, use the available tools to inspect relevant files and make any needed edits before marking complete. You may call tools before producing this node's final textual output. If code changes are requested and you did not use a file editing tool, you must use `NODE_STATUS: IN_PROGRESS` unless there is a real external blocker. A response containing only `NODE_STATUS` is not useful progress; call tools or explain the concrete blocker.\n")
+		b.WriteString("For implementation nodes, use the available tools to inspect relevant files and make needed edits before marking complete. A read-only pass is not enough for an implementation request. If code changes are requested and you did not use an editing-capable file tool (`edit`, `write`, `replace_lines`, or `insert_lines`), you must continue with tool calls instead of returning another textual progress update. `bash`, `git diff`, and `git status` can verify work, but they do not count as file edits for workflow completion. A response containing only `NODE_STATUS` is not useful progress.\n")
 	}
 	b.WriteString("End your response with a final line exactly `NODE_STATUS: COMPLETE` only when this node's concrete deliverable is ready for downstream review or use.\n")
 	b.WriteString("Use `NODE_STATUS: IN_PROGRESS` if more implementation work remains, or `NODE_STATUS: BLOCKED` if you cannot proceed without user input or an external dependency.\n")
@@ -1017,6 +1108,23 @@ func workflowCleanNodeOutputForHandoff(output string) string {
 		cleaned = append(cleaned, line)
 	}
 	return strings.TrimSpace(strings.Join(cleaned, "\n"))
+}
+
+func workflowLatestMeaningfulAssistantOutput(sess *session.Session) string {
+	if sess == nil {
+		return ""
+	}
+	for i := len(sess.Messages) - 1; i >= 0; i-- {
+		msg := sess.Messages[i]
+		if !strings.EqualFold(strings.TrimSpace(msg.Role), "assistant") {
+			continue
+		}
+		cleaned := workflowCleanNodeOutputForHandoff(msg.Content)
+		if strings.TrimSpace(cleaned) != "" {
+			return cleaned
+		}
+	}
+	return ""
 }
 
 func workflowChildContextSeeded(child *session.Session) bool {
@@ -1162,22 +1270,27 @@ func workflowRequestLooksLikeToolWork(userMessage string) bool {
 }
 
 func workflowSessionHasModificationActivity(sess *session.Session) bool {
+	return workflowSessionModificationActivityCount(sess) > 0
+}
+
+func workflowSessionModificationActivityCount(sess *session.Session) int {
 	if sess == nil {
-		return false
+		return 0
 	}
+	count := 0
 	for _, msg := range sess.Messages {
 		for _, call := range msg.ToolCalls {
 			if workflowToolCanModifyFiles(call.Name) {
-				return true
+				count++
 			}
 		}
 		for _, result := range msg.ToolResults {
 			if workflowToolCanModifyFiles(result.Name) {
-				return true
+				count++
 			}
 		}
 	}
-	return false
+	return count
 }
 
 func workflowToolCanModifyFiles(name string) bool {

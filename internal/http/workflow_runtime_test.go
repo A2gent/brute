@@ -477,7 +477,7 @@ func TestWorkflowBlockedFinalOutputExplainsPausedWorkflow(t *testing.T) {
 	}
 	state := &workflowRuntimeState{
 		Nodes: map[string]*workflowRuntimeNodeState{
-			"main":   {Status: "in_progress"},
+			"main":   {Status: "in_progress", Error: "Need another pass", OutputPreview: "Partial handoff"},
 			"worker": {Status: "pending"},
 		},
 	}
@@ -486,6 +486,9 @@ func TestWorkflowBlockedFinalOutputExplainsPausedWorkflow(t *testing.T) {
 	if !strings.Contains(got, "Workflow paused before completing") || !strings.Contains(got, "Main agent (in_progress)") {
 		t.Fatalf("unexpected blocked final output: %s", got)
 	}
+	if !strings.Contains(got, "Need another pass") || !strings.Contains(got, "Partial handoff") {
+		t.Fatalf("expected blocked output to include details, got: %s", got)
+	}
 }
 
 func TestWorkflowBareStatusRetryPromptGuidesContinuation(t *testing.T) {
@@ -493,6 +496,79 @@ func TestWorkflowBareStatusRetryPromptGuidesContinuation(t *testing.T) {
 
 	if !strings.Contains(got, "previously returned only workflow status") || !strings.Contains(got, "editing tools") {
 		t.Fatalf("unexpected retry prompt: %s", got)
+	}
+}
+
+func TestComposeWorkflowNodePromptForImplementationRetryRequiresEditTool(t *testing.T) {
+	def := &workflowDefinitionRuntime{Name: "review"}
+	node := workflowNodeRuntime{
+		ID:    "developer",
+		Label: "developer",
+		Kind:  "subagent",
+	}
+
+	prompt := composeWorkflowNodePromptWithContext(def, node, "please implement tracing in code", nil, "I only read files so far.", "", false, true)
+
+	if !strings.Contains(prompt, "Your next step must be to call an editing-capable file tool") {
+		t.Fatalf("expected retry prompt to require editing-capable tool, got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "`bash`, `git diff`, and `git status` can verify work, but they do not count as file edits") {
+		t.Fatalf("expected implementation retry to reject bash as editing evidence, got: %s", prompt)
+	}
+	if strings.Contains(prompt, "perform the remaining work or explain the concrete blocker") {
+		t.Fatalf("expected implementation retry to avoid permissive blocker wording, got: %s", prompt)
+	}
+}
+
+func TestWorkflowLatestMeaningfulAssistantOutputSkipsBareStatus(t *testing.T) {
+	child := session.New("worker")
+	child.AddAssistantMessage("Useful investigation notes.\nNODE_STATUS: IN_PROGRESS", nil)
+	child.AddAssistantMessage("NODE_STATUS: IN_PROGRESS", nil)
+
+	got := workflowLatestMeaningfulAssistantOutput(child)
+	if got != "Useful investigation notes." {
+		t.Fatalf("expected latest meaningful output, got %q", got)
+	}
+}
+
+func TestWorkflowSessionModificationActivityCountCountsOnlyEditTools(t *testing.T) {
+	child := session.New("worker")
+	child.AddAssistantMessage("", []session.ToolCall{
+		{Name: "read"},
+		{Name: "bash"},
+		{Name: "edit"},
+		{Name: "insert_lines"},
+	})
+	child.AddToolResult([]session.ToolResult{
+		{Name: "grep"},
+		{Name: "replace_lines"},
+		{Name: "write"},
+	})
+
+	if got := workflowSessionModificationActivityCount(child); got != 4 {
+		t.Fatalf("expected 4 modification activities, got %d", got)
+	}
+}
+
+func TestWorkflowMarkUnfinishedNodesBlockedExplainsTurnCap(t *testing.T) {
+	state := &workflowRuntimeState{
+		Nodes: map[string]*workflowRuntimeNodeState{
+			"worker": {Status: "in_progress", OutputPreview: "Read-only progress"},
+			"critic": {Status: "pending"},
+		},
+	}
+
+	workflowMarkUnfinishedNodesBlocked(state, "turn_cap")
+
+	worker := state.Nodes["worker"]
+	if worker.Status != "blocked" {
+		t.Fatalf("expected worker to be blocked, got %q", worker.Status)
+	}
+	if !strings.Contains(worker.Error, "turn limit") {
+		t.Fatalf("expected turn-limit error, got %q", worker.Error)
+	}
+	if state.Nodes["critic"].Status != "pending" {
+		t.Fatalf("expected pending node to remain pending, got %q", state.Nodes["critic"].Status)
 	}
 }
 

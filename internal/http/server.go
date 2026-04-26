@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -3727,7 +3728,7 @@ func (s *Server) ensureSessionSystemPromptSnapshot(sess *session.Session) *syste
 	}
 	thinkingBlocks := resolveThinkingInstructionBlocksFromSettings(settings)
 
-	if snapshot := sessionSystemPromptSnapshot(sess); snapshot != nil {
+	if snapshot := sessionSystemPromptSnapshot(sess); snapshot != nil && snapshotHasEnvironmentContext(snapshot) {
 		if resolvedSubAgent != nil {
 			subAgentIdentity := fmt.Sprintf(`You are a sub-agent named "%s".`, strings.TrimSpace(resolvedSubAgent.Name))
 			if strings.Contains(snapshot.BasePrompt, subAgentIdentity) || strings.Contains(snapshot.CombinedPrompt, subAgentIdentity) {
@@ -3797,29 +3798,62 @@ func (s *Server) composeSystemPromptSnapshot(sess *session.Session) *systemPromp
 	return s.composeSystemPromptSnapshotWithSettings(sess, settings)
 }
 
-func (s *Server) resolveProjectContextSection(sess *session.Session) (string, int) {
-	if sess == nil || sess.ProjectID == nil {
-		return "", 0
+func (s *Server) resolveEnvironmentContextSection(sess *session.Session) (string, int) {
+	now := time.Now()
+	workDir := absoluteCleanPath(strings.TrimSpace(s.config.WorkDir), ".")
+	projectName := ""
+	projectID := ""
+	projectRoot := ""
+	if sess != nil && sess.ProjectID != nil {
+		projectID = strings.TrimSpace(*sess.ProjectID)
+		if projectID != "" {
+			if project, err := s.store.GetProject(projectID); err == nil && project != nil {
+				projectName = strings.TrimSpace(project.Name)
+				if project.Folder != nil {
+					projectRoot = absoluteCleanPath(strings.TrimSpace(*project.Folder), workDir)
+				}
+			}
+		}
 	}
-	projectID := strings.TrimSpace(*sess.ProjectID)
-	if projectID == "" {
-		return "", 0
-	}
-	project, err := s.store.GetProject(projectID)
-	if err != nil || project == nil {
-		return "", 0
-	}
-	if project.Folder == nil || *project.Folder == "" {
-		return "", 0
-	}
+
 	var sb strings.Builder
-	sb.WriteString("Project context:\n")
-	sb.WriteString(fmt.Sprintf("- Project: %s\n", project.Name))
-	sb.WriteString("- Associated folder:\n")
-	sb.WriteString(fmt.Sprintf("  - %s\n", *project.Folder))
-	sb.WriteString("\nWhen working on this project, prefer operating within the associated folder above.")
-	content := sb.String()
+	sb.WriteString("Environment context:\n")
+	sb.WriteString(fmt.Sprintf("- Operating system: %s/%s\n", runtime.GOOS, runtime.GOARCH))
+	sb.WriteString(fmt.Sprintf("- Current time: %s (%s)\n", now.Format(time.RFC3339), now.Location().String()))
+	if workDir != "" {
+		sb.WriteString(fmt.Sprintf("- Server working directory: %s\n", workDir))
+	}
+	if projectID != "" {
+		sb.WriteString(fmt.Sprintf("- Project ID: %s\n", projectID))
+	}
+	if projectName != "" {
+		sb.WriteString(fmt.Sprintf("- Project name: %s\n", projectName))
+	}
+	if projectRoot != "" {
+		sb.WriteString(fmt.Sprintf("- Project root: %s\n", projectRoot))
+		sb.WriteString("\nWhen working on files for this session, operate within the project root above unless the user explicitly asks for a different location. The project root may contain multiple components; inspect it before concluding a requested app or package is unavailable.")
+	} else {
+		sb.WriteString("\nNo project root is associated with this session. Use the server working directory as the default file scope.")
+	}
+	content := strings.TrimSpace(sb.String())
 	return content, estimateTokensApprox(content)
+}
+
+func absoluteCleanPath(path string, base string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if !filepath.IsAbs(path) {
+		if strings.TrimSpace(base) == "" {
+			base = "."
+		}
+		path = filepath.Join(base, path)
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	return filepath.Clean(path)
 }
 
 func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, settings map[string]string) *systemPromptSnapshot {
@@ -4056,16 +4090,16 @@ func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, 
 		}
 	}
 
-	// Inject project context as the first section if a project is associated
-	projectContext, projectContextTokens := s.resolveProjectContextSection(sess)
-	if projectContext != "" {
-		appendSections = append([]string{projectContext}, appendSections...)
+	// Inject environment/project context as the first section.
+	environmentContext, environmentContextTokens := s.resolveEnvironmentContextSection(sess)
+	if environmentContext != "" {
+		appendSections = append([]string{environmentContext}, appendSections...)
 		resolvedBlocks = append([]systemPromptBlockSnapshot{{
-			Type:            "project_context",
+			Type:            "environment_context",
 			Value:           "",
 			Enabled:         true,
-			ResolvedContent: projectContext,
-			EstimatedTokens: projectContextTokens,
+			ResolvedContent: environmentContext,
+			EstimatedTokens: environmentContextTokens,
 		}}, resolvedBlocks...)
 	}
 
@@ -4236,6 +4270,18 @@ func snapshotHasThinkingBlocks(snapshot *systemPromptSnapshot) bool {
 		}
 	}
 	return false
+}
+
+func snapshotHasEnvironmentContext(snapshot *systemPromptSnapshot) bool {
+	if snapshot == nil {
+		return false
+	}
+	for _, block := range snapshot.Blocks {
+		if strings.TrimSpace(block.Type) == "environment_context" {
+			return true
+		}
+	}
+	return strings.Contains(snapshot.CombinedPrompt, "Environment context:")
 }
 
 func resolveMainAgentBasePrompt(settings map[string]string) string {
@@ -4500,8 +4546,8 @@ func (s *Server) resolveSubAgentsSection() (string, int) {
 // composeSubAgentSystemPromptSnapshot builds a system prompt snapshot for a
 // sub-agent using its own instruction blocks configuration. It follows the same
 // block-resolution logic as the main agent but uses a sub-agent-specific base
-// prompt and omits thinking blocks, project context, project_agents_md, and the
-// sub-agents listing (to prevent recursion).
+// prompt and omits thinking blocks, project_agents_md, and the sub-agents
+// listing (to prevent recursion).
 func (s *Server) composeSubAgentSystemPromptSnapshot(sa *storage.SubAgent, sess *session.Session) *systemPromptSnapshot {
 	rawBlocks := strings.TrimSpace(sa.InstructionBlocks)
 	blocks := []configuredInstructionBlock{}
@@ -4598,6 +4644,18 @@ Guidelines:
 	settings, _ := s.store.GetSettings()
 	if settings == nil {
 		settings = map[string]string{}
+	}
+
+	environmentContext, environmentContextTokens := s.resolveEnvironmentContextSection(sess)
+	if environmentContext != "" {
+		appendSections = append(appendSections, environmentContext)
+		resolvedBlocks = append(resolvedBlocks, systemPromptBlockSnapshot{
+			Type:            "environment_context",
+			Value:           "",
+			Enabled:         true,
+			ResolvedContent: environmentContext,
+			EstimatedTokens: environmentContextTokens,
+		})
 	}
 
 	for _, block := range blocks {

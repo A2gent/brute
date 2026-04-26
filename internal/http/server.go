@@ -1560,10 +1560,17 @@ func (s *Server) handleListOpenAIModels(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleListOpenAICodexModels(w http.ResponseWriter, r *http.Request) {
 	// Codex OAuth does not expose a public models listing endpoint like standard OpenAI API.
-	// Return a curated list of known Codex-capable models instead.
+	// Return a curated best-first list that combines current frontier models with Codex-specific IDs.
 	s.jsonResponse(w, http.StatusOK, ListProviderModelsResponse{
 		Models: []string{
+			"gpt-5.5",
+			"gpt-5.5-pro",
+			"gpt-5.4",
+			"gpt-5.4-pro",
+			"gpt-5.4-mini",
+			"gpt-5.4-nano",
 			"gpt-5.3-codex",
+			"gpt-5.2",
 			"gpt-5.2-codex",
 			"gpt-5.1-codex",
 			"gpt-5.1-codex-max",

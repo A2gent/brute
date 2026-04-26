@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -230,11 +231,52 @@ func LogResponseWithContent(inputTokens, outputTokens int, toolCallCount int, co
 
 // LogToolExecution logs tool execution
 func LogToolExecution(toolName string, success bool, duration time.Duration) {
-	if success {
-		Debug("Tool executed: name=%s duration=%v", toolName, duration)
-	} else {
-		Warn("Tool failed: name=%s duration=%v", toolName, duration)
+	status := "ok"
+	if !success {
+		status = "error"
 	}
+	LogOperationTiming(OperationTimingEvent{
+		Kind:       "tool_call",
+		Name:       toolName,
+		Status:     status,
+		DurationMs: duration.Milliseconds(),
+	})
+}
+
+// OperationTimingEvent is a structured timing record for long-running operations.
+type OperationTimingEvent struct {
+	OperationID string                 `json:"operation_id,omitempty"`
+	SessionID   string                 `json:"session_id,omitempty"`
+	MessageID   string                 `json:"message_id,omitempty"`
+	AgentID     string                 `json:"agent_id,omitempty"`
+	Kind        string                 `json:"kind"`
+	Name        string                 `json:"name"`
+	Status      string                 `json:"status"`
+	StartedAt   string                 `json:"started_at,omitempty"`
+	FinishedAt  string                 `json:"finished_at,omitempty"`
+	DurationMs  int64                  `json:"duration_ms"`
+	Meta        map[string]interface{} `json:"meta,omitempty"`
+	Error       map[string]string      `json:"error,omitempty"`
+}
+
+// LogOperationTiming writes a structured timing event into brute logs.
+func LogOperationTiming(event OperationTimingEvent) {
+	if event.Kind == "" || event.Name == "" {
+		Warn("operation_timing skipped: missing kind or name")
+		return
+	}
+	if event.Status == "" {
+		event.Status = "ok"
+	}
+	if event.DurationMs < 0 {
+		event.DurationMs = 0
+	}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		Warn("operation_timing marshal failed: %v", err)
+		return
+	}
+	Info("operation_timing %s", string(payload))
 }
 
 // LogSession logs session events

@@ -165,16 +165,16 @@ func SupportedProviders() []ProviderDefinition {
 			DisplayName:   "OpenAI",
 			DefaultURL:    "https://api.openai.com/v1",
 			RequiresKey:   true,
-			DefaultModel:  "gpt-4.1-mini",
-			ContextWindow: 128000,
+			DefaultModel:  "gpt-5.5",
+			ContextWindow: 1000000,
 		},
 		{
 			Type:          ProviderOpenAICodex,
 			DisplayName:   "OpenAI (Codex OAuth)",
 			DefaultURL:    "https://chatgpt.com/backend-api/codex",
 			RequiresKey:   true,
-			DefaultModel:  "gpt-5.3-codex",
-			ContextWindow: 400000,
+			DefaultModel:  "gpt-5.5",
+			ContextWindow: 1000000,
 		},
 	}
 }

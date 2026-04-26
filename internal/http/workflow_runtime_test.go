@@ -292,6 +292,32 @@ func TestWorkflowNodeWorkStatusForSessionRetriesFalseToolAccessBlocker(t *testin
 	}
 }
 
+func TestWorkflowNodeWorkStatusForSessionRetriesBareBlockedImplementation(t *testing.T) {
+	node := workflowNodeRuntime{
+		ID:    "n-main",
+		Label: "Main agent",
+		Kind:  "main",
+	}
+	child := session.New("build")
+	child.AddUserMessage("implement it")
+	child.AddAssistantMessage("", []session.ToolCall{{ID: "tc-1", Name: "read"}})
+
+	if got := workflowNodeWorkStatusForSession(node, "NODE_STATUS: BLOCKED", child, "please implement tracing in go code"); got != "in_progress" {
+		t.Fatalf("expected bare implementation blocker to be retried, got %q", got)
+	}
+}
+
+func TestWorkflowStateHasBlockedOrInProgressNode(t *testing.T) {
+	state := &workflowRuntimeState{
+		Nodes: map[string]*workflowRuntimeNodeState{
+			"main": {Status: "in_progress"},
+		},
+	}
+	if !workflowStateHasBlockedOrInProgressNode(state) {
+		t.Fatal("expected in-progress node to keep workflow unfinished")
+	}
+}
+
 func TestWorkflowNodeWorkStatusForSessionAllowsNonCodeMainWithoutTools(t *testing.T) {
 	node := workflowNodeRuntime{
 		ID:    "n-main",

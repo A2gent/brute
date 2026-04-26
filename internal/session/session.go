@@ -132,6 +132,13 @@ func (s *Session) AddUserMessage(content string) {
 
 // AddUserMessageWithImages adds a user message with optional image attachments.
 func (s *Session) AddUserMessageWithImages(content string, images []ImageAttachment) {
+	s.AddUserMessageWithImagesAndMetadata(content, images, nil)
+}
+
+// AddUserMessageWithImagesAndMetadata adds a user-role message with optional images and metadata.
+// The role remains "user" because LLM providers expect delegated tasks as user input, but
+// metadata lets the UI distinguish real user text from internal handoffs.
+func (s *Session) AddUserMessageWithImagesAndMetadata(content string, images []ImageAttachment, metadata map[string]interface{}) {
 	if s.Title == "" {
 		title := titleFromFirstPrompt(content)
 		if title == "" && len(images) > 0 {
@@ -141,9 +148,10 @@ func (s *Session) AddUserMessageWithImages(content string, images []ImageAttachm
 	}
 
 	s.AddMessage(Message{
-		Role:    "user",
-		Content: content,
-		Images:  images,
+		Role:     "user",
+		Content:  content,
+		Images:   images,
+		Metadata: metadata,
 	})
 }
 

@@ -2451,7 +2451,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		sess.AddAssistantMessage(content, nil)
-		sess.SetStatus(session.StatusCompleted)
+		sess.SetStatus(workflowSessionStatus(sess))
 		if saveErr := s.sessionManager.Save(sess); saveErr != nil {
 			s.errorResponse(w, http.StatusInternalServerError, "Failed to save workflow response: "+saveErr.Error())
 			return
@@ -2634,7 +2634,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		sess.AddAssistantMessage(content, nil)
-		sess.SetStatus(session.StatusCompleted)
+		sess.SetStatus(workflowSessionStatus(sess))
 		if saveErr := s.sessionManager.Save(sess); saveErr != nil {
 			_ = writeEvent(ChatStreamEvent{
 				Type:   "error",

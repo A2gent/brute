@@ -128,8 +128,15 @@ func (t *delegateToSubAgentTool) Execute(ctx context.Context, params json.RawMes
 		}
 	}
 
-	// Add user message with task
-	childSess.AddUserMessage(task)
+	// Add delegated task as a user-role message for provider compatibility, with
+	// metadata so the UI can show that this came from a parent agent.
+	childSess.AddUserMessageWithImagesAndMetadata(task, nil, map[string]interface{}{
+		"internal_handoff":  true,
+		"handoff_kind":      "subagent_delegation",
+		"parent_session_id": parentSessionID,
+		"sub_agent_id":      sa.ID,
+		"sub_agent_name":    sa.Name,
+	})
 	if err := t.server.sessionManager.Save(childSess); err != nil {
 		logging.Warn("Failed to save child session with initial task: %v", err)
 	}

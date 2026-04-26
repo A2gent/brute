@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -358,12 +359,12 @@ func (s *Server) runWorkflowSession(
 
 	final := workflowFinalOutput(def, outputs, succ)
 	if stopCondition == "judge" && judgeID != "" && !workflowJudgeApproved(outputs[judgeID]) {
-		if workflowStateHasBlockedNode(state) {
+		if workflowStateHasBlockedOrInProgressNode(state) {
 			state.Status = "blocked"
 		} else {
 			state.Status = "failed"
 		}
-	} else if workflowStateHasBlockedNode(state) {
+	} else if workflowStateHasBlockedOrInProgressNode(state) {
 		state.Status = "blocked"
 	} else {
 		state.Status = "completed"
@@ -404,7 +405,7 @@ func (s *Server) executeWorkflowNode(
 	}
 
 	nodePrompt := composeWorkflowNodePrompt(parent, def, node, userMessage, upstreamOutputs, previousNodeOutput)
-	child.AddUserMessage(nodePrompt)
+	child.AddUserMessageWithImagesAndMetadata(nodePrompt, nil, workflowNodePromptMessageMetadata(parent, def, node))
 	child.SetStatus(session.StatusRunning)
 	if err := s.sessionManager.Save(child); err != nil {
 		return "", child.ID, fmt.Errorf("failed to save child prompt: %w", err)
@@ -450,6 +451,25 @@ func (s *Server) executeWorkflowNode(
 		_ = s.sessionManager.Save(child)
 	}
 	return strings.TrimSpace(content), child.ID, nil
+}
+
+func workflowNodePromptMessageMetadata(parent *session.Session, def *workflowDefinitionRuntime, node workflowNodeRuntime) map[string]interface{} {
+	metadata := map[string]interface{}{
+		"internal_handoff":     true,
+		"handoff_kind":         "workflow_node",
+		"workflow_node_id":     node.ID,
+		"workflow_node_label":  node.Label,
+		"workflow_node_kind":   node.Kind,
+		"workflow_parent_role": "workflow",
+	}
+	if parent != nil {
+		metadata["workflow_parent_id"] = parent.ID
+	}
+	if def != nil {
+		metadata["workflow_id"] = def.ID
+		metadata["workflow_name"] = def.Name
+	}
+	return metadata
 }
 
 func (s *Server) workflowNodeChildSession(
@@ -860,7 +880,7 @@ func composeWorkflowNodePrompt(parent *session.Session, def *workflowDefinitionR
 	b.WriteString("\nWorkflow handoff status:\n")
 	b.WriteString("Do the node's actual work before handing off. A plan, intention, summary of what you will do, or request to start work is not complete.\n")
 	if workflowNodeRequiresToolEvidence(node, userMessage) {
-		b.WriteString("For implementation nodes, use the available tools to inspect relevant files and make any needed edits before marking complete. You may call tools before producing this node's final textual output. If code changes are requested and you did not use a file editing tool, you must use `NODE_STATUS: IN_PROGRESS` unless there is a real external blocker.\n")
+		b.WriteString("For implementation nodes, use the available tools to inspect relevant files and make any needed edits before marking complete. You may call tools before producing this node's final textual output. If code changes are requested and you did not use a file editing tool, you must use `NODE_STATUS: IN_PROGRESS` unless there is a real external blocker. A response containing only `NODE_STATUS` is not useful progress; call tools or explain the concrete blocker.\n")
 	}
 	b.WriteString("End your response with a final line exactly `NODE_STATUS: COMPLETE` only when this node's concrete deliverable is ready for downstream review or use.\n")
 	b.WriteString("Use `NODE_STATUS: IN_PROGRESS` if more implementation work remains, or `NODE_STATUS: BLOCKED` if you cannot proceed without user input or an external dependency.\n")
@@ -874,8 +894,10 @@ func workflowNodeWorkStatusForSession(node workflowNodeRuntime, output string, c
 		return status
 	}
 	hasModificationActivity := workflowSessionHasModificationActivity(child)
-	if status == "blocked" && !hasModificationActivity && workflowOutputLooksLikeToolAvailabilityConfusion(output) {
-		return "in_progress"
+	if status == "blocked" && !hasModificationActivity {
+		if workflowOutputLooksLikeToolAvailabilityConfusion(output) || workflowOutputIsBareStatus(output) {
+			return "in_progress"
+		}
 	}
 	if status != "complete" {
 		return status
@@ -1001,16 +1023,59 @@ func workflowOutputLooksLikeToolAvailabilityConfusion(output string) bool {
 	return false
 }
 
-func workflowStateHasBlockedNode(state *workflowRuntimeState) bool {
+func workflowOutputIsBareStatus(output string) bool {
+	lines := strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n")
+	meaningful := 0
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		meaningful++
+		upper := strings.ToUpper(line)
+		if !strings.HasPrefix(upper, "NODE_STATUS:") {
+			return false
+		}
+	}
+	return meaningful > 0
+}
+
+func workflowStateHasBlockedOrInProgressNode(state *workflowRuntimeState) bool {
 	if state == nil {
 		return false
 	}
 	for _, node := range state.Nodes {
-		if node != nil && strings.EqualFold(strings.TrimSpace(node.Status), "blocked") {
+		if node == nil {
+			continue
+		}
+		status := strings.ToLower(strings.TrimSpace(node.Status))
+		if status == "blocked" || status == "in_progress" || status == "running" {
 			return true
 		}
 	}
 	return false
+}
+
+func workflowSessionStatus(sess *session.Session) session.Status {
+	if sess == nil || sess.Metadata == nil {
+		return session.StatusCompleted
+	}
+	raw, ok := sess.Metadata[workflowStateMetadataKey]
+	if !ok {
+		return session.StatusCompleted
+	}
+	state := &workflowRuntimeState{}
+	if b, err := json.Marshal(raw); err == nil {
+		_ = json.Unmarshal(b, state)
+	}
+	switch strings.ToLower(strings.TrimSpace(state.Status)) {
+	case "failed":
+		return session.StatusFailed
+	case "blocked", "in_progress", "running":
+		return session.StatusPaused
+	default:
+		return session.StatusCompleted
+	}
 }
 
 func workflowNodeWorkStatus(output string) string {

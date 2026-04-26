@@ -33,14 +33,19 @@ type workflowDefinitionRuntime struct {
 }
 
 type workflowNodeRuntime struct {
-	ID              string
-	Label           string
-	Kind            string
-	Ref             string
-	SubAgentID      string
-	LocalAgentID    string
-	ExternalAgentID string
-	Instruction     string
+	ID                 string
+	Label              string
+	Kind               string
+	Ref                string
+	SubAgentID         string
+	LocalAgentID       string
+	ExternalAgentID    string
+	Instruction        string
+	WorkerSubAgentID   string
+	WorkerLabel        string
+	ReviewerSubAgentID string
+	ReviewerLabel      string
+	LoopMaxTurns       int
 }
 
 type workflowEdgeRuntime struct {
@@ -619,14 +624,19 @@ func workflowDefinitionFromMetadata(sess *session.Session) (*workflowDefinitionR
 			kind = "main"
 		}
 		def.Nodes = append(def.Nodes, workflowNodeRuntime{
-			ID:              id,
-			Label:           label,
-			Kind:            kind,
-			Ref:             strings.TrimSpace(asWorkflowString(row["ref"])),
-			SubAgentID:      strings.TrimSpace(asWorkflowString(row["subAgentId"])),
-			LocalAgentID:    strings.TrimSpace(asWorkflowString(row["localAgentId"])),
-			ExternalAgentID: strings.TrimSpace(asWorkflowString(row["externalAgentId"])),
-			Instruction:     strings.TrimSpace(asWorkflowString(row["instruction"])),
+			ID:                 id,
+			Label:              label,
+			Kind:               kind,
+			Ref:                strings.TrimSpace(asWorkflowString(row["ref"])),
+			SubAgentID:         strings.TrimSpace(asWorkflowString(row["subAgentId"])),
+			LocalAgentID:       strings.TrimSpace(asWorkflowString(row["localAgentId"])),
+			ExternalAgentID:    strings.TrimSpace(asWorkflowString(row["externalAgentId"])),
+			Instruction:        strings.TrimSpace(asWorkflowString(row["instruction"])),
+			WorkerSubAgentID:   strings.TrimSpace(asWorkflowString(row["workerSubAgentId"])),
+			WorkerLabel:        strings.TrimSpace(asWorkflowString(row["workerLabel"])),
+			ReviewerSubAgentID: strings.TrimSpace(asWorkflowString(row["reviewerSubAgentId"])),
+			ReviewerLabel:      strings.TrimSpace(asWorkflowString(row["reviewerLabel"])),
+			LoopMaxTurns:       asWorkflowInt(row["loopMaxTurns"]),
 		})
 	}
 	if edgesRaw, ok := root["edges"].([]interface{}); ok {
@@ -651,7 +661,90 @@ func workflowDefinitionFromMetadata(sess *session.Session) (*workflowDefinitionR
 	if len(def.Nodes) == 0 {
 		return nil, false
 	}
+	expandReviewLoopNodes(def)
 	return def, true
+}
+
+func expandReviewLoopNodes(def *workflowDefinitionRuntime) {
+	if def == nil {
+		return
+	}
+	nextNodes := make([]workflowNodeRuntime, 0, len(def.Nodes))
+	nextEdges := make([]workflowEdgeRuntime, 0, len(def.Edges))
+	loopByID := map[string]workflowNodeRuntime{}
+	for _, node := range def.Nodes {
+		if strings.EqualFold(strings.TrimSpace(node.Kind), "review_loop") {
+			loopByID[node.ID] = node
+			continue
+		}
+		nextNodes = append(nextNodes, node)
+	}
+	if len(loopByID) == 0 {
+		return
+	}
+	for loopID, loop := range loopByID {
+		workerID := loop.ID + "__worker"
+		reviewerID := loop.ID + "__critic"
+		workerLabel := strings.TrimSpace(loop.WorkerLabel)
+		if workerLabel == "" {
+			workerLabel = "Worker"
+		}
+		reviewerLabel := strings.TrimSpace(loop.ReviewerLabel)
+		if reviewerLabel == "" {
+			reviewerLabel = "Critic"
+		}
+		nextNodes = append(nextNodes,
+			workflowNodeRuntime{
+				ID:          workerID,
+				Label:       workerLabel,
+				Kind:        "subagent",
+				SubAgentID:  strings.TrimSpace(loop.WorkerSubAgentID),
+				Instruction: "Produce the requested work for the review loop. Incorporate critic feedback from prior loop turns before handing off.",
+			},
+			workflowNodeRuntime{
+				ID:          reviewerID,
+				Label:       reviewerLabel,
+				Kind:        "subagent",
+				SubAgentID:  strings.TrimSpace(loop.ReviewerSubAgentID),
+				Instruction: "Review the worker output. If it is acceptable, end with VERDICT: APPROVED. Otherwise give concrete revision feedback and end with VERDICT: REVISE.",
+			},
+		)
+		nextEdges = append(nextEdges,
+			workflowEdgeRuntime{From: workerID, To: reviewerID, Mode: "sequential"},
+			workflowEdgeRuntime{From: reviewerID, To: workerID, Mode: "sequential"},
+		)
+		if def.EntryNodeID == loopID {
+			def.EntryNodeID = workerID
+		}
+		if strings.TrimSpace(def.Policy.JudgeNodeID) == "" || strings.TrimSpace(def.Policy.JudgeNodeID) == loopID {
+			def.Policy.JudgeNodeID = reviewerID
+		}
+		def.Policy.StopCondition = "judge"
+		if loop.LoopMaxTurns > 0 {
+			def.Policy.MaxTurns = loop.LoopMaxTurns
+		}
+	}
+	for _, edge := range def.Edges {
+		from := strings.TrimSpace(edge.From)
+		to := strings.TrimSpace(edge.To)
+		if loop, ok := loopByID[from]; ok {
+			from = loop.ID + "__critic"
+		}
+		if loop, ok := loopByID[to]; ok {
+			to = loop.ID + "__worker"
+		}
+		if from == "" || to == "" {
+			continue
+		}
+		if _, fromWasLoop := loopByID[edge.From]; fromWasLoop {
+			if _, toWasLoop := loopByID[edge.To]; toWasLoop {
+				continue
+			}
+		}
+		nextEdges = append(nextEdges, workflowEdgeRuntime{From: from, To: to, Mode: edge.Mode})
+	}
+	def.Nodes = nextNodes
+	def.Edges = nextEdges
 }
 
 func workflowFinalOutput(def *workflowDefinitionRuntime, outputs map[string]string, succ map[string][]string) string {

@@ -687,19 +687,30 @@ func TestWorkflowNodeWorkStatusForSessionAllowsCriticWithoutTools(t *testing.T) 
 }
 
 func TestWorkflowJudgeApprovedAcceptsNaturalReviewSuccess(t *testing.T) {
-	output := "The implementation has been successfully verified, corrected for performance and layout issues, and confirmed to build."
+	cases := []string{
+		"The implementation has been successfully verified, corrected for performance and layout issues, and confirmed to build.",
+		"The codebase changes successfully implemented the architectural plan outlined.",
+		"Looks good overall. The worker completed the requested changes.",
+		"No blocking issues remain.",
+	}
 
-	if !workflowJudgeApproved(output) {
-		t.Fatal("expected natural review success text to approve the workflow")
+	for _, tc := range cases {
+		t.Run(tc, func(t *testing.T) {
+			if !workflowJudgeApproved(tc) {
+				t.Fatalf("expected natural review success text to approve the workflow: %q", tc)
+			}
+		})
 	}
 }
 
 func TestWorkflowJudgeApprovedRejectsExplicitChangeRequests(t *testing.T) {
 	cases := []string{
 		"VERDICT: REJECTED\nTests are failing.",
+		"VERDICT: REVISE\nPlease address the race condition.",
 		"Not approved: please fix the failing build.",
 		"Needs changes before this can land.",
 		"No blocking issues remain, but changes requested by product.",
+		"I found blocking issues in the implementation.",
 	}
 
 	for _, tc := range cases {

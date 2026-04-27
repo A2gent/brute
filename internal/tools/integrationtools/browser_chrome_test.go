@@ -14,6 +14,49 @@ import (
 	"github.com/go-rod/rod/lib/launcher"
 )
 
+func TestFormatElementsAsTOONIncludesGeometryAndState(t *testing.T) {
+	out := formatElementsAsTOON(map[string]interface{}{
+		"total":   float64(1),
+		"page":    float64(1),
+		"perPage": float64(20),
+		"hasMore": false,
+		"elements": []interface{}{
+			map[string]interface{}{
+				"selector": "#skin_MenuTabs_1 > div:nth-of-type(1)",
+				"tag":      "div",
+				"role":     "tab",
+				"type":     "pointer",
+				"text":     "KLASS(ID)",
+				"x":        float64(78),
+				"y":        float64(278),
+				"w":        float64(156),
+				"h":        float64(72),
+				"state":    "selected=true",
+				"href":     "",
+			},
+		},
+	})
+
+	if !strings.Contains(out, "elements[1]{selector,tag,role,type,text,x,y,w,h,state,href}:") {
+		t.Fatalf("expected extended TOON header, got:\n%s", out)
+	}
+	if !strings.Contains(out, "#skin_MenuTabs_1 > div:nth-of-type(1),div,tab,pointer,KLASS(ID),78,278,156,72,selected=true,") {
+		t.Fatalf("expected element geometry/state row, got:\n%s", out)
+	}
+}
+
+func TestBuildBrowserEvalScriptEmbedsScriptAsJSONString(t *testing.T) {
+	script := `(() => { return "1.B \"klass\""; })()`
+	wrapped := buildBrowserEvalScript(script)
+
+	if !strings.Contains(wrapped, `(0, eval)(__script)`) {
+		t.Fatalf("expected eval path in wrapper, got:\n%s", wrapped)
+	}
+	if !strings.Contains(wrapped, `1.B`) || !strings.Contains(wrapped, `klass`) {
+		t.Fatalf("expected script to be JSON escaped, got:\n%s", wrapped)
+	}
+}
+
 func TestChromeProfileLaunchWhenNoChromeRunning(t *testing.T) {
 	if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") == "true" {
 		t.Skip("Skipping Chrome profile launch test in CI")

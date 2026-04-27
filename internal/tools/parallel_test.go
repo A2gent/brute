@@ -173,4 +173,68 @@ func TestParallelTool_Execute(t *testing.T) {
 			t.Fatalf("unexpected error: %s", result.Error)
 		}
 	})
+
+	t.Run("disallow sub-agent delegation", func(t *testing.T) {
+		params := map[string]interface{}{
+			"steps": []map[string]interface{}{
+				{"tool": "delegate_to_subagent"},
+			},
+		}
+		raw, _ := json.Marshal(params)
+		result, err := parallel.Execute(context.Background(), raw)
+		if err != nil {
+			t.Fatalf("Execute returned error: %v", err)
+		}
+		if result.Success {
+			t.Fatalf("expected failure, got output: %s", result.Output)
+		}
+		if !strings.Contains(result.Error, "sub-agent delegation must be called as a top-level tool call") {
+			t.Fatalf("unexpected error: %s", result.Error)
+		}
+	})
+
+	t.Run("disallow browser automation", func(t *testing.T) {
+		params := map[string]interface{}{
+			"steps": []map[string]interface{}{
+				{"tool": "browser_chrome", "action": "click", "selector": "#menu"},
+			},
+		}
+		raw, _ := json.Marshal(params)
+		result, err := parallel.Execute(context.Background(), raw)
+		if err != nil {
+			t.Fatalf("Execute returned error: %v", err)
+		}
+		if result.Success {
+			t.Fatalf("expected failure, got output: %s", result.Output)
+		}
+		if !strings.Contains(result.Error, "browser automation is stateful") {
+			t.Fatalf("unexpected error: %s", result.Error)
+		}
+	})
+
+	t.Run("returns when context is cancelled while a step is still running", func(t *testing.T) {
+		params := map[string]interface{}{
+			"steps": []map[string]interface{}{
+				{"tool": "test_sleep", "args": map[string]interface{}{"text": "late", "ms": 200}},
+			},
+		}
+		raw, _ := json.Marshal(params)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		start := time.Now()
+		result, err := parallel.Execute(ctx, raw)
+		if err != nil {
+			t.Fatalf("Execute returned error: %v", err)
+		}
+		if time.Since(start) > 100*time.Millisecond {
+			t.Fatalf("expected quick cancellation, took %v", time.Since(start))
+		}
+		if result.Success {
+			t.Fatalf("expected failure, got output: %s", result.Output)
+		}
+		if !strings.Contains(result.Output, "context canceled") {
+			t.Fatalf("expected cancellation in output, got: %s", result.Output)
+		}
+	})
 }

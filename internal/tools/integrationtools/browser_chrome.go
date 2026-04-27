@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/A2gent/brute/internal/logging"
@@ -20,6 +21,7 @@ import (
 
 // BrowserChromeTool allows controlling a Chrome browser instance.
 type BrowserChromeTool struct {
+	mu               sync.Mutex
 	browser          *rod.Browser
 	page             *rod.Page // Persistent page across calls
 	workDir          string
@@ -30,6 +32,8 @@ type BrowserChromeTool struct {
 	headless         bool
 	capabilities     []string
 }
+
+const browserChromeActionTimeout = 45 * time.Second
 
 // NewBrowserChromeTool creates a new instance of the browser tool.
 func NewBrowserChromeTool(workDir string) *BrowserChromeTool {
@@ -73,7 +77,7 @@ func (t *BrowserChromeTool) Description() string {
 
 Actions:
 - navigate: Go to a URL (requires 'url')
-- get_interactive_elements: List all clickable/typeable elements with CSS selectors - USE THIS FIRST to find selectors
+- get_interactive_elements: Compact paginated DOM snapshot of clickable/typeable/visually clickable elements with selectors, text, state, and viewport coordinates. USE THIS FIRST to find controls.
 - get_text: Get page text content (simplified, no HTML)
 - click: Click an element (requires 'selector')
 - click_at: Click at specific pixel coordinates (requires 'x' and 'y')
@@ -84,7 +88,10 @@ Actions:
 - read_content: Get full HTML (verbose)
 - eval: Run JavaScript (requires 'script')
 
-Workflow: navigate -> get_interactive_elements -> click/type -> press_key Enter to submit`
+Workflow: navigate -> get_interactive_elements -> click/type -> verify with get_text or screenshot.
+Browser state is shared and actions are serialized. Do not call browser_chrome through parallel or issue multiple browser_chrome calls in the same turn.
+For visual apps, menus, tabs, timetables, canvases, or pages where text exists but the right control is unclear, take a screenshot and use click_at with the coordinates from get_interactive_elements or the screenshot.
+Prefer get_text/get_interactive_elements for cheap orientation; use screenshot only when visual layout matters or DOM signals are incomplete.`
 }
 
 func (t *BrowserChromeTool) Schema() map[string]interface{} {
@@ -144,12 +151,17 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 		return &tools.Result{Success: false, Error: "action is required"}, nil
 	}
 
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	// Ensure browser and page are ready
 	if err := t.ensureBrowserAndPage(); err != nil {
 		return &tools.Result{Success: false, Error: fmt.Sprintf("failed to ensure browser: %v", err)}, nil
 	}
 
-	page := t.page
+	opCtx, cancel := context.WithTimeout(ctx, browserChromeActionTimeout)
+	defer cancel()
+	page := t.page.Context(opCtx)
 
 	switch action {
 	case "navigate":
@@ -276,7 +288,19 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 		if err := os.WriteFile(screenshotPath, data, 0644); err != nil {
 			return &tools.Result{Success: false, Error: fmt.Sprintf("failed to save screenshot: %v", err)}, nil
 		}
-		return &tools.Result{Success: true, Output: fmt.Sprintf("Screenshot saved to %s", screenshotPath)}, nil
+		return &tools.Result{
+			Success: true,
+			Output:  fmt.Sprintf("Screenshot saved to %s", screenshotPath),
+			Metadata: map[string]interface{}{
+				"image_file": map[string]interface{}{
+					"path":        screenshotPath,
+					"format":      "png",
+					"bytes":       len(data),
+					"source_tool": t.Name(),
+					"action":      "screenshot",
+				},
+			},
+		}, nil
 
 	case "read_content":
 		content, err := page.HTML()
@@ -306,64 +330,101 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 		const perPage = 20
 		offset := (pageNum - 1) * perPage
 
-		// Get all interactive elements (inputs, buttons, links) with unique selectors
+		// Get all interactive elements with unique selectors.
+		// Includes visually clickable elements (cursor:pointer/tab/menu controls) because
+		// many JS-heavy sites expose navigation tabs as styled div/span elements rather
+		// than semantic links or buttons.
 		// Returns data in TOON format (Token-Oriented Object Notation) for compact LLM output
 		result := page.MustEval(fmt.Sprintf(`(offset, perPage) => {
 			const elements = [];
 			const seen = new Set();
-			
-			document.querySelectorAll('input, textarea, button, a[href], select, [role="button"], [onclick]').forEach((el, globalIdx) => {
-				if (el.type === 'hidden') return;
-				const rect = el.getBoundingClientRect();
-				if (rect.width === 0 && rect.height === 0) return;
-				if (el.offsetParent === null && getComputedStyle(el).position !== 'fixed') return;
-				
-				// Build unique selector
-				let selector = '';
-				if (el.id) {
-					selector = '#' + el.id;
-				} else if (el.name) {
-					selector = el.tagName.toLowerCase() + '[name="' + el.name + '"]';
-				} else if (el.getAttribute('data-testid')) {
-					selector = '[data-testid="' + el.getAttribute('data-testid') + '"]';
-				} else {
-					// Build path-based selector
-					let path = [];
-					let current = el;
-					while (current && current !== document.body) {
-						let seg = current.tagName.toLowerCase();
-						if (current.id) {
-							seg = '#' + current.id;
-							path.unshift(seg);
-							break;
-						}
-						const siblings = current.parentElement ? 
-							Array.from(current.parentElement.children).filter(c => c.tagName === current.tagName) : [];
-						if (siblings.length > 1) {
-							const idx = siblings.indexOf(current) + 1;
-							seg += ':nth-of-type(' + idx + ')';
-						}
+
+			const cssEscape = window.CSS && CSS.escape
+				? CSS.escape
+				: (value) => String(value).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+
+			const selectorFor = (el, globalIdx) => {
+				if (el.id) return '#' + cssEscape(el.id);
+				if (el.getAttribute('data-testid')) return '[data-testid="' + el.getAttribute('data-testid').replace(/"/g, '\\"') + '"]';
+				if (el.getAttribute('aria-label')) {
+					const label = el.getAttribute('aria-label').replace(/"/g, '\\"');
+					const byLabel = el.tagName.toLowerCase() + '[aria-label="' + label + '"]';
+					if (document.querySelectorAll(byLabel).length === 1) return byLabel;
+				}
+				if (el.name) return el.tagName.toLowerCase() + '[name="' + el.name.replace(/"/g, '\\"') + '"]';
+
+				const path = [];
+				let current = el;
+				while (current && current !== document.body) {
+					let seg = current.tagName.toLowerCase();
+					if (current.id) {
+						seg = '#' + cssEscape(current.id);
 						path.unshift(seg);
-						current = current.parentElement;
-						if (path.length > 3) break;
+						break;
 					}
-					selector = path.join(' > ');
+					const siblings = current.parentElement
+						? Array.from(current.parentElement.children).filter(c => c.tagName === current.tagName)
+						: [];
+					if (siblings.length > 1) {
+						seg += ':nth-of-type(' + (siblings.indexOf(current) + 1) + ')';
+					}
+					path.unshift(seg);
+					current = current.parentElement;
+					if (path.length > 5) break;
 				}
-				
-				if (seen.has(selector)) {
-					selector = el.tagName.toLowerCase() + '[data-idx="' + globalIdx + '"]';
-					el.setAttribute('data-idx', globalIdx);
+				let selector = path.join(' > ');
+				if (!selector || document.querySelectorAll(selector).length !== 1 || seen.has(selector)) {
+					selector = el.tagName.toLowerCase() + '[data-a2gent-idx="' + globalIdx + '"]';
+					el.setAttribute('data-a2gent-idx', globalIdx);
 				}
+				return selector;
+			};
+
+			const baseSelector = [
+				'input', 'textarea', 'button', 'a[href]', 'select', 'summary',
+				'[role="button"]', '[role="link"]', '[role="tab"]', '[role="menuitem"]',
+				'[role="option"]', '[role="checkbox"]', '[role="radio"]',
+				'[onclick]', '[tabindex]:not([tabindex="-1"])'
+			].join(',');
+			const candidates = new Set(Array.from(document.querySelectorAll(baseSelector)));
+			document.querySelectorAll('body *').forEach((el) => {
+				const style = getComputedStyle(el);
+				if (style.cursor === 'pointer') candidates.add(el);
+			});
+
+			Array.from(candidates).forEach((el, globalIdx) => {
+				if ((el.type || '').toLowerCase() === 'hidden') return;
+				const rect = el.getBoundingClientRect();
+				if (rect.width === 0 || rect.height === 0) return;
+				const style = getComputedStyle(el);
+				if (style.visibility === 'hidden' || style.display === 'none' || style.pointerEvents === 'none') return;
+				if (el.offsetParent === null && style.position !== 'fixed') return;
+
+				const selector = selectorFor(el, globalIdx);
 				seen.add(selector);
-				
-				const text = (el.innerText || el.value || el.placeholder || el.getAttribute('aria-label') || '').substring(0, 60).trim();
+
+				const text = (el.innerText || el.value || el.placeholder || el.getAttribute('aria-label') || el.title || '').replace(/\s+/g, ' ').substring(0, 80).trim();
+				const stateParts = [];
+				for (const attr of ['aria-selected', 'aria-current', 'aria-expanded', 'aria-checked']) {
+					const value = el.getAttribute(attr);
+					if (value) stateParts.push(attr.replace('aria-', '') + '=' + value);
+				}
+				if (el.classList && Array.from(el.classList).some(c => /active|selected|current|open/i.test(c))) {
+					stateParts.push('class=' + Array.from(el.classList).filter(c => /active|selected|current|open/i.test(c)).slice(0, 3).join('|'));
+				}
 				
 				elements.push({
 					selector: selector,
 					tag: el.tagName.toLowerCase(),
-					type: el.type || el.getAttribute('role') || '',
+					role: el.getAttribute('role') || '',
+					type: el.type || (style.cursor === 'pointer' ? 'pointer' : ''),
 					text: text,
-					href: el.href ? el.href.substring(0, 80) : undefined
+					x: Math.round(rect.left + rect.width / 2),
+					y: Math.round(rect.top + rect.height / 2),
+					w: Math.round(rect.width),
+					h: Math.round(rect.height),
+					state: stateParts.join(';'),
+					href: el.href ? el.href.substring(0, 100) : undefined
 				});
 			});
 			
@@ -383,9 +444,7 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 		}
 		// Wait for page to be stable before evaluating
 		page.MustWaitStable()
-		// Wrap script to handle both expressions and statements
-		// This prevents "apply is not a function" errors for assignment statements
-		wrappedScript := fmt.Sprintf(`() => { %s }`, script)
+		wrappedScript := buildBrowserEvalScript(script)
 		result, err := page.Eval(wrappedScript)
 		if err != nil {
 			return &tools.Result{Success: false, Error: fmt.Sprintf("failed to eval: %v", err)}, nil
@@ -394,7 +453,7 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 		if result.Value.Nil() {
 			return &tools.Result{Success: true, Output: "OK"}, nil
 		}
-		return &tools.Result{Success: true, Output: fmt.Sprintf("%v", result.Value)}, nil
+		return &tools.Result{Success: true, Output: result.Value.JSON("", "  ")}, nil
 
 	default:
 		return &tools.Result{Success: false, Error: fmt.Sprintf("unknown action: %s", action)}, nil
@@ -430,7 +489,7 @@ func formatElementsAsTOON(result interface{}) string {
 	sb.WriteString(fmt.Sprintf("hasMore: %v\n", hasMore))
 
 	// TOON tabular array format: key[N]{field1,field2,...}:
-	sb.WriteString(fmt.Sprintf("elements[%d]{selector,tag,type,text,href}:\n", len(elements)))
+	sb.WriteString(fmt.Sprintf("elements[%d]{selector,tag,role,type,text,x,y,w,h,state,href}:\n", len(elements)))
 
 	for _, elem := range elements {
 		el, ok := elem.(map[string]interface{})
@@ -440,12 +499,18 @@ func formatElementsAsTOON(result interface{}) string {
 
 		selector := escapeField(getString(el, "selector"))
 		tag := getString(el, "tag")
+		role := getString(el, "role")
 		typ := getString(el, "type")
 		text := escapeField(getString(el, "text"))
+		x := formatNumberField(el, "x")
+		y := formatNumberField(el, "y")
+		w := formatNumberField(el, "w")
+		h := formatNumberField(el, "h")
+		state := escapeField(getString(el, "state"))
 		href := getString(el, "href")
 
 		// TOON row format: value1,value2,value3,...
-		sb.WriteString(fmt.Sprintf("  %s,%s,%s,%s,%s\n", selector, tag, typ, text, href))
+		sb.WriteString(fmt.Sprintf("  %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n", selector, tag, role, typ, text, x, y, w, h, state, href))
 	}
 
 	return sb.String()
@@ -459,6 +524,46 @@ func getString(m map[string]interface{}, key string) string {
 		}
 	}
 	return ""
+}
+
+func formatNumberField(m map[string]interface{}, key string) string {
+	if v, ok := m[key]; ok && v != nil {
+		switch n := v.(type) {
+		case float64:
+			return fmt.Sprintf("%.0f", n)
+		case float32:
+			return fmt.Sprintf("%.0f", n)
+		case int:
+			return fmt.Sprintf("%d", n)
+		case int64:
+			return fmt.Sprintf("%d", n)
+		case json.Number:
+			return n.String()
+		}
+	}
+	return ""
+}
+
+func buildBrowserEvalScript(script string) string {
+	encoded, err := json.Marshal(script)
+	if err != nil {
+		encoded = []byte(`""`)
+	}
+	return fmt.Sprintf(`() => {
+		const __script = %s;
+		try {
+			return (0, eval)(__script);
+		} catch (__exprErr) {
+			try {
+				return (new Function(__script))();
+			} catch (__stmtErr) {
+				return {
+					error: String(__stmtErr && __stmtErr.message ? __stmtErr.message : __stmtErr),
+					expression_error: String(__exprErr && __exprErr.message ? __exprErr.message : __exprErr)
+				};
+			}
+		}
+	}`, string(encoded))
 }
 
 // escapeField escapes a TOON field value if it contains special characters

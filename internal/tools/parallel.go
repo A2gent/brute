@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -13,9 +12,16 @@ const (
 	parallelMaxSteps           = 12
 	parallelDefaultOutputChars = 12000
 	parallelMaxOutputChars     = 200000
+	parallelStepTimeout        = 90 * time.Second
 )
 
 type parallelContextKey struct{}
+
+var parallelUnsupportedTools = map[string]string{
+	"parallel":             "recursive parallel calls are not allowed",
+	"delegate_to_subagent": "sub-agent delegation must be called as a top-level tool call",
+	"browser_chrome":       "browser automation is stateful and must be called sequentially as a top-level tool call",
+}
 
 // ParallelTool executes independent tool calls concurrently and returns ordered results.
 type ParallelTool struct {
@@ -52,7 +58,7 @@ func (t *ParallelTool) Name() string {
 }
 
 func (t *ParallelTool) Description() string {
-	return "Run multiple independent tool calls concurrently in one call. Use this for parallel codebase exploration, such as several grep/read/find_files/bash searches that do not depend on each other."
+	return "Run multiple independent tool calls concurrently in one call. Use this for parallel codebase exploration, such as several grep/read/find_files/bash searches that do not depend on each other. Do not use this for recursive parallel calls, delegate_to_subagent, or browser_chrome; call those as top-level tool calls instead."
 }
 
 func (t *ParallelTool) Schema() map[string]interface{} {
@@ -67,7 +73,7 @@ func (t *ParallelTool) Schema() map[string]interface{} {
 					"properties": map[string]interface{}{
 						"tool": map[string]interface{}{
 							"type":        "string",
-							"description": "Tool name to execute for this parallel step.",
+							"description": "Tool name to execute for this parallel step. Cannot be parallel, delegate_to_subagent, or browser_chrome.",
 						},
 						"args": map[string]interface{}{
 							"type":        "object",
@@ -122,15 +128,15 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 	}
 
 	results := make([]parallelStepOutput, len(p.Steps))
-	var wg sync.WaitGroup
+	resultChans := make([]chan parallelStepOutput, 0, len(p.Steps))
 
 	for i, step := range p.Steps {
 		toolName := strings.TrimSpace(step.Tool)
 		if toolName == "" {
 			return &Result{Success: false, Error: fmt.Sprintf("step %d: tool is required", i+1)}, nil
 		}
-		if toolName == t.Name() {
-			return &Result{Success: false, Error: fmt.Sprintf("step %d: recursive parallel call is not allowed", i+1)}, nil
+		if reason, ok := parallelUnsupportedTools[toolName]; ok {
+			return &Result{Success: false, Error: fmt.Sprintf("step %d: %s", i+1, reason)}, nil
 		}
 		args, err := decodeParallelStepArgs(step)
 		if err != nil {
@@ -141,12 +147,14 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 			return nil, fmt.Errorf("step %d: failed to serialize step args: %w", i+1, err)
 		}
 
-		wg.Add(1)
+		resultCh := make(chan parallelStepOutput, 1)
+		resultChans = append(resultChans, resultCh)
 		go func(idx int, name string, raw json.RawMessage) {
-			defer wg.Done()
-
 			start := time.Now()
-			stepResult, err := t.manager.Execute(ctx, name, raw)
+			stepCtx, cancel := context.WithTimeout(ctx, parallelStepTimeout)
+			defer cancel()
+
+			stepResult, err := t.manager.Execute(stepCtx, name, raw)
 			duration := time.Since(start)
 			out := parallelStepOutput{
 				Step:       idx + 1,
@@ -174,11 +182,31 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 				out.Metadata = stepResult.Metadata
 			}
 
-			results[idx] = out
+			resultCh <- out
 		}(i, toolName, stepParams)
 	}
 
-	wg.Wait()
+	for i, resultCh := range resultChans {
+		select {
+		case out := <-resultCh:
+			results[i] = out
+		case <-ctx.Done():
+			results[i] = parallelStepOutput{
+				Step:    i + 1,
+				Tool:    strings.TrimSpace(p.Steps[i].Tool),
+				Success: false,
+				Error:   ctx.Err().Error(),
+			}
+		case <-time.After(parallelStepTimeout):
+			results[i] = parallelStepOutput{
+				Step:       i + 1,
+				Tool:       strings.TrimSpace(p.Steps[i].Tool),
+				Success:    false,
+				Error:      fmt.Sprintf("parallel step timed out after %s", parallelStepTimeout),
+				DurationMs: parallelStepTimeout.Milliseconds(),
+			}
+		}
+	}
 
 	success := true
 	totalOutputChars := 0

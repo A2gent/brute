@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -448,11 +449,13 @@ func TestWorkflowNodeWorkStatusForSessionRequiresBuilderToolEvidence(t *testing.
 	}
 
 	child.AddAssistantMessage("", []session.ToolCall{{ID: "tc-1", Name: "read"}})
+	child.AddToolResult([]session.ToolResult{{ToolCallID: "tc-1", Name: "read", Content: "file content"}})
 	if got := workflowNodeWorkStatusForSession(node, "Done.\nNODE_STATUS: COMPLETE", child, "please fix the button code"); got != "in_progress" {
 		t.Fatalf("expected builder with read-only activity to remain in_progress, got %q", got)
 	}
 
 	child.AddAssistantMessage("", []session.ToolCall{{ID: "tc-2", Name: "edit"}})
+	child.AddToolResult([]session.ToolResult{{ToolCallID: "tc-2", Name: "edit", Content: "Updated src/Button.tsx"}})
 	if got := workflowNodeWorkStatusForSession(node, "Done.\nNODE_STATUS: COMPLETE", child, "please fix the button code"); got != "complete" {
 		t.Fatalf("expected builder with modification activity to be complete, got %q", got)
 	}
@@ -483,6 +486,7 @@ func TestWorkflowNodeWorkStatusForSessionRequiresDeveloperModificationEvidence(t
 	child := session.New("build")
 	child.AddUserMessage("implement it")
 	child.AddAssistantMessage("", []session.ToolCall{{ID: "tc-1", Name: "find_files"}})
+	child.AddToolResult([]session.ToolResult{{ToolCallID: "tc-1", Name: "find_files", Content: "web-app/src/App.tsx"}})
 	child.AddAssistantMessage("Done.\nNODE_STATUS: COMPLETE", nil)
 
 	if got := workflowNodeWorkStatusForSession(node, "Done.\nNODE_STATUS: COMPLETE", child, "implement tracing in code"); got != "in_progress" {
@@ -490,6 +494,7 @@ func TestWorkflowNodeWorkStatusForSessionRequiresDeveloperModificationEvidence(t
 	}
 
 	child.AddAssistantMessage("", []session.ToolCall{{ID: "tc-2", Name: "replace_lines"}})
+	child.AddToolResult([]session.ToolResult{{ToolCallID: "tc-2", Name: "replace_lines", Content: "Updated web-app/src/App.tsx"}})
 	if got := workflowNodeWorkStatusForSession(node, "Done.\nNODE_STATUS: COMPLETE", child, "implement tracing in code"); got != "complete" {
 		t.Fatalf("expected developer with modification-capable activity to be complete, got %q", got)
 	}
@@ -578,7 +583,10 @@ func TestWorkflowBlockedFinalOutputExplainsPausedWorkflow(t *testing.T) {
 func TestWorkflowBareStatusRetryPromptGuidesContinuation(t *testing.T) {
 	got := workflowBareStatusRetryPrompt(workflowNodeRuntime{ID: "worker", Label: "Developer"})
 
-	if !strings.Contains(got, "previously returned only workflow status") || !strings.Contains(got, "editing tools") {
+	if !strings.Contains(got, "previously returned only workflow status") || !strings.Contains(got, "editing-capable tool") {
+		t.Fatalf("unexpected retry prompt: %s", got)
+	}
+	if !strings.Contains(got, "Do not answer with only `NODE_STATUS`") || !strings.Contains(got, "Placeholder files") {
 		t.Fatalf("unexpected retry prompt: %s", got)
 	}
 }
@@ -618,19 +626,63 @@ func TestWorkflowLatestMeaningfulAssistantOutputSkipsBareStatus(t *testing.T) {
 func TestWorkflowSessionModificationActivityCountCountsOnlyEditTools(t *testing.T) {
 	child := session.New("worker")
 	child.AddAssistantMessage("", []session.ToolCall{
-		{Name: "read"},
-		{Name: "bash"},
-		{Name: "edit"},
-		{Name: "insert_lines"},
+		{ID: "tc-read", Name: "read"},
+		{ID: "tc-bash", Name: "bash"},
+		{ID: "tc-edit", Name: "edit"},
+		{ID: "tc-insert", Name: "insert_lines"},
 	})
 	child.AddToolResult([]session.ToolResult{
-		{Name: "grep"},
-		{Name: "replace_lines"},
-		{Name: "write"},
+		{ToolCallID: "tc-read", Name: "read", Content: "read ok"},
+		{ToolCallID: "tc-bash", Name: "bash", Content: "bash ok"},
+		{ToolCallID: "tc-edit", Name: "edit", Content: "Updated src/app.ts"},
+		{ToolCallID: "tc-insert", Name: "insert_lines", Content: "Inserted lines"},
 	})
 
-	if got := workflowSessionModificationActivityCount(child); got != 4 {
-		t.Fatalf("expected 4 modification activities, got %d", got)
+	if got := workflowSessionModificationActivityCount(child); got != 2 {
+		t.Fatalf("expected 2 modification activities, got %d", got)
+	}
+}
+
+func TestWorkflowSessionModificationActivityCountIgnoresFailedAndPlaceholderWrites(t *testing.T) {
+	child := session.New("worker")
+	child.AddAssistantMessage("", []session.ToolCall{
+		{ID: "tc-failed", Name: "edit", Input: json.RawMessage(`{"path":"src/app.ts","old_string":"a","new_string":"b"}`)},
+		{ID: "tc-placeholder", Name: "write", Input: json.RawMessage(`{"path":"src/GitChangesInline.tsx","content":"placeholder"}`)},
+		{ID: "tc-real", Name: "write", Input: json.RawMessage(`{"path":"src/GitChangesInline.tsx","content":"export function GitChangesInline() {\n  return <section>Changed files</section>;\n}\n"}`)},
+	})
+	child.AddToolResult([]session.ToolResult{
+		{ToolCallID: "tc-failed", Name: "edit", Content: "Error: old_string not found", IsError: true},
+		{ToolCallID: "tc-placeholder", Name: "write", Content: "Created src/GitChangesInline.tsx (11 bytes)"},
+		{ToolCallID: "tc-real", Name: "write", Content: "Updated src/GitChangesInline.tsx"},
+	})
+
+	if got := workflowSessionModificationActivityCount(child); got != 1 {
+		t.Fatalf("expected only the real write to count, got %d", got)
+	}
+}
+
+func TestWorkflowSessionModificationActivityCountInspectsParallelResults(t *testing.T) {
+	child := session.New("worker")
+	child.AddAssistantMessage("", []session.ToolCall{
+		{
+			ID:   "tc-parallel",
+			Name: "parallel",
+			Input: json.RawMessage(`{"steps":[
+				{"tool":"write","input":{"path":"src/placeholder.ts","content":"placeholder"}},
+				{"tool":"replace_lines","input":{"path":"src/app.ts","start_line":1,"end_line":1,"content":"export const value = 1;"}}
+			]}`),
+		},
+	})
+	child.AddToolResult([]session.ToolResult{
+		{
+			ToolCallID: "tc-parallel",
+			Name:       "parallel",
+			Content:    `[{"step":1,"tool":"write","success":true,"output":"Created src/placeholder.ts (11 bytes)"},{"step":2,"tool":"replace_lines","success":true,"output":"Updated src/app.ts"}]`,
+		},
+	})
+
+	if got := workflowSessionModificationActivityCount(child); got != 1 {
+		t.Fatalf("expected only the meaningful nested modification to count, got %d", got)
 	}
 }
 

@@ -944,7 +944,7 @@ func workflowBareStatusRetryPrompt(node workflowNodeRuntime) string {
 	if label == "" {
 		label = "this node"
 	}
-	return fmt.Sprintf("%s previously returned only workflow status without a usable handoff. Continue the actual work now. If this node is responsible for implementation, call the editing tools needed to make changes before returning a final status.", label)
+	return fmt.Sprintf("%s previously returned only workflow status without a usable handoff. Continue the actual work now. Do not answer with only `NODE_STATUS`. If this node is responsible for implementation, your next response must first use an editing-capable tool (`edit`, `write`, `replace_lines`, or `insert_lines`) to make a meaningful change, or clearly explain a concrete external blocker unrelated to tool availability. Placeholder files, stubs, TODO-only edits, `bash`, `git diff`, and `git status` do not count as implementation progress.", label)
 }
 
 func workflowBlockedFinalOutput(def *workflowDefinitionRuntime, state *workflowRuntimeState) string {
@@ -1306,19 +1306,142 @@ func workflowSessionModificationActivityCount(sess *session.Session) int {
 		return 0
 	}
 	count := 0
+	callsByID := make(map[string]session.ToolCall)
 	for _, msg := range sess.Messages {
 		for _, call := range msg.ToolCalls {
-			if workflowToolCanModifyFiles(call.Name) {
-				count++
-			}
+			callsByID[call.ID] = call
 		}
 		for _, result := range msg.ToolResults {
-			if workflowToolCanModifyFiles(result.Name) {
-				count++
-			}
+			count += workflowModificationActivityForToolResult(result, callsByID)
 		}
 	}
 	return count
+}
+
+func workflowModificationActivityForToolResult(result session.ToolResult, callsByID map[string]session.ToolCall) int {
+	if result.IsError {
+		return 0
+	}
+	call := callsByID[result.ToolCallID]
+	name := strings.TrimSpace(result.Name)
+	if name == "" {
+		name = strings.TrimSpace(call.Name)
+	}
+	if strings.EqualFold(name, "parallel") || strings.EqualFold(name, "pipeline") {
+		return workflowNestedModificationActivityCount(result, call)
+	}
+	if !workflowToolCanModifyFiles(name) {
+		return 0
+	}
+	if !workflowToolResultLooksSuccessful(result.Content) {
+		return 0
+	}
+	if !workflowModificationToolCallLooksMeaningful(name, call.Input) {
+		return 0
+	}
+	return 1
+}
+
+func workflowNestedModificationActivityCount(result session.ToolResult, call session.ToolCall) int {
+	var nestedCalls []struct {
+		Tool  string          `json:"tool"`
+		Input json.RawMessage `json:"input"`
+	}
+	if len(call.Input) > 0 {
+		var params struct {
+			Steps []struct {
+				Tool  string          `json:"tool"`
+				Input json.RawMessage `json:"input"`
+			} `json:"steps"`
+		}
+		if err := json.Unmarshal(call.Input, &params); err == nil {
+			for _, step := range params.Steps {
+				nestedCalls = append(nestedCalls, struct {
+					Tool  string          `json:"tool"`
+					Input json.RawMessage `json:"input"`
+				}{Tool: step.Tool, Input: step.Input})
+			}
+		}
+	}
+	var nestedResults []struct {
+		Step    int    `json:"step"`
+		Tool    string `json:"tool"`
+		Success bool   `json:"success"`
+		Output  string `json:"output"`
+	}
+	if err := json.Unmarshal([]byte(result.Content), &nestedResults); err != nil {
+		return 0
+	}
+	count := 0
+	for _, nested := range nestedResults {
+		if !nested.Success || !workflowToolCanModifyFiles(nested.Tool) || !workflowToolResultLooksSuccessful(nested.Output) {
+			continue
+		}
+		var input json.RawMessage
+		if nested.Step > 0 && nested.Step <= len(nestedCalls) {
+			input = nestedCalls[nested.Step-1].Input
+		}
+		if workflowModificationToolCallLooksMeaningful(nested.Tool, input) {
+			count++
+		}
+	}
+	return count
+}
+
+func workflowToolResultLooksSuccessful(content string) bool {
+	text := strings.ToLower(strings.TrimSpace(content))
+	if text == "" {
+		return false
+	}
+	if strings.HasPrefix(text, "error:") {
+		return false
+	}
+	return true
+}
+
+func workflowModificationToolCallLooksMeaningful(name string, input json.RawMessage) bool {
+	if !strings.EqualFold(strings.TrimSpace(name), "write") {
+		return true
+	}
+	if len(input) == 0 {
+		return true
+	}
+	var params struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(input, &params); err != nil {
+		return true
+	}
+	return !workflowWriteContentLooksPlaceholder(params.Content)
+}
+
+func workflowWriteContentLooksPlaceholder(content string) bool {
+	normalized := strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(content)), " "))
+	if normalized == "" {
+		return true
+	}
+	placeholderValues := map[string]bool{
+		"placeholder":      true,
+		"todo":             true,
+		"todo: implement":  true,
+		"stub":             true,
+		"tbd":              true,
+		"not implemented":  true,
+		"coming soon":      true,
+		"work in progress": true,
+		"wip":              true,
+	}
+	if placeholderValues[normalized] {
+		return true
+	}
+	if len([]rune(normalized)) <= 32 {
+		for marker := range placeholderValues {
+			if strings.Contains(normalized, marker) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func workflowToolCanModifyFiles(name string) bool {

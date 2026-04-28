@@ -1679,15 +1679,16 @@ func (s *Server) handleListOpenAICompatibleModels(w http.ResponseWriter, r *http
 	}
 
 	modelIDs := make([]string, 0, len(models))
+	modelIDs := make([]string, 0, len(models))
 	for _, model := range models {
 		modelID := strings.TrimSpace(model.ID)
 		if modelID != "" {
 			modelIDs = append(modelIDs, modelID)
 		}
 	}
+	sort.Strings(modelIDs)
 
 	s.jsonResponse(w, http.StatusOK, ListProviderModelsResponse{Models: modelIDs})
-}
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	sessions, err := s.sessionManager.List()

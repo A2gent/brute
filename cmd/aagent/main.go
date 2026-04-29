@@ -222,6 +222,8 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 		toolManager,
 		initialTask,
 		cfg,
+		server.Port(),
+		server.PortReady(),
 	)
 
 	// Run the TUI
@@ -362,6 +364,8 @@ func runAgent(cmd *cobra.Command, args []string) error {
 		toolManager,
 		initialTask,
 		cfg,
+		0,
+		nil,
 	)
 
 	// Run the TUI

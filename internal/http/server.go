@@ -54,6 +54,8 @@ type Server struct {
 	store          storage.Store
 	router         chi.Router
 	port           int
+	portMu         sync.RWMutex
+	portReady      chan int
 	speechClips    *speechcache.Store
 	runParentCtx   context.Context
 	activeRunsMu   sync.Mutex
@@ -233,6 +235,7 @@ func NewServer(
 		sessionManager: sessionManager,
 		store:          store,
 		port:           port,
+		portReady:      make(chan int, 1),
 		speechClips:    speechClips,
 		runParentCtx:   context.Background(),
 		activeRuns:     make(map[string]map[string]context.CancelFunc),
@@ -252,6 +255,19 @@ func NewServer(
 	s.bootstrapDisabledToolsByDefault()
 	s.setupRoutes()
 	return s
+}
+
+// Port returns the bound HTTP port. When configured with port 0, this is updated
+// after Run successfully binds a random available port.
+func (s *Server) Port() int {
+	s.portMu.RLock()
+	defer s.portMu.RUnlock()
+	return s.port
+}
+
+// PortReady yields the actual HTTP port once Run successfully binds the listener.
+func (s *Server) PortReady() <-chan int {
+	return s.portReady
 }
 
 func (s *Server) bootstrapDisabledToolsByDefault() {
@@ -574,10 +590,17 @@ func (s *Server) Run(ctx context.Context) error {
 		return err
 	}
 	if tcpAddr, ok := listener.Addr().(*net.TCPAddr); ok {
+		s.portMu.Lock()
 		s.port = tcpAddr.Port
+		s.portMu.Unlock()
 	}
+	select {
+	case s.portReady <- s.Port():
+	default:
+	}
+	close(s.portReady)
 	logging.Info("Starting HTTP server on %s", listener.Addr().String())
-	fmt.Printf("HTTP API server running on http://0.0.0.0:%d (accessible from any host)\n", s.port)
+	fmt.Printf("HTTP API server running on http://0.0.0.0:%d (accessible from any host)\n", s.Port())
 
 	go s.runTelegramDuplexLoop(ctx)
 	go s.runA2ATunnelIfConfigured()
@@ -1679,7 +1702,6 @@ func (s *Server) handleListOpenAICompatibleModels(w http.ResponseWriter, r *http
 	}
 
 	modelIDs := make([]string, 0, len(models))
-	modelIDs := make([]string, 0, len(models))
 	for _, model := range models {
 		modelID := strings.TrimSpace(model.ID)
 		if modelID != "" {
@@ -1689,6 +1711,7 @@ func (s *Server) handleListOpenAICompatibleModels(w http.ResponseWriter, r *http
 	sort.Strings(modelIDs)
 
 	s.jsonResponse(w, http.StatusOK, ListProviderModelsResponse{Models: modelIDs})
+}
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	sessions, err := s.sessionManager.List()

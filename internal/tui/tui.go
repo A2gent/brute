@@ -486,6 +486,10 @@ type (
 		memoryMB float64
 	}
 
+	serverPortMsg struct {
+		port int
+	}
+
 	sessionSyncMsg struct {
 		session *session.Session
 	}
@@ -508,6 +512,7 @@ type Model struct {
 	// Display state
 	messages    []message
 	taskSummary string
+	serverPort  int
 	width       int
 	height      int
 	ready       bool
@@ -574,6 +579,9 @@ type Model struct {
 	// Config reference for persistence
 	appConfig *config.Config
 
+	// HTTP server port updates
+	serverPortUpdates <-chan int
+
 	// Memory tracking
 	memoryMB float64
 
@@ -607,6 +615,8 @@ func New(
 	toolManager *tools.Manager,
 	initialTask string,
 	appConfig *config.Config,
+	serverPort int,
+	serverPortUpdates <-chan int,
 ) Model {
 	ta := textarea.New()
 	ta.Placeholder = ""
@@ -672,6 +682,7 @@ func New(
 		agentConfig:       agentConfig,
 		messages:          make([]message, 0),
 		taskSummary:       initialTask,
+		serverPort:        serverPort,
 		lastUserInputTime: time.Now(),
 		loadingFrames:     []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
 		loadingIndex:      0,
@@ -679,6 +690,7 @@ func New(
 		commandRegistry:   cmdRegistry,
 		filteredCommands:  cmdRegistry.GetCommands(),
 		appConfig:         appConfig,
+		serverPortUpdates: serverPortUpdates,
 	}
 
 	// Load existing messages from session
@@ -703,8 +715,22 @@ func (m Model) Init() tea.Cmd {
 		textarea.Blink,
 		tickCmd(),
 		updateMemoryCmd(),
+		serverPortCmd(m.serverPortUpdates),
 		sessionSyncCmd(m.sessionManager, m.session.ID),
 	)
+}
+
+func serverPortCmd(portUpdates <-chan int) tea.Cmd {
+	if portUpdates == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		port, ok := <-portUpdates
+		if !ok {
+			return nil
+		}
+		return serverPortMsg{port: port}
+	}
 }
 
 // saveSessionIfNotEmpty persists the active session only after the conversation started.
@@ -760,14 +786,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		// Height calculation: total - topBar(1) - textarea(3) - bottomBar(1) = total - 5
-		// If question prompt is shown, also subtract its height
-		fixedHeight := 5 // topBar + textarea + bottomBar
-		questionHeight := m.calculateQuestionPromptHeight()
-		viewportHeight := msg.Height - fixedHeight - questionHeight
-		if viewportHeight < 1 {
-			viewportHeight = 1
-		}
+		viewportHeight := m.calculateViewportHeight()
 
 		if !m.ready {
 			m.viewport = viewport.New(msg.Width, viewportHeight)
@@ -935,14 +954,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.pendingQuestion = nil
 						m.textarea.Reset() // Clear textarea
 
-						// Recalculate viewport height now that question is hidden
-						fixedHeight := 5 // topBar + textarea + bottomBar
-						questionHeight := m.calculateQuestionPromptHeight()
-						viewportHeight := m.height - fixedHeight - questionHeight
-						if viewportHeight < 1 {
-							viewportHeight = 1
-						}
-						m.viewport.Height = viewportHeight
+						m.updateViewportHeight()
 
 						// Reload session
 						if sess, err := m.sessionManager.Get(m.session.ID); err == nil {
@@ -1327,6 +1339,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case memoryUpdateMsg:
 		m.memoryMB = msg.memoryMB
 
+	case serverPortMsg:
+		m.serverPort = msg.port
+
 	case sessionSyncMsg:
 		if msg.session != nil {
 			// Check if session status changed to input_required
@@ -1339,14 +1354,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.questionOptionIndex = 0
 					m.processing = false // Stop processing, wait for answer
 
-					// Recalculate viewport height now that question is shown
-					fixedHeight := 5 // topBar + textarea + bottomBar
-					questionHeight := m.calculateQuestionPromptHeight()
-					viewportHeight := m.height - fixedHeight - questionHeight
-					if viewportHeight < 1 {
-						viewportHeight = 1
-					}
-					m.viewport.Height = viewportHeight
+					m.updateViewportHeight()
 				}
 			}
 
@@ -1416,14 +1424,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.questionOptionIndex = 0
 						logging.Debug("TUI: Loaded pending question: %s", question.Header)
 
-						// Recalculate viewport height now that question is shown
-						fixedHeight := 5 // topBar + textarea + bottomBar
-						questionHeight := m.calculateQuestionPromptHeight()
-						viewportHeight := m.height - fixedHeight - questionHeight
-						if viewportHeight < 1 {
-							viewportHeight = 1
-						}
-						m.viewport.Height = viewportHeight
+						m.updateViewportHeight()
 					}
 				}
 			}
@@ -1483,6 +1484,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.totalOutputTokens += msg.outputTokens
 	}
 
+	m.updateViewportHeight()
+
 	// Update components
 	m.textarea, taCmd = m.textarea.Update(msg)
 	m.viewport, vpCmd = m.viewport.Update(msg)
@@ -1501,17 +1504,10 @@ func (m Model) View() string {
 	// Top bar with task summary, stats, session, and time
 	topBar := m.renderTopBar()
 
-	// Messages viewport - show ASCII art if no messages
+	// Messages viewport - show ASCII art and centered input if no messages
 	var messagesView string
 	if len(m.messages) == 0 {
-		// Center the ASCII art
-		artStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#7D56F4")).
-			Bold(true).
-			Width(m.viewport.Width).
-			Height(m.viewport.Height).
-			Align(lipgloss.Center, lipgloss.Center)
-		messagesView = artStyle.Render(asciiArt)
+		messagesView = m.renderEmptySessionView()
 	} else {
 		messagesView = m.viewport.View()
 	}
@@ -1579,43 +1575,7 @@ func (m Model) View() string {
 		commandMenu = m.renderCommandMenu() + "\n"
 	}
 
-	// Input area - show textarea for custom answer, placeholder for option selection
-	var inputView string
-	if m.showQuestionPrompt && m.questionOptionIndex >= 0 {
-		// Option is selected - show placeholder
-		disabledStyle := lipgloss.NewStyle().
-			Background(lipgloss.Color("#1a1a1a")).
-			Foreground(lipgloss.Color("#666666")).
-			Width(m.width)
-
-		selectedOption := ""
-		if m.questionOptionIndex < len(m.pendingQuestion.Options) {
-			selectedOption = m.pendingQuestion.Options[m.questionOptionIndex].Label
-		}
-		inputView = disabledStyle.Render("│ Selected: " + selectedOption + " (press Enter to submit, ↓ for custom)")
-	} else {
-		// Normal textarea (for regular input or custom answer)
-		textareaContent := m.textarea.View()
-
-		// Ensure the textarea takes up exactly 3 lines with full width background
-		lines := strings.Split(textareaContent, "\n")
-		paddedLines := make([]string, 0, 3)
-		for i := 0; i < 3; i++ {
-			var line string
-			if i < len(lines) {
-				line = lines[i]
-			} else {
-				line = "│ " // Empty line with prompt
-			}
-			// Pad each line to full width with background
-			paddedLine := lipgloss.NewStyle().
-				Background(lipgloss.Color("#1a1a1a")).
-				Width(m.width).
-				Render(line)
-			paddedLines = append(paddedLines, paddedLine)
-		}
-		inputView = strings.Join(paddedLines, "\n")
-	}
+	inputView := m.renderInputView(m.width)
 
 	// Help text (now on the right side)
 	var helpStr string
@@ -1641,31 +1601,112 @@ func (m Model) View() string {
 
 	// Bottom bar with path on left and shortcuts on right
 	pathText := pathStyle.Render(cwd)
+	portText := ""
+	if m.serverPort > 0 {
+		portText = statsStyle.Render(fmt.Sprintf("API :%d", m.serverPort))
+	}
 	helpText := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#666666")).
 		Render(helpStr)
 
 	// Calculate space between path and help
 	bottomUsedWidth := lipgloss.Width(pathText) + lipgloss.Width(helpText)
+	if portText != "" {
+		bottomUsedWidth += lipgloss.Width(portText) + 2
+	}
 	bottomSpace := m.width - bottomUsedWidth
 	if bottomSpace < 1 {
 		bottomSpace = 1
 	}
 
-	bottomBar := lipgloss.JoinHorizontal(
-		lipgloss.Left,
-		pathText,
-		strings.Repeat(" ", bottomSpace),
-		helpText,
-	)
+	bottomLeft := pathText
+	if portText != "" {
+		bottomLeft = lipgloss.JoinHorizontal(lipgloss.Left, pathText, "  ", portText)
+	}
 
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		topBar,
-		messagesView,
-		questionPrompt+commandMenu+inputView,
-		bottomBar,
-	)
+	bottomBar := lipgloss.JoinHorizontal(lipgloss.Left, bottomLeft, strings.Repeat(" ", bottomSpace), helpText)
+
+	sections := []string{topBar, messagesView}
+	if m.hasDiscussion() || m.showQuestionPrompt {
+		sections = append(sections, questionPrompt+commandMenu+inputView)
+	}
+	sections = append(sections, bottomBar)
+
+	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+}
+
+func (m Model) renderInputView(width int) string {
+	if width < 1 {
+		width = 1
+	}
+	if m.showQuestionPrompt && m.questionOptionIndex >= 0 {
+		disabledStyle := lipgloss.NewStyle().
+			Background(lipgloss.Color("#1a1a1a")).
+			Foreground(lipgloss.Color("#666666")).
+			Width(width)
+
+		selectedOption := ""
+		if m.questionOptionIndex < len(m.pendingQuestion.Options) {
+			selectedOption = m.pendingQuestion.Options[m.questionOptionIndex].Label
+		}
+		return disabledStyle.Render("│ Selected: " + selectedOption + " (press Enter to submit, ↓ for custom)")
+	}
+
+	m.textarea.SetWidth(width)
+	textareaContent := m.textarea.View()
+	lines := strings.Split(textareaContent, "\n")
+	paddedLines := make([]string, 0, 3)
+	for i := 0; i < 3; i++ {
+		line := "│ "
+		if i < len(lines) {
+			line = lines[i]
+		}
+		paddedLine := lipgloss.NewStyle().
+			Background(lipgloss.Color("#1a1a1a")).
+			Width(width).
+			Render(line)
+		paddedLines = append(paddedLines, paddedLine)
+	}
+	return strings.Join(paddedLines, "\n")
+}
+
+func (m Model) renderEmptySessionView() string {
+	inputWidth := m.width
+	if inputWidth > 90 {
+		inputWidth = 90
+	}
+	if inputWidth < 20 {
+		inputWidth = m.width
+	}
+
+	artStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#7D56F4")).
+		Bold(true).
+		Width(m.width).
+		Align(lipgloss.Center)
+	inputStyle := lipgloss.NewStyle().
+		Width(m.width).
+		Align(lipgloss.Center)
+
+	parts := []string{
+		artStyle.Render(asciiArt),
+		inputStyle.Render(m.renderInputView(inputWidth)),
+	}
+	if m.showCommandMenu {
+		parts = append(parts, inputStyle.Render(m.renderCommandMenu()))
+	}
+
+	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
+	contentHeight := lipgloss.Height(content)
+	topPad := (m.viewport.Height - contentHeight) / 2
+	if topPad < 0 {
+		topPad = 0
+	}
+
+	return lipgloss.NewStyle().
+		Width(m.width).
+		Height(m.viewport.Height).
+		Render(strings.Repeat("\n", topPad) + content)
 }
 
 // renderSeparator renders a horizontal line with optional processing indicator
@@ -2237,12 +2278,31 @@ func (m *Model) SetSize(width, height int) {
 	m.textarea.SetWidth(width)
 	if m.ready {
 		m.viewport.Width = width
-		viewportHeight := height - 6
-		if viewportHeight < 1 {
-			viewportHeight = 1
-		}
-		m.viewport.Height = viewportHeight
+		m.updateViewportHeight()
 	}
+}
+
+func (m Model) hasDiscussion() bool {
+	return len(m.messages) > 0
+}
+
+func (m Model) calculateViewportHeight() int {
+	fixedHeight := 2 // top bar + bottom bar
+	if m.hasDiscussion() || m.showQuestionPrompt {
+		fixedHeight += 3 // bottom textarea
+	}
+	viewportHeight := m.height - fixedHeight - m.calculateQuestionPromptHeight()
+	if viewportHeight < 1 {
+		viewportHeight = 1
+	}
+	return viewportHeight
+}
+
+func (m *Model) updateViewportHeight() {
+	if !m.ready {
+		return
+	}
+	m.viewport.Height = m.calculateViewportHeight()
 }
 
 // executeCommand executes a slash command and returns the updated model

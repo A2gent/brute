@@ -493,12 +493,13 @@ func (s *Server) executeWorkflowNode(
 	}
 
 	agentConfig := agent.Config{
-		Name:          child.AgentID,
-		Model:         target.Model,
-		SystemPrompt:  s.buildSystemPromptForWorkflowNode(child, node),
-		MaxSteps:      s.config.MaxSteps,
-		Temperature:   s.config.Temperature,
-		ContextWindow: target.ContextWindow,
+		Name:                child.AgentID,
+		Model:               target.Model,
+		SystemPrompt:        s.buildSystemPromptForWorkflowNode(child, node),
+		MaxSteps:            s.config.MaxSteps,
+		Temperature:         s.config.Temperature,
+		ContextWindow:       target.ContextWindow,
+		UsePreviousResponse: target.StatefulResponses,
 	}
 	ag := agent.New(agentConfig, target.Client, s.toolManagerForWorkflowNode(child, node), s.sessionManager)
 	content, _, runErr := ag.RunWithEvents(ctx, child, nodePrompt, func(ev agent.Event) {

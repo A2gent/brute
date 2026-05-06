@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,16 +28,40 @@ type Client struct {
 	baseURL     string
 	model       string
 	accountID   string
+	options     Options
 	httpClient  *http.Client
 }
 
+type Options struct {
+	PromptCacheKey    string
+	ReasoningEffort   string
+	TextVerbosity     string
+	ServiceTier       string
+	MaxTokens         int
+	StatefulResponses bool
+}
+
 type responsesRequest struct {
-	Model        string               `json:"model"`
-	Instructions string               `json:"instructions,omitempty"`
-	Input        []responsesInputItem `json:"input"`
-	Tools        []responsesTool      `json:"tools,omitempty"`
-	Store        bool                 `json:"store"`
-	Stream       bool                 `json:"stream"`
+	Model              string               `json:"model"`
+	Instructions       string               `json:"instructions,omitempty"`
+	Input              []responsesInputItem `json:"input"`
+	Tools              []responsesTool      `json:"tools,omitempty"`
+	Store              bool                 `json:"store"`
+	Stream             bool                 `json:"stream"`
+	PreviousResponseID string               `json:"previous_response_id,omitempty"`
+	PromptCacheKey     string               `json:"prompt_cache_key,omitempty"`
+	Reasoning          *responsesReasoning  `json:"reasoning,omitempty"`
+	Text               *responsesText       `json:"text,omitempty"`
+	ServiceTier        string               `json:"service_tier,omitempty"`
+	MaxOutputTokens    int                  `json:"max_output_tokens,omitempty"`
+}
+
+type responsesReasoning struct {
+	Effort string `json:"effort,omitempty"`
+}
+
+type responsesText struct {
+	Verbosity string `json:"verbosity,omitempty"`
 }
 
 type responsesInputItem struct {
@@ -67,8 +93,14 @@ type responsesResponse struct {
 	Status string                `json:"status"`
 	Output []responsesOutputItem `json:"output"`
 	Usage  struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
+		InputTokens        int `json:"input_tokens"`
+		OutputTokens       int `json:"output_tokens"`
+		InputTokensDetails struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"input_tokens_details"`
+		OutputTokensDetails struct {
+			ReasoningTokens int `json:"reasoning_tokens"`
+		} `json:"output_tokens_details"`
 	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
@@ -98,6 +130,17 @@ type streamToolState struct {
 }
 
 func NewClient(accessToken, model, baseURL string) *Client {
+	return NewClientWithOptions(accessToken, model, baseURL, Options{
+		PromptCacheKey:    strings.TrimSpace(os.Getenv("AAGENT_OPENAI_CODEX_PROMPT_CACHE_KEY")),
+		ReasoningEffort:   strings.TrimSpace(os.Getenv("AAGENT_OPENAI_CODEX_REASONING_EFFORT")),
+		TextVerbosity:     strings.TrimSpace(os.Getenv("AAGENT_OPENAI_CODEX_TEXT_VERBOSITY")),
+		ServiceTier:       strings.TrimSpace(os.Getenv("AAGENT_OPENAI_CODEX_SERVICE_TIER")),
+		MaxTokens:         envInt("AAGENT_OPENAI_CODEX_MAX_TOKENS"),
+		StatefulResponses: envBool("AAGENT_OPENAI_CODEX_STATEFUL_RESPONSES"),
+	})
+}
+
+func NewClientWithOptions(accessToken, model, baseURL string, options Options) *Client {
 	normalizedBaseURL := strings.TrimSpace(baseURL)
 	if normalizedBaseURL == "" {
 		normalizedBaseURL = defaultBaseURL
@@ -111,6 +154,7 @@ func NewClient(accessToken, model, baseURL string) *Client {
 		baseURL:     normalizedBaseURL,
 		model:       strings.TrimSpace(model),
 		accountID:   extractAccountID(strings.TrimSpace(accessToken)),
+		options:     normalizeOptions(options),
 		httpClient: &http.Client{
 			Timeout: 10 * time.Minute,
 		},
@@ -118,6 +162,13 @@ func NewClient(accessToken, model, baseURL string) *Client {
 }
 
 func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatResponse, error) {
+	return c.ChatStream(ctx, request, nil)
+}
+
+func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEvent func(llm.StreamEvent) error) (*llm.ChatResponse, error) {
+	if request == nil {
+		request = &llm.ChatRequest{}
+	}
 	model := strings.TrimSpace(request.Model)
 	if model == "" {
 		model = c.model
@@ -143,13 +194,24 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 		})
 	}
 
+	options := c.requestOptions(request)
 	payload := responsesRequest{
-		Model:        model,
-		Instructions: codexInstructions(request.SystemPrompt),
-		Input:        input,
-		Tools:        tools,
-		Store:        false,
-		Stream:       true,
+		Model:              model,
+		Instructions:       codexInstructions(request.SystemPrompt),
+		Input:              input,
+		Tools:              tools,
+		Store:              options.StatefulResponses,
+		Stream:             true,
+		PreviousResponseID: options.previousResponseID(request),
+		PromptCacheKey:     options.promptCacheKey(request),
+		ServiceTier:        options.ServiceTier,
+		MaxOutputTokens:    options.maxTokens(request),
+	}
+	if effort := strings.TrimSpace(options.ReasoningEffort); effort != "" {
+		payload.Reasoning = &responsesReasoning{Effort: effort}
+	}
+	if verbosity := strings.TrimSpace(options.TextVerbosity); verbosity != "" {
+		payload.Text = &responsesText{Verbosity: verbosity}
 	}
 
 	body, err := json.Marshal(payload)
@@ -177,25 +239,29 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read Codex response: %w", err)
-	}
-
 	if resp.StatusCode != http.StatusOK {
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("failed to read Codex error response: %w", readErr)
+		}
 		err := fmt.Errorf("OpenAI Codex error (%d): %s", resp.StatusCode, string(respBody))
 		logging.LogResponse(0, 0, 0, err)
 		return nil, err
 	}
 
 	contentType := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type")))
-	trimmedBody := strings.TrimSpace(string(respBody))
-	if strings.Contains(contentType, "text/event-stream") ||
-		strings.HasPrefix(trimmedBody, "event:") ||
-		strings.HasPrefix(trimmedBody, "data:") {
-		return parseStreamResponse(respBody)
+	if strings.Contains(contentType, "text/event-stream") {
+		return parseStreamReader(resp.Body, onEvent)
 	}
 
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read Codex response: %w", err)
+	}
+	trimmedBody := strings.TrimSpace(string(respBody))
+	if strings.HasPrefix(trimmedBody, "event:") || strings.HasPrefix(trimmedBody, "data:") {
+		return parseStreamResponse(respBody)
+	}
 	var parsed responsesResponse
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
 		return nil, fmt.Errorf("failed to parse Codex response: %w", err)
@@ -204,6 +270,10 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 }
 
 func parseStreamResponse(body []byte) (*llm.ChatResponse, error) {
+	return parseStreamReader(bytes.NewReader(body), nil)
+}
+
+func parseStreamReader(reader io.Reader, onEvent func(llm.StreamEvent) error) (*llm.ChatResponse, error) {
 	var completed *responsesResponse
 	streamedItems := make([]responsesOutputItem, 0)
 	var textFallback strings.Builder
@@ -221,7 +291,7 @@ func parseStreamResponse(body []byte) (*llm.ChatResponse, error) {
 		return state
 	}
 
-	scanner := bufio.NewScanner(bytes.NewReader(body))
+	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -248,6 +318,14 @@ func parseStreamResponse(body []byte) (*llm.ChatResponse, error) {
 		switch ev.Type {
 		case "response.output_text.delta":
 			textFallback.WriteString(ev.Delta)
+			if onEvent != nil && ev.Delta != "" {
+				if err := onEvent(llm.StreamEvent{
+					Type:         llm.StreamEventContentDelta,
+					ContentDelta: ev.Delta,
+				}); err != nil {
+					return nil, err
+				}
+			}
 		case "response.function_call_arguments.delta":
 			id := strings.TrimSpace(ev.ItemID)
 			if id == "" {
@@ -255,6 +333,17 @@ func parseStreamResponse(body []byte) (*llm.ChatResponse, error) {
 			}
 			state := ensureToolState(id)
 			state.input.WriteString(ev.Delta)
+			if onEvent != nil && ev.Delta != "" {
+				if err := onEvent(llm.StreamEvent{
+					Type:           llm.StreamEventToolCallDelta,
+					ToolCallIndex:  ev.OutputIx,
+					ToolCallID:     id,
+					ToolCallName:   state.name,
+					ToolInputDelta: ev.Delta,
+				}); err != nil {
+					return nil, err
+				}
+			}
 		case "response.output_item.done":
 			if len(ev.Item) == 0 {
 				continue
@@ -341,9 +430,12 @@ func parseResponseObject(parsed responsesResponse) (*llm.ChatResponse, error) {
 
 	result := &llm.ChatResponse{
 		StopReason: parsed.Status,
+		ResponseID: strings.TrimSpace(parsed.ID),
 		Usage: llm.TokenUsage{
-			InputTokens:  parsed.Usage.InputTokens,
-			OutputTokens: parsed.Usage.OutputTokens,
+			InputTokens:       parsed.Usage.InputTokens,
+			OutputTokens:      parsed.Usage.OutputTokens,
+			CachedInputTokens: parsed.Usage.InputTokensDetails.CachedTokens,
+			ReasoningTokens:   parsed.Usage.OutputTokensDetails.ReasoningTokens,
 		},
 	}
 
@@ -495,4 +587,90 @@ func codexInstructions(systemPrompt string) string {
 	return codexPrefix + "\n\n" + prompt
 }
 
+func normalizeOptions(options Options) Options {
+	options.PromptCacheKey = strings.TrimSpace(options.PromptCacheKey)
+	options.ReasoningEffort = strings.TrimSpace(options.ReasoningEffort)
+	options.TextVerbosity = strings.TrimSpace(options.TextVerbosity)
+	options.ServiceTier = strings.TrimSpace(options.ServiceTier)
+	if options.MaxTokens < 0 {
+		options.MaxTokens = 0
+	}
+	return options
+}
+
+func (c *Client) requestOptions(request *llm.ChatRequest) Options {
+	options := c.options
+	if request == nil {
+		return options
+	}
+	if strings.TrimSpace(request.PromptCacheKey) != "" {
+		options.PromptCacheKey = strings.TrimSpace(request.PromptCacheKey)
+	}
+	if strings.TrimSpace(request.ReasoningEffort) != "" {
+		options.ReasoningEffort = strings.TrimSpace(request.ReasoningEffort)
+	}
+	if strings.TrimSpace(request.TextVerbosity) != "" {
+		options.TextVerbosity = strings.TrimSpace(request.TextVerbosity)
+	}
+	if strings.TrimSpace(request.ServiceTier) != "" {
+		options.ServiceTier = strings.TrimSpace(request.ServiceTier)
+	}
+	if request.MaxTokens > 0 {
+		options.MaxTokens = request.MaxTokens
+	}
+	if request.Store {
+		options.StatefulResponses = true
+	}
+	return normalizeOptions(options)
+}
+
+func (options Options) promptCacheKey(request *llm.ChatRequest) string {
+	if key := strings.TrimSpace(options.PromptCacheKey); key != "" {
+		return key
+	}
+	if request != nil {
+		return strings.TrimSpace(request.SessionID)
+	}
+	return ""
+}
+
+func (options Options) previousResponseID(request *llm.ChatRequest) string {
+	if !options.StatefulResponses || request == nil {
+		return ""
+	}
+	return strings.TrimSpace(request.PreviousResponseID)
+}
+
+func (options Options) maxTokens(request *llm.ChatRequest) int {
+	if options.MaxTokens > 0 {
+		return options.MaxTokens
+	}
+	if request != nil && request.MaxTokens > 0 {
+		return request.MaxTokens
+	}
+	return 0
+}
+
+func envBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func envInt(key string) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return 0
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 0 {
+		return 0
+	}
+	return value
+}
+
 var _ llm.Client = (*Client)(nil)
+var _ llm.StreamingClient = (*Client)(nil)

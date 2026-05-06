@@ -162,12 +162,13 @@ func (t *delegateToSubAgentTool) Execute(ctx context.Context, params json.RawMes
 	}
 
 	agentConfig := agent.Config{
-		Name:          "subagent-" + sa.Name,
-		Model:         target.Model,
-		SystemPrompt:  systemPrompt,
-		MaxSteps:      30, // Sub-agents get fewer steps
-		Temperature:   t.server.config.Temperature,
-		ContextWindow: target.ContextWindow,
+		Name:                "subagent-" + sa.Name,
+		Model:               target.Model,
+		SystemPrompt:        systemPrompt,
+		MaxSteps:            30, // Sub-agents get fewer steps
+		Temperature:         t.server.config.Temperature,
+		ContextWindow:       target.ContextWindow,
+		UsePreviousResponse: target.StatefulResponses,
 	}
 
 	ag := agent.New(agentConfig, target.Client, toolMgr, t.server.sessionManager)

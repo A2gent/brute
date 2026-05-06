@@ -29,6 +29,12 @@ type Provider struct {
 	APIKey             string              `json:"api_key"`
 	BaseURL            string              `json:"base_url"`
 	Model              string              `json:"model"`
+	PromptCacheKey     string              `json:"prompt_cache_key,omitempty"`
+	ReasoningEffort    string              `json:"reasoning_effort,omitempty"`
+	TextVerbosity      string              `json:"text_verbosity,omitempty"`
+	ServiceTier        string              `json:"service_tier,omitempty"`
+	MaxTokens          int                 `json:"max_tokens,omitempty"`
+	StatefulResponses  bool                `json:"stateful_responses,omitempty"`
 	FallbackChain      []string            `json:"fallback_chain,omitempty"` // Legacy provider-only fallback nodes.
 	FallbackChainNodes []FallbackChainNode `json:"fallback_chain_nodes,omitempty"`
 	RouterProvider     string              `json:"router_provider,omitempty"` // Provider reference used by automatic router (direct provider or fallback chain).

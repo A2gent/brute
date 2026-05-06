@@ -33,6 +33,11 @@ func NewRegistry() *Registry {
 				Aliases:     []string{"proj"},
 			},
 			{
+				Name:        "agents",
+				Description: "Select workflow/agent for new sessions",
+				Aliases:     []string{"agent", "workflow", "workflows"},
+			},
+			{
 				Name:        "provider",
 				Description: "Switch LLM provider",
 				Aliases:     []string{"p"},

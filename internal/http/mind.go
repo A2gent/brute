@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/llm"
@@ -25,6 +27,8 @@ const gitCommitProviderSettingKey = "AAGENT_GIT_COMMIT_PROVIDER"
 const gitCommitPromptTemplateSettingKey = "AAGENT_GIT_COMMIT_PROMPT_TEMPLATE"
 const defaultGitCommitPromptTemplate = "Generate a descriptive Git commit message based on provided files and diffs.\nReturn plain text only (no markdown, no code fences).\nFormat:\n1) First line: imperative summary (max 72 chars).\n2) Blank line.\n3) 2-4 bullet points with specific technical changes.\n\nChanged files:\n{{files}}\n\nDiff snippets:\n{{diffs}}"
 const projectSearchMaxResults = 5
+const maxProjectEditableFileBytes = 512 * 1024
+const maxProjectEditableFileLines = 20000
 
 type MindConfigResponse struct {
 	RootFolder string `json:"root_folder"`
@@ -616,7 +620,42 @@ func isMarkdownFile(name string) bool {
 
 func isProjectEditableFile(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
-	return ext == ".md" || ext == ".markdown" || ext == ".yaml" || ext == ".yml"
+	return !isProjectBlockedMediaFileExtension(ext)
+}
+
+func isProjectBlockedMediaFileExtension(ext string) bool {
+	switch ext {
+	case ".avif", ".bmp", ".gif", ".heic", ".heif", ".ico", ".jpeg", ".jpg", ".png", ".svg", ".svgz", ".tif", ".tiff", ".webp":
+		return true
+	case ".3g2", ".3gp", ".avi", ".flv", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ogv", ".webm", ".wmv":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateProjectFileContent(content []byte, action string) error {
+	if len(content) > maxProjectEditableFileBytes {
+		return fmt.Errorf("File is too large to %s (max 512 KiB)", action)
+	}
+	if bytes.Contains(content, []byte{0}) || !utf8.Valid(content) {
+		return fmt.Errorf("File must be UTF-8 text to %s", action)
+	}
+	if countProjectFileLines(content) > maxProjectEditableFileLines {
+		return fmt.Errorf("File has too many lines to %s (max 20,000 lines)", action)
+	}
+	return nil
+}
+
+func countProjectFileLines(content []byte) int {
+	if len(content) == 0 {
+		return 0
+	}
+	lineCount := bytes.Count(content, []byte{'\n'})
+	if content[len(content)-1] != '\n' {
+		lineCount++
+	}
+	return lineCount
 }
 
 func directoryHasChildren(path string) bool {
@@ -1111,7 +1150,7 @@ func (s *Server) handleGetProjectFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !isProjectEditableFile(normalizedRelPath) {
-		s.errorResponse(w, http.StatusBadRequest, "Only markdown and YAML files can be opened")
+		s.errorResponse(w, http.StatusBadRequest, "Images and videos cannot be opened in the project editor")
 		return
 	}
 
@@ -1124,10 +1163,18 @@ func (s *Server) handleGetProjectFile(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusBadRequest, "Path is a directory")
 		return
 	}
+	if info.Size() > maxProjectEditableFileBytes {
+		s.errorResponse(w, http.StatusBadRequest, "File is too large to open (max 512 KiB)")
+		return
+	}
 
 	content, err := os.ReadFile(resolvedPath)
 	if err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to read file: "+err.Error())
+		return
+	}
+	if err := validateProjectFileContent(content, "open"); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -1183,7 +1230,11 @@ func (s *Server) handleUpsertProjectFile(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if !isProjectEditableFile(normalizedRelPath) {
-		s.errorResponse(w, http.StatusBadRequest, "Only markdown and YAML files can be created or edited")
+		s.errorResponse(w, http.StatusBadRequest, "Images and videos cannot be created or edited in the project editor")
+		return
+	}
+	if err := validateProjectFileContent([]byte(req.Content), "create or edit"); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -1262,7 +1313,7 @@ func (s *Server) handleDeleteProjectFile(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if !isProjectEditableFile(normalizedRelPath) {
-		s.errorResponse(w, http.StatusBadRequest, "Only markdown and YAML files can be deleted")
+		s.errorResponse(w, http.StatusBadRequest, "Images and videos cannot be deleted from the project editor")
 		return
 	}
 
@@ -1348,7 +1399,7 @@ func (s *Server) handleMoveProjectFile(w http.ResponseWriter, r *http.Request) {
 
 	isDir := fromInfo.IsDir()
 	if !isDir && !isProjectEditableFile(fromNormalized) {
-		s.errorResponse(w, http.StatusBadRequest, "Only markdown/YAML files and folders can be moved")
+		s.errorResponse(w, http.StatusBadRequest, "Images and videos cannot be moved from the project editor")
 		return
 	}
 
@@ -1363,7 +1414,7 @@ func (s *Server) handleMoveProjectFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !isDir && !isProjectEditableFile(toNormalized) {
-		s.errorResponse(w, http.StatusBadRequest, "Destination must be a markdown or YAML file")
+		s.errorResponse(w, http.StatusBadRequest, "Destination cannot be an image or video file")
 		return
 	}
 
@@ -1540,7 +1591,7 @@ func (s *Server) handleRenameProjectEntry(w http.ResponseWriter, r *http.Request
 	}
 
 	if !info.IsDir() && !isProjectEditableFile(newName) {
-		s.errorResponse(w, http.StatusBadRequest, "File must have .md/.markdown or .yaml/.yml extension")
+		s.errorResponse(w, http.StatusBadRequest, "File cannot be renamed to an image or video extension")
 		return
 	}
 

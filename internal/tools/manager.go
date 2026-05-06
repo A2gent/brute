@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -125,17 +126,29 @@ func (m *Manager) Unregister(name string) {
 func (m *Manager) Get(name string) (Tool, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	tool, ok := m.tools[name]
+	tool, ok := m.tools[normalizeToolName(name)]
 	return tool, ok
 }
 
 // Execute executes a tool by name with the given parameters
 func (m *Manager) Execute(ctx context.Context, name string, params json.RawMessage) (*Result, error) {
-	tool, ok := m.Get(name)
+	toolName := normalizeToolName(name)
+	tool, ok := m.Get(toolName)
 	if !ok {
-		return nil, fmt.Errorf("tool not found: %s", name)
+		return nil, fmt.Errorf("tool not found: %s", toolName)
 	}
 	return tool.Execute(ctx, params)
+}
+
+func normalizeToolName(name string) string {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(trimmed, "."); idx >= 0 && idx+1 < len(trimmed) {
+		return strings.TrimSpace(trimmed[idx+1:])
+	}
+	return trimmed
 }
 
 // ExecuteParallel executes multiple tool calls in parallel
@@ -152,12 +165,13 @@ func (m *Manager) ExecuteParallel(ctx context.Context, calls []llm.ToolCall) []l
 
 			start := time.Now()
 			callCtx := context.WithValue(ctx, "tool_call_id", tc.ID)
-			result, err := m.Execute(callCtx, tc.Name, json.RawMessage(tc.Input))
+			toolName := normalizeToolName(tc.Name)
+			result, err := m.Execute(callCtx, toolName, json.RawMessage(tc.Input))
 			duration := time.Since(start)
 
 			tr := llm.ToolResult{
 				ToolCallID: tc.ID,
-				Name:       tc.Name,
+				Name:       toolName,
 				DurationMs: duration.Milliseconds(),
 			}
 
@@ -167,10 +181,17 @@ func (m *Manager) ExecuteParallel(ctx context.Context, calls []llm.ToolCall) []l
 				logging.LogToolExecution(tc.Name, false, duration)
 				logging.Debug("Tool %s error: %v", tc.Name, err)
 			} else if !result.Success {
-				tr.Content = fmt.Sprintf("Error: %s", result.Error)
+				message := strings.TrimSpace(result.Error)
+				if message == "" {
+					message = strings.TrimSpace(result.Output)
+				}
+				if message == "" {
+					message = "tool returned unsuccessful result"
+				}
+				tr.Content = fmt.Sprintf("Error: %s", message)
 				tr.IsError = true
-				logging.LogToolExecution(tc.Name, false, duration)
-				logging.Debug("Tool %s failed: %s", tc.Name, result.Error)
+				logging.LogToolExecution(toolName, false, duration)
+				logging.Debug("Tool %s failed: %s", toolName, message)
 			} else {
 				tr.Content = result.Output
 				tr.Metadata = result.Metadata

@@ -27,6 +27,9 @@ func (m *memStore) GetSession(id string) (*storage.Session, error) {
 	}
 	return s, nil
 }
+func (m *memStore) GetSessionSummary(id string) (*storage.Session, error) {
+	return m.GetSession(id)
+}
 func (m *memStore) ListSessions() ([]*storage.Session, error)            { return nil, nil }
 func (m *memStore) ListSessionsByJob(string) ([]*storage.Session, error) { return nil, nil }
 func (m *memStore) DeleteSession(string) error                           { return nil }

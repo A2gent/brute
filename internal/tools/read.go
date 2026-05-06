@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -96,11 +95,7 @@ func (t *ReadTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 		return &Result{Success: false, Error: "start_line must be <= end_line"}, nil
 	}
 
-	// Resolve path
-	path := p.Path
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(t.workDir, path)
-	}
+	path := resolveToolPath(t.workDir, p.Path)
 
 	// Check if file exists
 	info, err := os.Stat(path)

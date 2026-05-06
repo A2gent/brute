@@ -135,11 +135,7 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 	// Determine base path
 	basePath := t.workDir
 	if p.Path != "" {
-		if filepath.IsAbs(p.Path) {
-			basePath = p.Path
-		} else {
-			basePath = filepath.Join(t.workDir, p.Path)
-		}
+		basePath = resolveToolPath(t.workDir, p.Path)
 	}
 
 	// Determine file pattern

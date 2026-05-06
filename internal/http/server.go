@@ -2065,8 +2065,15 @@ func (s *Server) handleUpdateSessionProvider(w http.ResponseWriter, r *http.Requ
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionID")
 	includeMessages := r.URL.Query().Get("include_messages") != "false"
+	includeMetadata := r.URL.Query().Get("include_metadata") != "false"
 
-	sess, err := s.sessionManager.Get(sessionID)
+	var sess *session.Session
+	var err error
+	if includeMessages || includeMetadata {
+		sess, err = s.sessionManager.Get(sessionID)
+	} else {
+		sess, err = s.sessionManager.GetSummary(sessionID)
+	}
 	if err != nil {
 		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
 		return
@@ -2079,6 +2086,9 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	if !includeMessages {
 		resp.Messages = nil
 		resp.SystemPromptSnapshot = nil
+	}
+	if !includeMetadata {
+		resp.Metadata = nil
 	}
 	s.jsonResponse(w, http.StatusOK, resp)
 }

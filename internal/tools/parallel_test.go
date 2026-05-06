@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/A2gent/brute/internal/llm"
 )
 
 type sleepTool struct{}
@@ -31,11 +33,23 @@ func (t *sleepTool) Execute(_ context.Context, params json.RawMessage) (*Result,
 	return &Result{Success: true, Output: p.Text}, nil
 }
 
+type outputOnlyFailTool struct{}
+
+func (t *outputOnlyFailTool) Name() string        { return "test_output_fail" }
+func (t *outputOnlyFailTool) Description() string { return "fails with structured output only" }
+func (t *outputOnlyFailTool) Schema() map[string]interface{} {
+	return map[string]interface{}{"type": "object"}
+}
+func (t *outputOnlyFailTool) Execute(_ context.Context, _ json.RawMessage) (*Result, error) {
+	return &Result{Success: false, Output: `[{"step":1,"error":"tool not found: missing"}]`}, nil
+}
+
 func TestParallelTool_Execute(t *testing.T) {
 	manager := NewManager(t.TempDir())
 	manager.Register(&emitTool{})
 	manager.Register(&failTool{})
 	manager.Register(&sleepTool{})
+	manager.Register(&outputOnlyFailTool{})
 
 	parallelRaw, ok := manager.Get("parallel")
 	if !ok {
@@ -122,6 +136,25 @@ func TestParallelTool_Execute(t *testing.T) {
 		}
 	})
 
+	t.Run("accepts provider namespaced tool names", func(t *testing.T) {
+		params := map[string]interface{}{
+			"steps": []map[string]interface{}{
+				{"tool": "functions.test_emit", "text": "namespaced"},
+			},
+		}
+		raw, _ := json.Marshal(params)
+		result, err := parallel.Execute(context.Background(), raw)
+		if err != nil {
+			t.Fatalf("Execute returned error: %v", err)
+		}
+		if !result.Success {
+			t.Fatalf("expected success, got error: %s output: %s", result.Error, result.Output)
+		}
+		if !strings.Contains(result.Output, `"tool": "test_emit"`) || !strings.Contains(result.Output, `"output": "namespaced"`) {
+			t.Fatalf("expected namespaced tool to be normalized, got: %s", result.Output)
+		}
+	})
+
 	t.Run("args takes precedence over inline arguments", func(t *testing.T) {
 		params := map[string]interface{}{
 			"steps": []map[string]interface{}{
@@ -159,6 +192,25 @@ func TestParallelTool_Execute(t *testing.T) {
 		params := map[string]interface{}{
 			"steps": []map[string]interface{}{
 				{"tool": "parallel"},
+			},
+		}
+		raw, _ := json.Marshal(params)
+		result, err := parallel.Execute(context.Background(), raw)
+		if err != nil {
+			t.Fatalf("Execute returned error: %v", err)
+		}
+		if result.Success {
+			t.Fatalf("expected failure, got output: %s", result.Output)
+		}
+		if !strings.Contains(result.Error, "recursive parallel call") {
+			t.Fatalf("unexpected error: %s", result.Error)
+		}
+	})
+
+	t.Run("disallow namespaced recursive parallel", func(t *testing.T) {
+		params := map[string]interface{}{
+			"steps": []map[string]interface{}{
+				{"tool": "functions.parallel"},
 			},
 		}
 		raw, _ := json.Marshal(params)
@@ -237,4 +289,30 @@ func TestParallelTool_Execute(t *testing.T) {
 			t.Fatalf("expected cancellation in output, got: %s", result.Output)
 		}
 	})
+}
+
+func TestManagerExecuteParallel_PreservesOutputOnlyFailure(t *testing.T) {
+	manager := NewManager(t.TempDir())
+	manager.Register(&outputOnlyFailTool{})
+
+	results := manager.ExecuteParallel(context.Background(), []llm.ToolCall{
+		{
+			ID:    "tc-output-fail",
+			Name:  "functions.test_output_fail",
+			Input: `{}`,
+		},
+	})
+
+	if len(results) != 1 {
+		t.Fatalf("expected one result, got %d", len(results))
+	}
+	if !results[0].IsError {
+		t.Fatalf("expected error result: %#v", results[0])
+	}
+	if results[0].Name != "test_output_fail" {
+		t.Fatalf("expected normalized result name, got %q", results[0].Name)
+	}
+	if !strings.Contains(results[0].Content, "tool not found: missing") {
+		t.Fatalf("expected structured failure output to be preserved, got: %s", results[0].Content)
+	}
 }

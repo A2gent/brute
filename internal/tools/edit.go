@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -80,11 +79,7 @@ func (t *EditTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 		return &Result{Success: false, Error: "old_string and new_string must be different"}, nil
 	}
 
-	// Resolve path
-	path := p.Path
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(t.workDir, path)
-	}
+	path := resolveToolPath(t.workDir, p.Path)
 
 	// Read file
 	content, err := os.ReadFile(path)

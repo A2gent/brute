@@ -133,6 +133,7 @@ type Store interface {
 	// Session operations
 	SaveSession(sess *Session) error
 	GetSession(id string) (*Session, error)
+	GetSessionSummary(id string) (*Session, error)
 	ListSessions() ([]*Session, error)                  // Returns only non-job sessions
 	ListSessionsByJob(jobID string) ([]*Session, error) // Returns sessions for a specific job
 	DeleteSession(id string) error

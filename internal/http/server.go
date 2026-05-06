@@ -780,6 +780,7 @@ type ChatStreamEvent struct {
 	Type       string                 `json:"type"`
 	Delta      string                 `json:"delta,omitempty"`
 	Content    string                 `json:"content,omitempty"`
+	Message    *MessageResponse       `json:"message,omitempty"`
 	Messages   []MessageResponse      `json:"messages,omitempty"`
 	Status     string                 `json:"status,omitempty"`
 	Usage      *UsageResponse         `json:"usage,omitempty"`
@@ -2757,19 +2758,20 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			_ = writeEvent(ChatStreamEvent{
 				Type:      "tool_executing",
 				Step:      ev.Step,
+				Message:   streamLastMessageResponse(s, sess),
 				ToolCalls: toolCalls,
 			})
 		case agent.EventToolCompleted:
-			// Send updated messages after tool execution
-			freshSess, err := s.sessionManager.Get(sess.ID)
-			if err == nil {
-				_ = writeEvent(ChatStreamEvent{
-					Type:     "tool_completed",
-					Step:     ev.Step,
-					Messages: s.messagesToResponse(freshSess.Messages),
-					Status:   string(freshSess.Status),
-				})
+			event := ChatStreamEvent{
+				Type:   "tool_completed",
+				Step:   ev.Step,
+				Status: string(sess.Status),
 			}
+			if len(sess.Messages) > 0 {
+				msg := s.messageToResponse(sess.Messages[len(sess.Messages)-1])
+				event.Message = &msg
+			}
+			_ = writeEvent(event)
 		case agent.EventStepCompleted:
 			_ = writeEvent(ChatStreamEvent{
 				Type: "step_completed",
@@ -2833,6 +2835,14 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			OutputTokens: usage.OutputTokens,
 		},
 	})
+}
+
+func streamLastMessageResponse(s *Server, sess *session.Session) *MessageResponse {
+	if sess == nil || len(sess.Messages) == 0 {
+		return nil
+	}
+	msg := s.messageToResponse(sess.Messages[len(sess.Messages)-1])
+	return &msg
 }
 
 // --- Recurring Jobs Handlers ---
@@ -3461,43 +3471,47 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 func (s *Server) messagesToResponse(messages []session.Message) []MessageResponse {
 	resp := make([]MessageResponse, len(messages))
 	for i, m := range messages {
-		msg := MessageResponse{
-			Role:      m.Role,
-			Content:   m.Content,
-			Images:    sessionImagesToPayload(m.Images),
-			Metadata:  m.Metadata,
-			Timestamp: m.Timestamp,
-		}
-
-		if len(m.ToolCalls) > 0 {
-			msg.ToolCalls = make([]ToolCallResponse, len(m.ToolCalls))
-			for j, tc := range m.ToolCalls {
-				msg.ToolCalls[j] = ToolCallResponse{
-					ID:               tc.ID,
-					Name:             tc.Name,
-					Input:            tc.Input,
-					ThoughtSignature: tc.ThoughtSignature,
-				}
-			}
-		}
-
-		if len(m.ToolResults) > 0 {
-			msg.ToolResults = make([]ToolResultResponse, len(m.ToolResults))
-			for j, tr := range m.ToolResults {
-				msg.ToolResults[j] = ToolResultResponse{
-					ToolCallID: tr.ToolCallID,
-					Content:    tr.Content,
-					IsError:    tr.IsError,
-					Metadata:   tr.Metadata,
-					Name:       tr.Name,
-					DurationMs: tr.DurationMs,
-				}
-			}
-		}
-
-		resp[i] = msg
+		resp[i] = s.messageToResponse(m)
 	}
 	return resp
+}
+
+func (s *Server) messageToResponse(m session.Message) MessageResponse {
+	msg := MessageResponse{
+		Role:      m.Role,
+		Content:   m.Content,
+		Images:    sessionImagesToPayload(m.Images),
+		Metadata:  m.Metadata,
+		Timestamp: m.Timestamp,
+	}
+
+	if len(m.ToolCalls) > 0 {
+		msg.ToolCalls = make([]ToolCallResponse, len(m.ToolCalls))
+		for j, tc := range m.ToolCalls {
+			msg.ToolCalls[j] = ToolCallResponse{
+				ID:               tc.ID,
+				Name:             tc.Name,
+				Input:            tc.Input,
+				ThoughtSignature: tc.ThoughtSignature,
+			}
+		}
+	}
+
+	if len(m.ToolResults) > 0 {
+		msg.ToolResults = make([]ToolResultResponse, len(m.ToolResults))
+		for j, tr := range m.ToolResults {
+			msg.ToolResults[j] = ToolResultResponse{
+				ToolCallID: tr.ToolCallID,
+				Content:    tr.Content,
+				IsError:    tr.IsError,
+				Metadata:   tr.Metadata,
+				Name:       tr.Name,
+				DurationMs: tr.DurationMs,
+			}
+		}
+	}
+
+	return msg
 }
 
 func normalizeIncomingImages(images []MessageImagePayload) ([]session.ImageAttachment, error) {

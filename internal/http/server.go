@@ -1265,7 +1265,7 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 			TextVerbosity:     strings.TrimSpace(existing.TextVerbosity),
 			ServiceTier:       strings.TrimSpace(existing.ServiceTier),
 			MaxTokens:         existing.MaxTokens,
-			StatefulResponses: existing.StatefulResponses,
+			StatefulResponses: s.providerStatefulResponsesForConfig(def.Type, existing.StatefulResponses),
 			ProxyManaged:      proxyManaged,
 			ProxyBaseURL:      proxyBaseURL,
 			FallbackChain:     nil,
@@ -1426,7 +1426,7 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if req.StatefulResponses != nil {
-			provider.StatefulResponses = *req.StatefulResponses
+			provider.StatefulResponses = req.StatefulResponses
 		}
 
 		if provider.BaseURL == "" {
@@ -5652,11 +5652,18 @@ func (s *Server) resolveContextWindowForProvider(providerType config.ProviderTyp
 }
 
 func (s *Server) providerStatefulResponses(providerType config.ProviderType) bool {
+	provider := s.config.Providers[string(providerType)]
+	return s.providerStatefulResponsesForConfig(providerType, provider.StatefulResponses)
+}
+
+func (s *Server) providerStatefulResponsesForConfig(providerType config.ProviderType, configured *bool) bool {
 	if providerType != config.ProviderOpenAICodex {
 		return false
 	}
-	provider := s.config.Providers[string(providerType)]
-	return provider.StatefulResponses
+	if configured == nil {
+		return true
+	}
+	return *configured
 }
 
 func (s *Server) createLLMClient(providerType config.ProviderType, model string, sess *session.Session) (llm.Client, error) {
@@ -5776,7 +5783,7 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 			TextVerbosity:     provider.TextVerbosity,
 			ServiceTier:       provider.ServiceTier,
 			MaxTokens:         provider.MaxTokens,
-			StatefulResponses: provider.StatefulResponses,
+			StatefulResponses: s.providerStatefulResponsesForConfig(providerType, provider.StatefulResponses),
 		}), nil
 	case config.ProviderAnthropic:
 		// Use API key (OAuth case handled above)

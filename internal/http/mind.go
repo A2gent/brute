@@ -1009,7 +1009,16 @@ func (s *Server) handleProjectSearch(w http.ResponseWriter, r *http.Request) {
 
 	fileNameCandidates := make([]rankedFileNameMatch, 0, 32)
 	contentCandidates := make([]rankedContentMatch, 0, 32)
-	queryLower := strings.ToLower(query)
+	normalizedQueryLower := strings.ToLower(normalizeProjectSearchQuery(query))
+	if normalizedQueryLower == "" {
+		s.jsonResponse(w, http.StatusOK, ProjectSearchResponse{
+			RootFolder:      resolvedRoot,
+			Query:           query,
+			FileNameMatches: []ProjectFileNameMatch{},
+			ContentMatches:  []ProjectContentMatch{},
+		})
+		return
+	}
 
 	walkErr := filepath.WalkDir(resolvedRoot, func(fullPath string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -1030,17 +1039,17 @@ func (s *Server) handleProjectSearch(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 
-		if !isMarkdownFile(name) {
-			return nil
-		}
-
 		relPath, relErr := filepath.Rel(resolvedRoot, fullPath)
 		if relErr != nil {
 			return nil
 		}
 		relPath = filepath.ToSlash(relPath)
 
-		if score := scoreProjectFileNameMatch(relPath, queryLower); score > 0 {
+		if !isProjectEditableFile(relPath) {
+			return nil
+		}
+
+		if score := scoreProjectFileNameMatch(relPath, normalizedQueryLower); score > 0 {
 			fileNameCandidates = append(fileNameCandidates, rankedFileNameMatch{
 				ProjectFileNameMatch: ProjectFileNameMatch{
 					Path: relPath,
@@ -1050,11 +1059,18 @@ func (s *Server) handleProjectSearch(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
+		info, infoErr := entry.Info()
+		if infoErr != nil || info.Size() > maxProjectEditableFileBytes {
+			return nil
+		}
 		content, readErr := os.ReadFile(fullPath)
 		if readErr != nil {
 			return nil
 		}
-		lineNumber, lineText, score := findProjectContentMatch(content, queryLower)
+		if err := validateProjectFileContent(content, "search"); err != nil {
+			return nil
+		}
+		lineNumber, lineText, score := findProjectContentMatch(content, normalizedQueryLower)
 		if score > 0 {
 			contentCandidates = append(contentCandidates, rankedContentMatch{
 				ProjectContentMatch: ProjectContentMatch{
@@ -2970,6 +2986,25 @@ type rankedFileNameMatch struct {
 type rankedContentMatch struct {
 	ProjectContentMatch
 	score int
+}
+
+func normalizeProjectSearchQuery(query string) string {
+	normalized := strings.TrimSpace(query)
+	for len(normalized) >= 2 {
+		first := normalized[0]
+		last := normalized[len(normalized)-1]
+		if (first == '"' && last == '"') || (first == '\'' && last == '\'') || (first == '`' && last == '`') {
+			normalized = strings.TrimSpace(normalized[1 : len(normalized)-1])
+			continue
+		}
+		break
+	}
+	normalized = strings.ReplaceAll(normalized, "\\", "/")
+	for strings.HasPrefix(normalized, "./") {
+		normalized = strings.TrimPrefix(normalized, "./")
+	}
+	normalized = strings.TrimPrefix(normalized, "/")
+	return normalized
 }
 
 func scoreProjectFileNameMatch(relPath string, queryLower string) int {

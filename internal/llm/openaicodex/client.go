@@ -45,7 +45,7 @@ type responsesInputItem struct {
 	CallID    string                 `json:"call_id,omitempty"`
 	Name      string                 `json:"name,omitempty"`
 	Arguments string                 `json:"arguments,omitempty"`
-	Output    string                 `json:"output,omitempty"`
+	Output    *string                `json:"output,omitempty"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
@@ -393,10 +393,11 @@ func buildInputItems(messages []llm.Message) []responsesInputItem {
 		switch role {
 		case "tool":
 			for _, tr := range msg.ToolResults {
+				output := strings.TrimSpace(tr.Content)
 				items = append(items, responsesInputItem{
 					Type:   "function_call_output",
 					CallID: strings.TrimSpace(tr.ToolCallID),
-					Output: strings.TrimSpace(tr.Content),
+					Output: &output,
 				})
 			}
 		case "assistant":

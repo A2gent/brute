@@ -1,6 +1,71 @@
 package openaicodex
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+
+	"github.com/A2gent/brute/internal/llm"
+)
+
+func TestBuildInputItems_IncludesEmptyFunctionCallOutput(t *testing.T) {
+	items := buildInputItems([]llm.Message{
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{
+				{ID: "call_empty", Name: "bash", Input: `{"command":"true"}`},
+			},
+		},
+		{
+			Role: "tool",
+			ToolResults: []llm.ToolResult{
+				{ToolCallID: "call_empty", Name: "bash", Content: ""},
+			},
+		},
+	})
+
+	if len(items) != 2 {
+		t.Fatalf("item count = %d, want 2", len(items))
+	}
+	if items[1].Output == nil {
+		t.Fatalf("function_call_output output was omitted")
+	}
+	if got := *items[1].Output; got != "" {
+		t.Fatalf("function_call_output output = %q, want empty string", got)
+	}
+
+	body, err := json.Marshal(items[1])
+	if err != nil {
+		t.Fatalf("marshal function_call_output: %v", err)
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("unmarshal function_call_output: %v", err)
+	}
+	if _, ok := raw["output"]; !ok {
+		t.Fatalf("marshaled function_call_output missing output field: %s", string(body))
+	}
+}
+
+func TestBuildInputItems_DoesNotAddOutputToMessages(t *testing.T) {
+	items := buildInputItems([]llm.Message{
+		{Role: "user", Content: "hello"},
+	})
+
+	if len(items) != 1 {
+		t.Fatalf("item count = %d, want 1", len(items))
+	}
+	body, err := json.Marshal(items[0])
+	if err != nil {
+		t.Fatalf("marshal message item: %v", err)
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("unmarshal message item: %v", err)
+	}
+	if _, ok := raw["output"]; ok {
+		t.Fatalf("message item unexpectedly includes output field: %s", string(body))
+	}
+}
 
 func TestParseStreamResponse_UsesStreamedMessageWhenCompletedOutputIsEmpty(t *testing.T) {
 	body := []byte(`event: response.output_item.added

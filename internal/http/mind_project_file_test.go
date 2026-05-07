@@ -120,6 +120,77 @@ func TestProjectFileEditorRejectsUnsupportedFiles(t *testing.T) {
 	}
 }
 
+func TestProjectSearchFindsCodeFileByPath(t *testing.T) {
+	server, projectID, projectDir := newProjectFileTestServer(t)
+
+	targetPath := "spec/models/spareto/search/query_spec.rb"
+	fullPath := filepath.Join(projectDir, filepath.FromSlash(targetPath))
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		t.Fatalf("failed to create parent directory: %v", err)
+	}
+	if err := os.WriteFile(fullPath, []byte("RSpec.describe Spareto::Search::Query do\nend\n"), 0o644); err != nil {
+		t.Fatalf("failed to write code file: %v", err)
+	}
+
+	queries := []string{
+		targetPath,
+		`"` + targetPath + `"`,
+		"./" + targetPath,
+		strings.ReplaceAll(targetPath, "/", "\\"),
+	}
+	for _, query := range queries {
+		t.Run(query, func(t *testing.T) {
+			rec := requestProjectSearch(t, server, projectID, query)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+			}
+
+			var response ProjectSearchResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatalf("failed to decode response: %v", err)
+			}
+			if len(response.FileNameMatches) == 0 {
+				t.Fatalf("expected filename match for %q, got none", targetPath)
+			}
+			if response.FileNameMatches[0].Path != targetPath {
+				t.Fatalf("expected first filename match %q, got %q", targetPath, response.FileNameMatches[0].Path)
+			}
+		})
+	}
+}
+
+func TestProjectSearchSearchesCodeFileContent(t *testing.T) {
+	server, projectID, projectDir := newProjectFileTestServer(t)
+
+	targetPath := "spec/models/spareto/search/query_spec.rb"
+	fullPath := filepath.Join(projectDir, filepath.FromSlash(targetPath))
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		t.Fatalf("failed to create parent directory: %v", err)
+	}
+	if err := os.WriteFile(fullPath, []byte("RSpec.describe Spareto::Search::Query do\nend\n"), 0o644); err != nil {
+		t.Fatalf("failed to write code file: %v", err)
+	}
+
+	rec := requestProjectSearch(t, server, projectID, "Spareto::Search::Query")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var response ProjectSearchResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(response.ContentMatches) == 0 {
+		t.Fatalf("expected content match for %q, got none", targetPath)
+	}
+	if response.ContentMatches[0].Path != targetPath {
+		t.Fatalf("expected first content match %q, got %q", targetPath, response.ContentMatches[0].Path)
+	}
+	if response.ContentMatches[0].Line != 1 {
+		t.Fatalf("expected content match on line 1, got line %d", response.ContentMatches[0].Line)
+	}
+}
+
 func newProjectFileTestServer(t *testing.T) (*Server, string, string) {
 	t.Helper()
 
@@ -157,6 +228,16 @@ func newProjectFileTestServer(t *testing.T) (*Server, string, string) {
 	}
 
 	return server, projectID, projectDir
+}
+
+func requestProjectSearch(t *testing.T, server *Server, projectID string, query string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	target := "/projects/search?projectID=" + url.QueryEscape(projectID) + "&query=" + url.QueryEscape(query)
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+	return rec
 }
 
 func requestProjectFile(t *testing.T, server *Server, method string, projectID string, path string, body *bytes.Reader) *httptest.ResponseRecorder {

@@ -16,6 +16,7 @@ import (
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/storage"
+	"github.com/A2gent/brute/internal/tools"
 )
 
 const (
@@ -492,14 +493,15 @@ func (s *Server) executeWorkflowNode(
 	}
 
 	agentConfig := agent.Config{
-		Name:          child.AgentID,
-		Model:         target.Model,
-		SystemPrompt:  s.buildSystemPromptForWorkflowNode(child, node),
-		MaxSteps:      s.config.MaxSteps,
-		Temperature:   s.config.Temperature,
-		ContextWindow: target.ContextWindow,
+		Name:                child.AgentID,
+		Model:               target.Model,
+		SystemPrompt:        s.buildSystemPromptForWorkflowNode(child, node),
+		MaxSteps:            s.config.MaxSteps,
+		Temperature:         s.config.Temperature,
+		ContextWindow:       target.ContextWindow,
+		UsePreviousResponse: target.StatefulResponses,
 	}
-	ag := agent.New(agentConfig, target.Client, s.toolManagerForSession(child), s.sessionManager)
+	ag := agent.New(agentConfig, target.Client, s.toolManagerForWorkflowNode(child, node), s.sessionManager)
 	content, _, runErr := ag.RunWithEvents(ctx, child, nodePrompt, func(ev agent.Event) {
 		if ev.Type == agent.EventProviderTrace && ev.Provider != nil {
 			s.applyProviderTraceToSession(child, target.ProviderType, ev.Provider)
@@ -593,6 +595,24 @@ func (s *Server) buildSystemPromptForWorkflowNode(child *session.Session, node w
 		}
 	}
 	return s.buildSystemPromptForSession(child)
+}
+
+func (s *Server) toolManagerForWorkflowNode(child *session.Session, node workflowNodeRuntime) *tools.Manager {
+	manager := s.toolManagerForSession(child)
+	if manager == nil {
+		return nil
+	}
+	kind := strings.ToLower(strings.TrimSpace(node.Kind))
+	if kind != "main" {
+		return manager
+	}
+
+	// Workflow main nodes are orchestrators inside an already-defined graph.
+	// Let the workflow runtime launch downstream nodes instead of allowing
+	// recursive delegation that blocks parent tool completion.
+	scoped := manager.Clone()
+	scoped.Unregister("delegate_to_subagent")
+	return scoped
 }
 
 func (s *Server) createWorkflowNodeChildSession(

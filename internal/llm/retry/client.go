@@ -200,6 +200,10 @@ func IsRetryableError(ctx context.Context, err error) bool {
 		strings.Contains(msg, "broken pipe") {
 		return true
 	}
+	if strings.Contains(msg, "stream error") || strings.Contains(msg, "internal_error") ||
+		strings.Contains(msg, "received from peer") {
+		return true
+	}
 	if strings.Contains(msg, "rate limit") || strings.Contains(msg, "ratelimit") || strings.Contains(msg, "429") {
 		return true
 	}

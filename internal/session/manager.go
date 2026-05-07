@@ -104,6 +104,15 @@ func (m *Manager) Get(id string) (*Session, error) {
 	return FromStorage(ss), nil
 }
 
+// GetSummary retrieves lightweight session fields without loading the message transcript.
+func (m *Manager) GetSummary(id string) (*Session, error) {
+	ss, err := m.store.GetSessionSummary(id)
+	if err != nil {
+		return nil, err
+	}
+	return FromStorage(ss), nil
+}
+
 // Save saves a session and appends new messages to the JSONL log (if configured).
 func (m *Manager) Save(sess *Session) error {
 	if err := m.store.SaveSession(sess.ToStorage()); err != nil {

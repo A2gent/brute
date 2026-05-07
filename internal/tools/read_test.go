@@ -20,7 +20,7 @@ func TestReadTool_LineNumberFormatting(t *testing.T) {
 
 	t.Run("line numbers disabled by default", func(t *testing.T) {
 		params := map[string]interface{}{
-			"path": "sample.txt",
+			"path":  "sample.txt",
 			"limit": 2,
 		}
 		raw, _ := json.Marshal(params)
@@ -60,4 +60,34 @@ func TestReadTool_LineNumberFormatting(t *testing.T) {
 			t.Fatalf("expected line-numbered output for line 2, got: %q", result.Output)
 		}
 	})
+}
+
+func TestReadTool_ResolvesSingleNestedGitProject(t *testing.T) {
+	workDir := t.TempDir()
+	nestedRoot := filepath.Join(workDir, "spareto")
+	if err := os.MkdirAll(filepath.Join(nestedRoot, ".git"), 0755); err != nil {
+		t.Fatalf("failed to create nested git dir: %v", err)
+	}
+	path := filepath.Join(nestedRoot, "app/services/clickstack/metrics.rb")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("failed to create nested dirs: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("nested metrics\n"), 0644); err != nil {
+		t.Fatalf("failed to create nested file: %v", err)
+	}
+
+	tool := NewReadTool(workDir)
+	raw, _ := json.Marshal(map[string]interface{}{
+		"path": "app/services/clickstack/metrics.rb",
+	})
+	result, err := tool.Execute(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected success, got error: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "nested metrics") {
+		t.Fatalf("expected nested file content, got: %q", result.Output)
+	}
 }

@@ -131,7 +131,7 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 	resultChans := make([]chan parallelStepOutput, 0, len(p.Steps))
 
 	for i, step := range p.Steps {
-		toolName := strings.TrimSpace(step.Tool)
+		toolName := normalizeToolName(step.Tool)
 		if toolName == "" {
 			return &Result{Success: false, Error: fmt.Sprintf("step %d: tool is required", i+1)}, nil
 		}
@@ -193,14 +193,14 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 		case <-ctx.Done():
 			results[i] = parallelStepOutput{
 				Step:    i + 1,
-				Tool:    strings.TrimSpace(p.Steps[i].Tool),
+				Tool:    normalizeToolName(p.Steps[i].Tool),
 				Success: false,
 				Error:   ctx.Err().Error(),
 			}
 		case <-time.After(parallelStepTimeout):
 			results[i] = parallelStepOutput{
 				Step:       i + 1,
-				Tool:       strings.TrimSpace(p.Steps[i].Tool),
+				Tool:       normalizeToolName(p.Steps[i].Tool),
 				Success:    false,
 				Error:      fmt.Sprintf("parallel step timed out after %s", parallelStepTimeout),
 				DurationMs: parallelStepTimeout.Milliseconds(),

@@ -1860,12 +1860,13 @@ func (s *Server) handleTelegramInboundMessage(
 	}
 
 	agentConfig := agent.Config{
-		Name:          sess.AgentID,
-		Model:         target.Model,
-		SystemPrompt:  s.buildSystemPromptForSession(sess),
-		MaxSteps:      s.config.MaxSteps,
-		Temperature:   s.config.Temperature,
-		ContextWindow: target.ContextWindow,
+		Name:                sess.AgentID,
+		Model:               target.Model,
+		SystemPrompt:        s.buildSystemPromptForSession(sess),
+		MaxSteps:            s.config.MaxSteps,
+		Temperature:         s.config.Temperature,
+		ContextWindow:       target.ContextWindow,
+		UsePreviousResponse: target.StatefulResponses,
 	}
 	ag := agent.New(agentConfig, target.Client, s.toolManagerForSession(sess), s.sessionManager)
 

@@ -28,6 +28,7 @@ type Config struct {
 	ContextWindow            int
 	CompactionTriggerPercent float64
 	CompactionPrompt         string
+	UsePreviousResponse      bool
 }
 
 // Agent represents an AI agent that can execute tasks
@@ -59,10 +60,14 @@ const (
 const (
 	metadataTotalInputTokens     = "total_input_tokens"
 	metadataTotalOutputTokens    = "total_output_tokens"
+	metadataTotalCachedTokens    = "total_cached_input_tokens"
+	metadataTotalReasoningTokens = "total_reasoning_tokens"
 	metadataCurrentContextTokens = "current_context_tokens"
 	metadataCompactionCount      = "compaction_count"
 	metadataLastCompactionAt     = "last_compaction_at"
+	metadataLastResponseID       = "last_response_id"
 	messageMetadataCompaction    = "context_compaction"
+	messageMetadataResponseID    = "response_id"
 	toolMetadataExternalWait     = "external_wait"
 	defaultCompactionTriggerPct  = 80.0
 	defaultCompactionPrompt      = `You are compacting a coding-agent conversation because context usage is high.
@@ -219,6 +224,8 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		} else if compacted {
 			totalUsage.InputTokens += compactionUsage.InputTokens
 			totalUsage.OutputTokens += compactionUsage.OutputTokens
+			totalUsage.CachedInputTokens += compactionUsage.CachedInputTokens
+			totalUsage.ReasoningTokens += compactionUsage.ReasoningTokens
 		}
 
 		// Build chat request
@@ -236,10 +243,16 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		assistantMetadata := map[string]interface{}{
 			"llm_duration_ms": llmDurationMs,
 		}
+		if a.config.UsePreviousResponse && strings.TrimSpace(response.ResponseID) != "" {
+			assistantMetadata[messageMetadataResponseID] = strings.TrimSpace(response.ResponseID)
+			metadataSetString(sess, metadataLastResponseID, strings.TrimSpace(response.ResponseID))
+		}
 
 		// Accumulate token usage
 		totalUsage.InputTokens += response.Usage.InputTokens
 		totalUsage.OutputTokens += response.Usage.OutputTokens
+		totalUsage.CachedInputTokens += response.Usage.CachedInputTokens
+		totalUsage.ReasoningTokens += response.Usage.ReasoningTokens
 		a.addTokenUsageMetadata(sess, response.Usage)
 
 		// Check if we have tool calls
@@ -463,6 +476,13 @@ func (a *Agent) callLLM(ctx context.Context, request *llm.ChatRequest, step int,
 func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 	// Convert session messages to LLM messages
 	activeMessages := a.getActiveConversationMessages(sess)
+	previousResponseID := ""
+	if a.config.UsePreviousResponse {
+		previousResponseID = lastResponseIDForStatefulRequest(sess)
+	}
+	if previousResponseID != "" {
+		activeMessages = messagesAfterResponseID(activeMessages, previousResponseID)
+	}
 	messages := make([]llm.Message, 0, len(activeMessages))
 
 	for _, m := range activeMessages {
@@ -503,11 +523,14 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 	}
 
 	return &llm.ChatRequest{
-		Model:        a.config.Model,
-		Messages:     messages,
-		Tools:        a.toolManager.GetDefinitions(),
-		Temperature:  a.config.Temperature,
-		SystemPrompt: a.config.SystemPrompt,
+		Model:              a.config.Model,
+		Messages:           messages,
+		Tools:              a.toolManager.GetDefinitions(),
+		Temperature:        a.config.Temperature,
+		SystemPrompt:       a.config.SystemPrompt,
+		SessionID:          sess.ID,
+		PromptCacheKey:     sess.ID,
+		PreviousResponseID: previousResponseID,
 	}
 }
 
@@ -893,6 +916,12 @@ func (a *Agent) addTokenUsageMetadata(sess *session.Session, usage llm.TokenUsag
 
 	// OutputTokens are new tokens generated in this step - accumulate them
 	metadataSetFloat(sess, metadataTotalOutputTokens, metadataFloat(sess.Metadata, metadataTotalOutputTokens)+float64(usage.OutputTokens))
+	if usage.CachedInputTokens > 0 {
+		metadataSetFloat(sess, metadataTotalCachedTokens, metadataFloat(sess.Metadata, metadataTotalCachedTokens)+float64(usage.CachedInputTokens))
+	}
+	if usage.ReasoningTokens > 0 {
+		metadataSetFloat(sess, metadataTotalReasoningTokens, metadataFloat(sess.Metadata, metadataTotalReasoningTokens)+float64(usage.ReasoningTokens))
+	}
 
 	// InputTokens from API represent the FULL context size (system prompt + all history)
 	// NOT incremental tokens, so we should NOT accumulate them.
@@ -955,6 +984,31 @@ func metadataSetString(sess *session.Session, key string, value string) {
 		sess.Metadata = map[string]interface{}{}
 	}
 	sess.Metadata[key] = value
+}
+
+func lastResponseIDForStatefulRequest(sess *session.Session) string {
+	if sess == nil || sess.Metadata == nil {
+		return ""
+	}
+	raw, _ := sess.Metadata[metadataLastResponseID].(string)
+	return strings.TrimSpace(raw)
+}
+
+func messagesAfterResponseID(messages []session.Message, responseID string) []session.Message {
+	responseID = strings.TrimSpace(responseID)
+	if responseID == "" {
+		return messages
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		raw, _ := messages[i].Metadata[messageMetadataResponseID].(string)
+		if strings.TrimSpace(raw) == responseID {
+			if i+1 >= len(messages) {
+				return nil
+			}
+			return messages[i+1:]
+		}
+	}
+	return messages
 }
 
 func sessionImagesToLLM(images []session.ImageAttachment) []llm.Image {

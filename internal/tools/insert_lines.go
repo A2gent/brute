@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -68,10 +67,7 @@ func (t *InsertLinesTool) Execute(ctx context.Context, params json.RawMessage) (
 		return &Result{Success: false, Error: "path is required"}, nil
 	}
 
-	path := p.Path
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(t.workDir, path)
-	}
+	path := resolveToolPath(t.workDir, p.Path)
 
 	if ctx.Err() != nil {
 		return nil, ctx.Err()

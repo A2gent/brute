@@ -79,6 +79,53 @@ func TestFindFilesTool_Execute(t *testing.T) {
 	})
 }
 
+func TestFindFilesTool_ResolvesSingleNestedGitProject(t *testing.T) {
+	tempDir := t.TempDir()
+	nestedRoot := filepath.Join(tempDir, "spareto")
+	if err := os.MkdirAll(filepath.Join(nestedRoot, ".git"), 0755); err != nil {
+		t.Fatalf("failed to create nested git dir: %v", err)
+	}
+	createTestFile(t, nestedRoot, "spec/services/clickstack/metrics_spec.rb", "RSpec.describe 'metrics'")
+
+	tool := NewFindFilesTool(tempDir)
+	result := executeTool(t, tool, map[string]interface{}{
+		"path":    "spec",
+		"pattern": "**/clickstack/*.rb",
+	})
+
+	assertSuccess(t, result)
+	assertContains(t, result.Output, "services/clickstack/metrics_spec.rb")
+}
+
+func TestEditTool_ResolvesSingleNestedGitProject(t *testing.T) {
+	tempDir := t.TempDir()
+	nestedRoot := filepath.Join(tempDir, "spareto")
+	if err := os.MkdirAll(filepath.Join(nestedRoot, ".git"), 0755); err != nil {
+		t.Fatalf("failed to create nested git dir: %v", err)
+	}
+	createTestFile(t, nestedRoot, "config/initializers/opentelemetry.rb", "broken")
+
+	tool := NewEditTool(tempDir)
+	raw, _ := json.Marshal(map[string]interface{}{
+		"path":       "config/initializers/opentelemetry.rb",
+		"old_string": "broken",
+		"new_string": "fixed",
+	})
+	result, err := tool.Execute(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	assertSuccess(t, result)
+
+	content, err := os.ReadFile(filepath.Join(nestedRoot, "config/initializers/opentelemetry.rb"))
+	if err != nil {
+		t.Fatalf("failed to read edited file: %v", err)
+	}
+	if string(content) != "fixed" {
+		t.Fatalf("expected nested file to be edited, got %q", string(content))
+	}
+}
+
 func TestFindFilesTool_Pagination(t *testing.T) {
 	tempDir := t.TempDir()
 

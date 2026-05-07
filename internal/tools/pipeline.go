@@ -124,7 +124,7 @@ func (t *PipelineTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 	stageMeta := make([]map[string]interface{}, 0, len(p.Steps))
 
 	for i, stage := range p.Steps {
-		toolName := strings.TrimSpace(stage.Tool)
+		toolName := normalizeToolName(stage.Tool)
 		if toolName == "" {
 			return &Result{Success: false, Error: fmt.Sprintf("step %d: tool is required", i+1)}, nil
 		}

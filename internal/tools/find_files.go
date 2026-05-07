@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -242,7 +243,49 @@ func resolveToolPath(workDir, path string) string {
 	if filepath.IsAbs(path) {
 		return path
 	}
-	return filepath.Join(workDir, path)
+	primary := filepath.Join(workDir, path)
+	if _, err := os.Stat(primary); err == nil {
+		return primary
+	}
+	if nested := resolveNestedProjectPath(workDir, path); nested != "" {
+		return nested
+	}
+	return primary
+}
+
+func resolveNestedProjectPath(workDir, relPath string) string {
+	entries, err := os.ReadDir(workDir)
+	if err != nil {
+		return ""
+	}
+	matches := make([]string, 0, 1)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		root := filepath.Join(workDir, name)
+		if info, err := os.Stat(filepath.Join(root, ".git")); err != nil || !info.IsDir() {
+			continue
+		}
+		candidate := filepath.Join(root, relPath)
+		if _, err := os.Stat(candidate); err == nil {
+			matches = append(matches, candidate)
+			continue
+		}
+		if parent := filepath.Dir(candidate); parent != "." && parent != candidate {
+			if info, err := os.Stat(parent); err == nil && info.IsDir() {
+				matches = append(matches, candidate)
+			}
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0]
+	}
+	return ""
 }
 
 func collectFileMatches(ctx context.Context, basePath, pattern string, exclude []string, showHidden bool, useDefaultExcludes bool, limit int) ([]fileSearchResult, int, error) {

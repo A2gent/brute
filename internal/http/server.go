@@ -675,6 +675,8 @@ type SessionResponse struct {
 	TotalTokens          int                          `json:"total_tokens"`
 	InputTokens          int                          `json:"input_tokens"`
 	OutputTokens         int                          `json:"output_tokens"`
+	CachedInputTokens    int                          `json:"cached_input_tokens,omitempty"`
+	ReasoningTokens      int                          `json:"reasoning_tokens,omitempty"`
 	CurrentContextTokens int                          `json:"current_context_tokens"`
 	ModelContextWindow   int                          `json:"model_context_window"`
 	TaskProgress         string                       `json:"task_progress,omitempty"`
@@ -780,6 +782,7 @@ type ChatStreamEvent struct {
 	Type       string                 `json:"type"`
 	Delta      string                 `json:"delta,omitempty"`
 	Content    string                 `json:"content,omitempty"`
+	Message    *MessageResponse       `json:"message,omitempty"`
 	Messages   []MessageResponse      `json:"messages,omitempty"`
 	Status     string                 `json:"status,omitempty"`
 	Usage      *UsageResponse         `json:"usage,omitempty"`
@@ -944,35 +947,47 @@ type UpdateSettingsRequest struct {
 }
 
 type ProviderConfigResponse struct {
-	Type           string                     `json:"type"`
-	DisplayName    string                     `json:"display_name"`
-	DefaultURL     string                     `json:"default_url"`
-	RequiresKey    bool                       `json:"requires_key"`
-	DefaultModel   string                     `json:"default_model"`
-	ContextWindow  int                        `json:"context_window"`
-	IsActive       bool                       `json:"is_active"`
-	Configured     bool                       `json:"configured"`
-	HasAPIKey      bool                       `json:"has_api_key"`
-	BaseURL        string                     `json:"base_url"`
-	Model          string                     `json:"model"`
-	ProxyManaged   bool                       `json:"proxy_managed"`
-	ProxyBaseURL   string                     `json:"proxy_base_url,omitempty"`
-	FallbackChain  []config.FallbackChainNode `json:"fallback_chain,omitempty"`
-	RouterProvider string                     `json:"router_provider,omitempty"`
-	RouterModel    string                     `json:"router_model,omitempty"`
-	RouterRules    []config.RouterRule        `json:"router_rules,omitempty"`
+	Type              string                     `json:"type"`
+	DisplayName       string                     `json:"display_name"`
+	DefaultURL        string                     `json:"default_url"`
+	RequiresKey       bool                       `json:"requires_key"`
+	DefaultModel      string                     `json:"default_model"`
+	ContextWindow     int                        `json:"context_window"`
+	IsActive          bool                       `json:"is_active"`
+	Configured        bool                       `json:"configured"`
+	HasAPIKey         bool                       `json:"has_api_key"`
+	BaseURL           string                     `json:"base_url"`
+	Model             string                     `json:"model"`
+	PromptCacheKey    string                     `json:"prompt_cache_key,omitempty"`
+	ReasoningEffort   string                     `json:"reasoning_effort,omitempty"`
+	TextVerbosity     string                     `json:"text_verbosity,omitempty"`
+	ServiceTier       string                     `json:"service_tier,omitempty"`
+	MaxTokens         int                        `json:"max_tokens,omitempty"`
+	StatefulResponses bool                       `json:"stateful_responses,omitempty"`
+	ProxyManaged      bool                       `json:"proxy_managed"`
+	ProxyBaseURL      string                     `json:"proxy_base_url,omitempty"`
+	FallbackChain     []config.FallbackChainNode `json:"fallback_chain,omitempty"`
+	RouterProvider    string                     `json:"router_provider,omitempty"`
+	RouterModel       string                     `json:"router_model,omitempty"`
+	RouterRules       []config.RouterRule        `json:"router_rules,omitempty"`
 }
 
 type UpdateProviderRequest struct {
-	Name           *string                     `json:"name,omitempty"`
-	APIKey         *string                     `json:"api_key,omitempty"`
-	BaseURL        *string                     `json:"base_url,omitempty"`
-	Model          *string                     `json:"model,omitempty"`
-	FallbackChain  *[]config.FallbackChainNode `json:"fallback_chain,omitempty"`
-	RouterProvider *string                     `json:"router_provider,omitempty"`
-	RouterModel    *string                     `json:"router_model,omitempty"`
-	RouterRules    *[]config.RouterRule        `json:"router_rules,omitempty"`
-	Active         *bool                       `json:"active,omitempty"`
+	Name              *string                     `json:"name,omitempty"`
+	APIKey            *string                     `json:"api_key,omitempty"`
+	BaseURL           *string                     `json:"base_url,omitempty"`
+	Model             *string                     `json:"model,omitempty"`
+	PromptCacheKey    *string                     `json:"prompt_cache_key,omitempty"`
+	ReasoningEffort   *string                     `json:"reasoning_effort,omitempty"`
+	TextVerbosity     *string                     `json:"text_verbosity,omitempty"`
+	ServiceTier       *string                     `json:"service_tier,omitempty"`
+	MaxTokens         *int                        `json:"max_tokens,omitempty"`
+	StatefulResponses *bool                       `json:"stateful_responses,omitempty"`
+	FallbackChain     *[]config.FallbackChainNode `json:"fallback_chain,omitempty"`
+	RouterProvider    *string                     `json:"router_provider,omitempty"`
+	RouterModel       *string                     `json:"router_model,omitempty"`
+	RouterRules       *[]config.RouterRule        `json:"router_rules,omitempty"`
+	Active            *bool                       `json:"active,omitempty"`
 }
 
 type SetActiveProviderRequest struct {
@@ -1234,20 +1249,26 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 		}
 
 		resp = append(resp, ProviderConfigResponse{
-			Type:          string(def.Type),
-			DisplayName:   def.DisplayName,
-			DefaultURL:    def.DefaultURL,
-			RequiresKey:   def.RequiresKey,
-			DefaultModel:  def.DefaultModel,
-			ContextWindow: def.ContextWindow,
-			IsActive:      s.config.ActiveProvider == string(def.Type),
-			Configured:    configured,
-			HasAPIKey:     hasAPIKey,
-			BaseURL:       baseURL,
-			Model:         model,
-			ProxyManaged:  proxyManaged,
-			ProxyBaseURL:  proxyBaseURL,
-			FallbackChain: nil,
+			Type:              string(def.Type),
+			DisplayName:       def.DisplayName,
+			DefaultURL:        def.DefaultURL,
+			RequiresKey:       def.RequiresKey,
+			DefaultModel:      def.DefaultModel,
+			ContextWindow:     def.ContextWindow,
+			IsActive:          s.config.ActiveProvider == string(def.Type),
+			Configured:        configured,
+			HasAPIKey:         hasAPIKey,
+			BaseURL:           baseURL,
+			Model:             model,
+			PromptCacheKey:    strings.TrimSpace(existing.PromptCacheKey),
+			ReasoningEffort:   strings.TrimSpace(existing.ReasoningEffort),
+			TextVerbosity:     strings.TrimSpace(existing.TextVerbosity),
+			ServiceTier:       strings.TrimSpace(existing.ServiceTier),
+			MaxTokens:         existing.MaxTokens,
+			StatefulResponses: s.providerStatefulResponsesForConfig(def.Type, existing.StatefulResponses),
+			ProxyManaged:      proxyManaged,
+			ProxyBaseURL:      proxyBaseURL,
+			FallbackChain:     nil,
 		})
 	}
 
@@ -1384,6 +1405,28 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Model != nil {
 			provider.Model = strings.TrimSpace(*req.Model)
+		}
+		if req.PromptCacheKey != nil {
+			provider.PromptCacheKey = strings.TrimSpace(*req.PromptCacheKey)
+		}
+		if req.ReasoningEffort != nil {
+			provider.ReasoningEffort = strings.TrimSpace(*req.ReasoningEffort)
+		}
+		if req.TextVerbosity != nil {
+			provider.TextVerbosity = strings.TrimSpace(*req.TextVerbosity)
+		}
+		if req.ServiceTier != nil {
+			provider.ServiceTier = strings.TrimSpace(*req.ServiceTier)
+		}
+		if req.MaxTokens != nil {
+			if *req.MaxTokens > 0 {
+				provider.MaxTokens = *req.MaxTokens
+			} else {
+				provider.MaxTokens = 0
+			}
+		}
+		if req.StatefulResponses != nil {
+			provider.StatefulResponses = req.StatefulResponses
 		}
 
 		if provider.BaseURL == "" {
@@ -2065,8 +2108,15 @@ func (s *Server) handleUpdateSessionProvider(w http.ResponseWriter, r *http.Requ
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionID")
 	includeMessages := r.URL.Query().Get("include_messages") != "false"
+	includeMetadata := r.URL.Query().Get("include_metadata") != "false"
 
-	sess, err := s.sessionManager.Get(sessionID)
+	var sess *session.Session
+	var err error
+	if includeMessages || includeMetadata {
+		sess, err = s.sessionManager.Get(sessionID)
+	} else {
+		sess, err = s.sessionManager.GetSummary(sessionID)
+	}
 	if err != nil {
 		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
 		return
@@ -2079,6 +2129,9 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	if !includeMessages {
 		resp.Messages = nil
 		resp.SystemPromptSnapshot = nil
+	}
+	if !includeMetadata {
+		resp.Metadata = nil
 	}
 	s.jsonResponse(w, http.StatusOK, resp)
 }
@@ -2310,12 +2363,13 @@ func (s *Server) resumeSessionAfterQuestionAnswer(sessionID string, userAnswer s
 		}
 
 		agentConfig := agent.Config{
-			Name:          sess.AgentID,
-			Model:         target.Model,
-			SystemPrompt:  s.buildSystemPromptForSession(sess),
-			MaxSteps:      s.config.MaxSteps,
-			Temperature:   s.config.Temperature,
-			ContextWindow: target.ContextWindow,
+			Name:                sess.AgentID,
+			Model:               target.Model,
+			SystemPrompt:        s.buildSystemPromptForSession(sess),
+			MaxSteps:            s.config.MaxSteps,
+			Temperature:         s.config.Temperature,
+			ContextWindow:       target.ContextWindow,
+			UsePreviousResponse: target.StatefulResponses,
 		}
 		ag := agent.New(agentConfig, target.Client, s.toolManagerForSession(sess), s.sessionManager)
 		_, _, err = ag.RunWithEvents(runCtx, sess, userAnswer, func(ev agent.Event) {
@@ -2528,12 +2582,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// Create agent config
 	agentConfig := agent.Config{
-		Name:          sess.AgentID,
-		Model:         target.Model,
-		SystemPrompt:  s.buildSystemPromptForSession(sess),
-		MaxSteps:      s.config.MaxSteps,
-		Temperature:   s.config.Temperature,
-		ContextWindow: target.ContextWindow,
+		Name:                sess.AgentID,
+		Model:               target.Model,
+		SystemPrompt:        s.buildSystemPromptForSession(sess),
+		MaxSteps:            s.config.MaxSteps,
+		Temperature:         s.config.Temperature,
+		ContextWindow:       target.ContextWindow,
+		UsePreviousResponse: target.StatefulResponses,
 	}
 
 	// Create agent instance
@@ -2718,12 +2773,13 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agentConfig := agent.Config{
-		Name:          sess.AgentID,
-		Model:         target.Model,
-		SystemPrompt:  s.buildSystemPromptForSession(sess),
-		MaxSteps:      s.config.MaxSteps,
-		Temperature:   s.config.Temperature,
-		ContextWindow: target.ContextWindow,
+		Name:                sess.AgentID,
+		Model:               target.Model,
+		SystemPrompt:        s.buildSystemPromptForSession(sess),
+		MaxSteps:            s.config.MaxSteps,
+		Temperature:         s.config.Temperature,
+		ContextWindow:       target.ContextWindow,
+		UsePreviousResponse: target.StatefulResponses,
 	}
 	ag := agent.New(agentConfig, target.Client, s.toolManagerForSession(sess), s.sessionManager)
 
@@ -2747,19 +2803,20 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			_ = writeEvent(ChatStreamEvent{
 				Type:      "tool_executing",
 				Step:      ev.Step,
+				Message:   streamLastMessageResponse(s, sess),
 				ToolCalls: toolCalls,
 			})
 		case agent.EventToolCompleted:
-			// Send updated messages after tool execution
-			freshSess, err := s.sessionManager.Get(sess.ID)
-			if err == nil {
-				_ = writeEvent(ChatStreamEvent{
-					Type:     "tool_completed",
-					Step:     ev.Step,
-					Messages: s.messagesToResponse(freshSess.Messages),
-					Status:   string(freshSess.Status),
-				})
+			event := ChatStreamEvent{
+				Type:   "tool_completed",
+				Step:   ev.Step,
+				Status: string(sess.Status),
 			}
+			if len(sess.Messages) > 0 {
+				msg := s.messageToResponse(sess.Messages[len(sess.Messages)-1])
+				event.Message = &msg
+			}
+			_ = writeEvent(event)
 		case agent.EventStepCompleted:
 			_ = writeEvent(ChatStreamEvent{
 				Type: "step_completed",
@@ -2823,6 +2880,14 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			OutputTokens: usage.OutputTokens,
 		},
 	})
+}
+
+func streamLastMessageResponse(s *Server, sess *session.Session) *MessageResponse {
+	if sess == nil || len(sess.Messages) == 0 {
+		return nil
+	}
+	msg := s.messageToResponse(sess.Messages[len(sess.Messages)-1])
+	return &msg
 }
 
 // --- Recurring Jobs Handlers ---
@@ -3172,12 +3237,13 @@ Cron expression:`, scheduleText)
 
 	// Create agent config for parsing
 	agentConfig := agent.Config{
-		Name:          "scheduler",
-		Model:         target.Model,
-		SystemPrompt:  "You convert natural-language schedules into strict 5-field cron expressions.",
-		MaxSteps:      1, // Only need one response
-		Temperature:   0, // Deterministic output
-		ContextWindow: target.ContextWindow,
+		Name:                "scheduler",
+		Model:               target.Model,
+		SystemPrompt:        "You convert natural-language schedules into strict 5-field cron expressions.",
+		MaxSteps:            1, // Only need one response
+		Temperature:         0, // Deterministic output
+		ContextWindow:       target.ContextWindow,
+		UsePreviousResponse: target.StatefulResponses,
 	}
 
 	ag := agent.New(agentConfig, target.Client, s.toolManagerForSession(sess), s.sessionManager)
@@ -3285,12 +3351,13 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 
 	// Run the agent with resolved task prompt
 	agentConfig := agent.Config{
-		Name:          "job-runner",
-		Model:         target.Model,
-		SystemPrompt:  s.buildSystemPromptForSession(sess),
-		MaxSteps:      s.config.MaxSteps,
-		Temperature:   s.config.Temperature,
-		ContextWindow: target.ContextWindow,
+		Name:                "job-runner",
+		Model:               target.Model,
+		SystemPrompt:        s.buildSystemPromptForSession(sess),
+		MaxSteps:            s.config.MaxSteps,
+		Temperature:         s.config.Temperature,
+		ContextWindow:       target.ContextWindow,
+		UsePreviousResponse: target.StatefulResponses,
 	}
 	ag := agent.New(agentConfig, target.Client, s.toolManagerForSession(sess), s.sessionManager)
 	sess.AddUserMessage(effectiveTaskPrompt)
@@ -3414,6 +3481,8 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 	}
 	inputTokens, outputTokens := sessionInputOutputTokens(sess)
 	totalTokens := inputTokens + outputTokens
+	cachedInputTokens := int(metadataNumber(sess.Metadata, "total_cached_input_tokens"))
+	reasoningTokens := int(metadataNumber(sess.Metadata, "total_reasoning_tokens"))
 	currentContextTokens := int(metadataNumber(sess.Metadata, "current_context_tokens"))
 	modelContextWindow := int(metadataNumber(sess.Metadata, "context_window"))
 	isOutbound, targetAgentID, targetAgentName := sessionA2AOutboundMeta(sess)
@@ -3433,6 +3502,8 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		TotalTokens:          totalTokens,
 		InputTokens:          inputTokens,
 		OutputTokens:         outputTokens,
+		CachedInputTokens:    cachedInputTokens,
+		ReasoningTokens:      reasoningTokens,
 		CurrentContextTokens: currentContextTokens,
 		ModelContextWindow:   modelContextWindow,
 		TaskProgress:         sess.TaskProgress,
@@ -3451,43 +3522,47 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 func (s *Server) messagesToResponse(messages []session.Message) []MessageResponse {
 	resp := make([]MessageResponse, len(messages))
 	for i, m := range messages {
-		msg := MessageResponse{
-			Role:      m.Role,
-			Content:   m.Content,
-			Images:    sessionImagesToPayload(m.Images),
-			Metadata:  m.Metadata,
-			Timestamp: m.Timestamp,
-		}
-
-		if len(m.ToolCalls) > 0 {
-			msg.ToolCalls = make([]ToolCallResponse, len(m.ToolCalls))
-			for j, tc := range m.ToolCalls {
-				msg.ToolCalls[j] = ToolCallResponse{
-					ID:               tc.ID,
-					Name:             tc.Name,
-					Input:            tc.Input,
-					ThoughtSignature: tc.ThoughtSignature,
-				}
-			}
-		}
-
-		if len(m.ToolResults) > 0 {
-			msg.ToolResults = make([]ToolResultResponse, len(m.ToolResults))
-			for j, tr := range m.ToolResults {
-				msg.ToolResults[j] = ToolResultResponse{
-					ToolCallID: tr.ToolCallID,
-					Content:    tr.Content,
-					IsError:    tr.IsError,
-					Metadata:   tr.Metadata,
-					Name:       tr.Name,
-					DurationMs: tr.DurationMs,
-				}
-			}
-		}
-
-		resp[i] = msg
+		resp[i] = s.messageToResponse(m)
 	}
 	return resp
+}
+
+func (s *Server) messageToResponse(m session.Message) MessageResponse {
+	msg := MessageResponse{
+		Role:      m.Role,
+		Content:   m.Content,
+		Images:    sessionImagesToPayload(m.Images),
+		Metadata:  m.Metadata,
+		Timestamp: m.Timestamp,
+	}
+
+	if len(m.ToolCalls) > 0 {
+		msg.ToolCalls = make([]ToolCallResponse, len(m.ToolCalls))
+		for j, tc := range m.ToolCalls {
+			msg.ToolCalls[j] = ToolCallResponse{
+				ID:               tc.ID,
+				Name:             tc.Name,
+				Input:            tc.Input,
+				ThoughtSignature: tc.ThoughtSignature,
+			}
+		}
+	}
+
+	if len(m.ToolResults) > 0 {
+		msg.ToolResults = make([]ToolResultResponse, len(m.ToolResults))
+		for j, tr := range m.ToolResults {
+			msg.ToolResults[j] = ToolResultResponse{
+				ToolCallID: tr.ToolCallID,
+				Content:    tr.Content,
+				IsError:    tr.IsError,
+				Metadata:   tr.Metadata,
+				Name:       tr.Name,
+				DurationMs: tr.DurationMs,
+			}
+		}
+	}
+
+	return msg
 }
 
 func normalizeIncomingImages(images []MessageImagePayload) ([]session.ImageAttachment, error) {
@@ -5576,6 +5651,21 @@ func (s *Server) resolveContextWindowForProvider(providerType config.ProviderTyp
 	return 0
 }
 
+func (s *Server) providerStatefulResponses(providerType config.ProviderType) bool {
+	provider := s.config.Providers[string(providerType)]
+	return s.providerStatefulResponsesForConfig(providerType, provider.StatefulResponses)
+}
+
+func (s *Server) providerStatefulResponsesForConfig(providerType config.ProviderType, configured *bool) bool {
+	if providerType != config.ProviderOpenAICodex {
+		return false
+	}
+	if configured == nil {
+		return true
+	}
+	return *configured
+}
+
 func (s *Server) createLLMClient(providerType config.ProviderType, model string, sess *session.Session) (llm.Client, error) {
 	if providerType == config.ProviderAutoRouter {
 		return nil, fmt.Errorf("automatic router requires dynamic prompt routing")
@@ -5687,7 +5777,14 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return lmstudio.NewClient(apiKey, modelName, baseURL), nil
 	case config.ProviderOpenAICodex:
-		return openaicodex.NewClient(apiKey, modelName, baseURL), nil
+		return openaicodex.NewClientWithOptions(apiKey, modelName, baseURL, openaicodex.Options{
+			PromptCacheKey:    provider.PromptCacheKey,
+			ReasoningEffort:   provider.ReasoningEffort,
+			TextVerbosity:     provider.TextVerbosity,
+			ServiceTier:       provider.ServiceTier,
+			MaxTokens:         provider.MaxTokens,
+			StatefulResponses: s.providerStatefulResponsesForConfig(providerType, provider.StatefulResponses),
+		}), nil
 	case config.ProviderAnthropic:
 		// Use API key (OAuth case handled above)
 		return anthropic.NewClientWithBaseURL(apiKey, modelName, baseURL), nil

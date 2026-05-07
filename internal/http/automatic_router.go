@@ -14,10 +14,11 @@ import (
 )
 
 type executionTarget struct {
-	ProviderType  config.ProviderType
-	Model         string
-	ContextWindow int
-	Client        llm.Client
+	ProviderType      config.ProviderType
+	Model             string
+	ContextWindow     int
+	StatefulResponses bool
+	Client            llm.Client
 }
 
 func normalizeRouterRules(raw []config.RouterRule) []config.RouterRule {
@@ -121,10 +122,11 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, providerType config
 			return nil, err
 		}
 		return &executionTarget{
-			ProviderType:  providerType,
-			Model:         requestedModel,
-			ContextWindow: s.resolveContextWindowForProvider(providerType),
-			Client:        client,
+			ProviderType:      providerType,
+			Model:             requestedModel,
+			ContextWindow:     s.resolveContextWindowForProvider(providerType),
+			StatefulResponses: s.providerStatefulResponses(providerType),
+			Client:            client,
 		}, nil
 	}
 
@@ -149,10 +151,11 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, providerType config
 	}
 	logging.Info("Automatic router selected target provider=%s model=%s rule=%q reason=%s", targetProvider, targetModel, chosen.Match, reason)
 	return &executionTarget{
-		ProviderType:  targetProvider,
-		Model:         targetModel,
-		ContextWindow: s.resolveContextWindowForProvider(targetProvider),
-		Client:        client,
+		ProviderType:      targetProvider,
+		Model:             targetModel,
+		ContextWindow:     s.resolveContextWindowForProvider(targetProvider),
+		StatefulResponses: s.providerStatefulResponses(targetProvider),
+		Client:            client,
 	}, nil
 }
 

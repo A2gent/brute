@@ -61,11 +61,7 @@ func (t *WriteTool) Execute(ctx context.Context, params json.RawMessage) (*Resul
 		return &Result{Success: false, Error: "path is required"}, nil
 	}
 
-	// Resolve path
-	path := p.Path
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(t.workDir, path)
-	}
+	path := resolveToolPath(t.workDir, p.Path)
 
 	// Create parent directories if needed
 	dir := filepath.Dir(path)

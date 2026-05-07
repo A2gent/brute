@@ -67,6 +67,24 @@ func TestBuildInputItems_DoesNotAddOutputToMessages(t *testing.T) {
 	}
 }
 
+func TestRequestOptions_DisablesStatefulResponses(t *testing.T) {
+	client := NewClientWithOptions("", "gpt-5.5", "", Options{
+		StatefulResponses: true,
+	})
+
+	options := client.requestOptions(&llm.ChatRequest{
+		Store:              true,
+		PreviousResponseID: "resp_123",
+	})
+
+	if options.StatefulResponses {
+		t.Fatalf("stateful responses enabled for OpenAI Codex")
+	}
+	if got := options.previousResponseID(&llm.ChatRequest{PreviousResponseID: "resp_123"}); got != "" {
+		t.Fatalf("previous response id = %q, want empty", got)
+	}
+}
+
 func TestParseStreamResponse_UsesStreamedMessageWhenCompletedOutputIsEmpty(t *testing.T) {
 	body := []byte(`event: response.output_item.added
 data: {"type":"response.output_item.added","item":{"id":"msg_1","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}

@@ -5657,13 +5657,9 @@ func (s *Server) providerStatefulResponses(providerType config.ProviderType) boo
 }
 
 func (s *Server) providerStatefulResponsesForConfig(providerType config.ProviderType, configured *bool) bool {
-	if providerType != config.ProviderOpenAICodex {
-		return false
-	}
-	if configured == nil {
-		return true
-	}
-	return *configured
+	// The ChatGPT Codex backend requires store=false, so no provider can
+	// currently opt into previous-response chaining through this path.
+	return false
 }
 
 func (s *Server) createLLMClient(providerType config.ProviderType, model string, sess *session.Session) (llm.Client, error) {

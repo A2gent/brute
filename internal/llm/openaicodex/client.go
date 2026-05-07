@@ -593,6 +593,8 @@ func normalizeOptions(options Options) Options {
 	options.ReasoningEffort = strings.TrimSpace(options.ReasoningEffort)
 	options.TextVerbosity = strings.TrimSpace(options.TextVerbosity)
 	options.ServiceTier = strings.TrimSpace(options.ServiceTier)
+	// The ChatGPT Codex backend rejects stored responses.
+	options.StatefulResponses = false
 	if options.MaxTokens < 0 {
 		options.MaxTokens = 0
 	}
@@ -618,9 +620,6 @@ func (c *Client) requestOptions(request *llm.ChatRequest) Options {
 	}
 	if request.MaxTokens > 0 {
 		options.MaxTokens = request.MaxTokens
-	}
-	if request.Store {
-		options.StatefulResponses = true
 	}
 	return normalizeOptions(options)
 }

@@ -139,11 +139,12 @@ type ProjectGitFileDiffResponse struct {
 }
 
 type ProjectGitBranch struct {
-	Name    string `json:"name"`
-	Current bool   `json:"current"`
-	Remote  bool   `json:"remote"`
-	Ahead   int    `json:"ahead"`
-	Behind  int    `json:"behind"`
+	Name      string `json:"name"`
+	Current   bool   `json:"current"`
+	Remote    bool   `json:"remote"`
+	Ahead     int    `json:"ahead"`
+	Behind    int    `json:"behind"`
+	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
 type ProjectGitHistoryCommit struct {
@@ -193,6 +194,11 @@ type ProjectGitPushRequest struct {
 
 type ProjectGitPullRequest struct {
 	RepoPath string `json:"repo_path,omitempty"`
+}
+
+type ProjectGitCheckoutRequest struct {
+	RepoPath string `json:"repo_path,omitempty"`
+	Branch   string `json:"branch"`
 }
 
 type ProjectGitInitRequest struct {
@@ -2432,6 +2438,66 @@ func (s *Server) handleProjectGitPull(w http.ResponseWriter, r *http.Request) {
 	s.jsonResponse(w, http.StatusOK, ProjectGitPullResponse{Output: output})
 }
 
+func (s *Server) handleProjectGitCheckout(w http.ResponseWriter, r *http.Request) {
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+
+	resolvedRoot, err := s.resolveProjectRootFolder(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var req ProjectGitCheckoutRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	branch := strings.TrimSpace(req.Branch)
+	if branch == "" {
+		s.errorResponse(w, http.StatusBadRequest, "branch is required")
+		return
+	}
+
+	targetRepoRoot, err := resolveProjectGitTargetRoot(resolvedRoot, strings.TrimSpace(req.RepoPath))
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !projectHasGitMetadata(targetRepoRoot) {
+		s.errorResponse(w, http.StatusBadRequest, "Target folder does not contain a .git directory")
+		return
+	}
+
+	args := []string{"checkout", branch}
+	remotePrefix := "remotes/"
+	if strings.HasPrefix(branch, remotePrefix) {
+		args = []string{"checkout", "--track", strings.TrimPrefix(branch, remotePrefix)}
+	} else if slashIndex := strings.Index(branch, "/"); slashIndex > 0 {
+		remoteName := branch[:slashIndex]
+		localName := branch[slashIndex+1:]
+		if remoteName != "" && localName != "" {
+			if _, err := runGitCommand(targetRepoRoot, "rev-parse", "--verify", "refs/remotes/"+branch); err == nil {
+				if _, localErr := runGitCommand(targetRepoRoot, "rev-parse", "--verify", "refs/heads/"+localName); localErr != nil {
+					args = []string{"checkout", "--track", branch}
+				}
+			}
+		}
+	}
+
+	output, err := runGitCommand(targetRepoRoot, args...)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to checkout branch: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, ProjectGitPullResponse{Output: output})
+}
+
 func (s *Server) handleProjectGitInit(w http.ResponseWriter, r *http.Request) {
 	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
 	if projectID == "" {
@@ -2612,51 +2678,41 @@ func resolveGitRepoFilePath(repoRoot string, relPath string) (string, error) {
 	}
 
 	return filepath.ToSlash(relToRoot), nil
-}
 
+}
 func buildGitFileDiffPreview(repoRoot string, relPath string) (string, error) {
-	normalizedPath, err := resolveGitRepoFilePath(repoRoot, relPath)
+	statusOutput, _, statusErr := runGitCommandWithExitCode(repoRoot, "status", "--porcelain=v1", "--", relPath)
+	if statusErr == nil {
+		for _, line := range strings.Split(statusOutput, "\n") {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			if len(line) >= 3 && strings.TrimSpace(line[0:2]) == "??" {
+				return buildNewFileDiffPreview(repoRoot, relPath), nil
+			}
+		}
+	}
+
+	preview, _, err := runGitCommandWithExitCode(repoRoot, "diff", "--", relPath)
 	if err != nil {
-		return "", err
+		return "", errors.New(strings.TrimSpace(preview))
+	}
+	if strings.TrimSpace(preview) != "" {
+		return preview, nil
 	}
 
-	sections := make([]string, 0, 3)
-
-	if stagedDiff, diffErr := runGitCommand(repoRoot, "diff", "--no-color", "--cached", "--", normalizedPath); diffErr == nil && strings.TrimSpace(stagedDiff) != "" {
-		sections = append(sections, "Staged changes:\n"+stagedDiff)
+	preview, _, err = runGitCommandWithExitCode(repoRoot, "diff", "--cached", "--", relPath)
+	if err != nil {
+		return "", errors.New(strings.TrimSpace(preview))
 	}
-	if unstagedDiff, diffErr := runGitCommand(repoRoot, "diff", "--no-color", "--", normalizedPath); diffErr == nil && strings.TrimSpace(unstagedDiff) != "" {
-		sections = append(sections, "Unstaged changes:\n"+unstagedDiff)
-	}
-
-	if len(sections) == 0 && isGitFileUntracked(repoRoot, normalizedPath) {
-		newFilePreview := buildUntrackedFilePreview(repoRoot, normalizedPath)
-		if strings.TrimSpace(newFilePreview) != "" {
-			sections = append(sections, "Untracked file preview:\n"+newFilePreview)
-		}
+	if strings.TrimSpace(preview) != "" {
+		return preview, nil
 	}
 
-	if len(sections) == 0 {
-		return "No diff available for this file.", nil
-	}
-	return truncateText(strings.Join(sections, "\n\n"), 12000), nil
+	return buildNewFileDiffPreview(repoRoot, relPath), nil
 }
 
-func isGitFileUntracked(repoRoot string, relPath string) bool {
-	output, _, err := runGitCommandWithExitCode(repoRoot, "status", "--porcelain=v1", "--", relPath)
-	if err != nil && strings.TrimSpace(output) == "" {
-		return false
-	}
-	files := parseGitPorcelain(output)
-	for _, file := range files {
-		if filepath.ToSlash(strings.TrimSpace(file.Path)) == filepath.ToSlash(strings.TrimSpace(relPath)) {
-			return file.Untracked
-		}
-	}
-	return false
-}
-
-func buildUntrackedFilePreview(repoRoot string, relPath string) string {
+func buildNewFileDiffPreview(repoRoot string, relPath string) string {
 	fullPath := filepath.Join(repoRoot, filepath.FromSlash(relPath))
 	info, err := os.Stat(fullPath)
 	if err != nil || info.IsDir() {
@@ -2682,7 +2738,7 @@ func buildProjectGitBranches(repoRoot string, currentBranch string) ([]ProjectGi
 	output, err := runGitCommandPreserveLeading(
 		repoRoot,
 		"for-each-ref",
-		"--format=%(refname:short)%x1f%(HEAD)%x1f%(upstream:track)%x1f%(refname)",
+		"--format=%(refname:short)%1f%(HEAD)%1f%(upstream:track)%1f%(refname)%1f%(committerdate:iso-strict)",
 		"refs/heads",
 		"refs/remotes",
 	)
@@ -2710,19 +2766,24 @@ func buildProjectGitBranches(repoRoot string, currentBranch string) ([]ProjectGi
 
 		refname := strings.TrimSpace(parts[3])
 		remote := strings.HasPrefix(refname, "refs/remotes/")
-		if remote && strings.HasSuffix(name, "/HEAD") {
+		if remote && (strings.HasSuffix(refname, "/HEAD") || strings.HasSuffix(name, "/HEAD")) {
 			continue
 		}
 
+		updatedAt := ""
+		if len(parts) >= 5 {
+			updatedAt = strings.TrimSpace(parts[4])
+		}
 		ahead, behind := parseGitAheadBehind(parts[2])
 		current := strings.TrimSpace(parts[1]) == "*" || (!remote && name == currentBranch)
 
 		branches = append(branches, ProjectGitBranch{
-			Name:    name,
-			Current: current,
-			Remote:  remote,
-			Ahead:   ahead,
-			Behind:  behind,
+			Name:      name,
+			Current:   current,
+			Remote:    remote,
+			Ahead:     ahead,
+			Behind:    behind,
+			UpdatedAt: updatedAt,
 		})
 	}
 

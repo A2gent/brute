@@ -507,6 +507,7 @@ func (s *Server) setupRoutes() {
 		r.Post("/git/commit-message", s.handleProjectGitCommitMessageSuggestion)
 		r.Post("/git/push", s.handleProjectGitPush)
 		r.Post("/git/pull", s.handleProjectGitPull)
+		r.Post("/git/checkout", s.handleProjectGitCheckout)
 		r.Post("/git/commit", s.handleProjectGitCommit)
 		r.Get("/file", s.handleGetProjectFile)
 		r.Get("/search", s.handleProjectSearch)

@@ -228,7 +228,10 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			totalUsage.ReasoningTokens += compactionUsage.ReasoningTokens
 		}
 
-		// Build chat request
+		// Build chat request. Reload first so non-blocking user notes
+		// injected while the current request/tool batch was running are visible
+		// to the next LLM turn.
+		a.mergeFreshSessionState(sess)
 		request := a.buildRequest(sess)
 
 		// Call LLM (streaming when supported)
@@ -328,6 +331,11 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		// Add tool results to session
 		sess.AddToolResult(sessionResults)
 
+		// Merge in any user notes that were injected while tools were running
+		// before saving this step, otherwise the agent's in-memory transcript
+		// could overwrite them.
+		a.mergeFreshSessionState(sess)
+
 		// Reload session to check if status was changed by tools (e.g., question tool)
 		// Also sync any fields that tools may have updated (e.g., task_progress)
 		// IMPORTANT: Do this BEFORE Save() so we can detect status changes made by tools
@@ -375,6 +383,41 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			onEvent(Event{Type: EventStepCompleted, Step: step})
 		}
 	}
+}
+func (a *Agent) mergeFreshSessionState(sess *session.Session) {
+	if a == nil || a.sessionManager == nil || sess == nil || sess.ID == "" {
+		return
+	}
+	fresh, err := a.sessionManager.Get(sess.ID)
+	if err != nil || fresh == nil {
+		return
+	}
+
+	if len(fresh.Messages) > len(sess.Messages) && sessionMessagePrefixMatches(fresh.Messages, sess.Messages) {
+		sess.Messages = append(sess.Messages, fresh.Messages[len(sess.Messages):]...)
+	}
+	if fresh.Metadata != nil {
+		sess.Metadata = fresh.Metadata
+	}
+	sess.TaskProgress = fresh.TaskProgress
+	if fresh.Status == session.StatusInputRequired || fresh.Status == session.StatusWaitingExternal {
+		sess.Status = fresh.Status
+	}
+	if fresh.UpdatedAt.After(sess.UpdatedAt) {
+		sess.UpdatedAt = fresh.UpdatedAt
+	}
+}
+
+func sessionMessagePrefixMatches(full []session.Message, prefix []session.Message) bool {
+	if len(prefix) > len(full) {
+		return false
+	}
+	for i := range prefix {
+		if full[i].ID == "" || prefix[i].ID == "" || full[i].ID != prefix[i].ID {
+			return false
+		}
+	}
+	return true
 }
 
 func hasExternalWaitResult(results []session.ToolResult) bool {

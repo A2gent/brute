@@ -482,6 +482,7 @@ func (s *Server) setupRoutes() {
 		r.Put("/{sessionID}/provider", s.handleUpdateSessionProvider)
 		r.Post("/{sessionID}/chat", s.handleChat)
 		r.Post("/{sessionID}/chat/stream", s.handleChatStream)
+		r.Post("/{sessionID}/inject", s.handleInjectSessionMessage)
 		r.Get("/{sessionID}/question", s.handleGetPendingQuestion)
 		r.Post("/{sessionID}/answer", s.handleAnswerQuestion)
 		r.Post("/{sessionID}/start", s.handleStartSession)
@@ -2326,6 +2327,43 @@ func (s *Server) handleAnswerQuestion(w http.ResponseWriter, r *http.Request) {
 
 	s.resumeSessionAfterQuestionAnswer(sessionID, req.Answer)
 	s.jsonResponse(w, http.StatusOK, map[string]interface{}{"status": "ok"})
+}
+func (s *Server) handleInjectSessionMessage(w http.ResponseWriter, r *http.Request) {
+	sessionID := chi.URLParam(r, "sessionID")
+
+	var req struct {
+		Message string                `json:"message"`
+		Images  []MessageImagePayload `json:"images,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	images, err := normalizeIncomingImages(req.Images)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid images payload: "+err.Error())
+		return
+	}
+
+	if strings.TrimSpace(req.Message) == "" && len(images) == 0 {
+		s.errorResponse(w, http.StatusBadRequest, "Message or images are required")
+		return
+	}
+
+	sess, err := s.sessionManager.InjectUserMessage(sessionID, req.Message, images)
+	if err != nil {
+		s.errorResponse(w, http.StatusNotFound, "Failed to inject message: "+err.Error())
+		return
+	}
+	defer s.queueTelegramSessionMessageSync(sess.ID)
+
+	logging.LogSession("message_injected", sess.ID, "via HTTP")
+
+	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"status":  "ok",
+		"session": s.sessionToResponse(sess),
+	})
 }
 
 func (s *Server) resumeSessionAfterQuestionAnswer(sessionID string, userAnswer string) {

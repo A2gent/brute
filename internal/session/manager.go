@@ -234,6 +234,24 @@ func (m *Manager) AnswerQuestion(sessionID string, answer string) error {
 	return m.Save(sess)
 }
 
+// InjectUserMessage appends a user message to an existing session without changing
+// the run status. Active agent loops will pick it up after the current LLM request
+// or tool batch finishes and before the next LLM request is built.
+func (m *Manager) InjectUserMessage(sessionID string, content string, images []ImageAttachment) (*Session, error) {
+	sess, err := m.Get(sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("session not found: %w", err)
+	}
+
+	sess.AddUserMessageWithImagesAndMetadata(content, images, map[string]interface{}{
+		"injected_during_run": true,
+	})
+	if err := m.Save(sess); err != nil {
+		return nil, err
+	}
+	return sess, nil
+}
+
 // SetSessionStatus updates session status (used by question tool)
 func (m *Manager) SetSessionStatus(sessionID string, status string) error {
 	sess, err := m.Get(sessionID)

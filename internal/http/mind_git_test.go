@@ -68,6 +68,95 @@ func TestBuildProjectGitBranchesReadsForEachRefFields(t *testing.T) {
 	}
 }
 
+func TestProjectGitBranchChangesTargetUsesLocalMaster(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is not available")
+	}
+
+	repoRoot := t.TempDir()
+	initMindGitTestRepo(t, repoRoot)
+
+	target := projectGitBranchChangesTarget(repoRoot)
+	if target.Available {
+		t.Fatalf("expected master branch not to expose branch changes, got %#v", target)
+	}
+	if target.CurrentBranch != "master" {
+		t.Fatalf("expected current branch master, got %#v", target)
+	}
+
+	runGitForMindTest(t, repoRoot, "checkout", "-b", "feature/local-base")
+	target = projectGitBranchChangesTarget(repoRoot)
+	if !target.Available {
+		t.Fatalf("expected feature branch changes to be available, got %#v", target)
+	}
+	if target.BaseBranch != "master" || target.BaseRef != "refs/heads/master" {
+		t.Fatalf("expected local master base, got %#v", target)
+	}
+}
+
+func TestProjectGitBranchChangesTargetFallsBackToOriginMaster(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is not available")
+	}
+
+	repoRoot := t.TempDir()
+	initMindGitTestRepo(t, repoRoot)
+	runGitForMindTest(t, repoRoot, "update-ref", "refs/remotes/origin/master", "HEAD")
+	runGitForMindTest(t, repoRoot, "checkout", "-b", "feature/remote-base")
+	runGitForMindTest(t, repoRoot, "branch", "-D", "master")
+
+	target := projectGitBranchChangesTarget(repoRoot)
+	if !target.Available {
+		t.Fatalf("expected remote master branch changes to be available, got %#v", target)
+	}
+	if target.BaseBranch != "origin/master" || target.BaseRef != "refs/remotes/origin/master" {
+		t.Fatalf("expected origin/master base, got %#v", target)
+	}
+}
+
+func TestProjectGitBranchChangesTargetInfersDetachedLocalBranch(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is not available")
+	}
+
+	repoRoot := t.TempDir()
+	initMindGitTestRepo(t, repoRoot)
+	runGitForMindTest(t, repoRoot, "checkout", "-b", "feature/detached")
+	writeGitTestFile(t, repoRoot, "README.md", "feature\n")
+	runGitForMindTest(t, repoRoot, "add", "README.md")
+	runGitForMindTest(t, repoRoot, "-c", "commit.gpgsign=false", "commit", "-m", "feature")
+	runGitForMindTest(t, repoRoot, "checkout", "--detach", "HEAD")
+
+	target := projectGitBranchChangesTarget(repoRoot)
+	if !target.Available {
+		t.Fatalf("expected detached feature branch changes to be available, got %#v", target)
+	}
+	if target.CurrentBranch != "feature/detached" {
+		t.Fatalf("expected detached HEAD to infer feature branch, got %#v", target)
+	}
+	if target.BaseBranch != "master" || target.BaseRef != "refs/heads/master" {
+		t.Fatalf("expected local master base, got %#v", target)
+	}
+}
+
+func initMindGitTestRepo(t *testing.T, repoRoot string) {
+	t.Helper()
+
+	runGitForMindTest(t, repoRoot, "init")
+	runGitForMindTest(t, repoRoot, "branch", "-M", "master")
+	runGitForMindTest(t, repoRoot, "config", "user.email", "test@example.com")
+	runGitForMindTest(t, repoRoot, "config", "user.name", "Test User")
+	writeGitTestFile(t, repoRoot, "README.md", "initial\n")
+	runGitForMindTest(t, repoRoot, "add", "README.md")
+	runGitForMindTest(t, repoRoot, "-c", "commit.gpgsign=false", "commit", "-m", "initial")
+}
+
 func runGitForMindTest(t *testing.T, repoRoot string, args ...string) {
 	t.Helper()
 

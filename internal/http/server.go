@@ -497,6 +497,8 @@ func (s *Server) setupRoutes() {
 		r.Get("/git/status", s.handleProjectGitStatus)
 		r.Post("/git/init", s.handleProjectGitInit)
 		r.Get("/git/diff", s.handleProjectGitFileDiff)
+		r.Get("/git/branch-changes", s.handleProjectGitBranchChanges)
+		r.Get("/git/branch-diff", s.handleProjectGitBranchDiff)
 		r.Get("/git/history", s.handleProjectGitHistory)
 		r.Get("/git/commit-files", s.handleProjectGitCommitFiles)
 		r.Get("/git/commit-diff", s.handleProjectGitCommitDiff)

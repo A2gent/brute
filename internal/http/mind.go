@@ -108,9 +108,12 @@ type ProjectGitChangedFile struct {
 }
 
 type ProjectGitStatusResponse struct {
-	RootFolder string                  `json:"root_folder"`
-	HasGit     bool                    `json:"has_git"`
-	Files      []ProjectGitChangedFile `json:"files"`
+	RootFolder              string                  `json:"root_folder"`
+	HasGit                  bool                    `json:"has_git"`
+	CurrentBranch           string                  `json:"current_branch,omitempty"`
+	BranchChangesAvailable  bool                    `json:"branch_changes_available"`
+	BranchChangesBaseBranch string                  `json:"branch_changes_base_branch,omitempty"`
+	Files                   []ProjectGitChangedFile `json:"files"`
 }
 
 type ProjectGitCommitRequest struct {
@@ -182,6 +185,21 @@ type ProjectGitCommitDiffResponse struct {
 	Commit  string `json:"commit"`
 	Path    string `json:"path"`
 	Preview string `json:"preview"`
+}
+
+type ProjectGitBranchChangesResponse struct {
+	RootFolder    string                 `json:"root_folder"`
+	CurrentBranch string                 `json:"current_branch"`
+	BaseBranch    string                 `json:"base_branch"`
+	Available     bool                   `json:"available"`
+	Files         []ProjectGitCommitFile `json:"files"`
+}
+
+type ProjectGitBranchDiffResponse struct {
+	CurrentBranch string `json:"current_branch"`
+	BaseBranch    string `json:"base_branch"`
+	Path          string `json:"path"`
+	Preview       string `json:"preview"`
 }
 
 type ProjectGitCommitMessageResponse struct {
@@ -1685,10 +1703,14 @@ func (s *Server) handleProjectGitStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	currentBranch, baseBranch, branchChangesAvailable := projectGitBranchChangesAvailability(targetRepoRoot)
 	s.jsonResponse(w, http.StatusOK, ProjectGitStatusResponse{
-		RootFolder: targetRepoRoot,
-		HasGit:     true,
-		Files:      parseGitPorcelain(porcelainOutput),
+		RootFolder:              targetRepoRoot,
+		HasGit:                  true,
+		CurrentBranch:           currentBranch,
+		BranchChangesAvailable:  branchChangesAvailable,
+		BranchChangesBaseBranch: baseBranch,
+		Files:                   parseGitPorcelain(porcelainOutput),
 	})
 }
 
@@ -1992,6 +2014,7 @@ func (s *Server) handleProjectGitFileDiff(w http.ResponseWriter, r *http.Request
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
 	if !projectHasGitMetadata(targetRepoRoot) {
 		s.errorResponse(w, http.StatusBadRequest, "Target folder does not contain a .git directory")
 		return
@@ -2012,6 +2035,112 @@ func (s *Server) handleProjectGitFileDiff(w http.ResponseWriter, r *http.Request
 	s.jsonResponse(w, http.StatusOK, ProjectGitFileDiffResponse{
 		Path:    normalizedPath,
 		Preview: preview,
+	})
+}
+
+func (s *Server) handleProjectGitBranchChanges(w http.ResponseWriter, r *http.Request) {
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+
+	resolvedRoot, err := s.resolveProjectRootFolder(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	targetRepoRoot, err := resolveProjectGitTargetRoot(resolvedRoot, strings.TrimSpace(r.URL.Query().Get("repoPath")))
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !projectHasGitMetadata(targetRepoRoot) {
+		s.errorResponse(w, http.StatusBadRequest, "Target folder does not contain a .git directory")
+		return
+	}
+
+	branchChangesTarget := projectGitBranchChangesTarget(targetRepoRoot)
+	response := ProjectGitBranchChangesResponse{
+		RootFolder:    targetRepoRoot,
+		CurrentBranch: branchChangesTarget.CurrentBranch,
+		BaseBranch:    branchChangesTarget.BaseBranch,
+		Available:     branchChangesTarget.Available,
+		Files:         []ProjectGitCommitFile{},
+	}
+	if !branchChangesTarget.Available {
+		s.jsonResponse(w, http.StatusOK, response)
+		return
+	}
+
+	statusOutput, err := runGitCommandPreserveLeading(targetRepoRoot, "diff", "--name-status", "--find-renames", branchChangesTarget.BaseRef+"...HEAD")
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to read branch changed files: "+err.Error())
+		return
+	}
+	statuses := parseProjectGitCommitFileStatuses(statusOutput)
+
+	statsOutput, err := runGitCommandPreserveLeading(targetRepoRoot, "diff", "--numstat", "--find-renames", branchChangesTarget.BaseRef+"...HEAD")
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to read branch file stats: "+err.Error())
+		return
+	}
+	response.Files = mergeProjectGitCommitFiles(statuses, statsOutput)
+	s.jsonResponse(w, http.StatusOK, response)
+}
+
+func (s *Server) handleProjectGitBranchDiff(w http.ResponseWriter, r *http.Request) {
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+	pathParam := strings.TrimSpace(r.URL.Query().Get("path"))
+	if pathParam == "" {
+		s.errorResponse(w, http.StatusBadRequest, "path is required")
+		return
+	}
+
+	resolvedRoot, err := s.resolveProjectRootFolder(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	targetRepoRoot, err := resolveProjectGitTargetRoot(resolvedRoot, strings.TrimSpace(r.URL.Query().Get("repoPath")))
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !projectHasGitMetadata(targetRepoRoot) {
+		s.errorResponse(w, http.StatusBadRequest, "Target folder does not contain a .git directory")
+		return
+	}
+
+	branchChangesTarget := projectGitBranchChangesTarget(targetRepoRoot)
+	if !branchChangesTarget.Available {
+		s.errorResponse(w, http.StatusBadRequest, "Branch changes are available only on feature branches with a master or main branch")
+		return
+	}
+
+	normalizedPath, err := resolveGitRepoFilePath(targetRepoRoot, pathParam)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	preview, err := runGitCommandPreserveLeading(targetRepoRoot, "diff", "--no-color", "--find-renames", branchChangesTarget.BaseRef+"...HEAD", "--", normalizedPath)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to read branch file diff: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, ProjectGitBranchDiffResponse{
+		CurrentBranch: branchChangesTarget.CurrentBranch,
+		BaseBranch:    branchChangesTarget.BaseBranch,
+		Path:          normalizedPath,
+		Preview:       preview,
 	})
 }
 
@@ -2549,6 +2678,98 @@ func (s *Server) handleProjectGitInit(w http.ResponseWriter, r *http.Request) {
 		HasGit:     true,
 		RemoteURL:  remoteURL,
 	})
+}
+
+type projectGitBranchChangesTargetInfo struct {
+	CurrentBranch string
+	BaseBranch    string
+	BaseRef       string
+	Available     bool
+}
+
+func projectGitBranchChangesAvailability(repoRoot string) (string, string, bool) {
+	target := projectGitBranchChangesTarget(repoRoot)
+	return target.CurrentBranch, target.BaseBranch, target.Available
+}
+
+func projectGitBranchChangesTarget(repoRoot string) projectGitBranchChangesTargetInfo {
+	currentBranchOutput, err := runGitCommand(repoRoot, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return projectGitBranchChangesTargetInfo{}
+	}
+	currentBranch := strings.TrimSpace(currentBranchOutput)
+	if currentBranch == "HEAD" {
+		currentBranch = inferProjectGitDetachedBranch(repoRoot)
+	}
+	if currentBranch == "" || currentBranch == "HEAD" || currentBranch == "master" || currentBranch == "main" {
+		return projectGitBranchChangesTargetInfo{CurrentBranch: currentBranch}
+	}
+
+	for _, candidate := range []struct {
+		label string
+		ref   string
+	}{
+		{label: "master", ref: "refs/heads/master"},
+		{label: "main", ref: "refs/heads/main"},
+		{label: "origin/master", ref: "refs/remotes/origin/master"},
+		{label: "origin/main", ref: "refs/remotes/origin/main"},
+	} {
+		if _, err := runGitCommand(repoRoot, "show-ref", "--verify", "--quiet", candidate.ref); err == nil {
+			return projectGitBranchChangesTargetInfo{
+				CurrentBranch: currentBranch,
+				BaseBranch:    candidate.label,
+				BaseRef:       candidate.ref,
+				Available:     true,
+			}
+		}
+	}
+	return projectGitBranchChangesTargetInfo{CurrentBranch: currentBranch}
+}
+
+func inferProjectGitDetachedBranch(repoRoot string) string {
+	output, err := runGitCommandPreserveLeading(
+		repoRoot,
+		"for-each-ref",
+		"--points-at",
+		"HEAD",
+		"--format=%(refname:short)%1f%(refname)%1f%(committerdate:iso-strict)",
+		"refs/heads",
+	)
+	if err != nil {
+		return "HEAD"
+	}
+
+	type branchCandidate struct {
+		name      string
+		updatedAt string
+	}
+	candidates := make([]branchCandidate, 0)
+	for _, line := range strings.Split(output, "\n") {
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine == "" {
+			continue
+		}
+		parts := strings.Split(trimmedLine, "\x1f")
+		name := strings.TrimSpace(parts[0])
+		if name == "" || name == "master" || name == "main" {
+			continue
+		}
+		updatedAt := ""
+		if len(parts) >= 3 {
+			updatedAt = strings.TrimSpace(parts[2])
+		}
+		candidates = append(candidates, branchCandidate{name: name, updatedAt: updatedAt})
+	}
+	if len(candidates) == 0 {
+		return "HEAD"
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].updatedAt != candidates[j].updatedAt {
+			return candidates[i].updatedAt > candidates[j].updatedAt
+		}
+		return candidates[i].name < candidates[j].name
+	})
+	return candidates[0].name
 }
 
 func (s *Server) resolveProjectRootFolder(projectID string) (string, error) {

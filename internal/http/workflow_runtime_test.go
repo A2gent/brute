@@ -164,6 +164,52 @@ func TestComposeWorkflowNodePromptStripsControlLinesFromInputs(t *testing.T) {
 	}
 }
 
+func TestComposeWorkflowNodePromptStartsWithNodeInstructions(t *testing.T) {
+	parent := session.New("build")
+	def := &workflowDefinitionRuntime{Name: "DEV & CRITIC"}
+	node := workflowNodeRuntime{
+		ID:          "n-main",
+		Label:       "Main agent",
+		Kind:        "main",
+		Instruction: "Implement the requested change before handing off.",
+	}
+
+	prompt := composeWorkflowNodePrompt(parent, def, node, "please fix previews", nil, "")
+
+	if !strings.HasPrefix(prompt, "Node instructions:\nImplement the requested change before handing off.") {
+		t.Fatalf("expected prompt preview to start with node instructions, got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "\nWorkflow context:\nYou are executing one node in a multi-agent workflow.") {
+		t.Fatalf("expected workflow context after node instructions, got: %s", prompt)
+	}
+	if strings.Index(prompt, "Node instructions:") > strings.Index(prompt, "You are executing one node in a multi-agent workflow.") {
+		t.Fatalf("expected node instructions before workflow context, got: %s", prompt)
+	}
+}
+
+func TestComposeWorkflowNodePromptForChildFullContextStartsWithNodeInstructions(t *testing.T) {
+	parent := session.New("build")
+	child := session.New("child")
+	def := &workflowDefinitionRuntime{Name: "DEV & CRITIC"}
+	node := workflowNodeRuntime{
+		ID:          "developer",
+		Label:       "Developer",
+		Kind:        "subagent",
+		Instruction: "Produce or revise the requested work.",
+	}
+
+	prompt := composeWorkflowNodePromptForChild(parent, def, node, "please fix previews", nil, "", child, true)
+
+	if !strings.HasPrefix(prompt, "Node instructions:\nProduce or revise the requested work.") {
+		t.Fatalf("expected child session prompt preview to start with node instructions, got: %s", prompt)
+	}
+	if workflowIdx := strings.Index(prompt, "Workflow context:\nYou are executing one node in a multi-agent workflow."); workflowIdx == -1 {
+		t.Fatalf("expected workflow context after node instructions, got: %s", prompt)
+	} else if workflowIdx < strings.Index(prompt, "Node instructions:") {
+		t.Fatalf("expected node instructions before workflow context, got: %s", prompt)
+	}
+}
+
 func TestComposeWorkflowNodePromptWithContextAllowsNilDefinition(t *testing.T) {
 	node := workflowNodeRuntime{
 		ID:    "worker",

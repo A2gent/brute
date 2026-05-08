@@ -1073,6 +1073,19 @@ func composeWorkflowNodePromptWithContext(def *workflowDefinitionRuntime, node w
 		name = strings.TrimSpace(def.ID)
 	}
 	var b strings.Builder
+	inst := ""
+	if fullContext {
+		inst = strings.TrimSpace(node.Instruction)
+		if inst != "" {
+			b.WriteString("Node instructions:\n")
+			b.WriteString(inst)
+			b.WriteString("\n")
+			if workflowNodeInstructionLooksLikeOrchestrator(inst) {
+				b.WriteString("For an orchestration node, create the handoff/plan needed by downstream workflow nodes. Do not implement downstream work yourself. Mark complete when the handoff is ready.\n")
+			}
+			b.WriteString("\nWorkflow context:\n")
+		}
+	}
 	if fullContext {
 		b.WriteString("You are executing one node in a multi-agent workflow.\n")
 	} else {
@@ -1082,16 +1095,6 @@ func composeWorkflowNodePromptWithContext(def *workflowDefinitionRuntime, node w
 		b.WriteString("Workflow: " + name + "\n")
 	}
 	b.WriteString("Node: " + strings.TrimSpace(node.Label) + "\n")
-	if fullContext {
-		if inst := strings.TrimSpace(node.Instruction); inst != "" {
-			b.WriteString("\nNode instructions:\n")
-			b.WriteString(inst)
-			b.WriteString("\n")
-			if workflowNodeInstructionLooksLikeOrchestrator(inst) {
-				b.WriteString("For an orchestration node, create the handoff/plan needed by downstream workflow nodes. Do not implement downstream work yourself. Mark complete when the handoff is ready.\n")
-			}
-		}
-	}
 	if contextText != "" {
 		b.WriteString("\nParent session context:\n")
 		b.WriteString(contextText)

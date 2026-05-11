@@ -6086,13 +6086,23 @@ func (s *Server) adaptProviderErrorMessage(providerType config.ProviderType, err
 		return nil
 	}
 	msg := err.Error()
-	if providerType == config.ProviderOpenAICodex && strings.Contains(strings.ToLower(msg), "insufficient_quota") {
+	lowerMsg := strings.ToLower(msg)
+	if providerType == config.ProviderOpenAICodex && isOpenAICodexExpiredTokenError(lowerMsg) {
+		return fmt.Errorf("%s. Reconnect OpenAI Codex in provider settings: /providers/openai_codex", msg)
+	}
+	if providerType == config.ProviderOpenAICodex && strings.Contains(lowerMsg, "insufficient_quota") {
 		return fmt.Errorf("%s. OpenAI accepted the token, but this account/project has no API quota. Codex login access does not automatically grant paid API credits", msg)
 	}
-	if providerType == config.ProviderOpenAICodex && strings.Contains(strings.ToLower(msg), "usage_not_included") {
+	if providerType == config.ProviderOpenAICodex && strings.Contains(lowerMsg, "usage_not_included") {
 		return fmt.Errorf("%s. This ChatGPT account does not include Codex usage. Upgrade the ChatGPT plan for Codex access, then reconnect OAuth", msg)
 	}
 	return err
+}
+
+func isOpenAICodexExpiredTokenError(lowerMsg string) bool {
+	return strings.Contains(lowerMsg, "token_expired") ||
+		(strings.Contains(lowerMsg, "authentication token") && strings.Contains(lowerMsg, "expired")) ||
+		(strings.Contains(lowerMsg, "token is expired") && strings.Contains(lowerMsg, "signing in again"))
 }
 
 // handleBrowserChromeProfileStatus returns the status of the browser_chrome agent profile

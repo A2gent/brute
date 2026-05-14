@@ -198,6 +198,7 @@ func (s *Server) runWorkflowSession(
 	}
 	graph := newWorkflowGraph(def)
 
+	previousState := workflowRuntimeStateFromMetadata(sess)
 	state := &workflowRuntimeState{
 		WorkflowID:   def.ID,
 		WorkflowName: def.Name,
@@ -207,6 +208,11 @@ func (s *Server) runWorkflowSession(
 	}
 	for _, node := range def.Nodes {
 		st := &workflowRuntimeNodeState{Status: "pending"}
+		if previousState != nil && previousState.Nodes != nil {
+			if previousNodeState := previousState.Nodes[node.ID]; previousNodeState != nil {
+				st.ChildSessionID = strings.TrimSpace(previousNodeState.ChildSessionID)
+			}
+		}
 		if strings.EqualFold(node.Kind, "user") {
 			st.Status = "completed"
 			st.CompletedAt = time.Now().UTC().Format(time.RFC3339)
@@ -804,6 +810,28 @@ func workflowDefinitionFromMetadata(sess *session.Session) (*workflowDefinitionR
 	}
 	expandReviewLoopNodes(def)
 	return def, true
+}
+
+func workflowRuntimeStateFromMetadata(sess *session.Session) *workflowRuntimeState {
+	if sess == nil || sess.Metadata == nil {
+		return nil
+	}
+	raw, ok := sess.Metadata[workflowStateMetadataKey]
+	if !ok || raw == nil {
+		return nil
+	}
+	if state, ok := raw.(*workflowRuntimeState); ok {
+		return state
+	}
+	bytes, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var state workflowRuntimeState
+	if err := json.Unmarshal(bytes, &state); err != nil {
+		return nil
+	}
+	return &state
 }
 
 func expandReviewLoopNodes(def *workflowDefinitionRuntime) {

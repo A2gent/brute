@@ -227,6 +227,71 @@ func TestComposeWorkflowNodePromptWithContextAllowsNilDefinition(t *testing.T) {
 	}
 }
 
+func TestWorkflowRuntimeStateFromMetadataRoundTripsStoredMap(t *testing.T) {
+	sess := session.New("build")
+	sess.Metadata = map[string]interface{}{
+		workflowStateMetadataKey: map[string]interface{}{
+			"workflowId":   "wf-review",
+			"workflowName": "Review loop",
+			"status":       "completed",
+			"updatedAt":    "2026-05-14T00:00:00Z",
+			"nodes": map[string]interface{}{
+				"developer": map[string]interface{}{
+					"status":         "completed",
+					"childSessionId": "child-dev",
+				},
+				"reviewer": map[string]interface{}{
+					"status":         "completed",
+					"childSessionId": "child-review",
+				},
+			},
+		},
+	}
+
+	state := workflowRuntimeStateFromMetadata(sess)
+	if state == nil {
+		t.Fatalf("expected workflow state")
+	}
+	if state.Nodes["developer"] == nil || state.Nodes["developer"].ChildSessionID != "child-dev" {
+		t.Fatalf("expected developer child session to round-trip, got: %#v", state.Nodes["developer"])
+	}
+	if state.Nodes["reviewer"] == nil || state.Nodes["reviewer"].ChildSessionID != "child-review" {
+		t.Fatalf("expected reviewer child session to round-trip, got: %#v", state.Nodes["reviewer"])
+	}
+}
+
+func TestWorkflowNodeChildSessionReusesPreviousRuntimeState(t *testing.T) {
+	previous := &workflowRuntimeState{
+		Nodes: map[string]*workflowRuntimeNodeState{
+			"developer": {ChildSessionID: "child-dev"},
+		},
+	}
+	def := &workflowDefinitionRuntime{
+		Nodes: []workflowNodeRuntime{
+			{ID: "user", Kind: "user"},
+			{ID: "developer", Kind: "subagent"},
+		},
+	}
+
+	next := &workflowRuntimeState{Nodes: make(map[string]*workflowRuntimeNodeState, len(def.Nodes))}
+	for _, node := range def.Nodes {
+		st := &workflowRuntimeNodeState{Status: "pending"}
+		if previous != nil && previous.Nodes != nil {
+			if previousNodeState := previous.Nodes[node.ID]; previousNodeState != nil {
+				st.ChildSessionID = strings.TrimSpace(previousNodeState.ChildSessionID)
+			}
+		}
+		next.Nodes[node.ID] = st
+	}
+
+	if got := next.Nodes["developer"].ChildSessionID; got != "child-dev" {
+		t.Fatalf("expected developer child session reuse, got %q", got)
+	}
+	if got := next.Nodes["user"].ChildSessionID; got != "" {
+		t.Fatalf("expected user node to have no child session, got %q", got)
+	}
+}
+
 func TestWorkflowCleanNodeOutputForHandoffStripsControlLines(t *testing.T) {
 	output := "work done\nNODE_STATUS: COMPLETE\n\nVERDICT: APPROVED\nnext detail"
 	clean := workflowCleanNodeOutputForHandoff(output)

@@ -513,6 +513,7 @@ func (s *Server) setupRoutes() {
 		r.Post("/git/checkout", s.handleProjectGitCheckout)
 		r.Post("/git/commit", s.handleProjectGitCommit)
 		r.Get("/file", s.handleGetProjectFile)
+		r.Get("/file/raw", s.handleGetProjectFileRaw)
 		r.Get("/search", s.handleProjectSearch)
 		r.Post("/file", s.handleUpsertProjectFile)
 		r.Put("/file", s.handleUpsertProjectFile)

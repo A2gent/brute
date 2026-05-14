@@ -120,6 +120,51 @@ func TestProjectFileEditorRejectsUnsupportedFiles(t *testing.T) {
 	}
 }
 
+func TestProjectFileRawAllowsLargePDF(t *testing.T) {
+	server, projectID, projectDir := newProjectFileTestServer(t)
+
+	pdfPath := filepath.Join(projectDir, "docs", "manual.pdf")
+	if err := os.MkdirAll(filepath.Dir(pdfPath), 0o755); err != nil {
+		t.Fatalf("failed to create docs directory: %v", err)
+	}
+	pdfContent := append([]byte("%PDF-1.7\n"), bytes.Repeat([]byte("0"), maxProjectEditableFileBytes+1)...)
+	if err := os.WriteFile(pdfPath, pdfContent, 0o644); err != nil {
+		t.Fatalf("failed to write pdf file: %v", err)
+	}
+
+	rec := requestProjectFileRaw(t, server, projectID, "docs/manual.pdf")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/pdf") {
+		t.Fatalf("expected application/pdf content type, got %q", got)
+	}
+	if got := rec.Body.Bytes(); !bytes.Equal(got, pdfContent) {
+		t.Fatalf("expected raw pdf body length %d, got %d", len(pdfContent), len(got))
+	}
+}
+
+func TestProjectTextFileEndpointDoesNotApplyTextSizeLimitToPDF(t *testing.T) {
+	server, projectID, projectDir := newProjectFileTestServer(t)
+
+	pdfPath := filepath.Join(projectDir, "large.pdf")
+	pdfContent := append([]byte("%PDF-1.7\n"), bytes.Repeat([]byte("0"), maxProjectEditableFileBytes+1)...)
+	if err := os.WriteFile(pdfPath, pdfContent, 0o644); err != nil {
+		t.Fatalf("failed to write pdf file: %v", err)
+	}
+
+	rec := requestProjectFile(t, server, http.MethodGet, projectID, "large.pdf", nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "File is too large to open") {
+		t.Fatalf("expected pdf-specific response, got size-limit response: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "PDF files can be opened in the project preview") {
+		t.Fatalf("expected pdf preview response, got %s", rec.Body.String())
+	}
+}
+
 func TestProjectSearchFindsCodeFileByPath(t *testing.T) {
 	server, projectID, projectDir := newProjectFileTestServer(t)
 
@@ -216,6 +261,7 @@ func newProjectFileTestServer(t *testing.T) (*Server, string, string) {
 
 	projectID := "project-file-test"
 	now := time.Now()
+
 	folder := projectDir
 	if err := store.SaveProject(&storage.Project{
 		ID:        projectID,
@@ -257,6 +303,19 @@ func requestProjectFile(t *testing.T, server *Server, method string, projectID s
 	if method == http.MethodPut || method == http.MethodPost {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+	return rec
+}
+
+func requestProjectFileRaw(t *testing.T, server *Server, projectID string, path string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	target := "/projects/file/raw?projectID=" + url.QueryEscape(projectID)
+	if path != "" {
+		target += "&path=" + url.QueryEscape(path)
+	}
+	req := httptest.NewRequest(http.MethodGet, target, nil)
 	rec := httptest.NewRecorder()
 	server.router.ServeHTTP(rec, req)
 	return rec

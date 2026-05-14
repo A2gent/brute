@@ -642,6 +642,10 @@ func isMarkdownFile(name string) bool {
 	return ext == ".md" || ext == ".markdown"
 }
 
+func isPDFFile(name string) bool {
+	return strings.EqualFold(filepath.Ext(name), ".pdf")
+}
+
 func isProjectEditableFile(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
 	return !isProjectBlockedMediaFileExtension(ext)
@@ -1193,6 +1197,10 @@ func (s *Server) handleGetProjectFile(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusBadRequest, "Images and videos cannot be opened in the project editor")
 		return
 	}
+	if isPDFFile(normalizedRelPath) {
+		s.errorResponse(w, http.StatusBadRequest, "PDF files can be opened in the project preview")
+		return
+	}
 
 	info, err := os.Stat(resolvedPath)
 	if err != nil {
@@ -1223,6 +1231,65 @@ func (s *Server) handleGetProjectFile(w http.ResponseWriter, r *http.Request) {
 		Path:       filepath.ToSlash(normalizedRelPath),
 		Content:    string(content),
 	})
+}
+
+// handleGetProjectFileRaw streams a file from a project's folder for browser-native previews.
+func (s *Server) handleGetProjectFileRaw(w http.ResponseWriter, r *http.Request) {
+	projectID := r.URL.Query().Get("projectID")
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusNotFound, "Project not found")
+		return
+	}
+
+	if project.Folder == nil || strings.TrimSpace(*project.Folder) == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Project folder is not configured")
+		return
+	}
+
+	rootFolder := strings.TrimSpace(*project.Folder)
+	if !filepath.IsAbs(rootFolder) {
+		rootFolder = filepath.Join(".", rootFolder)
+	}
+	resolvedRoot, err := filepath.Abs(rootFolder)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Project folder path is invalid")
+		return
+	}
+
+	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	resolvedPath, normalizedRelPath, err := resolveMindPath(resolvedRoot, relPath)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if normalizedRelPath == "" {
+		s.errorResponse(w, http.StatusBadRequest, "File path is required")
+		return
+	}
+	if !isPDFFile(normalizedRelPath) {
+		s.errorResponse(w, http.StatusBadRequest, "Only PDF files can be previewed")
+		return
+	}
+
+	info, err := os.Stat(resolvedPath)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to access file: "+err.Error())
+		return
+	}
+	if info.IsDir() {
+		s.errorResponse(w, http.StatusBadRequest, "Path is a directory")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", "inline; filename=\""+strings.ReplaceAll(filepath.Base(normalizedRelPath), "\"", "")+"\"")
+	http.ServeFile(w, r, resolvedPath)
 }
 
 // handleUpsertProjectFile creates or updates a file in a project's folder

@@ -22,6 +22,7 @@ import (
 const (
 	workflowDefinitionMetadataKey = "workflow_definition"
 	workflowStateMetadataKey      = "workflow_state"
+	workflowTranscriptMetadataKey = "workflow_transcript"
 	workflowContextSeededKey      = "workflow_context_seeded"
 )
 
@@ -81,6 +82,19 @@ type workflowRuntimeState struct {
 	Status       string                               `json:"status"`
 	UpdatedAt    string                               `json:"updatedAt"`
 	Nodes        map[string]*workflowRuntimeNodeState `json:"nodes"`
+}
+
+type workflowTranscriptEntry struct {
+	ID             string `json:"id"`
+	NodeID         string `json:"nodeId,omitempty"`
+	NodeLabel      string `json:"nodeLabel,omitempty"`
+	NodeKind       string `json:"nodeKind,omitempty"`
+	ChildSessionID string `json:"childSessionId,omitempty"`
+	Role           string `json:"role"`
+	Content        string `json:"content"`
+	CreatedAt      string `json:"createdAt"`
+	Status         string `json:"status,omitempty"`
+	Turn           int    `json:"turn,omitempty"`
 }
 
 type workflowNodeResult struct {
@@ -380,7 +394,30 @@ func (s *Server) runWorkflowSession(
 			st.CompletedAt = time.Now().UTC().Format(time.RFC3339)
 			st.OutputPreview = preview(result.output, 220)
 			outputs[result.nodeID] = result.output
+			entryTurn := runVersion[result.nodeID] + 1
 			runVersion[result.nodeID]++
+			if cleanTranscriptOutput := strings.TrimSpace(result.output); cleanTranscriptOutput != "" {
+				node := graph.NodeByID[result.nodeID]
+				nodeLabel := strings.TrimSpace(result.nodeLabel)
+				if nodeLabel == "" {
+					nodeLabel = strings.TrimSpace(node.Label)
+				}
+				entry := workflowTranscriptEntry{
+					ID:             fmt.Sprintf("%s:%s:%d", sess.ID, result.nodeID, entryTurn),
+					NodeID:         result.nodeID,
+					NodeLabel:      nodeLabel,
+					NodeKind:       node.Kind,
+					ChildSessionID: result.childSessionID,
+					Role:           "agent",
+					Content:        cleanTranscriptOutput,
+					CreatedAt:      st.CompletedAt,
+					Status:         st.Status,
+					Turn:           entryTurn,
+				}
+				if err := s.appendWorkflowTranscriptEntry(sess, entry, emit); err != nil {
+					return "", llm.TokenUsage{}, err
+				}
+			}
 			if result.workStatus == "complete" {
 				completeVersion[result.nodeID]++
 			}
@@ -456,6 +493,45 @@ func (s *Server) persistWorkflowState(sess *session.Session, state *workflowRunt
 		_ = emit(ChatStreamEvent{Type: "workflow_update", Workflow: state})
 	}
 	return nil
+}
+
+func (s *Server) appendWorkflowTranscriptEntry(sess *session.Session, entry workflowTranscriptEntry, emit func(ChatStreamEvent) bool) error {
+	if sess.Metadata == nil {
+		sess.Metadata = make(map[string]interface{})
+	}
+	entries := workflowTranscriptEntriesFromMetadata(sess.Metadata[workflowTranscriptMetadataKey])
+	for _, existing := range entries {
+		if existing.ID == entry.ID {
+			return nil
+		}
+	}
+	entries = append(entries, entry)
+	sess.Metadata[workflowTranscriptMetadataKey] = entries
+	if err := s.sessionManager.Save(sess); err != nil {
+		return err
+	}
+	if emit != nil {
+		_ = emit(ChatStreamEvent{Type: "workflow_transcript_entry", WorkflowTranscriptEntry: entry})
+	}
+	return nil
+}
+
+func workflowTranscriptEntriesFromMetadata(raw interface{}) []workflowTranscriptEntry {
+	if raw == nil {
+		return nil
+	}
+	if entries, ok := raw.([]workflowTranscriptEntry); ok {
+		return entries
+	}
+	bytes, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var entries []workflowTranscriptEntry
+	if err := json.Unmarshal(bytes, &entries); err != nil {
+		return nil
+	}
+	return entries
 }
 
 func (s *Server) executeWorkflowNode(

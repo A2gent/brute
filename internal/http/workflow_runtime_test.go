@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/A2gent/brute/internal/session"
+	"github.com/A2gent/brute/internal/storage"
 )
 
 func TestHasRunnableWorkflow(t *testing.T) {
@@ -122,6 +123,89 @@ func TestComposeWorkflowNodePromptIncludesParentContext(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "NODE_STATUS: COMPLETE") {
 		t.Fatalf("expected node status handoff contract in prompt, got: %s", prompt)
+	}
+}
+
+func TestAppendWorkflowTranscriptEntryPersistsMetadata(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	srv := &Server{sessionManager: session.NewManager(store)}
+	sess := session.New("build")
+
+	entry := workflowTranscriptEntry{
+		ID:             "session:developer:1",
+		NodeID:         "developer",
+		NodeLabel:      "Developer",
+		NodeKind:       "subagent",
+		ChildSessionID: "child-1",
+		Role:           "agent",
+		Content:        "Implemented the feature.",
+		CreatedAt:      "2026-05-14T20:00:00Z",
+		Status:         "completed",
+		Turn:           1,
+	}
+
+	if err := srv.appendWorkflowTranscriptEntry(sess, entry, nil); err != nil {
+		t.Fatalf("append transcript entry: %v", err)
+	}
+
+	entries := workflowTranscriptEntriesFromMetadata(sess.Metadata[workflowTranscriptMetadataKey])
+	if len(entries) != 1 {
+		t.Fatalf("expected one transcript entry, got %d", len(entries))
+	}
+	if entries[0].ID != entry.ID || entries[0].Content != entry.Content || entries[0].NodeLabel != entry.NodeLabel {
+		t.Fatalf("unexpected transcript entry: %+v", entries[0])
+	}
+}
+
+func TestAppendWorkflowTranscriptEntryDeduplicatesByID(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	srv := &Server{sessionManager: session.NewManager(store)}
+	sess := session.New("build")
+	entry := workflowTranscriptEntry{
+		ID:        "session:critic:1",
+		NodeID:    "critic",
+		NodeLabel: "Critic",
+		Role:      "agent",
+		Content:   "Approved.",
+		CreatedAt: "2026-05-14T20:01:00Z",
+		Status:    "completed",
+		Turn:      1,
+	}
+
+	if err := srv.appendWorkflowTranscriptEntry(sess, entry, nil); err != nil {
+		t.Fatalf("append transcript entry: %v", err)
+	}
+	if err := srv.appendWorkflowTranscriptEntry(sess, entry, nil); err != nil {
+		t.Fatalf("append duplicate transcript entry: %v", err)
+	}
+
+	entries := workflowTranscriptEntriesFromMetadata(sess.Metadata[workflowTranscriptMetadataKey])
+	if len(entries) != 1 {
+		t.Fatalf("expected duplicate to be skipped, got %d entries", len(entries))
+	}
+}
+
+func TestWorkflowTranscriptEntryStreamJSON(t *testing.T) {
+	entry := workflowTranscriptEntry{
+		ID:        "session:developer:1",
+		NodeID:    "developer",
+		NodeLabel: "Developer",
+		Role:      "agent",
+		Content:   "Done.",
+		CreatedAt: "2026-05-14T20:02:00Z",
+	}
+	encoded, err := json.Marshal(ChatStreamEvent{Type: "workflow_transcript_entry", WorkflowTranscriptEntry: entry})
+	if err != nil {
+		t.Fatalf("marshal stream event: %v", err)
+	}
+	if !strings.Contains(string(encoded), "workflow_transcript_entry") || !strings.Contains(string(encoded), "Developer") {
+		t.Fatalf("expected transcript entry in JSON, got %s", encoded)
 	}
 }
 

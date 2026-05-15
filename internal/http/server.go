@@ -784,19 +784,20 @@ type ChatResponse struct {
 }
 
 type ChatStreamEvent struct {
-	Type       string                 `json:"type"`
-	Delta      string                 `json:"delta,omitempty"`
-	Content    string                 `json:"content,omitempty"`
-	Message    *MessageResponse       `json:"message,omitempty"`
-	Messages   []MessageResponse      `json:"messages,omitempty"`
-	Status     string                 `json:"status,omitempty"`
-	Usage      *UsageResponse         `json:"usage,omitempty"`
-	Error      string                 `json:"error,omitempty"`
-	ToolCalls  []StreamToolCallEvent  `json:"tool_calls,omitempty"`
-	ToolResult *StreamToolResultEvent `json:"tool_result,omitempty"`
-	Provider   *StreamProviderEvent   `json:"provider,omitempty"`
-	Workflow   interface{}            `json:"workflow,omitempty"`
-	Step       int                    `json:"step,omitempty"`
+	Type                    string                 `json:"type"`
+	Delta                   string                 `json:"delta,omitempty"`
+	Content                 string                 `json:"content,omitempty"`
+	Message                 *MessageResponse       `json:"message,omitempty"`
+	Messages                []MessageResponse      `json:"messages,omitempty"`
+	Status                  string                 `json:"status,omitempty"`
+	Usage                   *UsageResponse         `json:"usage,omitempty"`
+	Error                   string                 `json:"error,omitempty"`
+	ToolCalls               []StreamToolCallEvent  `json:"tool_calls,omitempty"`
+	ToolResult              *StreamToolResultEvent `json:"tool_result,omitempty"`
+	Provider                *StreamProviderEvent   `json:"provider,omitempty"`
+	Workflow                interface{}            `json:"workflow,omitempty"`
+	WorkflowTranscriptEntry interface{}            `json:"workflow_transcript_entry,omitempty"`
+	Step                    int                    `json:"step,omitempty"`
 }
 
 // StreamToolCallEvent represents a tool call in a stream event.
@@ -2735,8 +2736,16 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var streamWriteMu sync.Mutex
+	streamWritable := true
 	writeEvent := func(event ChatStreamEvent) bool {
+		streamWriteMu.Lock()
+		defer streamWriteMu.Unlock()
+		if !streamWritable {
+			return false
+		}
 		if err := json.NewEncoder(w).Encode(event); err != nil {
+			streamWritable = false
 			return false
 		}
 		flusher.Flush()
@@ -2746,6 +2755,23 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	if !writeEvent(ChatStreamEvent{Type: "status", Status: string(sess.Status)}) {
 		return
 	}
+
+	heartbeatDone := make(chan struct{})
+	defer close(heartbeatDone)
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if !writeEvent(ChatStreamEvent{Type: "heartbeat"}) {
+					return
+				}
+			case <-heartbeatDone:
+				return
+			}
+		}
+	}()
 
 	if s.hasRunnableWorkflow(sess) {
 		content, usage, runErr := s.runWorkflowSession(runCtx, sess, req.Message, writeEvent)

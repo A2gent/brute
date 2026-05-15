@@ -58,19 +58,24 @@ const (
 )
 
 const (
-	metadataTotalInputTokens     = "total_input_tokens"
-	metadataTotalOutputTokens    = "total_output_tokens"
-	metadataTotalCachedTokens    = "total_cached_input_tokens"
-	metadataTotalReasoningTokens = "total_reasoning_tokens"
-	metadataCurrentContextTokens = "current_context_tokens"
-	metadataCompactionCount      = "compaction_count"
-	metadataLastCompactionAt     = "last_compaction_at"
-	metadataLastResponseID       = "last_response_id"
-	messageMetadataCompaction    = "context_compaction"
-	messageMetadataResponseID    = "response_id"
-	toolMetadataExternalWait     = "external_wait"
-	defaultCompactionTriggerPct  = 80.0
-	defaultCompactionPrompt      = `You are compacting a coding-agent conversation because context usage is high.
+	metadataTotalInputTokens      = "total_input_tokens"
+	metadataTotalOutputTokens     = "total_output_tokens"
+	metadataTotalCachedTokens     = "total_cached_input_tokens"
+	metadataTotalReasoningTokens  = "total_reasoning_tokens"
+	metadataCurrentContextTokens  = "current_context_tokens"
+	metadataContextWindow         = "context_window"
+	metadataCompactionCount       = "compaction_count"
+	metadataLastCompactionAt      = "last_compaction_at"
+	metadataLastResponseID        = "last_response_id"
+	messageMetadataCompaction     = "context_compaction"
+	messageMetadataResponseID     = "response_id"
+	toolMetadataExternalWait      = "external_wait"
+	defaultCompactionTriggerPct   = 80.0
+	emptyFinalResponseMaxRetries  = 1
+	emptyFinalResponseRetryPrompt = `The previous model response was empty after tool execution. Produce a concise final response for the user now.
+
+Summarize what was done, mention verification or blockers, and do not paste raw tool output. Call another tool only if it is truly required to complete the answer.`
+	defaultCompactionPrompt = `You are compacting a coding-agent conversation because context usage is high.
 
 Create a concise continuation summary that lets the agent continue work in a fresh context window.
 
@@ -184,6 +189,8 @@ func (a *Agent) RunWithEvents(ctx context.Context, sess *session.Session, task s
 func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Event)) (string, llm.TokenUsage, error) {
 	step := 0
 	totalUsage := llm.TokenUsage{}
+	emptyFinalResponseRetries := 0
+	transientUserPrompt := ""
 
 	// Add session ID to context for tools that need it (e.g., question tool)
 	ctx = context.WithValue(ctx, "session_id", sess.ID)
@@ -233,6 +240,13 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		// to the next LLM turn.
 		a.mergeFreshSessionState(sess)
 		request := a.buildRequest(sess)
+		if strings.TrimSpace(transientUserPrompt) != "" {
+			request.Messages = append(request.Messages, llm.Message{
+				Role:    "user",
+				Content: strings.TrimSpace(transientUserPrompt),
+			})
+			transientUserPrompt = ""
+		}
 
 		// Call LLM (streaming when supported)
 		llmStart := time.Now()
@@ -263,8 +277,22 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			// No tool calls - agent is done
 			finalContent := strings.TrimSpace(response.Content)
 			if finalContent == "" {
-				finalContent = a.fallbackAssistantContentFromRecentTools(sess)
+				if emptyFinalResponseRetries < emptyFinalResponseMaxRetries {
+					emptyFinalResponseRetries++
+					transientUserPrompt = emptyFinalResponseRetryPrompt
+					logging.Warn("Model returned empty final response; retrying once for session=%s step=%d", sess.ID, step)
+					continue
+				}
+				message := "Model returned an empty final response after tool execution."
+				sess.AddAssistantMessageWithMetadata(message, nil, map[string]interface{}{
+					"empty_final_response": true,
+					"llm_duration_ms":      llmDurationMs,
+				})
+				sess.SetStatus(session.StatusFailed)
+				a.sessionManager.Save(sess)
+				return "", totalUsage, errors.New(message)
 			}
+			emptyFinalResponseRetries = 0
 			sess.AddAssistantMessageWithImagesAndMetadata(finalContent, llmImagesToSession(response.Images), nil, assistantMetadata)
 			sess.SetStatus(session.StatusCompleted)
 			a.sessionManager.Save(sess)
@@ -273,6 +301,8 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			}
 			return finalContent, totalUsage, nil
 		}
+
+		emptyFinalResponseRetries = 0
 
 		// Convert tool calls for session storage
 		sessionToolCalls := make([]session.ToolCall, 0, len(response.ToolCalls))
@@ -441,31 +471,6 @@ func hasExternalWaitResult(results []session.ToolResult) bool {
 		}
 	}
 	return false
-}
-
-func (a *Agent) fallbackAssistantContentFromRecentTools(sess *session.Session) string {
-	if sess == nil {
-		return "I finished tool execution but produced no final text response."
-	}
-	for i := len(sess.Messages) - 1; i >= 0; i-- {
-		msg := sess.Messages[i]
-		if msg.Role != "tool" || len(msg.ToolResults) == 0 {
-			continue
-		}
-		for _, tr := range msg.ToolResults {
-			content := strings.TrimSpace(tr.Content)
-			if content == "" || tr.IsError {
-				continue
-			}
-			const maxLen = 1200
-			runes := []rune(content)
-			if len(runes) > maxLen {
-				content = string(runes[:maxLen]) + "..."
-			}
-			return content
-		}
-	}
-	return "I finished tool execution but produced no final text response."
 }
 
 func (a *Agent) callLLM(ctx context.Context, request *llm.ChatRequest, step int, onEvent func(Event)) (*llm.ChatResponse, error) {
@@ -952,6 +957,9 @@ func (a *Agent) resolveCompactionConfig() compactionConfig {
 func (a *Agent) addTokenUsageMetadata(sess *session.Session, usage llm.TokenUsage) {
 	if sess == nil {
 		return
+	}
+	if a.config.ContextWindow > 0 {
+		metadataSetFloat(sess, metadataContextWindow, float64(a.config.ContextWindow))
 	}
 
 	// Get previous context size before updating

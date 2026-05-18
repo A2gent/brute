@@ -316,9 +316,41 @@ func (s *Server) handleDeleteMeetingArtifacts(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	deletedAudio := make([]string, 0, len(req.AudioPath))
+	noteContentBytes, readErr := os.ReadFile(absNotesPath)
+	if readErr != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "failed to read meeting note")
+		return
+	}
+	noteContent := string(noteContentBytes)
+	parsedMeeting := parseMeetingHistoryFromMarkdown(noteContent)
+	_, noteBody := parseMeetingFrontmatter(noteContent)
+
+	audioCandidates := make([]string, 0, len(req.AudioPath)+len(parsedMeeting.AudioPaths))
+	audioCandidates = append(audioCandidates, req.AudioPath...)
+	audioCandidates = append(audioCandidates, parsedMeeting.AudioPaths...)
+	audioCandidates = append(audioCandidates, extractAudioLinksFromAudioSection(noteBody)...)
+	baseName := strings.TrimSuffix(filepath.Base(absNotesPath), filepath.Ext(absNotesPath))
+	seenAudioDirs := make(map[string]struct{})
+	for _, candidate := range audioCandidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		absAudioPath, absErr := filepath.Abs(candidate)
+		if absErr != nil {
+			continue
+		}
+		dir := filepath.Dir(absAudioPath)
+		if _, seen := seenAudioDirs[dir]; seen {
+			continue
+		}
+		seenAudioDirs[dir] = struct{}{}
+		audioCandidates = append(audioCandidates, discoverMeetingAudioByBaseName(dir, baseName)...)
+	}
+
+	deletedAudio := make([]string, 0, len(audioCandidates))
 	seenAudio := make(map[string]struct{})
-	for _, candidate := range req.AudioPath {
+	for _, candidate := range audioCandidates {
 		candidate = strings.TrimSpace(candidate)
 		if candidate == "" {
 			continue

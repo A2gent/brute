@@ -33,10 +33,12 @@ type Client struct {
 }
 
 type Options struct {
-	PromptCacheKey    string
-	ReasoningEffort   string
-	TextVerbosity     string
-	ServiceTier       string
+	PromptCacheKey  string
+	ReasoningEffort string
+	TextVerbosity   string
+	ServiceTier     string
+	// Retained for config compatibility. The ChatGPT Codex backend rejects
+	// max_output_tokens, so this client intentionally omits token caps.
 	MaxTokens         int
 	StatefulResponses bool
 }
@@ -53,7 +55,6 @@ type responsesRequest struct {
 	Reasoning          *responsesReasoning  `json:"reasoning,omitempty"`
 	Text               *responsesText       `json:"text,omitempty"`
 	ServiceTier        string               `json:"service_tier,omitempty"`
-	MaxOutputTokens    int                  `json:"max_output_tokens,omitempty"`
 }
 
 type responsesReasoning struct {
@@ -205,7 +206,6 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		PreviousResponseID: options.previousResponseID(request),
 		PromptCacheKey:     options.promptCacheKey(request),
 		ServiceTier:        options.ServiceTier,
-		MaxOutputTokens:    options.maxTokens(request),
 	}
 	if effort := strings.TrimSpace(options.ReasoningEffort); effort != "" {
 		payload.Reasoning = &responsesReasoning{Effort: effort}
@@ -618,9 +618,6 @@ func (c *Client) requestOptions(request *llm.ChatRequest) Options {
 	if strings.TrimSpace(request.ServiceTier) != "" {
 		options.ServiceTier = strings.TrimSpace(request.ServiceTier)
 	}
-	if request.MaxTokens > 0 {
-		options.MaxTokens = request.MaxTokens
-	}
 	return normalizeOptions(options)
 }
 
@@ -639,16 +636,6 @@ func (options Options) previousResponseID(request *llm.ChatRequest) string {
 		return ""
 	}
 	return strings.TrimSpace(request.PreviousResponseID)
-}
-
-func (options Options) maxTokens(request *llm.ChatRequest) int {
-	if options.MaxTokens > 0 {
-		return options.MaxTokens
-	}
-	if request != nil && request.MaxTokens > 0 {
-		return request.MaxTokens
-	}
-	return 0
 }
 
 func envBool(key string) bool {

@@ -2,6 +2,8 @@ package openaicodex
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/A2gent/brute/internal/llm"
@@ -82,6 +84,42 @@ func TestRequestOptions_DisablesStatefulResponses(t *testing.T) {
 	}
 	if got := options.previousResponseID(&llm.ChatRequest{PreviousResponseID: "resp_123"}); got != "" {
 		t.Fatalf("previous response id = %q, want empty", got)
+	}
+}
+
+func TestChat_DoesNotSendUnsupportedMaxOutputTokens(t *testing.T) {
+	var raw map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Path, "/responses"; got != want {
+			t.Fatalf("path = %q, want %q", got, want)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if _, ok := raw["max_output_tokens"]; ok {
+			t.Fatalf("request included unsupported max_output_tokens: %v", raw["max_output_tokens"])
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(`event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1}}}
+
+`))
+	}))
+	defer server.Close()
+
+	client := NewClientWithOptions("token", "gpt-5.5", server.URL, Options{MaxTokens: 200})
+	client.httpClient = server.Client()
+
+	resp, err := client.Chat(t.Context(), &llm.ChatRequest{
+		Messages:  []llm.Message{{Role: "user", Content: "hello"}},
+		MaxTokens: 100,
+	})
+	if err != nil {
+		t.Fatalf("Chat returned error: %v", err)
+	}
+	if got, want := resp.Content, "ok"; got != want {
+		t.Fatalf("content = %q, want %q", got, want)
 	}
 }
 

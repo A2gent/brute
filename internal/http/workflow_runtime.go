@@ -576,6 +576,7 @@ func (s *Server) executeWorkflowNode(
 
 	agentConfig := agent.Config{
 		Name:                child.AgentID,
+		Provider:            string(target.ProviderType),
 		Model:               target.Model,
 		SystemPrompt:        s.buildSystemPromptForWorkflowNode(child, node),
 		MaxSteps:            s.config.MaxSteps,

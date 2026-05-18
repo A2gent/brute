@@ -163,6 +163,7 @@ func (t *delegateToSubAgentTool) Execute(ctx context.Context, params json.RawMes
 
 	agentConfig := agent.Config{
 		Name:                "subagent-" + sa.Name,
+		Provider:            string(target.ProviderType),
 		Model:               target.Model,
 		SystemPrompt:        systemPrompt,
 		MaxSteps:            30, // Sub-agents get fewer steps

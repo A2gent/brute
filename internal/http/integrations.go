@@ -1861,6 +1861,7 @@ func (s *Server) handleTelegramInboundMessage(
 
 	agentConfig := agent.Config{
 		Name:                sess.AgentID,
+		Provider:            string(target.ProviderType),
 		Model:               target.Model,
 		SystemPrompt:        s.buildSystemPromptForSession(sess),
 		MaxSteps:            s.config.MaxSteps,

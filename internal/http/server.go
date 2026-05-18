@@ -2407,6 +2407,7 @@ func (s *Server) resumeSessionAfterQuestionAnswer(sessionID string, userAnswer s
 
 		agentConfig := agent.Config{
 			Name:                sess.AgentID,
+			Provider:            string(target.ProviderType),
 			Model:               target.Model,
 			SystemPrompt:        s.buildSystemPromptForSession(sess),
 			MaxSteps:            s.config.MaxSteps,
@@ -2626,6 +2627,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	// Create agent config
 	agentConfig := agent.Config{
 		Name:                sess.AgentID,
+		Provider:            string(target.ProviderType),
 		Model:               target.Model,
 		SystemPrompt:        s.buildSystemPromptForSession(sess),
 		MaxSteps:            s.config.MaxSteps,
@@ -2842,6 +2844,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	agentConfig := agent.Config{
 		Name:                sess.AgentID,
+		Provider:            string(target.ProviderType),
 		Model:               target.Model,
 		SystemPrompt:        s.buildSystemPromptForSession(sess),
 		MaxSteps:            s.config.MaxSteps,
@@ -3306,6 +3309,7 @@ Cron expression:`, scheduleText)
 	// Create agent config for parsing
 	agentConfig := agent.Config{
 		Name:                "scheduler",
+		Provider:            string(target.ProviderType),
 		Model:               target.Model,
 		SystemPrompt:        "You convert natural-language schedules into strict 5-field cron expressions.",
 		MaxSteps:            1, // Only need one response
@@ -3420,6 +3424,7 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 	// Run the agent with resolved task prompt
 	agentConfig := agent.Config{
 		Name:                "job-runner",
+		Provider:            string(target.ProviderType),
 		Model:               target.Model,
 		SystemPrompt:        s.buildSystemPromptForSession(sess),
 		MaxSteps:            s.config.MaxSteps,

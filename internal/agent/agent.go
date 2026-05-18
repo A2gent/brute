@@ -21,6 +21,7 @@ import (
 type Config struct {
 	Name                     string
 	Description              string
+	Provider                 string
 	Model                    string
 	SystemPrompt             string
 	Temperature              float64
@@ -251,15 +252,13 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		// Call LLM (streaming when supported)
 		llmStart := time.Now()
 		response, err := a.callLLM(ctx, request, step, onEvent)
-		llmDurationMs := time.Since(llmStart).Milliseconds()
+		llmCompleted := time.Now()
 		if err != nil {
 			sess.SetStatus(session.StatusFailed)
 			a.sessionManager.Save(sess)
 			return "", totalUsage, fmt.Errorf("LLM error: %w", err)
 		}
-		assistantMetadata := map[string]interface{}{
-			"llm_duration_ms": llmDurationMs,
-		}
+		assistantMetadata := llmTimingMetadata(llmStart, llmCompleted, a.config.Provider, a.config.Model)
 		if a.config.UsePreviousResponse && strings.TrimSpace(response.ResponseID) != "" {
 			assistantMetadata[messageMetadataResponseID] = strings.TrimSpace(response.ResponseID)
 			metadataSetString(sess, metadataLastResponseID, strings.TrimSpace(response.ResponseID))
@@ -284,10 +283,9 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 					continue
 				}
 				message := "Model returned an empty final response after tool execution."
-				sess.AddAssistantMessageWithMetadata(message, nil, map[string]interface{}{
+				sess.AddAssistantMessageWithMetadata(message, nil, llmTimingMetadata(llmStart, llmCompleted, a.config.Provider, a.config.Model, map[string]interface{}{
 					"empty_final_response": true,
-					"llm_duration_ms":      llmDurationMs,
-				})
+				}))
 				sess.SetStatus(session.StatusFailed)
 				a.sessionManager.Save(sess)
 				return "", totalUsage, errors.New(message)
@@ -518,6 +516,28 @@ func (a *Agent) callLLM(ctx context.Context, request *llm.ChatRequest, step int,
 		}
 		return nil
 	})
+}
+func llmTimingMetadata(startedAt, completedAt time.Time, provider, model string, extra ...map[string]interface{}) map[string]interface{} {
+	if completedAt.Before(startedAt) {
+		completedAt = startedAt
+	}
+	metadata := map[string]interface{}{
+		"llm_duration_ms":  completedAt.Sub(startedAt).Milliseconds(),
+		"llm_started_at":   startedAt.UTC().Format(time.RFC3339Nano),
+		"llm_completed_at": completedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if trimmedProvider := strings.TrimSpace(provider); trimmedProvider != "" {
+		metadata["llm_provider"] = trimmedProvider
+	}
+	if trimmedModel := strings.TrimSpace(model); trimmedModel != "" {
+		metadata["llm_model"] = trimmedModel
+	}
+	for _, values := range extra {
+		for key, value := range values {
+			metadata[key] = value
+		}
+	}
+	return metadata
 }
 
 // buildRequest builds a chat request from the session

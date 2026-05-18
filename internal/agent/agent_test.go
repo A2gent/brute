@@ -224,6 +224,54 @@ func TestLoopRetriesEmptyFinalResponseWithoutPromotingToolOutput(t *testing.T) {
 	}
 }
 
+func TestLoopStoresLLMTimingMetadataOnAssistantMessage(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	sm := session.NewManager(store)
+	sess, err := sm.Create("test-agent")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	sess.AddUserMessage("hello")
+
+	mockLLM := &MockLLM{
+		Response: &llm.ChatResponse{Content: "hi there"},
+	}
+	ag := New(Config{Provider: "test-provider", Model: "test-model", MaxSteps: 3}, mockLLM, tools.NewManager(t.TempDir()), sm)
+
+	_, _, err = ag.RunWithEvents(context.Background(), sess, "hello", nil)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	lastMsg := sess.Messages[len(sess.Messages)-1]
+	if lastMsg.Role != "assistant" {
+		t.Fatalf("expected assistant message, got %s", lastMsg.Role)
+	}
+	if lastMsg.Metadata == nil {
+		t.Fatal("expected assistant message metadata")
+	}
+	if _, ok := lastMsg.Metadata["llm_duration_ms"].(int64); !ok {
+		t.Fatalf("expected int64 llm_duration_ms metadata, got %#v", lastMsg.Metadata["llm_duration_ms"])
+	}
+	if got := lastMsg.Metadata["llm_provider"]; got != "test-provider" {
+		t.Fatalf("expected llm_provider metadata, got %#v", got)
+	}
+	if got := lastMsg.Metadata["llm_model"]; got != "test-model" {
+		t.Fatalf("expected llm_model metadata, got %#v", got)
+	}
+	if got := lastMsg.Metadata["llm_started_at"]; got == "" {
+		t.Fatalf("expected llm_started_at metadata, got %#v", got)
+	}
+	if got := lastMsg.Metadata["llm_completed_at"]; got == "" {
+		t.Fatalf("expected llm_completed_at metadata, got %#v", got)
+	}
+}
+
 func TestLoopFailsAfterRepeatedEmptyFinalResponses(t *testing.T) {
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	if err != nil {

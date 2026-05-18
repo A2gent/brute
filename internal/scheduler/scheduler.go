@@ -216,6 +216,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 
 	agentConfig := agent.Config{
 		Name:          "job-runner",
+		Provider:      string(providerType),
 		Model:         model,
 		MaxSteps:      s.config.MaxSteps,
 		Temperature:   s.config.Temperature,

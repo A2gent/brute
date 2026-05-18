@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"os/exec"
@@ -646,6 +647,29 @@ func isPDFFile(name string) bool {
 	return strings.EqualFold(filepath.Ext(name), ".pdf")
 }
 
+func isProjectRawPreviewFile(name string) bool {
+	return isPDFFile(name) || isProjectBrowserImageFile(name)
+}
+
+func isProjectBrowserImageFile(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".apng", ".avif", ".bmp", ".gif", ".ico", ".jpeg", ".jpg", ".png", ".svg", ".webp":
+		return true
+	default:
+		return false
+	}
+}
+
+func projectRawPreviewContentType(name string) string {
+	if isPDFFile(name) {
+		return "application/pdf"
+	}
+	if contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(name))); contentType != "" {
+		return contentType
+	}
+	return "application/octet-stream"
+}
+
 func isProjectEditableFile(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
 	return !isProjectBlockedMediaFileExtension(ext)
@@ -1272,8 +1296,8 @@ func (s *Server) handleGetProjectFileRaw(w http.ResponseWriter, r *http.Request)
 		s.errorResponse(w, http.StatusBadRequest, "File path is required")
 		return
 	}
-	if !isPDFFile(normalizedRelPath) {
-		s.errorResponse(w, http.StatusBadRequest, "Only PDF files can be previewed")
+	if !isProjectRawPreviewFile(normalizedRelPath) {
+		s.errorResponse(w, http.StatusBadRequest, "Only PDF and image files can be previewed")
 		return
 	}
 
@@ -1287,7 +1311,7 @@ func (s *Server) handleGetProjectFileRaw(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Type", projectRawPreviewContentType(normalizedRelPath))
 	w.Header().Set("Content-Disposition", "inline; filename=\""+strings.ReplaceAll(filepath.Base(normalizedRelPath), "\"", "")+"\"")
 	http.ServeFile(w, r, resolvedPath)
 }

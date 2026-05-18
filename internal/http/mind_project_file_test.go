@@ -144,6 +144,30 @@ func TestProjectFileRawAllowsLargePDF(t *testing.T) {
 	}
 }
 
+func TestProjectFileRawAllowsImagePreview(t *testing.T) {
+	server, projectID, projectDir := newProjectFileTestServer(t)
+
+	imagePath := filepath.Join(projectDir, "img", "Screenshot 2024-10-26 at 01.17.51.png")
+	if err := os.MkdirAll(filepath.Dir(imagePath), 0o755); err != nil {
+		t.Fatalf("failed to create img directory: %v", err)
+	}
+	imageContent := []byte("\x89PNG\r\n\x1a\npreview-image")
+	if err := os.WriteFile(imagePath, imageContent, 0o644); err != nil {
+		t.Fatalf("failed to write image file: %v", err)
+	}
+
+	rec := requestProjectFileRaw(t, server, projectID, "img/Screenshot 2024-10-26 at 01.17.51.png")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "image/png") {
+		t.Fatalf("expected image/png content type, got %q", got)
+	}
+	if got := rec.Body.Bytes(); !bytes.Equal(got, imageContent) {
+		t.Fatalf("expected raw image body length %d, got %d", len(imageContent), len(got))
+	}
+}
+
 func TestProjectTextFileEndpointDoesNotApplyTextSizeLimitToPDF(t *testing.T) {
 	server, projectID, projectDir := newProjectFileTestServer(t)
 

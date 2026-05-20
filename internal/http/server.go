@@ -205,6 +205,7 @@ const builtInToolsInstructionBlockType = "builtin_tools"
 const integrationSkillsInstructionBlockType = "integration_skills"
 const externalMarkdownSkillsInstructionBlockType = "external_markdown_skills"
 const mcpServersInstructionBlockType = "mcp_servers"
+const branchTaskDocInstructionBlockType = "branch_task_doc"
 const skillsFolderSettingKey = "AAGENT_SKILLS_FOLDER"
 const externalMarkdownDisabledSkillsSettingKey = "A2GENT_EXTERNAL_MARKDOWN_DISABLED_SKILLS"
 const disabledToolsSettingKey = "A2GENT_DISABLED_TOOLS"
@@ -4166,6 +4167,17 @@ func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, 
 			}
 			blockSnapshot.EstimatedTokens = estimatedTokens
 			appendSections = append(appendSections, section)
+		case branchTaskDocInstructionBlockType:
+			section, sourcePath, estimatedTokens, resolveErr := s.resolveBranchTaskDocSection(sess, value, sectionNumber)
+			blockSnapshot.SourcePath = sourcePath
+			blockSnapshot.ResolvedContent = section
+			blockSnapshot.Error = resolveErr
+			if section == "" {
+				resolvedBlocks = append(resolvedBlocks, blockSnapshot)
+				continue
+			}
+			blockSnapshot.EstimatedTokens = estimatedTokens
+			appendSections = append(appendSections, section)
 		case "text":
 			if value == "" {
 				resolvedBlocks = append(resolvedBlocks, blockSnapshot)
@@ -4643,6 +4655,122 @@ func (s *Server) resolveProjectAgentsMDSection(sess *session.Session, settings m
 	}
 
 	return fmt.Sprintf("Instruction block %d (dynamic project file):\n%s", blockNumber, strings.Join(collected, "\n\n"))
+}
+
+type branchTaskDocConfig struct {
+	Directory string `json:"directory"`
+	Mode      string `json:"mode"`
+}
+
+func parseBranchTaskDocConfig(raw string) branchTaskDocConfig {
+	trimmed := strings.TrimSpace(raw)
+	config := branchTaskDocConfig{Mode: "content"}
+	if trimmed == "" {
+		return config
+	}
+	if err := json.Unmarshal([]byte(trimmed), &config); err != nil {
+		config.Directory = trimmed
+		config.Mode = "content"
+		return config
+	}
+	config.Directory = strings.TrimSpace(config.Directory)
+	if strings.TrimSpace(config.Mode) != "path" {
+		config.Mode = "content"
+	}
+	return config
+}
+
+func (s *Server) resolveBranchTaskDocSection(sess *session.Session, _ string, blockNumber int) (string, string, int, string) {
+	if sess == nil || sess.ProjectID == nil || strings.TrimSpace(*sess.ProjectID) == "" {
+		return "", "", 0, "No project is associated with this session."
+	}
+
+	project, err := s.store.GetProject(strings.TrimSpace(*sess.ProjectID))
+	if err != nil || project == nil || project.Folder == nil || strings.TrimSpace(*project.Folder) == "" {
+		if err != nil {
+			return "", "", 0, "Failed to load session project: " + err.Error()
+		}
+		return "", "", 0, "Session project has no folder."
+	}
+
+	projectRoot := absoluteCleanPath(strings.TrimSpace(*project.Folder), strings.TrimSpace(s.config.WorkDir))
+	branch, err := currentGitBranch(projectRoot)
+	if err != nil {
+		return "", "", 0, "Failed to resolve current git branch: " + err.Error()
+	}
+
+	settings, err := s.store.GetSettings()
+	if err != nil {
+		return "", "", 0, "Failed to load settings: " + err.Error()
+	}
+	projectID := strings.TrimSpace(*sess.ProjectID)
+	config := branchTaskDocConfig{
+		Directory: strings.TrimSpace(settings["A2GENT_PROJECT_BRANCH_TASK_DOC_DIRECTORY."+projectID]),
+		Mode:      strings.TrimSpace(settings["A2GENT_PROJECT_BRANCH_TASK_DOC_MODE."+projectID]),
+	}
+	if config.Mode != "path" {
+		config.Mode = "content"
+	}
+	if config.Directory == "" {
+		return "", "", 0, "Branch task documentation directory is not configured for this project."
+	}
+	if branch == "" || branch == "master" {
+		return "", "", 0, "Branch task documentation is skipped on master or detached HEAD."
+	}
+
+	baseDir := absoluteCleanPath(config.Directory, strings.TrimSpace(s.config.WorkDir))
+	relPath, err := branchTaskDocRelativePath(branch)
+	if err != nil {
+		return "", "", 0, "Invalid branch name for documentation path: " + err.Error()
+	}
+	expectedPath := filepath.Join(baseDir, relPath)
+
+	var rendered string
+	if data, readErr := os.ReadFile(expectedPath); readErr != nil {
+		rendered = fmt.Sprintf("Instruction block %d (branch task documentation):\nCurrent git branch: %s\nExpected task documentation path: %s\nDocumentation for the current branch task is expected at the path above, but the file does not exist yet.", blockNumber, branch, expectedPath)
+	} else if config.Mode == "path" {
+		rendered = fmt.Sprintf("Instruction block %d (branch task documentation reference):\nCurrent git branch: %s\nTask documentation file path: %s\nLoad and use this file as task/session documentation reference when needed.", blockNumber, branch, expectedPath)
+	} else {
+		content := strings.TrimSpace(string(data))
+		if content == "" {
+			content = "[file is empty]"
+		}
+		if len(content) > maxDynamicInstructionBytes {
+			content = content[:maxDynamicInstructionBytes] + "\n\n[truncated]"
+		}
+		rendered = fmt.Sprintf("Instruction block %d (branch task documentation):\nCurrent git branch: %s\nTask documentation file: %s\n\n%s", blockNumber, branch, expectedPath, content)
+	}
+
+	return rendered, expectedPath, estimateTokensApprox(rendered), ""
+}
+
+func currentGitBranch(projectRoot string) (string, error) {
+	out, err := runGitCommand(projectRoot, "branch", "--show-current")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+func branchTaskDocRelativePath(branch string) (string, error) {
+	trimmed := strings.Trim(strings.TrimSpace(branch), "/\\")
+	if trimmed == "" || strings.Contains(trimmed, "\x00") {
+		return "", errors.New("empty branch name")
+	}
+	parts := strings.FieldsFunc(trimmed, func(r rune) bool { return r == '/' || r == '\\' })
+	if len(parts) == 0 {
+		return "", errors.New("empty branch name")
+	}
+	cleanParts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" || part == "." || part == ".." || strings.ContainsAny(part, `/\\`) {
+			return "", fmt.Errorf("unsafe branch path component %q", part)
+		}
+		cleanParts = append(cleanParts, part)
+	}
+	cleanParts[len(cleanParts)-1] += ".md"
+	return filepath.Join(cleanParts...), nil
 }
 
 func (s *Server) resolveIntegrationSkillsSection(blockNumber int) (string, string) {

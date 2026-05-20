@@ -4761,16 +4761,15 @@ func branchTaskDocRelativePath(branch string) (string, error) {
 	if len(parts) == 0 {
 		return "", errors.New("empty branch name")
 	}
-	cleanParts := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" || part == "." || part == ".." || strings.ContainsAny(part, `/\\`) {
-			return "", fmt.Errorf("unsafe branch path component %q", part)
-		}
-		cleanParts = append(cleanParts, part)
+
+	// Branch names often contain owner/team prefixes like "kurapov/AR-1324-task".
+	// Use only the final path segment so documentation is created/read as a single
+	// file in the configured directory instead of creating nested subfolders.
+	fileStem := strings.TrimSpace(parts[len(parts)-1])
+	if fileStem == "" || fileStem == "." || fileStem == ".." || strings.ContainsAny(fileStem, `/\\`) {
+		return "", fmt.Errorf("unsafe branch filename %q", fileStem)
 	}
-	cleanParts[len(cleanParts)-1] += ".md"
-	return filepath.Join(cleanParts...), nil
+	return fileStem + ".md", nil
 }
 
 func (s *Server) resolveIntegrationSkillsSection(blockNumber int) (string, string) {

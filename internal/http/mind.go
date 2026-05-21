@@ -106,6 +106,7 @@ type ProjectGitChangedFile struct {
 	WorktreeStatus string `json:"worktree_status"`
 	Staged         bool   `json:"staged"`
 	Untracked      bool   `json:"untracked"`
+	HasConflict    bool   `json:"has_conflict"`
 }
 
 type ProjectGitStatusResponse struct {
@@ -3577,6 +3578,9 @@ func parseGitPorcelain(output string) []ProjectGitChangedFile {
 		}
 		untracked := statusCode == "??"
 		staged := !untracked && indexStatus != " "
+		// Git reports unresolved merge conflicts with at least one unmerged (U)
+		// side, plus both-added/both-deleted combinations like AA/DD.
+		hasConflict := indexStatus == "U" || worktreeStatus == "U" || statusCode == "AA" || statusCode == "DD"
 
 		files = append(files, ProjectGitChangedFile{
 			Path:           pathPart,
@@ -3585,6 +3589,7 @@ func parseGitPorcelain(output string) []ProjectGitChangedFile {
 			WorktreeStatus: worktreeStatus,
 			Staged:         staged,
 			Untracked:      untracked,
+			HasConflict:    hasConflict,
 		})
 	}
 	return files

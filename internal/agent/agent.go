@@ -273,7 +273,10 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 
 		// Check if we have tool calls
 		if len(response.ToolCalls) == 0 {
-			// No tool calls - agent is done
+			// No tool calls - agent is done unless the user injected new context
+			// while this LLM request was in flight. In that case, persist the
+			// assistant reply, append the injected note after it, and run one more
+			// turn so the backend flow actually incorporates the new user input.
 			finalContent := strings.TrimSpace(response.Content)
 			if finalContent == "" {
 				if emptyFinalResponseRetries < emptyFinalResponseMaxRetries {
@@ -292,6 +295,15 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			}
 			emptyFinalResponseRetries = 0
 			sess.AddAssistantMessageWithImagesAndMetadata(finalContent, llmImagesToSession(response.Images), nil, assistantMetadata)
+			if a.mergeFreshSessionState(sess) {
+				if err := a.sessionManager.Save(sess); err != nil {
+					_ = err
+				}
+				if onEvent != nil {
+					onEvent(Event{Type: EventStepCompleted, Step: step})
+				}
+				continue
+			}
 			sess.SetStatus(session.StatusCompleted)
 			a.sessionManager.Save(sess)
 			if onEvent != nil {
@@ -412,20 +424,58 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		}
 	}
 }
-func (a *Agent) mergeFreshSessionState(sess *session.Session) {
+func (a *Agent) mergeFreshSessionState(sess *session.Session) bool {
 	if a == nil || a.sessionManager == nil || sess == nil || sess.ID == "" {
-		return
+		return false
 	}
 	fresh, err := a.sessionManager.Get(sess.ID)
 	if err != nil || fresh == nil {
-		return
+		return false
 	}
 
+	changed := false
 	if len(fresh.Messages) > len(sess.Messages) && sessionMessagePrefixMatches(fresh.Messages, sess.Messages) {
 		sess.Messages = append(sess.Messages, fresh.Messages[len(sess.Messages):]...)
+		changed = true
+	} else {
+		// WHY: users can inject notes while an LLM call or tool batch is running. The
+		// active agent has an older in-memory transcript; without merging these DB-only
+		// messages before Save(), the storage layer treats them as stale and deletes
+		// them. Append only injected user notes here so we preserve the valid
+		// assistant-tool-result ordering while still making the user's note visible to
+		// the next LLM turn.
+		existing := make(map[string]struct{}, len(sess.Messages))
+		for _, msg := range sess.Messages {
+			if msg.ID != "" {
+				existing[msg.ID] = struct{}{}
+			}
+		}
+		for _, msg := range fresh.Messages {
+			if !isInjectedUserMessage(msg) {
+				continue
+			}
+			if msg.ID != "" {
+				if _, ok := existing[msg.ID]; ok {
+					continue
+				}
+				existing[msg.ID] = struct{}{}
+			}
+			sess.Messages = append(sess.Messages, msg)
+			changed = true
+		}
 	}
 	if fresh.Metadata != nil {
-		sess.Metadata = fresh.Metadata
+		merged := make(map[string]interface{}, len(fresh.Metadata)+len(sess.Metadata))
+		for key, value := range fresh.Metadata {
+			merged[key] = value
+		}
+		// Preserve metadata produced by the in-flight turn (for example token
+		// estimates) because it may not have been saved when we reload DB-only
+		// injected messages.
+		for key, value := range sess.Metadata {
+			merged[key] = value
+		}
+		sess.Metadata = merged
 	}
 	sess.TaskProgress = fresh.TaskProgress
 	if fresh.Status == session.StatusInputRequired || fresh.Status == session.StatusWaitingExternal {
@@ -433,6 +483,25 @@ func (a *Agent) mergeFreshSessionState(sess *session.Session) {
 	}
 	if fresh.UpdatedAt.After(sess.UpdatedAt) {
 		sess.UpdatedAt = fresh.UpdatedAt
+	}
+	return changed
+}
+
+func isInjectedUserMessage(msg session.Message) bool {
+	if msg.Role != "user" || msg.Metadata == nil {
+		return false
+	}
+	raw, ok := msg.Metadata["injected_during_run"]
+	if !ok {
+		return false
+	}
+	switch value := raw.(type) {
+	case bool:
+		return value
+	case string:
+		return strings.EqualFold(strings.TrimSpace(value), "true")
+	default:
+		return false
 	}
 }
 

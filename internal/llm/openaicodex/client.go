@@ -19,8 +19,10 @@ import (
 )
 
 const (
-	defaultBaseURL = "https://chatgpt.com/backend-api/codex"
-	codexPrefix    = "You are Codex, based on GPT-5. You are running as a coding agent in a local CLI."
+	defaultBaseURL               = "https://chatgpt.com/backend-api/codex"
+	defaultRequestTimeout        = 10 * time.Minute
+	defaultResponseHeaderTimeout = 60 * time.Second
+	codexPrefix                  = "You are Codex, based on GPT-5. You are running as a coding agent in a local CLI."
 )
 
 type Client struct {
@@ -39,8 +41,9 @@ type Options struct {
 	ServiceTier     string
 	// Retained for config compatibility. The ChatGPT Codex backend rejects
 	// max_output_tokens, so this client intentionally omits token caps.
-	MaxTokens         int
-	StatefulResponses bool
+	MaxTokens             int
+	StatefulResponses     bool
+	ResponseHeaderTimeout time.Duration
 }
 
 type responsesRequest struct {
@@ -150,15 +153,23 @@ func NewClientWithOptions(accessToken, model, baseURL string, options Options) *
 	if strings.HasSuffix(normalizedBaseURL, "/responses") {
 		normalizedBaseURL = strings.TrimSuffix(normalizedBaseURL, "/responses")
 	}
+	options = normalizeOptions(options)
 	return &Client{
 		accessToken: strings.TrimSpace(accessToken),
 		baseURL:     normalizedBaseURL,
 		model:       strings.TrimSpace(model),
 		accountID:   extractAccountID(strings.TrimSpace(accessToken)),
-		options:     normalizeOptions(options),
-		httpClient: &http.Client{
-			Timeout: 10 * time.Minute,
-		},
+		options:     options,
+		httpClient:  newHTTPClient(options.ResponseHeaderTimeout),
+	}
+}
+
+func newHTTPClient(responseHeaderTimeout time.Duration) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = responseHeaderTimeout
+	return &http.Client{
+		Timeout:   defaultRequestTimeout,
+		Transport: transport,
 	}
 }
 
@@ -598,6 +609,12 @@ func normalizeOptions(options Options) Options {
 	if options.MaxTokens < 0 {
 		options.MaxTokens = 0
 	}
+	if options.ResponseHeaderTimeout <= 0 {
+		options.ResponseHeaderTimeout = envDurationSeconds(
+			"AAGENT_OPENAI_CODEX_RESPONSE_HEADER_TIMEOUT_SECONDS",
+			defaultResponseHeaderTimeout,
+		)
+	}
 	return options
 }
 
@@ -657,6 +674,14 @@ func envInt(key string) int {
 		return 0
 	}
 	return value
+}
+
+func envDurationSeconds(key string, fallback time.Duration) time.Duration {
+	value := envInt(key)
+	if value <= 0 {
+		return fallback
+	}
+	return time.Duration(value) * time.Second
 }
 
 var _ llm.Client = (*Client)(nil)

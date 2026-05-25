@@ -666,7 +666,6 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 		Temperature:        a.config.Temperature,
 		SystemPrompt:       a.config.SystemPrompt,
 		SessionID:          sess.ID,
-		PromptCacheKey:     sess.ID,
 		PreviousResponseID: previousResponseID,
 	}
 }

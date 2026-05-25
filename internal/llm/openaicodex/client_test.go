@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/A2gent/brute/internal/llm"
 )
@@ -84,6 +85,36 @@ func TestRequestOptions_DisablesStatefulResponses(t *testing.T) {
 	}
 	if got := options.previousResponseID(&llm.ChatRequest{PreviousResponseID: "resp_123"}); got != "" {
 		t.Fatalf("previous response id = %q, want empty", got)
+	}
+}
+
+func TestNewClientWithOptions_ConfiguresResponseHeaderTimeout(t *testing.T) {
+	client := NewClientWithOptions("", "gpt-5.5", "", Options{
+		ResponseHeaderTimeout: 250 * time.Millisecond,
+	})
+
+	transport, ok := client.httpClient.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport type = %T, want *http.Transport", client.httpClient.Transport)
+	}
+	if got, want := transport.ResponseHeaderTimeout, 250*time.Millisecond; got != want {
+		t.Fatalf("response header timeout = %v, want %v", got, want)
+	}
+	if got, want := client.httpClient.Timeout, defaultRequestTimeout; got != want {
+		t.Fatalf("request timeout = %v, want %v", got, want)
+	}
+}
+
+func TestNewClientWithOptions_UsesEnvResponseHeaderTimeout(t *testing.T) {
+	t.Setenv("AAGENT_OPENAI_CODEX_RESPONSE_HEADER_TIMEOUT_SECONDS", "7")
+
+	client := NewClientWithOptions("", "gpt-5.5", "", Options{})
+	transport, ok := client.httpClient.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport type = %T, want *http.Transport", client.httpClient.Transport)
+	}
+	if got, want := transport.ResponseHeaderTimeout, 7*time.Second; got != want {
+		t.Fatalf("response header timeout = %v, want %v", got, want)
 	}
 }
 

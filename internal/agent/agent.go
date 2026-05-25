@@ -1225,6 +1225,7 @@ Available tools allow you to:
 - Find files with include/exclude filters (find_files)
 - Search file contents (grep)
 - Filter text/file content to reduce context (filter)
+- Suggest quick UI branch-offs into new sessions for actionable follow-ups; use one suggestion per distinct follow-up when multiple independent issues deserve separate sessions (suggest_session)
 
 Be concise but thorough. Complete the user's task step by step.`
 
@@ -1256,7 +1257,8 @@ const defaultBuiltInToolsGuidance = `Available tools allow you to:
 - Find files by pattern (glob)
 - Find files with include/exclude filters (find_files)
 - Search file contents (grep)
-- Filter text/file content to reduce context (filter)`
+- Filter text/file content to reduce context (filter)
+- Suggest quick UI branch-offs into new sessions for actionable follow-ups; use one suggestion per distinct follow-up when multiple independent issues deserve separate sessions (suggest_session)`
 
 func (a *Agent) buildCompactionRequestFromMessages(messagesToSummarize []session.Message, prompt string) *llm.ChatRequest {
 	var sb strings.Builder

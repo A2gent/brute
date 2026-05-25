@@ -236,16 +236,19 @@ func (s *SQLiteStore) migrate() error {
 		`ALTER TABLE sessions ADD COLUMN task_progress TEXT`,
 		// Sub-agents table
 		`CREATE TABLE IF NOT EXISTS sub_agents (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			provider TEXT NOT NULL DEFAULT '',
-			model TEXT NOT NULL DEFAULT '',
-			enabled_tools TEXT NOT NULL DEFAULT '[]',
-			created_at TIMESTAMP NOT NULL,
-			updated_at TIMESTAMP NOT NULL
-		)`,
-		// Migration: Add instruction_blocks column to sub_agents
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				project_id TEXT,
+				provider TEXT NOT NULL DEFAULT '',
+				model TEXT NOT NULL DEFAULT '',
+				enabled_tools TEXT NOT NULL DEFAULT '[]',
+				created_at TIMESTAMP NOT NULL,
+				updated_at TIMESTAMP NOT NULL
+			)`,
+		// Migration: add optional project binding and instruction blocks to sub_agents.
 		`ALTER TABLE sub_agents ADD COLUMN instruction_blocks TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE sub_agents ADD COLUMN project_id TEXT`,
+		`CREATE INDEX IF NOT EXISTS idx_sub_agents_project_id ON sub_agents(project_id)`,
 	}
 
 	for _, m := range migrations {
@@ -805,6 +808,11 @@ func (s *SQLiteStore) DeleteProject(id string) error {
 	// Delete all sessions associated with this project (cascade deletes messages)
 	if _, err := tx.Exec(`DELETE FROM sessions WHERE project_id = ?`, id); err != nil {
 		return fmt.Errorf("failed to delete project sessions: %w", err)
+	}
+	// WHY: project deletion must not leave sub-agents pointing at a missing project.
+	// WHAT: make those sub-agents global while preserving their configuration.
+	if _, err := tx.Exec(`UPDATE sub_agents SET project_id = NULL WHERE project_id = ?`, id); err != nil {
+		return fmt.Errorf("failed to clear sub-agent project bindings: %w", err)
 	}
 	if _, err := tx.Exec(`DELETE FROM projects WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("failed to delete project: %w", err)
@@ -1572,16 +1580,17 @@ func (s *SQLiteStore) SaveSubAgent(sa *SubAgent) error {
 	}
 
 	_, err = s.db.Exec(`
-		INSERT INTO sub_agents (id, name, provider, model, enabled_tools, instruction_blocks, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO sub_agents (id, name, project_id, provider, model, enabled_tools, instruction_blocks, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
+			project_id = excluded.project_id,
 			provider = excluded.provider,
 			model = excluded.model,
 			enabled_tools = excluded.enabled_tools,
 			instruction_blocks = excluded.instruction_blocks,
 			updated_at = excluded.updated_at
-	`, sa.ID, sa.Name, sa.Provider, sa.Model, string(enabledToolsJSON), instrBlocks, sa.CreatedAt, sa.UpdatedAt)
+	`, sa.ID, sa.Name, sa.ProjectID, sa.Provider, sa.Model, string(enabledToolsJSON), instrBlocks, sa.CreatedAt, sa.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to save sub-agent: %w", err)
 	}
@@ -1592,16 +1601,24 @@ func (s *SQLiteStore) SaveSubAgent(sa *SubAgent) error {
 func (s *SQLiteStore) GetSubAgent(id string) (*SubAgent, error) {
 	var sa SubAgent
 	var enabledToolsJSON string
+	var projectID sql.NullString
 
 	err := s.db.QueryRow(`
-		SELECT id, name, provider, model, enabled_tools, instruction_blocks, created_at, updated_at
+		SELECT id, name, project_id, provider, model, enabled_tools, instruction_blocks, created_at, updated_at
 		FROM sub_agents WHERE id = ?
-	`, id).Scan(&sa.ID, &sa.Name, &sa.Provider, &sa.Model, &enabledToolsJSON, &sa.InstructionBlocks, &sa.CreatedAt, &sa.UpdatedAt)
+	`, id).Scan(&sa.ID, &sa.Name, &projectID, &sa.Provider, &sa.Model, &enabledToolsJSON, &sa.InstructionBlocks, &sa.CreatedAt, &sa.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("sub-agent not found: %s", id)
 	}
 	if err != nil {
 		return nil, err
+	}
+
+	if projectID.Valid {
+		trimmedProjectID := strings.TrimSpace(projectID.String)
+		if trimmedProjectID != "" {
+			sa.ProjectID = &trimmedProjectID
+		}
 	}
 
 	if enabledToolsJSON != "" {
@@ -1619,7 +1636,7 @@ func (s *SQLiteStore) GetSubAgent(id string) (*SubAgent, error) {
 // ListSubAgents returns all sub-agents ordered by name.
 func (s *SQLiteStore) ListSubAgents() ([]*SubAgent, error) {
 	rows, err := s.db.Query(`
-		SELECT id, name, provider, model, enabled_tools, instruction_blocks, created_at, updated_at
+		SELECT id, name, project_id, provider, model, enabled_tools, instruction_blocks, created_at, updated_at
 		FROM sub_agents
 		ORDER BY name COLLATE NOCASE ASC
 	`)
@@ -1632,8 +1649,16 @@ func (s *SQLiteStore) ListSubAgents() ([]*SubAgent, error) {
 	for rows.Next() {
 		var sa SubAgent
 		var enabledToolsJSON string
-		if err := rows.Scan(&sa.ID, &sa.Name, &sa.Provider, &sa.Model, &enabledToolsJSON, &sa.InstructionBlocks, &sa.CreatedAt, &sa.UpdatedAt); err != nil {
+		var projectID sql.NullString
+		if err := rows.Scan(&sa.ID, &sa.Name, &projectID, &sa.Provider, &sa.Model, &enabledToolsJSON, &sa.InstructionBlocks, &sa.CreatedAt, &sa.UpdatedAt); err != nil {
 			return nil, err
+		}
+
+		if projectID.Valid {
+			trimmedProjectID := strings.TrimSpace(projectID.String)
+			if trimmedProjectID != "" {
+				sa.ProjectID = &trimmedProjectID
+			}
 		}
 
 		if enabledToolsJSON != "" {

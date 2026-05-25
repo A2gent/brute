@@ -757,6 +757,12 @@ func (s *Server) applyNodeRoutingMetadata(child *session.Session, parent *sessio
 		if strings.TrimSpace(sa.Model) != "" {
 			child.Metadata["model"] = strings.TrimSpace(sa.Model)
 		}
+		if child.ProjectID == nil && sa.ProjectID != nil {
+			projectID := strings.TrimSpace(*sa.ProjectID)
+			if projectID != "" {
+				child.ProjectID = &projectID
+			}
+		}
 	}
 	return nil
 }

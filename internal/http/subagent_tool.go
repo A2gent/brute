@@ -120,11 +120,19 @@ func (t *delegateToSubAgentTool) Execute(ctx context.Context, params json.RawMes
 	childSess.Metadata["provider"] = string(providerType)
 	childSess.Metadata["model"] = model
 
-	// Also inherit project from parent session
+	// WHY: bound sub-agents should run with their project context even when the
+	// parent session is global. WHAT: prefer parent project, then fall back to the
+	// sub-agent's configured project.
 	if parentSessionID != "" {
 		parentSess, parentErr := t.server.sessionManager.Get(parentSessionID)
 		if parentErr == nil && parentSess.ProjectID != nil {
 			childSess.ProjectID = parentSess.ProjectID
+		}
+	}
+	if childSess.ProjectID == nil && sa.ProjectID != nil {
+		projectID := strings.TrimSpace(*sa.ProjectID)
+		if projectID != "" {
+			childSess.ProjectID = &projectID
 		}
 	}
 

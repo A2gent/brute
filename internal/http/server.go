@@ -868,6 +868,7 @@ type SessionListItem struct {
 // SubAgentRequest represents a request to create or update a sub-agent.
 type SubAgentRequest struct {
 	Name              string   `json:"name"`
+	ProjectID         string   `json:"project_id,omitempty"`
 	Provider          string   `json:"provider"`
 	Model             string   `json:"model,omitempty"`
 	EnabledTools      []string `json:"enabled_tools,omitempty"`
@@ -878,6 +879,7 @@ type SubAgentRequest struct {
 type SubAgentResponse struct {
 	ID                string   `json:"id"`
 	Name              string   `json:"name"`
+	ProjectID         string   `json:"project_id,omitempty"`
 	Provider          string   `json:"provider"`
 	Model             string   `json:"model"`
 	EnabledTools      []string `json:"enabled_tools"`
@@ -1922,7 +1924,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// If a sub-agent is specified, use its provider/model config
+	// If a sub-agent is specified, use its provider/model/project config.
 	subAgentID := strings.TrimSpace(req.SubAgentID)
 	if subAgentID != "" {
 		sa, saErr := s.store.GetSubAgent(subAgentID)
@@ -1937,6 +1939,16 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 		if sa.Model != "" && req.Model == "" {
 			req.Model = sa.Model
+		}
+		if req.ProjectID == "" && sa.ProjectID != nil {
+			boundProjectID := strings.TrimSpace(*sa.ProjectID)
+			if boundProjectID != "" {
+				if _, projectErr := s.store.GetProject(boundProjectID); projectErr != nil {
+					s.errorResponse(w, http.StatusBadRequest, "Sub-agent project not found: "+projectErr.Error())
+					return
+				}
+				req.ProjectID = boundProjectID
+			}
 		}
 	}
 
@@ -6599,9 +6611,14 @@ func (s *Server) subAgentToResponse(sa *storage.SubAgent) SubAgentResponse {
 	if instrBlocks == "" {
 		instrBlocks = "[]"
 	}
+	projectID := ""
+	if sa.ProjectID != nil {
+		projectID = strings.TrimSpace(*sa.ProjectID)
+	}
 	return SubAgentResponse{
 		ID:                sa.ID,
 		Name:              sa.Name,
+		ProjectID:         projectID,
 		Provider:          sa.Provider,
 		Model:             sa.Model,
 		EnabledTools:      tools,
@@ -6625,6 +6642,18 @@ func (s *Server) handleListSubAgents(w http.ResponseWriter, r *http.Request) {
 	s.jsonResponse(w, http.StatusOK, resp)
 }
 
+func (s *Server) normalizeSubAgentProjectID(w http.ResponseWriter, raw string) (*string, bool) {
+	projectID := strings.TrimSpace(raw)
+	if projectID == "" {
+		return nil, true
+	}
+	if _, err := s.store.GetProject(projectID); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Project not found: "+err.Error())
+		return nil, false
+	}
+	return &projectID, true
+}
+
 func (s *Server) handleCreateSubAgent(w http.ResponseWriter, r *http.Request) {
 	var req SubAgentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -6636,11 +6665,16 @@ func (s *Server) handleCreateSubAgent(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusBadRequest, "Name is required")
 		return
 	}
+	projectID, ok := s.normalizeSubAgentProjectID(w, req.ProjectID)
+	if !ok {
+		return
+	}
 
 	now := time.Now()
 	sa := &storage.SubAgent{
 		ID:                uuid.New().String(),
 		Name:              strings.TrimSpace(req.Name),
+		ProjectID:         projectID,
 		Provider:          strings.TrimSpace(req.Provider),
 		Model:             strings.TrimSpace(req.Model),
 		EnabledTools:      req.EnabledTools,
@@ -6689,7 +6723,13 @@ func (s *Server) handleUpdateSubAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	projectID, ok := s.normalizeSubAgentProjectID(w, req.ProjectID)
+	if !ok {
+		return
+	}
+
 	sa.Name = strings.TrimSpace(req.Name)
+	sa.ProjectID = projectID
 	sa.Provider = strings.TrimSpace(req.Provider)
 	sa.Model = strings.TrimSpace(req.Model)
 	sa.EnabledTools = req.EnabledTools

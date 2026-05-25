@@ -110,6 +110,7 @@ type MCPServer struct {
 type SubAgent struct {
 	ID                string
 	Name              string
+	ProjectID         *string  // Optional project this sub-agent is tied to
 	Provider          string   // LLM provider type (e.g., "anthropic", "openai")
 	Model             string   // Optional model override
 	EnabledTools      []string // Tool names to enable (empty = all tools)

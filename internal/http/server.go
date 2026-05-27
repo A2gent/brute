@@ -488,15 +488,15 @@ func (s *Server) setupRoutes() {
 		r.Post("/{sessionID}/answer", s.handleAnswerQuestion)
 		r.Post("/{sessionID}/start", s.handleStartSession)
 		r.Get("/{sessionID}/task-progress", s.handleGetTaskProgress)
+	})
 
-		// Reusable templates for pre-filling new session prompts.
-		r.Route("/session-templates", func(r chi.Router) {
-			r.Get("/", s.handleListSessionTemplates)
-			r.Post("/", s.handleCreateSessionTemplate)
-			r.Get("/{templateID}", s.handleGetSessionTemplate)
-			r.Put("/{templateID}", s.handleUpdateSessionTemplate)
-			r.Delete("/{templateID}", s.handleDeleteSessionTemplate)
-		})
+	// Reusable templates for pre-filling new session prompts.
+	r.Route("/session-templates", func(r chi.Router) {
+		r.Get("/", s.handleListSessionTemplates)
+		r.Post("/", s.handleCreateSessionTemplate)
+		r.Get("/{templateID}", s.handleGetSessionTemplate)
+		r.Put("/{templateID}", s.handleUpdateSessionTemplate)
+		r.Delete("/{templateID}", s.handleDeleteSessionTemplate)
 	})
 
 	// Projects endpoints (optional grouping for sessions)

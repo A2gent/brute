@@ -32,6 +32,15 @@ type Message struct {
 	Timestamp   time.Time
 }
 
+// SessionTemplate stores reusable text for pre-filling new session prompts.
+type SessionTemplate struct {
+	ID        string
+	Name      string
+	Content   string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 // RecurringJob represents a scheduled recurring job
 type RecurringJob struct {
 	ID               string
@@ -138,6 +147,12 @@ type Store interface {
 	ListSessions() ([]*Session, error)                  // Returns only non-job sessions
 	ListSessionsByJob(jobID string) ([]*Session, error) // Returns sessions for a specific job
 	DeleteSession(id string) error
+
+	// Session template operations
+	SaveSessionTemplate(template *SessionTemplate) error
+	GetSessionTemplate(id string) (*SessionTemplate, error)
+	ListSessionTemplates() ([]*SessionTemplate, error)
+	DeleteSessionTemplate(id string) error
 
 	// Project operations
 	SaveProject(project *Project) error

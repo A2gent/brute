@@ -33,14 +33,20 @@ func (m *memStore) GetSessionSummary(id string) (*storage.Session, error) {
 func (m *memStore) ListSessions() ([]*storage.Session, error)            { return nil, nil }
 func (m *memStore) ListSessionsByJob(string) ([]*storage.Session, error) { return nil, nil }
 func (m *memStore) DeleteSession(string) error                           { return nil }
-func (m *memStore) SaveProject(*storage.Project) error                   { return nil }
-func (m *memStore) GetProject(string) (*storage.Project, error)          { return nil, nil }
-func (m *memStore) ListProjects() ([]*storage.Project, error)            { return nil, nil }
-func (m *memStore) DeleteProject(string) error                           { return nil }
-func (m *memStore) SaveJob(*storage.RecurringJob) error                  { return nil }
-func (m *memStore) GetJob(string) (*storage.RecurringJob, error)         { return nil, nil }
-func (m *memStore) ListJobs() ([]*storage.RecurringJob, error)           { return nil, nil }
-func (m *memStore) DeleteJob(string) error                               { return nil }
+func (m *memStore) SaveSessionTemplate(*storage.SessionTemplate) error   { return nil }
+func (m *memStore) GetSessionTemplate(string) (*storage.SessionTemplate, error) {
+	return nil, os.ErrNotExist
+}
+func (m *memStore) ListSessionTemplates() ([]*storage.SessionTemplate, error) { return nil, nil }
+func (m *memStore) DeleteSessionTemplate(string) error                        { return nil }
+func (m *memStore) SaveProject(*storage.Project) error                        { return nil }
+func (m *memStore) GetProject(string) (*storage.Project, error)               { return nil, nil }
+func (m *memStore) ListProjects() ([]*storage.Project, error)                 { return nil, nil }
+func (m *memStore) DeleteProject(string) error                                { return nil }
+func (m *memStore) SaveJob(*storage.RecurringJob) error                       { return nil }
+func (m *memStore) GetJob(string) (*storage.RecurringJob, error)              { return nil, nil }
+func (m *memStore) ListJobs() ([]*storage.RecurringJob, error)                { return nil, nil }
+func (m *memStore) DeleteJob(string) error                                    { return nil }
 func (m *memStore) GetDueJobs(time.Time) ([]*storage.RecurringJob, error) {
 	return nil, nil
 }

@@ -234,6 +234,15 @@ func (s *SQLiteStore) migrate() error {
 		`ALTER TABLE projects ADD COLUMN folder TEXT`,
 		// Migration: Add task_progress column to sessions
 		`ALTER TABLE sessions ADD COLUMN task_progress TEXT`,
+		// Session templates are reusable prompt snippets for pre-filling new sessions.
+		`CREATE TABLE IF NOT EXISTS session_templates (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				content TEXT NOT NULL,
+				created_at TIMESTAMP NOT NULL,
+				updated_at TIMESTAMP NOT NULL
+			)`,
+		`CREATE INDEX IF NOT EXISTS idx_session_templates_name ON session_templates(name COLLATE NOCASE)`,
 		// Sub-agents table
 		`CREATE TABLE IF NOT EXISTS sub_agents (
 				id TEXT PRIMARY KEY,
@@ -263,6 +272,9 @@ func (s *SQLiteStore) migrate() error {
 	if err := s.seedSystemProjects(); err != nil {
 		return fmt.Errorf("failed to seed system projects: %w", err)
 	}
+	if err := s.seedBuiltInSubAgents(); err != nil {
+		return fmt.Errorf("failed to seed built-in sub-agents: %w", err)
+	}
 
 	return nil
 }
@@ -273,6 +285,51 @@ const (
 	SystemProjectAgentID = "system-agent"
 	SystemProjectSoulID  = "system-soul"
 )
+
+const BuiltInSpecificationSubAgentID = "builtin-specification-agent"
+
+const builtInSpecificationSubAgentPrompt = `You are the built-in Specification sub-agent for A2gent Plan view.
+
+Your job is to help the user create and improve a single markdown task specification before implementation starts.
+
+Required behavior:
+- Use the question tool whenever requirements, scope, business rules, UX behavior, non-functional constraints, acceptance criteria, or implementation boundaries are ambiguous. Do not silently guess important decisions.
+- Ask focused questions with 2-4 actionable options when possible, and allow custom answers.
+- Inspect the project codebase when it helps identify existing behavior, constraints, dependencies, terminology, or contradictions.
+- Keep all planning output in the provided single markdown specification file.
+- Group requirements into Functional and Non-functional categories: Performance, Security, Quality, Complexity, Documentation, UX.
+- Record explicit decisions under Decisions and unresolved items under Open questions or Ambiguities / risks.
+- Write strict, testable acceptance criteria.
+- Detect contradictions between requirements, decisions, and existing code. Resolve them through questions before editing the spec.
+- Do not implement product/code changes. Your deliverable is an improved specification document.
+- Preserve clear IDs such as REQ-F-001, REQ-NF-SEC-001, DEC-001, Q-001, RISK-001, AC-001.
+
+When the specification is ready, summarize remaining risks and say whether it is ready for implementation sessions.`
+
+func (s *SQLiteStore) seedBuiltInSubAgents() error {
+	instructionBlocks, err := json.Marshal([]map[string]interface{}{
+		{"type": "builtin_tools", "value": "", "enabled": true},
+		{"type": "text", "value": builtInSpecificationSubAgentPrompt, "enabled": true},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to encode specification sub-agent instructions: %w", err)
+	}
+
+	now := time.Now()
+	// WHY: Plan view launches this stable sub-agent ID directly; seeding keeps the
+	// built-in specialist available without requiring each user to configure it.
+	sa := &SubAgent{
+		ID:                BuiltInSpecificationSubAgentID,
+		Name:              "Specification",
+		Provider:          "",
+		Model:             "",
+		EnabledTools:      []string{},
+		InstructionBlocks: string(instructionBlocks),
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+	return s.SaveSubAgent(sa)
+}
 
 // seedSystemProjects creates the system projects if they don't exist.
 // These are required for the Knowledge Base and Agent session lists in the sidebar.
@@ -1556,8 +1613,76 @@ func (s *SQLiteStore) ListMCPServers() ([]*MCPServer, error) {
 
 		servers = append(servers, &server)
 	}
-
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return servers, nil
+}
+
+// --- Session Templates CRUD ---
+
+// SaveSessionTemplate saves a reusable session prompt template.
+func (s *SQLiteStore) SaveSessionTemplate(template *SessionTemplate) error {
+	_, err := s.db.Exec(`
+		INSERT INTO session_templates (id, name, content, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			name = excluded.name,
+			content = excluded.content,
+			updated_at = excluded.updated_at
+	`, template.ID, template.Name, template.Content, template.CreatedAt, template.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("failed to save session template: %w", err)
+	}
+	return nil
+}
+
+// GetSessionTemplate retrieves a session template by ID.
+func (s *SQLiteStore) GetSessionTemplate(id string) (*SessionTemplate, error) {
+	var template SessionTemplate
+	err := s.db.QueryRow(`
+		SELECT id, name, content, created_at, updated_at
+		FROM session_templates WHERE id = ?
+	`, id).Scan(&template.ID, &template.Name, &template.Content, &template.CreatedAt, &template.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("session template not found: %s", id)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &template, nil
+}
+
+// ListSessionTemplates returns all session templates ordered by name.
+func (s *SQLiteStore) ListSessionTemplates() ([]*SessionTemplate, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, content, created_at, updated_at
+		FROM session_templates
+		ORDER BY name COLLATE NOCASE ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var templates []*SessionTemplate
+	for rows.Next() {
+		var template SessionTemplate
+		if err := rows.Scan(&template.ID, &template.Name, &template.Content, &template.CreatedAt, &template.UpdatedAt); err != nil {
+			return nil, err
+		}
+		templates = append(templates, &template)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return templates, nil
+}
+
+// DeleteSessionTemplate deletes a session template by ID.
+func (s *SQLiteStore) DeleteSessionTemplate(id string) error {
+	_, err := s.db.Exec(`DELETE FROM session_templates WHERE id = ?`, id)
+	return err
 }
 
 // DeleteMCPServer deletes an MCP server by id.

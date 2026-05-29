@@ -74,7 +74,10 @@ func (c *Client) resolveTarget(ctx context.Context, request *llm.ChatRequest) (*
 
 	rules := normalizeRouterRules(autoCfg.RouterRules)
 	userPrompt := extractUserPrompt(request.Messages)
-	chosen, reason := c.selectRoutingRule(ctx, userPrompt, autoCfg, rules)
+	chosen, reason, err := c.selectRoutingRule(ctx, userPrompt, autoCfg, rules)
+	if err != nil {
+		return nil, nil, fmt.Errorf("automatic router failed: %w", err)
+	}
 	if chosen == nil {
 		return nil, nil, fmt.Errorf("automatic router could not resolve a route")
 	}
@@ -171,25 +174,23 @@ func extractUserPrompt(messages []llm.Message) string {
 	return ""
 }
 
-func (c *Client) selectRoutingRule(ctx context.Context, userPrompt string, autoCfg config.Provider, rules []config.RouterRule) (*config.RouterRule, string) {
+func (c *Client) selectRoutingRule(ctx context.Context, userPrompt string, autoCfg config.Provider, rules []config.RouterRule) (*config.RouterRule, string, error) {
 	if len(rules) == 0 {
-		return nil, ""
+		return nil, "", nil
 	}
 	if len(rules) == 1 {
-		return &rules[0], "single rule"
+		return &rules[0], "single rule", nil
 	}
 	if userPrompt == "" {
-		return &rules[0], "empty prompt fallback"
+		return &rules[0], "empty prompt fallback", nil
 	}
 
 	rule, reason, err := c.selectRoutingRuleViaLLM(ctx, userPrompt, autoCfg, rules)
-	if err == nil && rule != nil {
-		return rule, reason
-	}
 	if err != nil {
-		logging.Warn("Automatic router model decision failed, using keyword fallback: %v", err)
+		logging.Error("Automatic router model decision failed: %v", err)
+		return nil, "", err
 	}
-	return selectRoutingRuleByKeyword(userPrompt, rules), "keyword fallback"
+	return rule, reason, nil
 }
 
 func (c *Client) selectRoutingRuleViaLLM(ctx context.Context, userPrompt string, autoCfg config.Provider, rules []config.RouterRule) (*config.RouterRule, string, error) {
@@ -226,7 +227,7 @@ func (c *Client) selectRoutingRuleViaLLM(ctx context.Context, userPrompt string,
 			{Role: "user", Content: fmt.Sprintf("Rules: %s\n\nUser prompt: %s", string(rulesJSON), userPrompt)},
 		},
 		Temperature: 0,
-		MaxTokens:   120,
+		MaxTokens:   2048,
 	}
 	if routerModel != "" {
 		req.Model = routerModel
@@ -247,30 +248,6 @@ func (c *Client) selectRoutingRuleViaLLM(ctx context.Context, userPrompt string,
 	return &selected, strings.TrimSpace(choice.Reason), nil
 }
 
-func selectRoutingRuleByKeyword(userPrompt string, rules []config.RouterRule) *config.RouterRule {
-	if len(rules) == 0 {
-		return nil
-	}
-	prompt := strings.ToLower(strings.TrimSpace(userPrompt))
-	bestIndex := 0
-	bestScore := -1
-	for i, rule := range rules {
-		match := strings.ToLower(strings.TrimSpace(rule.Match))
-		if match == "" {
-			continue
-		}
-		score := 0
-		if strings.Contains(prompt, match) {
-			score = len(match) + 10
-		}
-		if score > bestScore {
-			bestScore = score
-			bestIndex = i
-		}
-	}
-	selected := rules[bestIndex]
-	return &selected
-}
 
 type routerChoice struct {
 	Index  int    `json:"index"`

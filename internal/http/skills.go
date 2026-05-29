@@ -38,6 +38,16 @@ var integrationToolNameSet = func() map[string]struct{} {
 	}
 	return out
 }()
+func (s *Server) getSkillsFolder(settings map[string]string) string {
+	folder := strings.TrimSpace(settings[skillsFolderSettingKey])
+	if folder == "" {
+		p, err := s.store.GetProject(storage.SystemProjectSoulID)
+		if err == nil && p != nil && p.Folder != nil {
+			return *p.Folder
+		}
+	}
+	return folder
+}
 
 type SkillFile struct {
 	Name         string `json:"name"`
@@ -524,7 +534,7 @@ func (s *Server) handleInstallSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	folder := strings.TrimSpace(settings[skillsFolderSettingKey])
+	folder := s.getSkillsFolder(settings)
 	if folder == "" {
 		s.errorResponse(w, http.StatusBadRequest, "Skills folder is not configured")
 		return
@@ -574,7 +584,7 @@ func (s *Server) handleDeleteSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	folder := strings.TrimSpace(settings[skillsFolderSettingKey])
+	folder := s.getSkillsFolder(settings)
 	if folder == "" {
 		s.errorResponse(w, http.StatusBadRequest, "Skills folder is not configured")
 		return

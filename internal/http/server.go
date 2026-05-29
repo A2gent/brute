@@ -5310,7 +5310,7 @@ func (s *Server) resolveMCPServersSection(blockNumber int) (string, int, string)
 }
 
 func (s *Server) resolveExternalMarkdownSkillsSection(settings map[string]string, blockNumber int) (string, int, string) {
-	folder := strings.TrimSpace(settings[skillsFolderSettingKey])
+	folder := s.getSkillsFolder(settings)
 	if folder == "" {
 		return "", 0, "Skills folder is not configured."
 	}

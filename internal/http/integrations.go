@@ -42,6 +42,7 @@ var supportedIntegrationProviders = map[string]struct{}{
 	"brave_search":    {},
 	"exa":             {},
 	"leonardo":        {},
+	"youtube":         {},
 	"a2_registry":     {},
 }
 
@@ -63,6 +64,7 @@ var requiredConfigFields = map[string][]string{
 	"brave_search":    {"api_key"},
 	"exa":             {"api_key"},
 	"leonardo":        {"api_key"},
+	"youtube":         {},
 	"a2_registry":     {"api_key"},
 }
 
@@ -3161,6 +3163,8 @@ func defaultIntegrationName(provider string) string {
 		return "ElevenLabs"
 	case "perplexity":
 		return "Perplexity"
+	case "youtube":
+		return "YouTube"
 	case "brave_search":
 		return "Brave Search"
 	default:

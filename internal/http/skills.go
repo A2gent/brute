@@ -16,6 +16,7 @@ import (
 
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/skills"
+	"github.com/A2gent/brute/internal/storage"
 	"gopkg.in/yaml.v2"
 )
 
@@ -26,6 +27,7 @@ var integrationToolsByProvider = map[string][]string{
 	"leonardo":        {"leonardo_generate_image"},
 	"telegram":        {"telegram_send_message"},
 	"exa":             {"exa_search"},
+	"youtube":         {"youtube_transcript"},
 	"a2_registry":     {"delegate_to_external_agent", "discover_external_agents"},
 }
 

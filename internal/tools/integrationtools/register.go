@@ -24,6 +24,7 @@ func Register(manager *tools.Manager, store storage.Store, clipStore *speechcach
 	manager.Register(NewDiscordSendMessageTool(store))
 	manager.Register(NewExaSearchQueryTool(store))
 	manager.Register(NewFetchURLTool())
+	manager.Register(NewYoutubeTranscriptTool())
 	manager.Register(NewBrowserChromeTool(manager.WorkDir()))
 	manager.Register(NewLeonardoGenerateImageTool(store, sessionManager))
 }

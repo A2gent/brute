@@ -219,6 +219,7 @@ type ProjectGitPullRequest struct {
 type ProjectGitCheckoutRequest struct {
 	RepoPath string `json:"repo_path,omitempty"`
 	Branch   string `json:"branch"`
+	Create   bool   `json:"create,omitempty"`
 }
 
 type ProjectGitInitRequest struct {
@@ -2695,8 +2696,11 @@ func (s *Server) handleProjectGitCheckout(w http.ResponseWriter, r *http.Request
 	}
 
 	args := []string{"checkout", branch}
+	if req.Create {
+		args = []string{"checkout", "-b", branch}
+	}
 	remotePrefix := "remotes/"
-	if strings.HasPrefix(branch, remotePrefix) {
+	if !req.Create && strings.HasPrefix(branch, remotePrefix) {
 		args = []string{"checkout", "--track", strings.TrimPrefix(branch, remotePrefix)}
 	} else if slashIndex := strings.Index(branch, "/"); slashIndex > 0 {
 		remoteName := branch[:slashIndex]

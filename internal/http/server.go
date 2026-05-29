@@ -848,24 +848,25 @@ type UsageResponse struct {
 
 // SessionListItem represents a session in the list
 type SessionListItem struct {
-	ID                 string    `json:"id"`
-	AgentID            string    `json:"agent_id"`
-	ParentID           string    `json:"parent_id,omitempty"`
-	LinkType           string    `json:"link_type,omitempty"`
-	ProjectID          string    `json:"project_id,omitempty"`
-	Provider           string    `json:"provider,omitempty"`
-	Model              string    `json:"model,omitempty"`
-	RoutedProvider     string    `json:"routed_provider,omitempty"`
-	RoutedModel        string    `json:"routed_model,omitempty"`
-	Title              string    `json:"title"`
-	Status             string    `json:"status"`
-	TotalTokens        int       `json:"total_tokens"`
-	InputTokens        int       `json:"input_tokens"`
-	OutputTokens       int       `json:"output_tokens"`
-	RunDurationSeconds int64     `json:"run_duration_seconds"`
-	TaskProgress       string    `json:"task_progress,omitempty"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	ID                 string                 `json:"id"`
+	AgentID            string                 `json:"agent_id"`
+	ParentID           string                 `json:"parent_id,omitempty"`
+	LinkType           string                 `json:"link_type,omitempty"`
+	ProjectID          string                 `json:"project_id,omitempty"`
+	Provider           string                 `json:"provider,omitempty"`
+	Model              string                 `json:"model,omitempty"`
+	RoutedProvider     string                 `json:"routed_provider,omitempty"`
+	RoutedModel        string                 `json:"routed_model,omitempty"`
+	Title              string                 `json:"title"`
+	Status             string                 `json:"status"`
+	TotalTokens        int                    `json:"total_tokens"`
+	InputTokens        int                    `json:"input_tokens"`
+	OutputTokens       int                    `json:"output_tokens"`
+	RunDurationSeconds int64                  `json:"run_duration_seconds"`
+	TaskProgress       string                 `json:"task_progress,omitempty"`
+	CreatedAt          time.Time              `json:"created_at"`
+	UpdatedAt          time.Time              `json:"updated_at"`
+	Metadata           map[string]interface{} `json:"metadata,omitempty"`
 	// A2A inbound fields — only set for sessions created from A2A tunnel requests.
 	A2AInbound         bool   `json:"a2a_inbound,omitempty"`
 	A2ASourceAgentID   string `json:"a2a_source_agent_id,omitempty"`
@@ -1796,6 +1797,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 
 	// Optional filter: ?a2a_inbound=true returns only A2A-originated sessions.
 	filterA2A := r.URL.Query().Get("a2a_inbound") == "true"
+	includeMetadata := r.URL.Query().Get("include_metadata") == "true"
 
 	items := make([]SessionListItem, 0, len(sessions))
 	for _, sess := range sessions {
@@ -1814,7 +1816,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			projectID = *sess.ProjectID
 		}
 		inputTokens, outputTokens := sessionInputOutputTokens(sess)
-		items = append(items, SessionListItem{
+		item := SessionListItem{
 			ID:                 sess.ID,
 			AgentID:            sess.AgentID,
 			ParentID:           parentID,
@@ -1836,7 +1838,11 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			A2AInbound:         isInbound,
 			A2ASourceAgentID:   sourceAgentID,
 			A2ASourceAgentName: sourceAgentName,
-		})
+		}
+		if includeMetadata {
+			item.Metadata = sess.Metadata
+		}
+		items = append(items, item)
 	}
 
 	s.jsonResponse(w, http.StatusOK, items)

@@ -138,6 +138,18 @@ type Project struct {
 	UpdatedAt time.Time
 }
 
+type ProjectDatabase struct {
+	ID          string
+	ProjectID   string
+	Name        string
+	Engine      string // postgres, mysql, sqlite
+	DSN         string
+	Environment string
+	IsReadOnly  bool
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
 // Store defines the interface for session storage
 type Store interface {
 	// Session operations
@@ -198,6 +210,12 @@ type Store interface {
 	GetSubAgent(id string) (*SubAgent, error)
 	ListSubAgents() ([]*SubAgent, error)
 	DeleteSubAgent(id string) error
+
+	// Project Database operations
+	SaveProjectDatabase(db *ProjectDatabase) error
+	GetProjectDatabase(id string) (*ProjectDatabase, error)
+	ListProjectDatabases(projectID string) ([]*ProjectDatabase, error)
+	DeleteProjectDatabase(id string) error
 
 	// Close closes the store
 	Close() error

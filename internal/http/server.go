@@ -188,6 +188,7 @@ func (s *Server) registerServerBackedTools(manager *tools.Manager) {
 	manager.Register(newCreateLocalDockerAgentsBulkTool(s))
 	manager.RegisterQuestionTool(s.sessionManager)
 	manager.RegisterSessionTaskProgressTool(s.sessionManager)
+		manager.RegisterSQLQueryTool(s.store)
 	logging.Debug("Server-backed tools registered. Total tools: %d", len(manager.GetDefinitions()))
 }
 
@@ -535,6 +536,13 @@ func (s *Server) setupRoutes() {
 		r.Get("/{projectID}", s.handleGetProject)
 		r.Put("/{projectID}", s.handleUpdateProject)
 		r.Delete("/{projectID}", s.handleDeleteProject)
+
+			r.Get("/{projectID}/databases", s.handleListProjectDatabases)
+			r.Post("/{projectID}/databases", s.handleCreateProjectDatabase)
+			r.Put("/{projectID}/databases/{dbID}", s.handleUpdateProjectDatabase)
+			r.Delete("/{projectID}/databases/{dbID}", s.handleDeleteProjectDatabase)
+			r.Get("/{projectID}/databases/{dbID}/tables", s.handleProjectDatabaseListTables)
+			r.Post("/{projectID}/databases/{dbID}/query", s.handleProjectDatabaseQuery)
 	})
 
 	// Recurring jobs endpoints
@@ -1064,6 +1072,44 @@ type UpdateProjectRequest struct {
 	Folder *string `json:"folder,omitempty"`
 }
 
+
+type ProjectDatabaseResponse struct {
+	ID          string    `json:"id"`
+	ProjectID   string    `json:"project_id"`
+	Name        string    `json:"name"`
+	Engine      string    `json:"engine"`
+	DSN         string    `json:"dsn"`
+	Environment string    `json:"environment"`
+	IsReadOnly  bool      `json:"is_read_only"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type CreateProjectDatabaseRequest struct {
+	Name        string `json:"name"`
+	Engine      string `json:"engine"`
+	DSN         string `json:"dsn"`
+	Environment string `json:"environment"`
+	IsReadOnly  bool   `json:"is_read_only"`
+}
+
+type UpdateProjectDatabaseRequest struct {
+	Name        *string `json:"name,omitempty"`
+	Engine      *string `json:"engine,omitempty"`
+	DSN         *string `json:"dsn,omitempty"`
+	Environment *string `json:"environment,omitempty"`
+	IsReadOnly  *bool   `json:"is_read_only,omitempty"`
+}
+
+type ProjectDatabaseTableResponse struct {
+	Name string `json:"name"`
+}
+
+type ProjectDatabaseDataRequest struct {
+	Query string `json:"query"` // Raw query, or we can use specific pagination args for read-only table view
+	Limit int    `json:"limit,omitempty"`
+	Offset int   `json:"offset,omitempty"`
+}
 // --- Handlers ---
 
 const agentNameSettingKey = "AAGENT_NAME"
@@ -4178,6 +4224,19 @@ func (s *Server) resolveEnvironmentContextSection(sess *session.Session) (string
 		sb.WriteString("\nNo project root is associated with this session. Use the server working directory as the default file scope.")
 	}
 	content := strings.TrimSpace(sb.String())
+		if projectID != "" {
+			dbs, err := s.store.ListProjectDatabases(projectID)
+			if err == nil && len(dbs) > 0 {
+				sb.WriteString("\nConfigured Project Databases:\n")
+				for _, db := range dbs {
+					ro := ""
+					if db.IsReadOnly {
+						ro = " (Read-only)"
+					}
+					sb.WriteString(fmt.Sprintf("- Name: %s | Environment: %s | Engine: %s%s\n", db.Name, db.Environment, db.Engine, ro))
+				}
+			}
+		}
 	return content, estimateTokensApprox(content)
 }
 

@@ -109,6 +109,11 @@ func (m *Manager) RegisterSessionTaskProgressTool(store TaskProgressStore) {
 	m.Register(NewSessionTaskProgressTool(store))
 }
 
+// RegisterSQLQueryTool registers the SQL query tool
+func (m *Manager) RegisterSQLQueryTool(store storage.Store) {
+	m.Register(NewSQLQueryTool(store))
+}
+
 // Register adds a tool to the manager
 func (m *Manager) Register(tool Tool) {
 	m.mu.Lock()

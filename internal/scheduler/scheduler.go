@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -31,11 +32,12 @@ const thinkingProjectName = "Thinking"
 
 // Scheduler manages recurring job execution
 type Scheduler struct {
-	store          storage.Store
-	sessionManager *session.Manager
-	llmClient      llm.Client
-	toolManager    *tools.Manager
-	config         *config.Config
+	store                         storage.Store
+	sessionManager                *session.Manager
+	llmClient                     llm.Client
+	toolManager                   *tools.Manager
+	toolManagerForSessionResolver func(*session.Session) *tools.Manager
+	config                        *config.Config
 
 	ticker      *time.Ticker
 	stopChan    chan struct{}
@@ -62,6 +64,24 @@ func NewScheduler(
 		stopChan:       make(chan struct{}),
 		runningJobs:    make(map[string]struct{}),
 	}
+}
+
+func (s *Scheduler) SetToolManagerForSessionResolver(resolve func(*session.Session) *tools.Manager) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.toolManagerForSessionResolver = resolve
+}
+
+func (s *Scheduler) toolManagerForSession(sess *session.Session) *tools.Manager {
+	s.mu.Lock()
+	resolve := s.toolManagerForSessionResolver
+	s.mu.Unlock()
+	if resolve != nil {
+		if manager := resolve(sess); manager != nil {
+			return manager
+		}
+	}
+	return s.toolManager
 }
 
 // Start begins the scheduler background loop
@@ -185,11 +205,18 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 	}
 
 	exec.SessionID = sess.ID
+	isThinkingJob := false
 	if thinking, thinkErr := s.isThinkingJob(job.ID); thinkErr != nil {
 		logging.Warn("Failed to check thinking job for project assignment: %v", thinkErr)
 	} else if thinking {
+		isThinkingJob = true
 		if assignErr := s.assignSessionToThinkingProject(sess); assignErr != nil {
 			logging.Warn("Failed to assign Thinking project for session %s: %v", sess.ID, assignErr)
+		}
+	}
+	if !isThinkingJob {
+		if assignErr := s.assignSessionToJobProject(sess, job); assignErr != nil {
+			logging.Warn("Failed to assign recurring job project for session %s: %v", sess.ID, assignErr)
 		}
 	}
 
@@ -203,7 +230,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 	}
 
 	contextWindow := s.resolveContextWindowForProvider(providerType)
-	effectiveTaskPrompt, resolveErr := jobs.ResolveTaskPrompt(job)
+	effectiveTaskPrompt, resolveErr := jobs.ResolveTaskPrompt(job, s.resolveJobWorkDir(job))
 	if resolveErr != nil {
 		logging.Error("Failed to resolve task instructions for job %s: %v", job.ID, resolveErr)
 		exec.Status = "failed"
@@ -234,7 +261,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 		return
 	}
 
-	ag := agent.New(agentConfig, client, s.toolManager, s.sessionManager)
+	ag := agent.New(agentConfig, client, s.toolManagerForSession(sess), s.sessionManager)
 
 	// Create a timeout context for job execution (default 30 minutes)
 	jobCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
@@ -283,6 +310,58 @@ func (s *Scheduler) rescheduleJobAfterAttempt(job *storage.RecurringJob, attempt
 	if err := s.store.SaveJob(job); err != nil {
 		logging.Error("Failed to update job %s after execution attempt: %v", job.ID, err)
 	}
+}
+
+func (s *Scheduler) resolveJobWorkDir(job *storage.RecurringJob) string {
+	defaultDir := strings.TrimSpace(s.config.WorkDir)
+	if defaultDir == "" {
+		defaultDir = "."
+	}
+	if job == nil || job.ProjectID == nil {
+		return defaultDir
+	}
+
+	projectID := strings.TrimSpace(*job.ProjectID)
+	if projectID == "" {
+		return defaultDir
+	}
+	project, err := s.store.GetProject(projectID)
+	if err != nil || project == nil || project.Folder == nil {
+		if err != nil {
+			logging.Warn("Failed to load recurring job project workdir: job=%s project=%s error=%v", job.ID, projectID, err)
+		}
+		return defaultDir
+	}
+
+	candidate := strings.TrimSpace(*project.Folder)
+	if candidate == "" {
+		return defaultDir
+	}
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(defaultDir, candidate)
+	}
+	candidate = filepath.Clean(candidate)
+	info, statErr := os.Stat(candidate)
+	if statErr != nil || !info.IsDir() {
+		logging.Warn("Skipping invalid recurring job project folder: job=%s folder=%s", job.ID, candidate)
+		return defaultDir
+	}
+	return candidate
+}
+
+func (s *Scheduler) assignSessionToJobProject(sess *session.Session, job *storage.RecurringJob) error {
+	if sess == nil || job == nil || job.ProjectID == nil {
+		return nil
+	}
+	projectID := strings.TrimSpace(*job.ProjectID)
+	if projectID == "" {
+		return nil
+	}
+	if _, err := s.store.GetProject(projectID); err != nil {
+		return fmt.Errorf("job project not found: %w", err)
+	}
+	sess.ProjectID = &projectID
+	return s.sessionManager.Save(sess)
 }
 
 func (s *Scheduler) isThinkingJob(jobID string) (bool, error) {

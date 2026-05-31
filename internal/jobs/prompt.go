@@ -3,6 +3,7 @@ package jobs
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/A2gent/brute/internal/storage"
@@ -25,7 +26,7 @@ func BuildTaskPromptForFile(path string) string {
 	return fmt.Sprintf("Load and follow instructions from this file path: %s", strings.TrimSpace(path))
 }
 
-func ResolveTaskPrompt(job *storage.RecurringJob) (string, error) {
+func ResolveTaskPrompt(job *storage.RecurringJob, baseDirs ...string) (string, error) {
 	if job == nil {
 		return "", fmt.Errorf("job is required")
 	}
@@ -35,13 +36,24 @@ func ResolveTaskPrompt(job *storage.RecurringJob) (string, error) {
 		if path == "" {
 			return "", fmt.Errorf("task prompt file is required when source is file")
 		}
-		data, err := os.ReadFile(path)
+		readPath := path
+		if !filepath.IsAbs(readPath) {
+			for _, baseDir := range baseDirs {
+				baseDir = strings.TrimSpace(baseDir)
+				if baseDir == "" {
+					continue
+				}
+				readPath = filepath.Join(baseDir, readPath)
+				break
+			}
+		}
+		data, err := os.ReadFile(readPath)
 		if err != nil {
-			return "", fmt.Errorf("failed to read task prompt file %q: %w", path, err)
+			return "", fmt.Errorf("failed to read task prompt file %q: %w", readPath, err)
 		}
 		content := strings.TrimSpace(string(data))
 		if content == "" {
-			return "", fmt.Errorf("task prompt file %q is empty", path)
+			return "", fmt.Errorf("task prompt file %q is empty", readPath)
 		}
 		if len(content) > maxTaskPromptBytes {
 			content = content[:maxTaskPromptBytes] + "\n\n[truncated]"

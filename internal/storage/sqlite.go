@@ -125,23 +125,26 @@ func (s *SQLiteStore) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_sessions_project_id ON sessions(project_id)`,
 		// Recurring jobs table
 		`CREATE TABLE IF NOT EXISTS recurring_jobs (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			schedule_human TEXT NOT NULL,
-			schedule_cron TEXT NOT NULL,
-			task_prompt TEXT NOT NULL,
-			task_prompt_source TEXT NOT NULL DEFAULT 'text',
-			task_prompt_file TEXT NOT NULL DEFAULT '',
-			llm_provider TEXT,
-			enabled INTEGER NOT NULL DEFAULT 1,
-			last_run_at TIMESTAMP,
-			next_run_at TIMESTAMP,
-			created_at TIMESTAMP NOT NULL,
-			updated_at TIMESTAMP NOT NULL
-		)`,
+				id TEXT PRIMARY KEY,
+				project_id TEXT,
+				name TEXT NOT NULL,
+				schedule_human TEXT NOT NULL,
+				schedule_cron TEXT NOT NULL,
+				task_prompt TEXT NOT NULL,
+				task_prompt_source TEXT NOT NULL DEFAULT 'text',
+				task_prompt_file TEXT NOT NULL DEFAULT '',
+				llm_provider TEXT,
+				enabled INTEGER NOT NULL DEFAULT 1,
+				last_run_at TIMESTAMP,
+				next_run_at TIMESTAMP,
+				created_at TIMESTAMP NOT NULL,
+				updated_at TIMESTAMP NOT NULL
+			)`,
+		`ALTER TABLE recurring_jobs ADD COLUMN project_id TEXT`,
 		`ALTER TABLE recurring_jobs ADD COLUMN task_prompt_source TEXT NOT NULL DEFAULT 'text'`,
 		`ALTER TABLE recurring_jobs ADD COLUMN task_prompt_file TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE recurring_jobs ADD COLUMN llm_provider TEXT`,
+		`CREATE INDEX IF NOT EXISTS idx_recurring_jobs_project_id ON recurring_jobs(project_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_recurring_jobs_next_run ON recurring_jobs(next_run_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_recurring_jobs_enabled ON recurring_jobs(enabled)`,
 		// Job executions table
@@ -880,6 +883,12 @@ func (s *SQLiteStore) DeleteProject(id string) error {
 	if _, err := tx.Exec(`DELETE FROM sessions WHERE project_id = ?`, id); err != nil {
 		return fmt.Errorf("failed to delete project sessions: %w", err)
 	}
+	if _, err := tx.Exec(`DELETE FROM job_executions WHERE job_id IN (SELECT id FROM recurring_jobs WHERE project_id = ?)`, id); err != nil {
+		return fmt.Errorf("failed to delete project job executions: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM recurring_jobs WHERE project_id = ?`, id); err != nil {
+		return fmt.Errorf("failed to delete project recurring jobs: %w", err)
+	}
 	// WHY: project deletion must not leave sub-agents pointing at a missing project.
 	// WHAT: make those sub-agents global while preserving their configuration.
 	if _, err := tx.Exec(`UPDATE sub_agents SET project_id = NULL WHERE project_id = ?`, id); err != nil {
@@ -897,14 +906,39 @@ func (s *SQLiteStore) Close() error {
 	return s.db.Close()
 }
 
+func nullableString(value *string) interface{} {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return trimmed
+}
+
+func setNullableString(target **string, value sql.NullString) {
+	if !value.Valid {
+		*target = nil
+		return
+	}
+	trimmed := strings.TrimSpace(value.String)
+	if trimmed == "" {
+		*target = nil
+		return
+	}
+	*target = &trimmed
+}
+
 // --- Recurring Jobs CRUD ---
 
 // SaveJob saves a recurring job to the database
 func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
 	_, err := s.db.Exec(`
-		INSERT INTO recurring_jobs (id, name, schedule_human, schedule_cron, task_prompt, task_prompt_source, task_prompt_file, llm_provider, enabled, last_run_at, next_run_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO recurring_jobs (id, project_id, name, schedule_human, schedule_cron, task_prompt, task_prompt_source, task_prompt_file, llm_provider, enabled, last_run_at, next_run_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
+			project_id = excluded.project_id,
 			name = excluded.name,
 			schedule_human = excluded.schedule_human,
 			schedule_cron = excluded.schedule_cron,
@@ -916,7 +950,7 @@ func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
 			last_run_at = excluded.last_run_at,
 			next_run_at = excluded.next_run_at,
 			updated_at = excluded.updated_at
-	`, job.ID, job.Name, job.ScheduleHuman, job.ScheduleCron, job.TaskPrompt, job.TaskPromptSource, job.TaskPromptFile, job.LLMProvider, job.Enabled, job.LastRunAt, job.NextRunAt, job.CreatedAt, job.UpdatedAt)
+	`, job.ID, nullableString(job.ProjectID), job.Name, job.ScheduleHuman, job.ScheduleCron, job.TaskPrompt, job.TaskPromptSource, job.TaskPromptFile, job.LLMProvider, job.Enabled, job.LastRunAt, job.NextRunAt, job.CreatedAt, job.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to save job: %w", err)
 	}
@@ -926,13 +960,14 @@ func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
 // GetJob retrieves a recurring job by ID
 func (s *SQLiteStore) GetJob(id string) (*RecurringJob, error) {
 	var job RecurringJob
+	var projectID sql.NullString
 	var lastRunAt, nextRunAt sql.NullTime
 	var enabled int
 
 	err := s.db.QueryRow(`
-		SELECT id, name, schedule_human, schedule_cron, task_prompt, task_prompt_source, task_prompt_file, llm_provider, enabled, last_run_at, next_run_at, created_at, updated_at
+		SELECT id, project_id, name, schedule_human, schedule_cron, task_prompt, task_prompt_source, task_prompt_file, llm_provider, enabled, last_run_at, next_run_at, created_at, updated_at
 		FROM recurring_jobs WHERE id = ?
-	`, id).Scan(&job.ID, &job.Name, &job.ScheduleHuman, &job.ScheduleCron, &job.TaskPrompt, &job.TaskPromptSource, &job.TaskPromptFile, &job.LLMProvider, &enabled, &lastRunAt, &nextRunAt, &job.CreatedAt, &job.UpdatedAt)
+	`, id).Scan(&job.ID, &projectID, &job.Name, &job.ScheduleHuman, &job.ScheduleCron, &job.TaskPrompt, &job.TaskPromptSource, &job.TaskPromptFile, &job.LLMProvider, &enabled, &lastRunAt, &nextRunAt, &job.CreatedAt, &job.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("job not found: %s", id)
 	}
@@ -941,6 +976,7 @@ func (s *SQLiteStore) GetJob(id string) (*RecurringJob, error) {
 	}
 
 	job.Enabled = enabled == 1
+	setNullableString(&job.ProjectID, projectID)
 	if lastRunAt.Valid {
 		job.LastRunAt = &lastRunAt.Time
 	}
@@ -954,7 +990,7 @@ func (s *SQLiteStore) GetJob(id string) (*RecurringJob, error) {
 // ListJobs lists all recurring jobs
 func (s *SQLiteStore) ListJobs() ([]*RecurringJob, error) {
 	rows, err := s.db.Query(`
-		SELECT id, name, schedule_human, schedule_cron, task_prompt, task_prompt_source, task_prompt_file, llm_provider, enabled, last_run_at, next_run_at, created_at, updated_at
+		SELECT id, project_id, name, schedule_human, schedule_cron, task_prompt, task_prompt_source, task_prompt_file, llm_provider, enabled, last_run_at, next_run_at, created_at, updated_at
 		FROM recurring_jobs ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -965,21 +1001,17 @@ func (s *SQLiteStore) ListJobs() ([]*RecurringJob, error) {
 	var jobs []*RecurringJob
 	for rows.Next() {
 		var job RecurringJob
+		var projectID sql.NullString
 		var lastRunAt, nextRunAt sql.NullTime
 		var enabled int
 
-		err := rows.Scan(&job.ID, &job.Name, &job.ScheduleHuman, &job.ScheduleCron, &job.TaskPrompt, &job.TaskPromptSource, &job.TaskPromptFile, &job.LLMProvider, &enabled, &lastRunAt, &nextRunAt, &job.CreatedAt, &job.UpdatedAt)
+		err := rows.Scan(&job.ID, &projectID, &job.Name, &job.ScheduleHuman, &job.ScheduleCron, &job.TaskPrompt, &job.TaskPromptSource, &job.TaskPromptFile, &job.LLMProvider, &enabled, &lastRunAt, &nextRunAt, &job.CreatedAt, &job.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
 
 		job.Enabled = enabled == 1
-		if projectID.Valid {
-			trimmedProjectID := strings.TrimSpace(projectID.String)
-			if trimmedProjectID != "" {
-				job.ProjectID = &trimmedProjectID
-			}
-		}
+		setNullableString(&job.ProjectID, projectID)
 		if lastRunAt.Valid {
 			job.LastRunAt = &lastRunAt.Time
 		}
@@ -1002,7 +1034,7 @@ func (s *SQLiteStore) DeleteJob(id string) error {
 // GetDueJobs returns jobs that are due to run (next_run_at <= now and enabled)
 func (s *SQLiteStore) GetDueJobs(now time.Time) ([]*RecurringJob, error) {
 	rows, err := s.db.Query(`
-		SELECT id, name, schedule_human, schedule_cron, task_prompt, task_prompt_source, task_prompt_file, llm_provider, enabled, last_run_at, next_run_at, created_at, updated_at
+		SELECT id, project_id, name, schedule_human, schedule_cron, task_prompt, task_prompt_source, task_prompt_file, llm_provider, enabled, last_run_at, next_run_at, created_at, updated_at
 		FROM recurring_jobs 
 		WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?
 		ORDER BY next_run_at ASC
@@ -1015,15 +1047,17 @@ func (s *SQLiteStore) GetDueJobs(now time.Time) ([]*RecurringJob, error) {
 	var jobs []*RecurringJob
 	for rows.Next() {
 		var job RecurringJob
+		var projectID sql.NullString
 		var lastRunAt, nextRunAt sql.NullTime
 		var enabled int
 
-		err := rows.Scan(&job.ID, &job.Name, &job.ScheduleHuman, &job.ScheduleCron, &job.TaskPrompt, &job.TaskPromptSource, &job.TaskPromptFile, &job.LLMProvider, &enabled, &lastRunAt, &nextRunAt, &job.CreatedAt, &job.UpdatedAt)
+		err := rows.Scan(&job.ID, &projectID, &job.Name, &job.ScheduleHuman, &job.ScheduleCron, &job.TaskPrompt, &job.TaskPromptSource, &job.TaskPromptFile, &job.LLMProvider, &enabled, &lastRunAt, &nextRunAt, &job.CreatedAt, &job.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
 
 		job.Enabled = enabled == 1
+		setNullableString(&job.ProjectID, projectID)
 		if lastRunAt.Valid {
 			job.LastRunAt = &lastRunAt.Time
 		}

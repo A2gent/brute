@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/A2gent/brute/internal/jobs"
 	"github.com/A2gent/brute/internal/storage"
 	"github.com/A2gent/brute/internal/tools"
+	"github.com/google/uuid"
 )
 
 type recurringJobsTool struct {
@@ -20,8 +20,9 @@ type recurringJobsTool struct {
 type recurringJobsParams struct {
 	Action string `json:"action"`
 
-	// list
-	IncludeDisabled *bool `json:"include_disabled,omitempty"`
+	// list/create
+	IncludeDisabled *bool  `json:"include_disabled,omitempty"`
+	ProjectID       string `json:"project_id,omitempty"`
 
 	// create
 	Name             string `json:"name,omitempty"`
@@ -65,6 +66,10 @@ func (t *recurringJobsTool) Schema() map[string]interface{} {
 			"include_disabled": map[string]interface{}{
 				"type":        "boolean",
 				"description": "Only for action=list. Include disabled jobs (default: true).",
+			},
+			"project_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional for action=list/create. Defaults to the current session project when available.",
 			},
 			"name": map[string]interface{}{
 				"type":        "string",
@@ -112,7 +117,7 @@ func (t *recurringJobsTool) Execute(ctx context.Context, params json.RawMessage)
 
 	switch strings.ToLower(strings.TrimSpace(p.Action)) {
 	case "list":
-		return t.handleList(p)
+		return t.handleList(ctx, p)
 	case "create":
 		return t.handleCreate(ctx, p)
 	case "delete":
@@ -124,12 +129,13 @@ func (t *recurringJobsTool) Execute(ctx context.Context, params json.RawMessage)
 	}
 }
 
-func (t *recurringJobsTool) handleList(p recurringJobsParams) (*tools.Result, error) {
+func (t *recurringJobsTool) handleList(ctx context.Context, p recurringJobsParams) (*tools.Result, error) {
 	includeDisabled := true
 	if p.IncludeDisabled != nil {
 		includeDisabled = *p.IncludeDisabled
 	}
 
+	projectID := t.resolveProjectID(ctx, p.ProjectID)
 	jobs, err := t.server.store.ListJobs()
 	if err != nil {
 		return &tools.Result{Success: false, Error: "failed to list jobs: " + err.Error()}, nil
@@ -143,12 +149,16 @@ func (t *recurringJobsTool) handleList(p recurringJobsParams) (*tools.Result, er
 		if !includeDisabled && !job.Enabled {
 			continue
 		}
+		if !jobMatchesProject(job, projectID) {
+			continue
+		}
 		outJobs = append(outJobs, t.server.jobToResponse(job))
 	}
 
 	payload := map[string]interface{}{
-		"count": len(outJobs),
-		"jobs":  outJobs,
+		"count":      len(outJobs),
+		"project_id": projectID,
+		"jobs":       outJobs,
 	}
 	return jsonToolOutput(payload)
 }
@@ -176,6 +186,11 @@ func (t *recurringJobsTool) handleCreate(ctx context.Context, p recurringJobsPar
 		return &tools.Result{Success: false, Error: "task_prompt is required when task_prompt_source=text"}, nil
 	}
 
+	projectID, projectErr := t.server.normalizeJobProjectID(t.resolveProjectID(ctx, p.ProjectID))
+	if projectErr != nil {
+		return &tools.Result{Success: false, Error: projectErr.Error()}, nil
+	}
+
 	llmProvider := normalizeJobLLMProvider(p.LLMProvider)
 	if llmProvider != "" {
 		if err := t.server.validateProviderRefForExecution(llmProvider); err != nil {
@@ -196,6 +211,7 @@ func (t *recurringJobsTool) handleCreate(ctx context.Context, p recurringJobsPar
 	now := time.Now()
 	job := &storage.RecurringJob{
 		ID:               uuid.New().String(),
+		ProjectID:        projectID,
 		Name:             name,
 		ScheduleHuman:    scheduleText,
 		ScheduleCron:     cronExpr,
@@ -271,6 +287,22 @@ func (t *recurringJobsTool) handleRunNow(ctx context.Context, p recurringJobsPar
 		"job_status": t.server.jobToResponse(job),
 	}
 	return jsonToolOutput(payload)
+}
+
+func (t *recurringJobsTool) resolveProjectID(ctx context.Context, explicit string) string {
+	projectID := strings.TrimSpace(explicit)
+	if projectID != "" {
+		return projectID
+	}
+	sessionID, _ := ctx.Value("session_id").(string)
+	if strings.TrimSpace(sessionID) == "" {
+		return ""
+	}
+	sess, err := t.server.sessionManager.Get(strings.TrimSpace(sessionID))
+	if err != nil || sess == nil || sess.ProjectID == nil {
+		return ""
+	}
+	return strings.TrimSpace(*sess.ProjectID)
 }
 
 func jsonToolOutput(payload map[string]interface{}) (*tools.Result, error) {

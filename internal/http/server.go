@@ -108,6 +108,10 @@ func (s *Server) resolveSessionWorkDir(sess *session.Session) string {
 	return defaultDir
 }
 
+func (s *Server) ToolManagerForSession(sess *session.Session) *tools.Manager {
+	return s.toolManagerForSession(sess)
+}
+
 func (s *Server) toolManagerForSession(sess *session.Session) *tools.Manager {
 	workDir := s.resolveSessionWorkDir(sess)
 	settings, err := s.store.GetSettings()
@@ -188,7 +192,7 @@ func (s *Server) registerServerBackedTools(manager *tools.Manager) {
 	manager.Register(newCreateLocalDockerAgentsBulkTool(s))
 	manager.RegisterQuestionTool(s.sessionManager)
 	manager.RegisterSessionTaskProgressTool(s.sessionManager)
-		manager.RegisterSQLQueryTool(s.store)
+	manager.RegisterSQLQueryTool(s.store)
 	logging.Debug("Server-backed tools registered. Total tools: %d", len(manager.GetDefinitions()))
 }
 
@@ -537,12 +541,12 @@ func (s *Server) setupRoutes() {
 		r.Put("/{projectID}", s.handleUpdateProject)
 		r.Delete("/{projectID}", s.handleDeleteProject)
 
-			r.Get("/{projectID}/databases", s.handleListProjectDatabases)
-			r.Post("/{projectID}/databases", s.handleCreateProjectDatabase)
-			r.Put("/{projectID}/databases/{dbID}", s.handleUpdateProjectDatabase)
-			r.Delete("/{projectID}/databases/{dbID}", s.handleDeleteProjectDatabase)
-			r.Get("/{projectID}/databases/{dbID}/tables", s.handleProjectDatabaseListTables)
-			r.Post("/{projectID}/databases/{dbID}/query", s.handleProjectDatabaseQuery)
+		r.Get("/{projectID}/databases", s.handleListProjectDatabases)
+		r.Post("/{projectID}/databases", s.handleCreateProjectDatabase)
+		r.Put("/{projectID}/databases/{dbID}", s.handleUpdateProjectDatabase)
+		r.Delete("/{projectID}/databases/{dbID}", s.handleDeleteProjectDatabase)
+		r.Get("/{projectID}/databases/{dbID}/tables", s.handleProjectDatabaseListTables)
+		r.Post("/{projectID}/databases/{dbID}/query", s.handleProjectDatabaseQuery)
 	})
 
 	// Recurring jobs endpoints
@@ -915,6 +919,7 @@ type ToolDefinitionResponse struct {
 // CreateJobRequest represents a request to create a recurring job
 type CreateJobRequest struct {
 	Name             string `json:"name"`
+	ProjectID        string `json:"project_id,omitempty"`
 	ScheduleText     string `json:"schedule_text"` // Natural language schedule
 	TaskPrompt       string `json:"task_prompt"`
 	TaskPromptSource string `json:"task_prompt_source,omitempty"` // "text" | "file"
@@ -926,6 +931,7 @@ type CreateJobRequest struct {
 // UpdateJobRequest represents a request to update a recurring job
 type UpdateJobRequest struct {
 	Name             string  `json:"name"`
+	ProjectID        *string `json:"project_id,omitempty"`
 	ScheduleText     string  `json:"schedule_text"`
 	TaskPrompt       string  `json:"task_prompt"`
 	TaskPromptSource string  `json:"task_prompt_source,omitempty"` // "text" | "file"
@@ -937,6 +943,7 @@ type UpdateJobRequest struct {
 // JobResponse represents a recurring job response
 type JobResponse struct {
 	ID               string     `json:"id"`
+	ProjectID        string     `json:"project_id,omitempty"`
 	Name             string     `json:"name"`
 	ScheduleHuman    string     `json:"schedule_human"`
 	ScheduleCron     string     `json:"schedule_cron"`
@@ -1072,7 +1079,6 @@ type UpdateProjectRequest struct {
 	Folder *string `json:"folder,omitempty"`
 }
 
-
 type ProjectDatabaseResponse struct {
 	ID          string    `json:"id"`
 	ProjectID   string    `json:"project_id"`
@@ -1106,10 +1112,11 @@ type ProjectDatabaseTableResponse struct {
 }
 
 type ProjectDatabaseDataRequest struct {
-	Query string `json:"query"` // Raw query, or we can use specific pagination args for read-only table view
-	Limit int    `json:"limit,omitempty"`
-	Offset int   `json:"offset,omitempty"`
+	Query  string `json:"query"` // Raw query, or we can use specific pagination args for read-only table view
+	Limit  int    `json:"limit,omitempty"`
+	Offset int    `json:"offset,omitempty"`
 }
+
 // --- Handlers ---
 
 const agentNameSettingKey = "AAGENT_NAME"
@@ -3050,16 +3057,42 @@ func streamLastMessageResponse(s *Server, sess *session.Session) *MessageRespons
 
 // --- Recurring Jobs Handlers ---
 
+func (s *Server) normalizeJobProjectID(raw string) (*string, error) {
+	projectID := strings.TrimSpace(raw)
+	if projectID == "" {
+		return nil, nil
+	}
+	if _, err := s.store.GetProject(projectID); err != nil {
+		return nil, fmt.Errorf("Project not found: %w", err)
+	}
+	return &projectID, nil
+}
+
+func jobMatchesProject(job *storage.RecurringJob, projectID string) bool {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return true
+	}
+	if job == nil || job.ProjectID == nil {
+		return false
+	}
+	return strings.TrimSpace(*job.ProjectID) == projectID
+}
+
 func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
+	projectID := strings.TrimSpace(r.URL.Query().Get("project_id"))
 	jobs, err := s.store.ListJobs()
 	if err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to list jobs: "+err.Error())
 		return
 	}
 
-	resp := make([]JobResponse, len(jobs))
-	for i, job := range jobs {
-		resp[i] = s.jobToResponse(job)
+	resp := make([]JobResponse, 0, len(jobs))
+	for _, job := range jobs {
+		if !jobMatchesProject(job, projectID) {
+			continue
+		}
+		resp = append(resp, s.jobToResponse(job))
 	}
 
 	s.jsonResponse(w, http.StatusOK, resp)
@@ -3078,6 +3111,12 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ScheduleText == "" {
 		s.errorResponse(w, http.StatusBadRequest, "Schedule text is required")
+		return
+	}
+
+	projectID, projectErr := s.normalizeJobProjectID(req.ProjectID)
+	if projectErr != nil {
+		s.errorResponse(w, http.StatusBadRequest, projectErr.Error())
 		return
 	}
 
@@ -3113,6 +3152,7 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	job := &storage.RecurringJob{
 		ID:               uuid.New().String(),
+		ProjectID:        projectID,
 		Name:             req.Name,
 		ScheduleHuman:    req.ScheduleText,
 		ScheduleCron:     cronExpr,
@@ -3165,6 +3205,15 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
 		return
+	}
+
+	if req.ProjectID != nil {
+		projectID, projectErr := s.normalizeJobProjectID(*req.ProjectID)
+		if projectErr != nil {
+			s.errorResponse(w, http.StatusBadRequest, projectErr.Error())
+			return
+		}
+		job.ProjectID = projectID
 	}
 
 	// Update fields if provided
@@ -3571,6 +3620,11 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 			logging.Warn("Failed to assign Thinking project for session %s: %v", sess.ID, assignErr)
 		}
 	}
+	if !isThinkingJob {
+		if assignErr := s.assignSessionToJobProject(sess, job); assignErr != nil {
+			logging.Warn("Failed to assign recurring job project for session %s: %v", sess.ID, assignErr)
+		}
+	}
 
 	exec.SessionID = sess.ID
 
@@ -3583,7 +3637,7 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 	}
 	_ = s.ensureSessionSystemPromptSnapshot(sess)
 
-	effectiveTaskPrompt, resolveErr := jobs.ResolveTaskPrompt(job)
+	effectiveTaskPrompt, resolveErr := jobs.ResolveTaskPrompt(job, s.resolveSessionWorkDir(sess))
 	if resolveErr != nil {
 		exec.Status = "failed"
 		exec.Error = "Failed to resolve task instructions: " + resolveErr.Error()
@@ -3657,6 +3711,21 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 	return exec, nil
 }
 
+func (s *Server) assignSessionToJobProject(sess *session.Session, job *storage.RecurringJob) error {
+	if sess == nil || job == nil || job.ProjectID == nil {
+		return nil
+	}
+	projectID := strings.TrimSpace(*job.ProjectID)
+	if projectID == "" {
+		return nil
+	}
+	if _, err := s.store.GetProject(projectID); err != nil {
+		return fmt.Errorf("job project not found: %w", err)
+	}
+	sess.ProjectID = &projectID
+	return s.sessionManager.Save(sess)
+}
+
 func (s *Server) assignSessionToThinkingProject(sess *session.Session) error {
 	now := time.Now()
 	project := &storage.Project{
@@ -3675,8 +3744,13 @@ func (s *Server) assignSessionToThinkingProject(sess *session.Session) error {
 
 // jobToResponse converts a storage job to API response
 func (s *Server) jobToResponse(job *storage.RecurringJob) JobResponse {
+	projectID := ""
+	if job.ProjectID != nil {
+		projectID = strings.TrimSpace(*job.ProjectID)
+	}
 	return JobResponse{
 		ID:               job.ID,
+		ProjectID:        projectID,
 		Name:             job.Name,
 		ScheduleHuman:    job.ScheduleHuman,
 		ScheduleCron:     job.ScheduleCron,
@@ -4224,19 +4298,19 @@ func (s *Server) resolveEnvironmentContextSection(sess *session.Session) (string
 		sb.WriteString("\nNo project root is associated with this session. Use the server working directory as the default file scope.")
 	}
 	content := strings.TrimSpace(sb.String())
-		if projectID != "" {
-			dbs, err := s.store.ListProjectDatabases(projectID)
-			if err == nil && len(dbs) > 0 {
-				sb.WriteString("\nConfigured Project Databases:\n")
-				for _, db := range dbs {
-					ro := ""
-					if db.IsReadOnly {
-						ro = " (Read-only)"
-					}
-					sb.WriteString(fmt.Sprintf("- Name: %s | Environment: %s | Engine: %s%s\n", db.Name, db.Environment, db.Engine, ro))
+	if projectID != "" {
+		dbs, err := s.store.ListProjectDatabases(projectID)
+		if err == nil && len(dbs) > 0 {
+			sb.WriteString("\nConfigured Project Databases:\n")
+			for _, db := range dbs {
+				ro := ""
+				if db.IsReadOnly {
+					ro = " (Read-only)"
 				}
+				sb.WriteString(fmt.Sprintf("- Name: %s | Environment: %s | Engine: %s%s\n", db.Name, db.Environment, db.Engine, ro))
 			}
 		}
+	}
 	return content, estimateTokensApprox(content)
 }
 

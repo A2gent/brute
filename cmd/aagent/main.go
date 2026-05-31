@@ -165,6 +165,7 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 
 	// Start scheduler for recurring jobs
 	jobScheduler := scheduler.NewScheduler(store, sessionManager, llmClient, toolManager, cfg)
+	jobScheduler.SetToolManagerForSessionResolver(server.ToolManagerForSession)
 	jobScheduler.Start(ctx)
 	defer jobScheduler.Stop()
 
@@ -450,6 +451,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	// Start scheduler for recurring jobs
 	jobScheduler := scheduler.NewScheduler(store, sessionManager, llmClient, toolManager, cfg)
+	jobScheduler.SetToolManagerForSessionResolver(server.ToolManagerForSession)
 	jobScheduler.Start(ctx)
 	defer jobScheduler.Stop()
 

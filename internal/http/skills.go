@@ -26,6 +26,7 @@ var integrationToolsByProvider = map[string][]string{
 	"elevenlabs":      {"elevenlabs_tts"},
 	"leonardo":        {"leonardo_generate_image"},
 	"telegram":        {"telegram_send_message"},
+	"discord":         {"discord_send_message"},
 	"exa":             {"exa_search"},
 	"youtube":         {"youtube_transcript"},
 	"a2_registry":     {"delegate_to_external_agent", "discover_external_agents"},

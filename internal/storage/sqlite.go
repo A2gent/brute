@@ -974,6 +974,12 @@ func (s *SQLiteStore) ListJobs() ([]*RecurringJob, error) {
 		}
 
 		job.Enabled = enabled == 1
+		if projectID.Valid {
+			trimmedProjectID := strings.TrimSpace(projectID.String)
+			if trimmedProjectID != "" {
+				job.ProjectID = &trimmedProjectID
+			}
+		}
 		if lastRunAt.Valid {
 			job.LastRunAt = &lastRunAt.Time
 		}
@@ -1821,7 +1827,6 @@ func (s *SQLiteStore) DeleteSubAgent(id string) error {
 	return err
 }
 
-
 // SaveProjectDatabase creates or updates a project database.
 func (s *SQLiteStore) SaveProjectDatabase(db *ProjectDatabase) error {
 	_, err := s.db.Exec(`
@@ -1886,5 +1891,6 @@ func (s *SQLiteStore) DeleteProjectDatabase(id string) error {
 	_, err := s.db.Exec(`DELETE FROM project_databases WHERE id = ?`, id)
 	return err
 }
+
 // Ensure SQLiteStore implements Store
 var _ Store = (*SQLiteStore)(nil)

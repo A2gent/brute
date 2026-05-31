@@ -44,6 +44,7 @@ type SessionTemplate struct {
 // RecurringJob represents a scheduled recurring job
 type RecurringJob struct {
 	ID               string
+	ProjectID        *string // Optional project this job is tied to
 	Name             string
 	ScheduleHuman    string // Human-readable schedule (e.g., "every Monday at 9am")
 	ScheduleCron     string // Parsed cron expression (e.g., "0 9 * * 1")

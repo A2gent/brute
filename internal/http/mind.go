@@ -28,6 +28,7 @@ const gitCommitProviderSettingKey = "AAGENT_GIT_COMMIT_PROVIDER"
 const gitCommitPromptTemplateSettingKey = "AAGENT_GIT_COMMIT_PROMPT_TEMPLATE"
 const defaultGitCommitPromptTemplate = "Generate a descriptive Git commit message based on provided files and diffs.\nReturn plain text only (no markdown, no code fences).\nFormat:\n1) First line: imperative summary (max 72 chars).\n2) Blank line.\n3) 2-4 bullet points with specific technical changes.\n\nChanged files:\n{{files}}\n\nDiff snippets:\n{{diffs}}"
 const projectSearchMaxResults = 5
+const projectSearchMaxFileResults = 20
 const maxProjectEditableFileBytes = 512 * 1024
 const maxProjectEditableFileLines = 20000
 
@@ -1156,10 +1157,10 @@ func (s *Server) handleProjectSearch(w http.ResponseWriter, r *http.Request) {
 		return contentCandidates[i].Path < contentCandidates[j].Path
 	})
 
-	fileNameMatches := make([]ProjectFileNameMatch, 0, projectSearchMaxResults)
+	fileNameMatches := make([]ProjectFileNameMatch, 0, projectSearchMaxFileResults)
 	for _, candidate := range fileNameCandidates {
 		fileNameMatches = append(fileNameMatches, candidate.ProjectFileNameMatch)
-		if len(fileNameMatches) >= projectSearchMaxResults {
+		if len(fileNameMatches) >= projectSearchMaxFileResults {
 			break
 		}
 	}

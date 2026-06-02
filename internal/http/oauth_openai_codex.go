@@ -25,6 +25,11 @@ type OpenAICodexOAuthImportResponse struct {
 	ExpiresAt int64  `json:"expires_at,omitempty"`
 }
 
+type ProviderOAuthStatusResponse struct {
+	Enabled   bool  `json:"enabled"`
+	ExpiresAt int64 `json:"expires_at,omitempty"`
+}
+
 // handleOpenAICodexOAuthImport imports OAuth tokens from Codex auth cache.
 func (s *Server) handleOpenAICodexOAuthImport(w http.ResponseWriter, r *http.Request) {
 	var req OpenAICodexOAuthImportRequest
@@ -109,10 +114,10 @@ func (s *Server) handleOpenAICodexOAuthImport(w http.ResponseWriter, r *http.Req
 func (s *Server) handleOpenAICodexOAuthStatus(w http.ResponseWriter, r *http.Request) {
 	provider := s.config.Providers[string(config.ProviderOpenAICodex)]
 	if provider.OAuth == nil || strings.TrimSpace(provider.OAuth.AccessToken) == "" {
-		s.jsonResponse(w, http.StatusOK, AnthropicOAuthStatusResponse{Enabled: false})
+		s.jsonResponse(w, http.StatusOK, ProviderOAuthStatusResponse{Enabled: false})
 		return
 	}
-	s.jsonResponse(w, http.StatusOK, AnthropicOAuthStatusResponse{
+	s.jsonResponse(w, http.StatusOK, ProviderOAuthStatusResponse{
 		Enabled:   true,
 		ExpiresAt: provider.OAuth.ExpiresAt,
 	})

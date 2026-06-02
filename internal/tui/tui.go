@@ -20,6 +20,7 @@ import (
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/anthropic"
 	"github.com/A2gent/brute/internal/llm/autorouter"
+	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/llm/gemini"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
@@ -3887,16 +3888,10 @@ func (m Model) selectProvider(providerType config.ProviderType) (tea.Model, tea.
 		}
 	}
 
-	// For providers requiring API key (except if OAuth is configured for Anthropic)
+	// For providers requiring API key
 	if providerDef.RequiresKey && existingProvider.APIKey == "" {
-		// Check if Anthropic has OAuth configured
-		hasOAuth := providerType == config.ProviderAnthropic &&
-			existingProvider.OAuth != nil &&
-			existingProvider.OAuth.AccessToken != ""
-		if !hasOAuth {
-			m.providerMenuStep = 1 // Go to API key input
-			return m, nil
-		}
+		m.providerMenuStep = 1 // Go to API key input
+		return m, nil
 	}
 
 	// Provider is ready, activate it
@@ -3974,7 +3969,7 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 				break
 			}
 		}
-		if envURL := strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL")); envURL != "" && (targetType == config.ProviderKimi || targetType == config.ProviderAnthropic) {
+		if envURL := strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL")); envURL != "" && targetType == config.ProviderKimi {
 			baseURL = envURL
 		}
 
@@ -3997,16 +3992,7 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 			// Other OpenAI-compatible providers
 			return lmstudio.NewClient(apiKey, model, baseURL), model, nil
 		case config.ProviderAnthropic:
-			// Anthropic supports OAuth or API key
-			if provider.OAuth != nil && provider.OAuth.AccessToken != "" {
-				tokens := &anthropic.OAuthTokens{
-					AccessToken:  provider.OAuth.AccessToken,
-					RefreshToken: provider.OAuth.RefreshToken,
-					ExpiresIn:    int(provider.OAuth.ExpiresAt - time.Now().Unix()),
-				}
-				return anthropic.NewOAuthClient(tokens, model, nil), model, nil
-			}
-			return anthropic.NewClientWithBaseURL(apiKey, model, baseURL), model, nil
+			return claudecli.NewClient(model, m.appConfig.WorkDir), model, nil
 		default:
 			return anthropic.NewClientWithBaseURL(apiKey, model, baseURL), model, nil
 		}
@@ -4158,13 +4144,6 @@ func (m Model) validateActiveProviderConfig() error {
 	}
 
 	provider := m.appConfig.Providers[string(providerType)]
-
-	// Check if Anthropic has OAuth configured
-	if providerType == config.ProviderAnthropic &&
-		provider.OAuth != nil &&
-		provider.OAuth.AccessToken != "" {
-		return nil
-	}
 
 	apiKey := strings.TrimSpace(provider.APIKey)
 	if apiKey == "" {

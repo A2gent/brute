@@ -26,6 +26,7 @@ import (
 	"github.com/A2gent/brute/internal/jobs"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/anthropic"
+	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/llm/gemini"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
@@ -396,12 +397,6 @@ func (s *Server) setupRoutes() {
 		r.Delete("/{providerType}", s.handleDeleteProvider)
 		r.Post("/{providerType}/test", s.handleTestProvider)
 		r.Post("/test-all", s.handleTestAllProviders)
-
-		// Anthropic OAuth
-		r.Post("/anthropic/oauth/start", s.handleAnthropicOAuthStart)
-		r.Post("/anthropic/oauth/callback", s.handleAnthropicOAuthCallback)
-		r.Get("/anthropic/oauth/status", s.handleAnthropicOAuthStatus)
-		r.Delete("/anthropic/oauth", s.handleAnthropicOAuthDisconnect)
 
 		// OpenAI Codex OAuth (import from Codex auth cache)
 		r.Post("/openai_codex/oauth/import", s.handleOpenAICodexOAuthImport)
@@ -1328,6 +1323,13 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 		hasAPIKey := strings.TrimSpace(existing.APIKey) != ""
 		hasOAuth := s.providerSupportsOAuth(def.Type) && existing.OAuth != nil && existing.OAuth.AccessToken != ""
 
+		if def.Type == config.ProviderAnthropic {
+			baseURL = ""
+			configured = s.providerConfiguredForUse(def.Type)
+			hasAPIKey = false
+			hasOAuth = false
+		}
+
 		if def.RequiresKey {
 			// Provider is configured if it has API key OR OAuth tokens
 			configured = configured && (hasAPIKey || hasOAuth)
@@ -1475,6 +1477,21 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		provider.APIKey = ""
 		provider.BaseURL = ""
 		provider.Model = ""
+		provider.FallbackChain = nil
+		provider.FallbackChainNodes = nil
+	} else if providerType == config.ProviderAnthropic {
+		if req.Model != nil {
+			provider.Model = strings.TrimSpace(*req.Model)
+		}
+		if provider.Model == "" {
+			provider.Model = def.DefaultModel
+		}
+		provider.APIKey = ""
+		provider.BaseURL = ""
+		provider.OAuth = nil
+		provider.RouterProvider = ""
+		provider.RouterModel = ""
+		provider.RouterRules = nil
 		provider.FallbackChain = nil
 		provider.FallbackChainNodes = nil
 	} else {
@@ -1740,51 +1757,16 @@ func (s *Server) handleListOpenCodeZenModels(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleListAnthropicModels(w http.ResponseWriter, r *http.Request) {
-	if parentProxyURL := strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_URL")); parentProxyURL != "" {
-		baseURL := normalizeOpenAIBaseURL(strings.TrimRight(parentProxyURL, "/") + "/providers/anthropic")
-		apiKey := strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_KEY"))
-		if apiKey == "" {
-			apiKey = "a2gent-proxy"
-		}
-
-		client := lmstudio.NewClient(apiKey, "", baseURL)
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		defer cancel()
-
-		models, err := client.ListModels(ctx)
-		if err != nil {
-			s.errorResponse(w, http.StatusBadGateway, "Failed to fetch models from Anthropic: "+err.Error())
-			return
-		}
-
-		modelIDs := make([]string, 0, len(models))
-		for _, model := range models {
-			modelID := strings.TrimSpace(model.ID)
-			if modelID != "" {
-				modelIDs = append(modelIDs, modelID)
-			}
-		}
-
-		s.jsonResponse(w, http.StatusOK, ListProviderModelsResponse{
-			Models: modelIDs,
-		})
-		return
-	}
-
-	provider := s.config.Providers[string(config.ProviderAnthropic)]
-	apiKey := strings.TrimSpace(provider.APIKey)
-	if apiKey == "" {
-		apiKey = s.apiKeyFromEnv(config.ProviderAnthropic)
-	}
-
-	models, err := anthropic.ListModels(apiKey)
-	if err != nil {
-		s.errorResponse(w, http.StatusInternalServerError, "Failed to list Anthropic models: "+err.Error())
-		return
-	}
-
 	s.jsonResponse(w, http.StatusOK, ListProviderModelsResponse{
-		Models: models,
+		Models: []string{
+			"sonnet",
+			"opus",
+			"haiku",
+			"claude-sonnet-4-6",
+			"claude-opus-4-6",
+			"claude-sonnet-4-5",
+			"claude-opus-4-5",
+		},
 	})
 }
 
@@ -6155,7 +6137,7 @@ func (s *Server) createLLMClient(providerType config.ProviderType, model string,
 	if config.IsFallbackAggregateRef(string(providerType)) || providerType == config.ProviderFallback {
 		return s.createFallbackChainClient(providerType, sess)
 	}
-	client, err := s.createBaseLLMClient(providerType, model)
+	client, err := s.createBaseLLMClientForSession(providerType, model, sess)
 	if err != nil {
 		return nil, err
 	}
@@ -6164,6 +6146,17 @@ func (s *Server) createLLMClient(providerType config.ProviderType, model string,
 		retries = retry.DefaultMaxRetries
 	}
 	return retry.Wrap(client, retry.WithMaxRetries(retries)), nil
+}
+
+func (s *Server) createBaseLLMClientForSession(providerType config.ProviderType, model string, sess *session.Session) (llm.Client, error) {
+	if providerType == config.ProviderAnthropic {
+		modelName := strings.TrimSpace(model)
+		if modelName == "" {
+			modelName = s.resolveModelForProvider(providerType)
+		}
+		return claudecli.NewClient(modelName, s.resolveSessionWorkDir(sess)), nil
+	}
+	return s.createBaseLLMClient(providerType, model)
 }
 
 func (s *Server) createBaseLLMClient(providerType config.ProviderType, model string) (llm.Client, error) {
@@ -6191,7 +6184,7 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 			break
 		}
 	}
-	if envURL := strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL")); envURL != "" && (providerType == config.ProviderKimi || providerType == config.ProviderAnthropic) {
+	if envURL := strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL")); envURL != "" && providerType == config.ProviderKimi {
 		baseURL = envURL
 	}
 	if providerType == config.ProviderOpenAICodex {
@@ -6203,6 +6196,10 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 	modelName := strings.TrimSpace(model)
 	if modelName == "" {
 		modelName = s.resolveModelForProvider(providerType)
+	}
+
+	if providerType == config.ProviderAnthropic {
+		return claudecli.NewClient(modelName, s.resolveSessionWorkDir(nil)), nil
 	}
 
 	if parentProxyURL := strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_URL")); parentProxyURL != "" {
@@ -6223,26 +6220,6 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 	}
 	if providerType == config.ProviderOpenCodeZen && apiKey == "" {
 		apiKey = "public"
-	}
-
-	// Special handling for Anthropic: OAuth or API key
-	if providerType == config.ProviderAnthropic {
-		if provider.OAuth != nil && provider.OAuth.AccessToken != "" {
-			// Use OAuth — pass ExpiresAt as an absolute timestamp so the client
-			// can correctly detect expiry regardless of when it was created.
-			remaining := int(provider.OAuth.ExpiresAt - time.Now().Unix())
-			if remaining < 0 {
-				remaining = 0
-			}
-			tokens := &anthropic.OAuthTokens{
-				AccessToken:  provider.OAuth.AccessToken,
-				RefreshToken: provider.OAuth.RefreshToken,
-				ExpiresIn:    remaining,
-				ExpiresAt:    provider.OAuth.ExpiresAt,
-			}
-			return anthropic.NewOAuthClient(tokens, modelName, s.refreshAnthropicOAuthToken), nil
-		}
-		// Fall through to API key check below
 	}
 
 	if def.RequiresKey && apiKey == "" {
@@ -6267,9 +6244,6 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 			MaxTokens:         provider.MaxTokens,
 			StatefulResponses: s.providerStatefulResponsesForConfig(providerType, provider.StatefulResponses),
 		}), nil
-	case config.ProviderAnthropic:
-		// Use API key (OAuth case handled above)
-		return anthropic.NewClientWithBaseURL(apiKey, modelName, baseURL), nil
 	default:
 		return anthropic.NewClientWithBaseURL(apiKey, modelName, baseURL), nil
 	}
@@ -6285,7 +6259,7 @@ func (s *Server) createFallbackChainClient(providerRef config.ProviderType, sess
 	for _, node := range chain {
 		ptype := config.ProviderType(node.Provider)
 		model := strings.TrimSpace(node.Model)
-		client, err := s.createBaseLLMClient(ptype, model)
+		client, err := s.createBaseLLMClientForSession(ptype, model, sess)
 		if err != nil {
 			return nil, fmt.Errorf("fallback node %s/%s is not available: %w", node.Provider, model, err)
 		}
@@ -6500,6 +6474,9 @@ func (s *Server) providerConfiguredForUse(providerType config.ProviderType) bool
 	if def == nil || providerType == config.ProviderFallback || providerType == config.ProviderAutoRouter {
 		return false
 	}
+	if providerType == config.ProviderAnthropic {
+		return claudecli.IsAvailable()
+	}
 	provider := s.config.Providers[string(providerType)]
 	baseURL := strings.TrimSpace(provider.BaseURL)
 	if baseURL == "" {
@@ -6523,7 +6500,7 @@ func (s *Server) providerConfiguredForUse(providerType config.ProviderType) bool
 }
 
 func (s *Server) providerSupportsOAuth(providerType config.ProviderType) bool {
-	return providerType == config.ProviderAnthropic || providerType == config.ProviderOpenAICodex
+	return providerType == config.ProviderOpenAICodex
 }
 
 func (s *Server) adaptProviderErrorMessage(providerType config.ProviderType, err error) error {
@@ -6701,6 +6678,13 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 
 	// Check if provider is configured
 	if !s.providerConfiguredForUse(providerType) {
+		if providerType == config.ProviderAnthropic {
+			s.jsonResponse(w, http.StatusBadRequest, ProviderTestResponse{
+				Success: false,
+				Message: "Claude CLI executable was not found. Install Claude Code or set AAGENT_CLAUDE_CLI_PATH.",
+			})
+			return
+		}
 		// Give a more specific message when OAuth was set up but credentials are missing
 		provider := s.config.Providers[string(providerType)]
 		if s.providerSupportsOAuth(providerType) && provider.OAuth != nil {

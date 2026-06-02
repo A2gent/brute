@@ -14,6 +14,7 @@ import (
 	"github.com/A2gent/brute/internal/jobs"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/anthropic"
+	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/llm/gemini"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
@@ -230,7 +231,8 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 	}
 
 	contextWindow := s.resolveContextWindowForProvider(providerType)
-	effectiveTaskPrompt, resolveErr := jobs.ResolveTaskPrompt(job, s.resolveJobWorkDir(job))
+	jobWorkDir := s.resolveJobWorkDir(job)
+	effectiveTaskPrompt, resolveErr := jobs.ResolveTaskPrompt(job, jobWorkDir)
 	if resolveErr != nil {
 		logging.Error("Failed to resolve task instructions for job %s: %v", job.ID, resolveErr)
 		exec.Status = "failed"
@@ -250,7 +252,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 		ContextWindow: contextWindow,
 	}
 
-	client, err := s.createLLMClient(providerType, model)
+	client, err := s.createLLMClient(providerType, model, jobWorkDir)
 	if err != nil {
 		logging.Error("Failed to initialize provider %s for job %s: %v", providerType, job.ID, err)
 		exec.Status = "failed"
@@ -444,11 +446,11 @@ func (s *Scheduler) resolveContextWindowForProvider(providerType config.Provider
 	return 0
 }
 
-func (s *Scheduler) createLLMClient(providerType config.ProviderType, model string) (llm.Client, error) {
+func (s *Scheduler) createLLMClient(providerType config.ProviderType, model string, workDir string) (llm.Client, error) {
 	if config.IsFallbackAggregateRef(string(providerType)) || providerType == config.ProviderFallback {
-		return s.createFallbackChainClient(providerType)
+		return s.createFallbackChainClient(providerType, workDir)
 	}
-	client, err := s.createBaseLLMClient(providerType, model)
+	client, err := s.createBaseLLMClient(providerType, model, workDir)
 	if err != nil {
 		return nil, err
 	}
@@ -459,7 +461,7 @@ func (s *Scheduler) createLLMClient(providerType config.ProviderType, model stri
 	return retry.Wrap(client, retry.WithMaxRetries(retries)), nil
 }
 
-func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model string) (llm.Client, error) {
+func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model string, workDir string) (llm.Client, error) {
 	def := config.GetProviderDefinition(providerType)
 	if def == nil {
 		return nil, fmt.Errorf("unknown provider: %s", providerType)
@@ -478,6 +480,10 @@ func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model 
 		modelName = s.resolveModelForProvider(providerType)
 	}
 
+	if providerType == config.ProviderAnthropic {
+		return claudecli.NewClient(modelName, workDir), nil
+	}
+
 	if parentProxyURL := strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_URL")); parentProxyURL != "" {
 		proxyBaseURL := normalizeOpenAIBaseURL(strings.TrimRight(parentProxyURL, "/") + "/providers/" + string(providerType))
 		proxyAPIKey := strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_KEY"))
@@ -490,21 +496,6 @@ func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model 
 	apiKey := strings.TrimSpace(provider.APIKey)
 	if apiKey == "" {
 		apiKey = s.apiKeyFromEnv(providerType)
-	}
-
-	// Special handling for Anthropic: OAuth or API key
-	if providerType == config.ProviderAnthropic {
-		if provider.OAuth != nil && provider.OAuth.AccessToken != "" {
-			// Use OAuth
-			tokens := &anthropic.OAuthTokens{
-				AccessToken:  provider.OAuth.AccessToken,
-				RefreshToken: provider.OAuth.RefreshToken,
-				ExpiresIn:    int(provider.OAuth.ExpiresAt - time.Now().Unix()),
-			}
-			// Note: scheduler doesn't have OAuth refresh handler, tokens must be valid
-			return anthropic.NewOAuthClient(tokens, modelName, nil), nil
-		}
-		// Fall through to API key check below
 	}
 
 	if def.RequiresKey && apiKey == "" {
@@ -520,15 +511,12 @@ func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model 
 		// Other OpenAI-compatible providers
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return lmstudio.NewClient(apiKey, modelName, baseURL), nil
-	case config.ProviderAnthropic:
-		// Use API key (OAuth case handled above)
-		return anthropic.NewClientWithBaseURL(apiKey, modelName, baseURL), nil
 	default:
 		return anthropic.NewClientWithBaseURL(apiKey, modelName, baseURL), nil
 	}
 }
 
-func (s *Scheduler) createFallbackChainClient(providerRef config.ProviderType) (llm.Client, error) {
+func (s *Scheduler) createFallbackChainClient(providerRef config.ProviderType, workDir string) (llm.Client, error) {
 	chain, err := s.fallbackNodesForProvider(providerRef)
 	if err != nil {
 		return nil, err
@@ -538,7 +526,7 @@ func (s *Scheduler) createFallbackChainClient(providerRef config.ProviderType) (
 	for _, node := range chain {
 		ptype := config.ProviderType(node.Provider)
 		model := strings.TrimSpace(node.Model)
-		client, err := s.createBaseLLMClient(ptype, model)
+		client, err := s.createBaseLLMClient(ptype, model, workDir)
 		if err != nil {
 			return nil, fmt.Errorf("fallback node %s/%s is not available: %w", node.Provider, model, err)
 		}
@@ -679,6 +667,9 @@ func (s *Scheduler) providerConfiguredForUse(providerType config.ProviderType) b
 	def := config.GetProviderDefinition(providerType)
 	if def == nil || providerType == config.ProviderFallback {
 		return false
+	}
+	if providerType == config.ProviderAnthropic {
+		return claudecli.IsAvailable()
 	}
 	provider := s.config.Providers[string(providerType)]
 	baseURL := strings.TrimSpace(provider.BaseURL)

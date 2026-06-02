@@ -152,9 +152,9 @@ func SupportedProviders() []ProviderDefinition {
 		},
 		{
 			Type:          ProviderAnthropic,
-			DisplayName:   "Anthropic Claude",
-			DefaultURL:    "https://api.anthropic.com/v1",
-			RequiresKey:   true,
+			DisplayName:   "Anthropic Claude (Claude CLI)",
+			DefaultURL:    "",
+			RequiresKey:   false,
 			DefaultModel:  "claude-opus-4-6",
 			ContextWindow: 200000,
 		},

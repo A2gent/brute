@@ -133,8 +133,9 @@ type SubAgent struct {
 type Project struct {
 	ID        string
 	Name      string
-	Folder    *string // Single optional folder path
-	IsSystem  bool    // System projects (Knowledge Base, Agent) cannot be deleted
+	Folder    *string           // Single optional folder path
+	Settings  map[string]string // Project-scoped settings, such as project-only system prompt blocks.
+	IsSystem  bool              // System projects (Knowledge Base, Agent) cannot be deleted
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

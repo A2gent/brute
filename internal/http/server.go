@@ -207,6 +207,11 @@ const thinkingFilePathSettingKey = "A2GENT_THINKING_FILE_PATH"
 const thinkingInstructionBlocksSettingKey = "A2GENT_THINKING_INSTRUCTION_BLOCKS"
 const agentInstructionBlocksSettingKey = "A2GENT_AGENT_INSTRUCTION_BLOCKS"
 const agentBaseSystemPromptSettingKey = "A2GENT_AGENT_BASE_SYSTEM_PROMPT"
+const projectInstructionBlocksSettingKey = "A2GENT_PROJECT_INSTRUCTION_BLOCKS"
+const projectBranchTaskDocDirectorySettingKey = "A2GENT_PROJECT_BRANCH_TASK_DOC_DIRECTORY"
+const projectBranchTaskDocModeSettingKey = "A2GENT_PROJECT_BRANCH_TASK_DOC_MODE"
+const legacyBranchTaskDocDirectorySettingPrefix = "A2GENT_PROJECT_BRANCH_TASK_DOC_DIRECTORY."
+const legacyBranchTaskDocModeSettingPrefix = "A2GENT_PROJECT_BRANCH_TASK_DOC_MODE."
 const builtInToolsInstructionBlockType = "builtin_tools"
 const integrationSkillsInstructionBlockType = "integration_skills"
 const externalMarkdownSkillsInstructionBlockType = "external_markdown_skills"
@@ -1056,22 +1061,25 @@ type UpdateSessionProviderRequest struct {
 }
 
 type ProjectResponse struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Folder    *string   `json:"folder,omitempty"`
-	IsSystem  bool      `json:"is_system"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string            `json:"id"`
+	Name      string            `json:"name"`
+	Folder    *string           `json:"folder,omitempty"`
+	Settings  map[string]string `json:"settings"`
+	IsSystem  bool              `json:"is_system"`
+	CreatedAt time.Time         `json:"created_at"`
+	UpdatedAt time.Time         `json:"updated_at"`
 }
 
 type CreateProjectRequest struct {
-	Name   string  `json:"name"`
-	Folder *string `json:"folder,omitempty"`
+	Name     string            `json:"name"`
+	Folder   *string           `json:"folder,omitempty"`
+	Settings map[string]string `json:"settings,omitempty"`
 }
 
 type UpdateProjectRequest struct {
-	Name   *string `json:"name,omitempty"`
-	Folder *string `json:"folder,omitempty"`
+	Name     *string            `json:"name,omitempty"`
+	Folder   *string            `json:"folder,omitempty"`
+	Settings *map[string]string `json:"settings,omitempty"`
 }
 
 type ProjectDatabaseResponse struct {
@@ -4092,6 +4100,9 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		}
 		project.Folder = normalizeFolder(req.Folder)
 	}
+	if req.Settings != nil {
+		project.Settings = normalizeProjectSettings(*req.Settings)
+	}
 	project.UpdatedAt = time.Now()
 
 	if err := s.store.SaveProject(project); err != nil {
@@ -4318,6 +4329,9 @@ func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, 
 	blocks := []configuredInstructionBlock{}
 	if rawBlocks != "" {
 		if err := json.Unmarshal([]byte(rawBlocks), &blocks); err != nil {
+	// WHY: project-specific blocks (AGENTS.md and branch docs) are now stored
+	// in project settings so global settings remain truly reusable across projects.
+	blocks = filterGlobalInstructionBlocks(blocks)
 			logging.Warn("Failed to parse %s: %v", agentInstructionBlocksSettingKey, err)
 			blocks = []configuredInstructionBlock{}
 		}
@@ -4435,83 +4449,84 @@ func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, 
 			}
 			blockSnapshot.EstimatedTokens = estimatedTokens
 			appendSections = append(appendSections, section)
-		case branchTaskDocInstructionBlockType:
-			section, sourcePath, estimatedTokens, resolveErr := s.resolveBranchTaskDocSection(sess, value, sectionNumber)
+			case "text":
+				if value == "" {
+					resolvedBlocks = append(resolvedBlocks, blockSnapshot)
+					continue
+				}
+				blockSnapshot.ResolvedContent = value
+				rendered := fmt.Sprintf("Instruction block %d (text):\n%s", sectionNumber, blockSnapshot.ResolvedContent)
+				blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
+				appendSections = append(appendSections, rendered)
+			case "file":
+				if value == "" {
+					resolvedBlocks = append(resolvedBlocks, blockSnapshot)
+					continue
+				}
+				blockSnapshot.SourcePath = value
+				content, readErr := s.readInstructionFileBlock(value)
+				if readErr != nil {
+					blockSnapshot.Error = readErr.Error()
+					rendered := fmt.Sprintf("Instruction block %d (file):\nUnable to load file %s: %s", sectionNumber, value, readErr.Error())
+					blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
+					appendSections = append(appendSections, rendered)
+				} else {
+					blockSnapshot.ResolvedContent = content
+					rendered := fmt.Sprintf("Instruction block %d (file):\n%s", sectionNumber, content)
+					blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
+					appendSections = append(appendSections, rendered)
+				}
+			default:
+				if value == "" {
+					resolvedBlocks = append(resolvedBlocks, blockSnapshot)
+					continue
+				}
+				blockSnapshot.Type = "text"
+				blockSnapshot.ResolvedContent = value
+				rendered := fmt.Sprintf("Instruction block %d (text):\n%s", sectionNumber, value)
+				blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
+				appendSections = append(appendSections, rendered)
+			}
+			resolvedBlocks = append(resolvedBlocks, blockSnapshot)
+		}
+
+		for _, block := range s.resolveProjectInstructionBlocks(sess) {
+			sectionNumber++
+			blockSnapshot := systemPromptBlockSnapshot{
+				Type:    strings.TrimSpace(block.Type),
+				Value:   strings.TrimSpace(block.Value),
+				Enabled: block.Enabled == nil || *block.Enabled,
+			}
+			if !blockSnapshot.Enabled {
+				resolvedBlocks = append(resolvedBlocks, blockSnapshot)
+				continue
+			}
+			section, sourcePath, estimatedTokens, resolveErr := s.resolveProjectInstructionBlockSection(sess, blockSnapshot.Type, blockSnapshot.Value, sectionNumber)
 			blockSnapshot.SourcePath = sourcePath
 			blockSnapshot.ResolvedContent = section
 			blockSnapshot.Error = resolveErr
-			if section == "" {
-				resolvedBlocks = append(resolvedBlocks, blockSnapshot)
-				continue
-			}
 			blockSnapshot.EstimatedTokens = estimatedTokens
-			appendSections = append(appendSections, section)
-		case "text":
-			if value == "" {
-				resolvedBlocks = append(resolvedBlocks, blockSnapshot)
-				continue
+			if section != "" {
+				appendSections = append(appendSections, section)
 			}
-			blockSnapshot.ResolvedContent = value
-			rendered := fmt.Sprintf("Instruction block %d (text):\n%s", sectionNumber, blockSnapshot.ResolvedContent)
-			blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
-			appendSections = append(appendSections, rendered)
-		case "file":
-			if value == "" {
-				resolvedBlocks = append(resolvedBlocks, blockSnapshot)
-				continue
-			}
-			blockSnapshot.SourcePath = value
-			content, readErr := s.readInstructionFileBlock(value)
-			if readErr != nil {
-				blockSnapshot.Error = readErr.Error()
-				rendered := fmt.Sprintf("Instruction block %d (file):\nUnable to load file %s: %s", sectionNumber, value, readErr.Error())
-				blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
-				appendSections = append(appendSections, rendered)
-			} else {
-				blockSnapshot.ResolvedContent = content
-				rendered := fmt.Sprintf("Instruction block %d (file):\n%s", sectionNumber, content)
-				blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
-				appendSections = append(appendSections, rendered)
-			}
-		case "project_agents_md":
-			section := s.resolveProjectAgentsMDSection(sess, settings, value, sectionNumber)
-			blockSnapshot.ResolvedContent = section
-			if section == "" {
-				blockSnapshot.Error = "No project/My Mind instruction file content found."
-				resolvedBlocks = append(resolvedBlocks, blockSnapshot)
-				continue
-			}
-			blockSnapshot.EstimatedTokens = estimateTokensApprox(section)
-			appendSections = append(appendSections, section)
-		default:
-			if value == "" {
-				resolvedBlocks = append(resolvedBlocks, blockSnapshot)
-				continue
-			}
-			blockSnapshot.Type = "text"
-			blockSnapshot.ResolvedContent = value
-			rendered := fmt.Sprintf("Instruction block %d (text):\n%s", sectionNumber, value)
-			blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
-			appendSections = append(appendSections, rendered)
+			resolvedBlocks = append(resolvedBlocks, blockSnapshot)
 		}
-		resolvedBlocks = append(resolvedBlocks, blockSnapshot)
-	}
-	if isThinkingSessionWithSettings(sess, settings) {
-		thinkingBlocks := resolveThinkingInstructionBlocksFromSettings(settings)
-		for _, block := range thinkingBlocks {
-			blockType := strings.TrimSpace(block.Type)
-			enabled := block.Enabled == nil || *block.Enabled
-			blockSnapshot := systemPromptBlockSnapshot{
-				Type:    "thinking_" + blockType,
-				Value:   strings.TrimSpace(block.Value),
-				Enabled: enabled,
-			}
-			sectionNumber++
-			if !enabled {
-				resolvedBlocks = append(resolvedBlocks, blockSnapshot)
-				continue
-			}
 
+		if isThinkingSessionWithSettings(sess, settings) {
+			thinkingBlocks := resolveThinkingInstructionBlocksFromSettings(settings)
+			for _, block := range thinkingBlocks {
+				blockType := strings.TrimSpace(block.Type)
+				enabled := block.Enabled == nil || *block.Enabled
+				blockSnapshot := systemPromptBlockSnapshot{
+					Type:    "thinking_" + blockType,
+					Value:   strings.TrimSpace(block.Value),
+					Enabled: enabled,
+				}
+				sectionNumber++
+				if !enabled {
+					resolvedBlocks = append(resolvedBlocks, blockSnapshot)
+					continue
+				}
 			value := blockSnapshot.Value
 			switch blockType {
 			case "text":
@@ -6001,6 +6016,7 @@ func projectToResponse(project *storage.Project) ProjectResponse {
 		ID:        project.ID,
 		Name:      project.Name,
 		Folder:    project.Folder,
+		Settings:  normalizeProjectSettings(project.Settings),
 		IsSystem:  project.IsSystem,
 		CreatedAt: project.CreatedAt,
 		UpdatedAt: project.UpdatedAt,
@@ -6016,6 +6032,21 @@ func normalizeFolder(folder *string) *string {
 		return nil
 	}
 	return &normalized
+}
+
+func normalizeProjectSettings(settings map[string]string) map[string]string {
+	if len(settings) == 0 {
+		return map[string]string{}
+	}
+	normalized := make(map[string]string, len(settings))
+	for key, value := range settings {
+		trimmedKey := strings.TrimSpace(key)
+		if trimmedKey == "" {
+			continue
+		}
+		normalized[trimmedKey] = strings.TrimSpace(value)
+	}
+	return normalized
 }
 
 func normalizeFolders(folders []string) []string {

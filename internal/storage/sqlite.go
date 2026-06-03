@@ -235,6 +235,8 @@ func (s *SQLiteStore) migrate() error {
 		`ALTER TABLE projects ADD COLUMN is_system INTEGER NOT NULL DEFAULT 0`,
 		// Migration: Change folders to folder (single folder, nullable)
 		`ALTER TABLE projects ADD COLUMN folder TEXT`,
+		// Project-scoped settings hold per-project prompt assembly options.
+		`ALTER TABLE projects ADD COLUMN settings TEXT NOT NULL DEFAULT '{}'`,
 		// Migration: Add task_progress column to sessions
 		`ALTER TABLE sessions ADD COLUMN task_progress TEXT`,
 		// Session templates are reusable prompt snippets for pre-filling new sessions.
@@ -283,6 +285,12 @@ func (s *SQLiteStore) migrate() error {
 		if err != nil && m[:5] != "ALTER" {
 			return fmt.Errorf("migration failed: %w", err)
 		}
+	}
+	// Move legacy global project prompt options into project rows once the
+	// settings column exists. The source app settings are left intact so older
+	// builds can still read them if users roll back.
+	if err := s.migrateProjectPromptSettingsFromAppSettings(); err != nil {
+		return fmt.Errorf("failed to migrate project prompt settings: %w", err)
 	}
 
 	// Seed system projects (idempotent - uses INSERT OR IGNORE)
@@ -416,6 +424,190 @@ func (s *SQLiteStore) ensureSoulProjectDefaults() error {
 	if strings.Contains(content, "# A2gent Soul defaults") {
 		return nil
 	}
+
+const (
+	projectInstructionBlocksSettingKey         = "A2GENT_PROJECT_INSTRUCTION_BLOCKS"
+	legacyAgentInstructionBlocksSettingKey     = "A2GENT_AGENT_INSTRUCTION_BLOCKS"
+	legacyBranchTaskDocDirectorySettingPrefix = "A2GENT_PROJECT_BRANCH_TASK_DOC_DIRECTORY."
+	legacyBranchTaskDocModeSettingPrefix      = "A2GENT_PROJECT_BRANCH_TASK_DOC_MODE."
+	projectBranchTaskDocDirectorySettingKey   = "A2GENT_PROJECT_BRANCH_TASK_DOC_DIRECTORY"
+	projectBranchTaskDocModeSettingKey        = "A2GENT_PROJECT_BRANCH_TASK_DOC_MODE"
+)
+
+type storedInstructionBlock struct {
+	Type    string `json:"type"`
+	Value   string `json:"value"`
+	Enabled *bool  `json:"enabled,omitempty"`
+}
+
+func normalizeProjectSettings(settings map[string]string) map[string]string {
+	if len(settings) == 0 {
+		return map[string]string{}
+	}
+	normalized := make(map[string]string, len(settings))
+	for key, value := range settings {
+		trimmedKey := strings.TrimSpace(key)
+		if trimmedKey == "" {
+			continue
+		}
+		normalized[trimmedKey] = strings.TrimSpace(value)
+	}
+	return normalized
+}
+
+func marshalProjectSettings(settings map[string]string) (string, error) {
+	data, err := json.Marshal(normalizeProjectSettings(settings))
+	if err != nil {
+		return "", fmt.Errorf("failed to encode project settings: %w", err)
+	}
+	return string(data), nil
+}
+
+func unmarshalProjectSettings(raw string) map[string]string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return map[string]string{}
+	}
+	settings := map[string]string{}
+	if err := json.Unmarshal([]byte(trimmed), &settings); err != nil {
+		return map[string]string{}
+	}
+	return normalizeProjectSettings(settings)
+}
+
+func extractLegacyProjectInstructionBlocks(raw string) []storedInstructionBlock {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+	var blocks []storedInstructionBlock
+	if err := json.Unmarshal([]byte(trimmed), &blocks); err != nil {
+		return nil
+	}
+	projectBlocks := make([]storedInstructionBlock, 0, len(blocks))
+	for _, block := range blocks {
+		blockType := strings.TrimSpace(block.Type)
+		if blockType != "project_agents_md" && blockType != "branch_task_doc" {
+			continue
+		}
+		projectBlocks = append(projectBlocks, storedInstructionBlock{
+			Type:    blockType,
+			Value:   strings.TrimSpace(block.Value),
+			Enabled: block.Enabled,
+		})
+	}
+	return projectBlocks
+}
+
+func parseStoredInstructionBlocks(raw string) []storedInstructionBlock {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return []storedInstructionBlock{}
+	}
+	var blocks []storedInstructionBlock
+	if err := json.Unmarshal([]byte(trimmed), &blocks); err != nil {
+		return []storedInstructionBlock{}
+	}
+	return blocks
+}
+
+func appendMissingInstructionBlocks(existing []storedInstructionBlock, additions []storedInstructionBlock) ([]storedInstructionBlock, bool) {
+	if len(additions) == 0 {
+		return existing, false
+	}
+	seen := make(map[string]struct{}, len(existing))
+	for _, block := range existing {
+		seen[strings.TrimSpace(block.Type)+"\x00"+strings.TrimSpace(block.Value)] = struct{}{}
+	}
+	changed := false
+	for _, block := range additions {
+		key := strings.TrimSpace(block.Type) + "\x00" + strings.TrimSpace(block.Value)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		existing = append(existing, block)
+		changed = true
+	}
+	return existing, changed
+}
+
+func serializeStoredInstructionBlocks(blocks []storedInstructionBlock) string {
+	if len(blocks) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(blocks)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func (s *SQLiteStore) migrateProjectPromptSettingsFromAppSettings() error {
+	settings, err := s.GetSettings()
+	if err != nil {
+		return err
+	}
+	legacyBlocks := extractLegacyProjectInstructionBlocks(settings[legacyAgentInstructionBlocksSettingKey])
+	hasLegacyBranchSettings := false
+	for key := range settings {
+		if strings.HasPrefix(key, legacyBranchTaskDocDirectorySettingPrefix) || strings.HasPrefix(key, legacyBranchTaskDocModeSettingPrefix) {
+			hasLegacyBranchSettings = true
+			break
+		}
+	}
+	if len(legacyBlocks) == 0 && !hasLegacyBranchSettings {
+		return nil
+	}
+
+	rows, err := s.db.Query(`SELECT id, settings FROM projects`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var projectID string
+		var rawSettings sql.NullString
+		if err := rows.Scan(&projectID, &rawSettings); err != nil {
+			return err
+		}
+		projectSettings := unmarshalProjectSettings(rawSettings.String)
+		changed := false
+
+		legacyDirectory := strings.TrimSpace(settings[legacyBranchTaskDocDirectorySettingPrefix+projectID])
+		if legacyDirectory != "" && projectSettings[projectBranchTaskDocDirectorySettingKey] == "" {
+			projectSettings[projectBranchTaskDocDirectorySettingKey] = legacyDirectory
+			mode := strings.TrimSpace(settings[legacyBranchTaskDocModeSettingPrefix+projectID])
+			if mode != "path" {
+				mode = "content"
+			}
+			projectSettings[projectBranchTaskDocModeSettingKey] = mode
+			changed = true
+		}
+
+		if len(legacyBlocks) > 0 {
+			currentBlocks := parseStoredInstructionBlocks(projectSettings[projectInstructionBlocksSettingKey])
+			mergedBlocks, blocksChanged := appendMissingInstructionBlocks(currentBlocks, legacyBlocks)
+			if blocksChanged {
+				projectSettings[projectInstructionBlocksSettingKey] = serializeStoredInstructionBlocks(mergedBlocks)
+				changed = true
+			}
+		}
+
+		if !changed {
+			continue
+		}
+		encoded, err := marshalProjectSettings(projectSettings)
+		if err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(`UPDATE projects SET settings = ?, updated_at = ? WHERE id = ?`, encoded, time.Now(), projectID); err != nil {
+			return fmt.Errorf("failed to migrate project %s prompt settings: %w", projectID, err)
+		}
+	}
+	return rows.Err()
+}
 
 	if content != "" && !strings.HasSuffix(content, "\n") {
 		content += "\n"
@@ -791,15 +983,21 @@ func (s *SQLiteStore) DeleteSession(id string) error {
 
 // SaveProject saves a project to the database.
 func (s *SQLiteStore) SaveProject(project *Project) error {
-	_, err := s.db.Exec(`
-		INSERT INTO projects (id, name, folder, is_system, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+	settingsJSON, err := marshalProjectSettings(project.Settings)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.Exec(`
+		INSERT INTO projects (id, name, folder, settings, is_system, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			folder = excluded.folder,
+			settings = excluded.settings,
 			is_system = excluded.is_system,
 			updated_at = excluded.updated_at
-	`, project.ID, project.Name, project.Folder, project.IsSystem, project.CreatedAt, project.UpdatedAt)
+	`, project.ID, project.Name, project.Folder, settingsJSON, project.IsSystem, project.CreatedAt, project.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to save project: %w", err)
 	}
@@ -811,12 +1009,13 @@ func (s *SQLiteStore) SaveProject(project *Project) error {
 func (s *SQLiteStore) GetProject(id string) (*Project, error) {
 	var project Project
 	var folder sql.NullString
+	var settingsRaw sql.NullString
 
 	err := s.db.QueryRow(`
-		SELECT id, name, folder, is_system, created_at, updated_at
+		SELECT id, name, folder, settings, is_system, created_at, updated_at
 		FROM projects
 		WHERE id = ?
-	`, id).Scan(&project.ID, &project.Name, &folder, &project.IsSystem, &project.CreatedAt, &project.UpdatedAt)
+	`, id).Scan(&project.ID, &project.Name, &folder, &settingsRaw, &project.IsSystem, &project.CreatedAt, &project.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("project not found: %s", id)
 	}
@@ -827,6 +1026,7 @@ func (s *SQLiteStore) GetProject(id string) (*Project, error) {
 	if folder.Valid {
 		project.Folder = &folder.String
 	}
+	project.Settings = unmarshalProjectSettings(settingsRaw.String)
 
 	return &project, nil
 }
@@ -834,7 +1034,7 @@ func (s *SQLiteStore) GetProject(id string) (*Project, error) {
 // ListProjects returns all projects ordered by name.
 func (s *SQLiteStore) ListProjects() ([]*Project, error) {
 	rows, err := s.db.Query(`
-		SELECT id, name, folder, is_system, created_at, updated_at
+		SELECT id, name, folder, settings, is_system, created_at, updated_at
 		FROM projects
 		ORDER BY name COLLATE NOCASE ASC
 	`)
@@ -847,13 +1047,15 @@ func (s *SQLiteStore) ListProjects() ([]*Project, error) {
 	for rows.Next() {
 		var project Project
 		var folder sql.NullString
-		if err := rows.Scan(&project.ID, &project.Name, &folder, &project.IsSystem, &project.CreatedAt, &project.UpdatedAt); err != nil {
+		var settingsRaw sql.NullString
+		if err := rows.Scan(&project.ID, &project.Name, &folder, &settingsRaw, &project.IsSystem, &project.CreatedAt, &project.UpdatedAt); err != nil {
 			return nil, err
 		}
 
 		if folder.Valid {
 			project.Folder = &folder.String
 		}
+		project.Settings = unmarshalProjectSettings(settingsRaw.String)
 
 		projects = append(projects, &project)
 	}

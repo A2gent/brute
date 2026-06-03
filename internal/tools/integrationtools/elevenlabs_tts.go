@@ -200,7 +200,18 @@ func (t *ElevenLabsTTSTool) Execute(ctx context.Context, params json.RawMessage)
 	}
 
 	output := fmt.Sprintf("Generated ElevenLabs speech clip.\nA2_AUDIO_CLIP_ID:%s\nText:%s", clipID, text)
-	return &tools.Result{Success: true, Output: output}, nil
+	return &tools.Result{
+		Success: true,
+		Output:  output,
+		Metadata: map[string]interface{}{
+			"audio_clip": map[string]interface{}{
+				"clip_id":        clipID,
+				"content_type":   contentType,
+				"auto_play":      true,
+				"generated_with": "elevenlabs_tts",
+			},
+		},
+	}, nil
 }
 
 func (t *ElevenLabsTTSTool) selectIntegration(integrationID string, integrationName string) (*storage.Integration, error) {

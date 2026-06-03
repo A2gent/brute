@@ -148,7 +148,9 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 
 	// Initialize tool manager
 	toolManager := tools.NewManager(cfg.WorkDir)
-	clipStore := speechcache.New(0)
+	// Persist speech clips so Telegram/TTS audio remains playable from session history
+	// after the short in-memory cache TTL or a server restart.
+	clipStore := speechcache.NewPersistent(0, filepath.Join(cfg.DataPath, "speech-clips"))
 	integrationtools.Register(toolManager, store, clipStore, sessionManager)
 
 	// Start HTTP server in background
@@ -315,7 +317,9 @@ func runAgent(cmd *cobra.Command, args []string) error {
 
 	// Initialize tool manager
 	toolManager := tools.NewManager(cfg.WorkDir)
-	clipStore := speechcache.New(0)
+	// Persist speech clips so Telegram/TTS audio remains playable from session history
+	// after the short in-memory cache TTL or a server restart.
+	clipStore := speechcache.NewPersistent(0, filepath.Join(cfg.DataPath, "speech-clips"))
 	integrationtools.Register(toolManager, store, clipStore, sessionManager)
 	// Create or resume session
 	var sess *session.Session
@@ -430,7 +434,9 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	// Initialize tool manager
 	toolManager := tools.NewManager(cfg.WorkDir)
-	clipStore := speechcache.New(0)
+	// Persist speech clips so Telegram/TTS audio remains playable from session history
+	// after the short in-memory cache TTL or a server restart.
+	clipStore := speechcache.NewPersistent(0, filepath.Join(cfg.DataPath, "speech-clips"))
 	integrationtools.Register(toolManager, store, clipStore, sessionManager)
 
 	// Create HTTP server

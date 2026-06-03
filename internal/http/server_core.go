@@ -56,7 +56,17 @@ func NewServer(
 	port int,
 ) *Server {
 	if speechClips == nil {
-		speechClips = speechcache.New(0)
+		diskDir := ""
+		if cfg != nil && strings.TrimSpace(cfg.DataPath) != "" {
+			diskDir = filepath.Join(cfg.DataPath, "speech-clips")
+		}
+		if diskDir != "" {
+			// Use disk-backed clips when the server owns the store so audio controls in
+			// old session messages can recover clips after memory TTL/restart.
+			speechClips = speechcache.NewPersistent(0, diskDir)
+		} else {
+			speechClips = speechcache.New(0)
+		}
 	}
 	s := &Server{
 		config:         cfg,

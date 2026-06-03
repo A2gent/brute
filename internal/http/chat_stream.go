@@ -1,0 +1,299 @@
+// chat_stream.go keeps streaming chat behavior isolated from the former monolithic server.go.
+package http
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/A2gent/brute/internal/agent"
+	"github.com/A2gent/brute/internal/logging"
+	"github.com/A2gent/brute/internal/session"
+	"github.com/go-chi/chi/v5"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+)
+
+func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
+	sessionID := chi.URLParam(r, "sessionID")
+
+	var req ChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	images, err := normalizeIncomingImages(req.Images)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid images payload: "+err.Error())
+		return
+	}
+
+	if strings.TrimSpace(req.Message) == "" && len(images) == 0 {
+		s.errorResponse(w, http.StatusBadRequest, "Message or images are required")
+		return
+	}
+
+	sess, err := s.sessionManager.Get(sessionID)
+	if err != nil {
+		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
+		return
+	}
+	defer s.queueTelegramSessionMessageSync(sess.ID)
+
+	lastUserMsg := ""
+	for i := len(sess.Messages) - 1; i >= 0; i-- {
+		if sess.Messages[i].Role == "user" {
+			lastUserMsg = sess.Messages[i].Content
+			break
+		}
+	}
+	if lastUserMsg != req.Message || !sameMessageImages(lastUserMessageImages(sess), images) {
+		sess.AddUserMessageWithImages(req.Message, images)
+	}
+	sess.SetStatus(session.StatusRunning)
+	if err := s.sessionManager.Save(sess); err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to update session: "+err.Error())
+		return
+	}
+
+	runCtx, cancelRun := context.WithCancel(s.sessionRunParentContext())
+	runID := s.registerActiveSessionRun(sessionID, cancelRun)
+	defer func() {
+		cancelRun()
+		s.unregisterActiveSessionRun(sessionID, runID)
+	}()
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		s.errorResponse(w, http.StatusInternalServerError, "Streaming is not supported by the server")
+		return
+	}
+
+	var streamWriteMu sync.Mutex
+	streamWritable := true
+	writeEvent := func(event ChatStreamEvent) bool {
+		streamWriteMu.Lock()
+		defer streamWriteMu.Unlock()
+		if !streamWritable {
+			return false
+		}
+		if err := json.NewEncoder(w).Encode(event); err != nil {
+			streamWritable = false
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+
+	if !writeEvent(ChatStreamEvent{Type: "status", Status: string(sess.Status)}) {
+		return
+	}
+
+	heartbeatDone := make(chan struct{})
+	defer close(heartbeatDone)
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if !writeEvent(ChatStreamEvent{Type: "heartbeat"}) {
+					return
+				}
+			case <-heartbeatDone:
+				return
+			}
+		}
+	}()
+
+	if s.hasRunnableWorkflow(sess) {
+		content, usage, runErr := s.runWorkflowSession(runCtx, sess, req.Message, writeEvent)
+		if runErr != nil {
+			if isCancellationError(runErr) {
+				sess.SetStatus(session.StatusPaused)
+				_ = s.sessionManager.Save(sess)
+				_ = writeEvent(ChatStreamEvent{
+					Type:   "error",
+					Error:  "Request was canceled before completion",
+					Status: string(sess.Status),
+				})
+				return
+			}
+			sess.AddAssistantMessage(fmt.Sprintf("Workflow failed: %s", runErr.Error()), nil)
+			sess.SetStatus(session.StatusFailed)
+			_ = s.sessionManager.Save(sess)
+			_ = writeEvent(ChatStreamEvent{
+				Type:   "error",
+				Error:  "Workflow error: " + runErr.Error(),
+				Status: string(sess.Status),
+			})
+			return
+		}
+		sess.AddAssistantMessage(content, nil)
+		sess.SetStatus(workflowSessionStatus(sess))
+		if saveErr := s.sessionManager.Save(sess); saveErr != nil {
+			_ = writeEvent(ChatStreamEvent{
+				Type:   "error",
+				Error:  "Failed to save workflow response: " + saveErr.Error(),
+				Status: string(sess.Status),
+			})
+			return
+		}
+		_ = writeEvent(ChatStreamEvent{
+			Type:     "done",
+			Content:  content,
+			Messages: s.messagesToResponse(sess.Messages),
+			Status:   string(sess.Status),
+			Usage: &UsageResponse{
+				InputTokens:  usage.InputTokens,
+				OutputTokens: usage.OutputTokens,
+			},
+		})
+		return
+	}
+
+	providerType := s.resolveSessionProviderType(sess)
+	model := s.resolveSessionModel(sess, providerType)
+	routingPrompt := messageForRouting(req.Message, len(images))
+	target, err := s.resolveExecutionTarget(runCtx, providerType, model, routingPrompt, sess)
+	if err != nil {
+		sess.AddAssistantMessage(fmt.Sprintf("Unable to start request: %s", err.Error()), nil)
+		sess.SetStatus(session.StatusFailed)
+		s.sessionManager.Save(sess)
+		_ = writeEvent(ChatStreamEvent{
+			Type:   "error",
+			Error:  "Provider configuration error: " + err.Error(),
+			Status: string(sess.Status),
+		})
+		return
+	}
+	if setSessionRoutedProviderAndModel(sess, providerType, target.ProviderType, target.Model) {
+		if err := s.sessionManager.Save(sess); err != nil {
+			logging.Warn("Failed to persist session routed target metadata: %v", err)
+		}
+	}
+
+	agentConfig := agent.Config{
+		Name:                sess.AgentID,
+		Provider:            string(target.ProviderType),
+		Model:               target.Model,
+		SystemPrompt:        s.buildSystemPromptForSession(sess),
+		MaxSteps:            s.config.MaxSteps,
+		Temperature:         s.config.Temperature,
+		ContextWindow:       target.ContextWindow,
+		UsePreviousResponse: target.StatefulResponses,
+	}
+	ag := agent.New(agentConfig, target.Client, s.toolManagerForSession(sess), s.sessionManager)
+
+	content, usage, err := ag.RunWithEvents(runCtx, sess, req.Message, func(ev agent.Event) {
+		switch ev.Type {
+		case agent.EventAssistantDelta:
+			_ = writeEvent(ChatStreamEvent{
+				Type:  "assistant_delta",
+				Delta: ev.Delta,
+			})
+		case agent.EventToolExecuting:
+			toolCalls := make([]StreamToolCallEvent, len(ev.ToolCalls))
+			for i, tc := range ev.ToolCalls {
+				toolCalls[i] = StreamToolCallEvent{
+					ID:               tc.ID,
+					Name:             tc.Name,
+					Input:            json.RawMessage(tc.Input),
+					ThoughtSignature: tc.ThoughtSignature,
+				}
+			}
+			_ = writeEvent(ChatStreamEvent{
+				Type:      "tool_executing",
+				Step:      ev.Step,
+				Message:   streamLastMessageResponse(s, sess),
+				ToolCalls: toolCalls,
+			})
+		case agent.EventToolCompleted:
+			event := ChatStreamEvent{
+				Type:   "tool_completed",
+				Step:   ev.Step,
+				Status: string(sess.Status),
+			}
+			if len(sess.Messages) > 0 {
+				msg := s.messageToResponse(sess.Messages[len(sess.Messages)-1])
+				event.Message = &msg
+			}
+			_ = writeEvent(event)
+		case agent.EventStepCompleted:
+			_ = writeEvent(ChatStreamEvent{
+				Type: "step_completed",
+				Step: ev.Step,
+			})
+		case agent.EventProviderTrace:
+			if ev.Provider == nil {
+				return
+			}
+			s.applyProviderTraceToSession(sess, target.ProviderType, ev.Provider)
+			_ = writeEvent(ChatStreamEvent{
+				Type: "provider_trace",
+				Step: ev.Step,
+				Provider: &StreamProviderEvent{
+					Provider:      ev.Provider.Provider,
+					Model:         ev.Provider.Model,
+					Attempt:       ev.Provider.Attempt,
+					MaxAttempts:   ev.Provider.MaxAttempts,
+					NodeIndex:     ev.Provider.NodeIndex,
+					TotalNodes:    ev.Provider.TotalNodes,
+					Phase:         ev.Provider.Phase,
+					Reason:        ev.Provider.Reason,
+					FallbackTo:    ev.Provider.FallbackTo,
+					FallbackModel: ev.Provider.FallbackModel,
+					Recovered:     ev.Provider.Recovered,
+				},
+			})
+		}
+	})
+
+	if err != nil {
+		if isCancellationError(err) {
+			sess.SetStatus(session.StatusPaused)
+			s.sessionManager.Save(sess)
+			_ = writeEvent(ChatStreamEvent{
+				Type:   "error",
+				Error:  "Request was canceled before completion.",
+				Status: string(sess.Status),
+			})
+			return
+		}
+		adaptedErr := s.adaptProviderErrorMessage(target.ProviderType, err)
+		sess.AddAssistantMessage(fmt.Sprintf("Request failed: %s", adaptedErr.Error()), nil)
+		sess.SetStatus(session.StatusFailed)
+		s.sessionManager.Save(sess)
+		_ = writeEvent(ChatStreamEvent{
+			Type:   "error",
+			Error:  "Agent error: " + adaptedErr.Error(),
+			Status: string(sess.Status),
+		})
+		return
+	}
+
+	_ = writeEvent(ChatStreamEvent{
+		Type:     "done",
+		Content:  content,
+		Messages: s.messagesToResponse(sess.Messages),
+		Status:   string(sess.Status),
+		Usage: &UsageResponse{
+			InputTokens:  usage.InputTokens,
+			OutputTokens: usage.OutputTokens,
+		},
+	})
+}
+
+func streamLastMessageResponse(s *Server, sess *session.Session) *MessageResponse {
+	if sess == nil || len(sess.Messages) == 0 {
+		return nil
+	}
+	msg := s.messageToResponse(sess.Messages[len(sess.Messages)-1])
+	return &msg
+}

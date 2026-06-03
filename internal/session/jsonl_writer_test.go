@@ -82,7 +82,17 @@ func (m *memStore) SaveSubAgent(*storage.SubAgent) error            { return nil
 func (m *memStore) GetSubAgent(string) (*storage.SubAgent, error)   { return nil, nil }
 func (m *memStore) ListSubAgents() ([]*storage.SubAgent, error)     { return nil, nil }
 func (m *memStore) DeleteSubAgent(string) error                     { return nil }
-func (m *memStore) Close() error                                    { return nil }
+func (m *memStore) SaveProjectDatabase(*storage.ProjectDatabase) error {
+	return nil
+}
+func (m *memStore) GetProjectDatabase(string) (*storage.ProjectDatabase, error) {
+	return nil, nil
+}
+func (m *memStore) ListProjectDatabases(string) ([]*storage.ProjectDatabase, error) {
+	return nil, nil
+}
+func (m *memStore) DeleteProjectDatabase(string) error { return nil }
+func (m *memStore) Close() error                       { return nil }
 
 // --- helpers ---
 

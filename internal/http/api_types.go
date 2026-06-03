@@ -1,0 +1,485 @@
+// api_types.go keeps HTTP request/response DTOs separate from handler logic while preserving behavior.
+package http
+
+import (
+	"encoding/json"
+	"github.com/A2gent/brute/internal/config"
+	"time"
+)
+
+// CreateSessionRequest represents a request to create a new session
+type CreateSessionRequest struct {
+	AgentID    string                 `json:"agent_id"`
+	Task       string                 `json:"task,omitempty"`
+	Images     []MessageImagePayload  `json:"images,omitempty"`
+	ParentID   string                 `json:"parent_id,omitempty"`
+	LinkType   string                 `json:"link_type,omitempty"`
+	Provider   string                 `json:"provider,omitempty"`
+	Model      string                 `json:"model,omitempty"`
+	ProjectID  string                 `json:"project_id,omitempty"`
+	SubAgentID string                 `json:"sub_agent_id,omitempty"` // Optional sub-agent to use for this session
+	Queued     bool                   `json:"queued,omitempty"`       // If true, create session without starting it
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// CreateSessionResponse represents a response after creating a session
+type CreateSessionResponse struct {
+	ID        string    `json:"id"`
+	AgentID   string    `json:"agent_id"`
+	ParentID  string    `json:"parent_id,omitempty"`
+	LinkType  string    `json:"link_type,omitempty"`
+	ProjectID string    `json:"project_id,omitempty"`
+	Provider  string    `json:"provider,omitempty"`
+	Model     string    `json:"model,omitempty"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// SessionResponse represents a session with its messages
+type SessionResponse struct {
+	ID                   string                       `json:"id"`
+	AgentID              string                       `json:"agent_id"`
+	ParentID             string                       `json:"parent_id,omitempty"`
+	LinkType             string                       `json:"link_type,omitempty"`
+	ProjectID            string                       `json:"project_id,omitempty"`
+	Provider             string                       `json:"provider,omitempty"`
+	Model                string                       `json:"model,omitempty"`
+	RoutedProvider       string                       `json:"routed_provider,omitempty"`
+	RoutedModel          string                       `json:"routed_model,omitempty"`
+	Title                string                       `json:"title"`
+	Status               string                       `json:"status"`
+	TotalTokens          int                          `json:"total_tokens"`
+	InputTokens          int                          `json:"input_tokens"`
+	OutputTokens         int                          `json:"output_tokens"`
+	CachedInputTokens    int                          `json:"cached_input_tokens,omitempty"`
+	ReasoningTokens      int                          `json:"reasoning_tokens,omitempty"`
+	CurrentContextTokens int                          `json:"current_context_tokens"`
+	ModelContextWindow   int                          `json:"model_context_window"`
+	TaskProgress         string                       `json:"task_progress,omitempty"`
+	ProviderFailures     []ProviderFailurePayload     `json:"provider_failures,omitempty"`
+	CreatedAt            time.Time                    `json:"created_at"`
+	UpdatedAt            time.Time                    `json:"updated_at"`
+	Messages             []MessageResponse            `json:"messages"`
+	SystemPromptSnapshot *SystemPromptSnapshotPayload `json:"system_prompt_snapshot,omitempty"`
+	Metadata             map[string]interface{}       `json:"metadata,omitempty"`
+	// A2A outbound fields — set for sessions used to contact remote agents.
+	A2AOutbound        bool   `json:"a2a_outbound,omitempty"`
+	A2ATargetAgentID   string `json:"a2a_target_agent_id,omitempty"`
+	A2ATargetAgentName string `json:"a2a_target_agent_name,omitempty"`
+}
+
+type ProviderFailurePayload struct {
+	Timestamp     time.Time `json:"timestamp"`
+	Provider      string    `json:"provider,omitempty"`
+	Model         string    `json:"model,omitempty"`
+	Attempt       int       `json:"attempt,omitempty"`
+	MaxAttempts   int       `json:"max_attempts,omitempty"`
+	NodeIndex     int       `json:"node_index,omitempty"`
+	TotalNodes    int       `json:"total_nodes,omitempty"`
+	Phase         string    `json:"phase,omitempty"`
+	Reason        string    `json:"reason,omitempty"`
+	FallbackTo    string    `json:"fallback_to,omitempty"`
+	FallbackModel string    `json:"fallback_model,omitempty"`
+}
+
+type SystemPromptSnapshotPayload struct {
+	BasePrompt        string                             `json:"base_prompt"`
+	CombinedPrompt    string                             `json:"combined_prompt"`
+	BaseEstimated     int                                `json:"base_estimated_tokens"`
+	CombinedEstimated int                                `json:"combined_estimated_tokens"`
+	Blocks            []SystemPromptBlockSnapshotPayload `json:"blocks"`
+}
+
+type SystemPromptBlockSnapshotPayload struct {
+	Type            string `json:"type"`
+	Value           string `json:"value"`
+	Enabled         bool   `json:"enabled"`
+	ResolvedContent string `json:"resolved_content,omitempty"`
+	SourcePath      string `json:"source_path,omitempty"`
+	Error           string `json:"error,omitempty"`
+	EstimatedTokens int    `json:"estimated_tokens"`
+}
+
+// MessageResponse represents a message in a session
+type MessageResponse struct {
+	Role         string                 `json:"role"`
+	Content      string                 `json:"content"`
+	Images       []MessageImagePayload  `json:"images,omitempty"`
+	ToolCalls    []ToolCallResponse     `json:"tool_calls,omitempty"`
+	ToolResults  []ToolResultResponse   `json:"tool_results,omitempty"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	Timestamp    time.Time              `json:"timestamp"`
+	InputTokens  int                    `json:"input_tokens,omitempty"`
+	OutputTokens int                    `json:"output_tokens,omitempty"`
+}
+
+type MessageImagePayload struct {
+	Name       string `json:"name,omitempty"`
+	MediaType  string `json:"media_type,omitempty"`
+	DataBase64 string `json:"data_base64,omitempty"`
+	URL        string `json:"url,omitempty"`
+}
+
+// ToolCallResponse represents a tool call
+type ToolCallResponse struct {
+	ID               string          `json:"id"`
+	Name             string          `json:"name"`
+	Input            json.RawMessage `json:"input"`
+	ThoughtSignature string          `json:"thought_signature,omitempty"`
+	InputTokens      int             `json:"input_tokens,omitempty"`
+	OutputTokens     int             `json:"output_tokens,omitempty"`
+}
+
+// ToolResultResponse represents a tool result
+type ToolResultResponse struct {
+	ToolCallID string                 `json:"tool_call_id"`
+	Content    string                 `json:"content"`
+	IsError    bool                   `json:"is_error"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+	Name       string                 `json:"name,omitempty"` // Tool name (required by Gemini)
+	DurationMs int64                  `json:"duration_ms"`
+}
+
+// ChatRequest represents a chat message request
+type ChatRequest struct {
+	Message string                `json:"message"`
+	Images  []MessageImagePayload `json:"images,omitempty"`
+}
+
+// ChatResponse represents a chat response
+type ChatResponse struct {
+	Content  string            `json:"content"`
+	Messages []MessageResponse `json:"messages"`
+	Status   string            `json:"status"`
+	Usage    UsageResponse     `json:"usage"`
+}
+
+type ChatStreamEvent struct {
+	Type                    string                 `json:"type"`
+	Delta                   string                 `json:"delta,omitempty"`
+	Content                 string                 `json:"content,omitempty"`
+	Message                 *MessageResponse       `json:"message,omitempty"`
+	Messages                []MessageResponse      `json:"messages,omitempty"`
+	Status                  string                 `json:"status,omitempty"`
+	Usage                   *UsageResponse         `json:"usage,omitempty"`
+	Error                   string                 `json:"error,omitempty"`
+	ToolCalls               []StreamToolCallEvent  `json:"tool_calls,omitempty"`
+	ToolResult              *StreamToolResultEvent `json:"tool_result,omitempty"`
+	Provider                *StreamProviderEvent   `json:"provider,omitempty"`
+	Workflow                interface{}            `json:"workflow,omitempty"`
+	WorkflowTranscriptEntry interface{}            `json:"workflow_transcript_entry,omitempty"`
+	Step                    int                    `json:"step,omitempty"`
+}
+
+// StreamToolCallEvent represents a tool call in a stream event.
+type StreamToolCallEvent struct {
+	ID               string          `json:"id"`
+	Name             string          `json:"name"`
+	Input            json.RawMessage `json:"input"`
+	ThoughtSignature string          `json:"thought_signature,omitempty"`
+}
+
+// StreamToolResultEvent represents a tool result in a stream event.
+type StreamToolResultEvent struct {
+	ToolCallID string `json:"tool_call_id"`
+	Name       string `json:"name"`
+	Content    string `json:"content"`
+	IsError    bool   `json:"is_error"`
+}
+
+type StreamProviderEvent struct {
+	Provider      string `json:"provider,omitempty"`
+	Model         string `json:"model,omitempty"`
+	Attempt       int    `json:"attempt,omitempty"`
+	MaxAttempts   int    `json:"max_attempts,omitempty"`
+	NodeIndex     int    `json:"node_index,omitempty"`
+	TotalNodes    int    `json:"total_nodes,omitempty"`
+	Phase         string `json:"phase,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	FallbackTo    string `json:"fallback_to,omitempty"`
+	FallbackModel string `json:"fallback_model,omitempty"`
+	Recovered     bool   `json:"recovered,omitempty"`
+}
+
+// UsageResponse represents token usage
+type UsageResponse struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+}
+
+// SessionListItem represents a session in the list
+type SessionListItem struct {
+	ID                 string                 `json:"id"`
+	AgentID            string                 `json:"agent_id"`
+	ParentID           string                 `json:"parent_id,omitempty"`
+	LinkType           string                 `json:"link_type,omitempty"`
+	ProjectID          string                 `json:"project_id,omitempty"`
+	Provider           string                 `json:"provider,omitempty"`
+	Model              string                 `json:"model,omitempty"`
+	RoutedProvider     string                 `json:"routed_provider,omitempty"`
+	RoutedModel        string                 `json:"routed_model,omitempty"`
+	Title              string                 `json:"title"`
+	Status             string                 `json:"status"`
+	TotalTokens        int                    `json:"total_tokens"`
+	InputTokens        int                    `json:"input_tokens"`
+	OutputTokens       int                    `json:"output_tokens"`
+	RunDurationSeconds int64                  `json:"run_duration_seconds"`
+	TaskProgress       string                 `json:"task_progress,omitempty"`
+	CreatedAt          time.Time              `json:"created_at"`
+	UpdatedAt          time.Time              `json:"updated_at"`
+	Metadata           map[string]interface{} `json:"metadata,omitempty"`
+	// A2A inbound fields — only set for sessions created from A2A tunnel requests.
+	A2AInbound         bool   `json:"a2a_inbound,omitempty"`
+	A2ASourceAgentID   string `json:"a2a_source_agent_id,omitempty"`
+	A2ASourceAgentName string `json:"a2a_source_agent_name,omitempty"`
+}
+
+// SubAgentRequest represents a request to create or update a sub-agent.
+type SubAgentRequest struct {
+	Name              string   `json:"name"`
+	ProjectID         string   `json:"project_id,omitempty"`
+	Provider          string   `json:"provider"`
+	Model             string   `json:"model,omitempty"`
+	EnabledTools      []string `json:"enabled_tools,omitempty"`
+	InstructionBlocks string   `json:"instruction_blocks,omitempty"`
+}
+
+// SubAgentResponse represents a sub-agent in API responses.
+type SubAgentResponse struct {
+	ID                string   `json:"id"`
+	Name              string   `json:"name"`
+	ProjectID         string   `json:"project_id,omitempty"`
+	Provider          string   `json:"provider"`
+	Model             string   `json:"model"`
+	EnabledTools      []string `json:"enabled_tools"`
+	InstructionBlocks string   `json:"instruction_blocks"`
+	CreatedAt         string   `json:"created_at"`
+	UpdatedAt         string   `json:"updated_at"`
+}
+
+// ToolDefinitionResponse is a minimal tool info for UI.
+type ToolDefinitionResponse struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// CreateJobRequest represents a request to create a recurring job
+type CreateJobRequest struct {
+	Name             string `json:"name"`
+	ProjectID        string `json:"project_id,omitempty"`
+	ScheduleText     string `json:"schedule_text"` // Natural language schedule
+	TaskPrompt       string `json:"task_prompt"`
+	TaskPromptSource string `json:"task_prompt_source,omitempty"` // "text" | "file"
+	TaskPromptFile   string `json:"task_prompt_file,omitempty"`
+	LLMProvider      string `json:"llm_provider,omitempty"`
+	Enabled          bool   `json:"enabled"`
+}
+
+// UpdateJobRequest represents a request to update a recurring job
+type UpdateJobRequest struct {
+	Name             string  `json:"name"`
+	ProjectID        *string `json:"project_id,omitempty"`
+	ScheduleText     string  `json:"schedule_text"`
+	TaskPrompt       string  `json:"task_prompt"`
+	TaskPromptSource string  `json:"task_prompt_source,omitempty"` // "text" | "file"
+	TaskPromptFile   string  `json:"task_prompt_file,omitempty"`
+	LLMProvider      *string `json:"llm_provider,omitempty"`
+	Enabled          *bool   `json:"enabled,omitempty"`
+}
+
+// JobResponse represents a recurring job response
+type JobResponse struct {
+	ID               string     `json:"id"`
+	ProjectID        string     `json:"project_id,omitempty"`
+	Name             string     `json:"name"`
+	ScheduleHuman    string     `json:"schedule_human"`
+	ScheduleCron     string     `json:"schedule_cron"`
+	TaskPrompt       string     `json:"task_prompt"`
+	TaskPromptSource string     `json:"task_prompt_source"`
+	TaskPromptFile   string     `json:"task_prompt_file,omitempty"`
+	LLMProvider      string     `json:"llm_provider,omitempty"`
+	Enabled          bool       `json:"enabled"`
+	LastRunAt        *time.Time `json:"last_run_at,omitempty"`
+	NextRunAt        *time.Time `json:"next_run_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+type SessionTemplateRequest struct {
+	Name    string `json:"name"`
+	Content string `json:"content"`
+}
+
+type SessionTemplateResponse struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Content   string    `json:"content"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// JobExecutionResponse represents a job execution response
+type JobExecutionResponse struct {
+	ID         string     `json:"id"`
+	JobID      string     `json:"job_id"`
+	SessionID  string     `json:"session_id,omitempty"`
+	Status     string     `json:"status"`
+	Output     string     `json:"output,omitempty"`
+	Error      string     `json:"error,omitempty"`
+	StartedAt  time.Time  `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}
+
+type SettingsResponse struct {
+	Settings                               map[string]string `json:"settings"`
+	DefaultSystemPrompt                    string            `json:"defaultSystemPrompt"`
+	DefaultSystemPromptWithoutBuiltInTools string            `json:"defaultSystemPromptWithoutBuiltInTools"`
+}
+
+type UpdateSettingsRequest struct {
+	Settings map[string]string `json:"settings"`
+}
+
+type ProviderConfigResponse struct {
+	Type              string                     `json:"type"`
+	DisplayName       string                     `json:"display_name"`
+	DefaultURL        string                     `json:"default_url"`
+	RequiresKey       bool                       `json:"requires_key"`
+	DefaultModel      string                     `json:"default_model"`
+	ContextWindow     int                        `json:"context_window"`
+	IsActive          bool                       `json:"is_active"`
+	Configured        bool                       `json:"configured"`
+	HasAPIKey         bool                       `json:"has_api_key"`
+	BaseURL           string                     `json:"base_url"`
+	Model             string                     `json:"model"`
+	PromptCacheKey    string                     `json:"prompt_cache_key,omitempty"`
+	ReasoningEffort   string                     `json:"reasoning_effort,omitempty"`
+	TextVerbosity     string                     `json:"text_verbosity,omitempty"`
+	ServiceTier       string                     `json:"service_tier,omitempty"`
+	MaxTokens         int                        `json:"max_tokens,omitempty"`
+	StatefulResponses bool                       `json:"stateful_responses,omitempty"`
+	ProxyManaged      bool                       `json:"proxy_managed"`
+	ProxyBaseURL      string                     `json:"proxy_base_url,omitempty"`
+	FallbackChain     []config.FallbackChainNode `json:"fallback_chain,omitempty"`
+	RouterProvider    string                     `json:"router_provider,omitempty"`
+	RouterModel       string                     `json:"router_model,omitempty"`
+	RouterRules       []config.RouterRule        `json:"router_rules,omitempty"`
+}
+
+type UpdateProviderRequest struct {
+	Name              *string                     `json:"name,omitempty"`
+	APIKey            *string                     `json:"api_key,omitempty"`
+	BaseURL           *string                     `json:"base_url,omitempty"`
+	Model             *string                     `json:"model,omitempty"`
+	PromptCacheKey    *string                     `json:"prompt_cache_key,omitempty"`
+	ReasoningEffort   *string                     `json:"reasoning_effort,omitempty"`
+	TextVerbosity     *string                     `json:"text_verbosity,omitempty"`
+	ServiceTier       *string                     `json:"service_tier,omitempty"`
+	MaxTokens         *int                        `json:"max_tokens,omitempty"`
+	StatefulResponses *bool                       `json:"stateful_responses,omitempty"`
+	FallbackChain     *[]config.FallbackChainNode `json:"fallback_chain,omitempty"`
+	RouterProvider    *string                     `json:"router_provider,omitempty"`
+	RouterModel       *string                     `json:"router_model,omitempty"`
+	RouterRules       *[]config.RouterRule        `json:"router_rules,omitempty"`
+	Active            *bool                       `json:"active,omitempty"`
+}
+
+type SetActiveProviderRequest struct {
+	Provider string `json:"provider"`
+}
+
+type CreateFallbackAggregateRequest struct {
+	Name          string                     `json:"name"`
+	FallbackChain []config.FallbackChainNode `json:"fallback_chain"`
+	Active        bool                       `json:"active,omitempty"`
+}
+
+type ListProviderModelsResponse struct {
+	Models []string `json:"models"`
+}
+
+type UpdateSessionProjectRequest struct {
+	ProjectID *string `json:"project_id"`
+}
+
+type UpdateSessionProviderRequest struct {
+	Provider string  `json:"provider"`
+	Model    *string `json:"model,omitempty"`
+}
+
+type ProjectResponse struct {
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Folder      *string           `json:"folder,omitempty"`
+	Settings    map[string]string `json:"settings"`
+	URLPatterns []string          `json:"url_patterns"`
+	IsSystem    bool              `json:"is_system"`
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
+}
+
+type CreateProjectRequest struct {
+	Name        string            `json:"name"`
+	Folder      *string           `json:"folder,omitempty"`
+	Settings    map[string]string `json:"settings,omitempty"`
+	URLPatterns []string          `json:"url_patterns,omitempty"`
+}
+
+type UpdateProjectRequest struct {
+	Name        *string            `json:"name,omitempty"`
+	Folder      *string            `json:"folder,omitempty"`
+	Settings    *map[string]string `json:"settings,omitempty"`
+	URLPatterns *[]string          `json:"url_patterns,omitempty"`
+}
+
+type ProjectDatabaseResponse struct {
+	ID          string    `json:"id"`
+	ProjectID   string    `json:"project_id"`
+	Name        string    `json:"name"`
+	Engine      string    `json:"engine"`
+	DSN         string    `json:"dsn"`
+	Environment string    `json:"environment"`
+	IsReadOnly  bool      `json:"is_read_only"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type CreateProjectDatabaseRequest struct {
+	Name        string `json:"name"`
+	Engine      string `json:"engine"`
+	DSN         string `json:"dsn"`
+	Environment string `json:"environment"`
+	IsReadOnly  bool   `json:"is_read_only"`
+}
+
+type UpdateProjectDatabaseRequest struct {
+	Name        *string `json:"name,omitempty"`
+	Engine      *string `json:"engine,omitempty"`
+	DSN         *string `json:"dsn,omitempty"`
+	Environment *string `json:"environment,omitempty"`
+	IsReadOnly  *bool   `json:"is_read_only,omitempty"`
+}
+
+type ProjectDatabaseTableResponse struct {
+	Name string `json:"name"`
+}
+
+type ProjectDatabaseDataRequest struct {
+	Query  string `json:"query"` // Raw query, or we can use specific pagination args for read-only table view
+	Limit  int    `json:"limit,omitempty"`
+	Offset int    `json:"offset,omitempty"`
+}
+
+// ProviderTestResponse represents the response from testing a provider
+type ProviderTestResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// ProviderTestResult represents the test result for a single provider
+type ProviderTestResult struct {
+	Provider string `json:"provider"`
+	Success  bool   `json:"success"`
+	Message  string `json:"message"`
+	Duration int64  `json:"duration_ms"`
+}

@@ -8,6 +8,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1061,25 +1062,28 @@ type UpdateSessionProviderRequest struct {
 }
 
 type ProjectResponse struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	Folder    *string           `json:"folder,omitempty"`
-	Settings  map[string]string `json:"settings"`
-	IsSystem  bool              `json:"is_system"`
-	CreatedAt time.Time         `json:"created_at"`
-	UpdatedAt time.Time         `json:"updated_at"`
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Folder      *string           `json:"folder,omitempty"`
+	Settings    map[string]string `json:"settings"`
+	URLPatterns []string          `json:"url_patterns"`
+	IsSystem    bool              `json:"is_system"`
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
 }
 
 type CreateProjectRequest struct {
-	Name     string            `json:"name"`
-	Folder   *string           `json:"folder,omitempty"`
-	Settings map[string]string `json:"settings,omitempty"`
+	Name        string            `json:"name"`
+	Folder      *string           `json:"folder,omitempty"`
+	Settings    map[string]string `json:"settings,omitempty"`
+	URLPatterns []string          `json:"url_patterns,omitempty"`
 }
 
 type UpdateProjectRequest struct {
-	Name     *string            `json:"name,omitempty"`
-	Folder   *string            `json:"folder,omitempty"`
-	Settings *map[string]string `json:"settings,omitempty"`
+	Name        *string            `json:"name,omitempty"`
+	Folder      *string            `json:"folder,omitempty"`
+	Settings    *map[string]string `json:"settings,omitempty"`
+	URLPatterns *[]string          `json:"url_patterns,omitempty"`
 }
 
 type ProjectDatabaseResponse struct {
@@ -4039,15 +4043,22 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusBadRequest, "Project name is required")
 		return
 	}
+	urlPatterns, err := normalizeProjectURLPatterns(req.URLPatterns)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	now := time.Now()
 	project := &storage.Project{
-		ID:        uuid.New().String(),
-		Name:      name,
-		Folder:    normalizeFolder(req.Folder),
-		IsSystem:  false,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          uuid.New().String(),
+		Name:        name,
+		Folder:      normalizeFolder(req.Folder),
+		Settings:    normalizeProjectSettings(req.Settings),
+		URLPatterns: urlPatterns,
+		IsSystem:    false,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	if err := s.store.SaveProject(project); err != nil {
@@ -4102,6 +4113,14 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Settings != nil {
 		project.Settings = normalizeProjectSettings(*req.Settings)
+	}
+	if req.URLPatterns != nil {
+		urlPatterns, err := normalizeProjectURLPatterns(*req.URLPatterns)
+		if err != nil {
+			s.errorResponse(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		project.URLPatterns = urlPatterns
 	}
 	project.UpdatedAt = time.Now()
 
@@ -4324,18 +4343,113 @@ func absoluteCleanPath(path string, base string) string {
 	return filepath.Clean(path)
 }
 
+func filterGlobalInstructionBlocks(blocks []configuredInstructionBlock) []configuredInstructionBlock {
+	if len(blocks) == 0 {
+		return []configuredInstructionBlock{}
+	}
+	filtered := make([]configuredInstructionBlock, 0, len(blocks))
+	for _, block := range blocks {
+		blockType := strings.TrimSpace(block.Type)
+		// WHY: project-only instruction sources depend on a session project and are
+		// stored in project settings. Keeping them out of global settings prevents
+		// one project's AGENTS.md/branch docs from leaking into unrelated sessions.
+		if blockType == "project_agents_md" || blockType == branchTaskDocInstructionBlockType {
+			continue
+		}
+		filtered = append(filtered, block)
+	}
+	return filtered
+}
+
+func (s *Server) resolveProjectInstructionBlocks(sess *session.Session) []configuredInstructionBlock {
+	if sess == nil || sess.ProjectID == nil || strings.TrimSpace(*sess.ProjectID) == "" {
+		return []configuredInstructionBlock{}
+	}
+	project, err := s.store.GetProject(strings.TrimSpace(*sess.ProjectID))
+	if err != nil || project == nil {
+		if err != nil {
+			logging.Warn("Failed to load project instruction blocks: %v", err)
+		}
+		return []configuredInstructionBlock{}
+	}
+	settings := normalizeProjectSettings(project.Settings)
+	blocks := []configuredInstructionBlock{}
+	if rawBlocks := strings.TrimSpace(settings[projectInstructionBlocksSettingKey]); rawBlocks != "" {
+		if err := json.Unmarshal([]byte(rawBlocks), &blocks); err != nil {
+			logging.Warn("Failed to parse %s for project %s: %v", projectInstructionBlocksSettingKey, project.ID, err)
+			blocks = []configuredInstructionBlock{}
+		}
+	}
+	if strings.TrimSpace(settings[projectBranchTaskDocDirectorySettingKey]) != "" {
+		hasBranchDocBlock := false
+		for _, block := range blocks {
+			if strings.TrimSpace(block.Type) == branchTaskDocInstructionBlockType {
+				hasBranchDocBlock = true
+				break
+			}
+		}
+		if !hasBranchDocBlock {
+			enabled := true
+			blocks = append(blocks, configuredInstructionBlock{Type: branchTaskDocInstructionBlockType, Enabled: &enabled})
+		}
+	}
+	return blocks
+}
+
+func (s *Server) resolveProjectInstructionBlockSection(sess *session.Session, blockType string, value string, blockNumber int) (string, string, int, string) {
+	blockType = strings.TrimSpace(blockType)
+	value = strings.TrimSpace(value)
+	switch blockType {
+	case "project_agents_md":
+		settings, err := s.store.GetSettings()
+		if err != nil {
+			settings = map[string]string{}
+		}
+		section := s.resolveProjectAgentsMDSection(sess, settings, value, blockNumber)
+		if section == "" {
+			return "", value, 0, "No project instruction file content found."
+		}
+		return section, value, estimateTokensApprox(section), ""
+	case branchTaskDocInstructionBlockType:
+		return s.resolveBranchTaskDocSection(sess, value, blockNumber)
+	case "text":
+		if value == "" {
+			return "", "", 0, "Empty project text instruction block."
+		}
+		section := fmt.Sprintf("Instruction block %d (project text):\n%s", blockNumber, value)
+		return section, "", estimateTokensApprox(section), ""
+	case "file":
+		if value == "" {
+			return "", "", 0, "Empty project file instruction block."
+		}
+		content, err := s.readInstructionFileBlock(value)
+		if err != nil {
+			section := fmt.Sprintf("Instruction block %d (project file):\nUnable to load file %s: %s", blockNumber, value, err.Error())
+			return section, value, estimateTokensApprox(section), err.Error()
+		}
+		section := fmt.Sprintf("Instruction block %d (project file):\n%s", blockNumber, content)
+		return section, value, estimateTokensApprox(section), ""
+	default:
+		if value == "" {
+			return "", "", 0, "Unsupported empty project instruction block."
+		}
+		section := fmt.Sprintf("Instruction block %d (project text):\n%s", blockNumber, value)
+		return section, "", estimateTokensApprox(section), ""
+	}
+}
+
 func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, settings map[string]string) *systemPromptSnapshot {
 	rawBlocks := strings.TrimSpace(settings[agentInstructionBlocksSettingKey])
 	blocks := []configuredInstructionBlock{}
 	if rawBlocks != "" {
 		if err := json.Unmarshal([]byte(rawBlocks), &blocks); err != nil {
-	// WHY: project-specific blocks (AGENTS.md and branch docs) are now stored
-	// in project settings so global settings remain truly reusable across projects.
-	blocks = filterGlobalInstructionBlocks(blocks)
 			logging.Warn("Failed to parse %s: %v", agentInstructionBlocksSettingKey, err)
 			blocks = []configuredInstructionBlock{}
 		}
 	}
+	// WHY: project-specific blocks (AGENTS.md and branch docs) are now stored
+	// in project settings so global settings remain truly reusable across projects.
+	blocks = filterGlobalInstructionBlocks(blocks)
 	hasBuiltInBlock := false
 	hasIntegrationBlock := false
 	hasExternalMarkdownBlock := false
@@ -4449,84 +4563,84 @@ func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, 
 			}
 			blockSnapshot.EstimatedTokens = estimatedTokens
 			appendSections = append(appendSections, section)
-			case "text":
-				if value == "" {
-					resolvedBlocks = append(resolvedBlocks, blockSnapshot)
-					continue
-				}
-				blockSnapshot.ResolvedContent = value
-				rendered := fmt.Sprintf("Instruction block %d (text):\n%s", sectionNumber, blockSnapshot.ResolvedContent)
-				blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
-				appendSections = append(appendSections, rendered)
-			case "file":
-				if value == "" {
-					resolvedBlocks = append(resolvedBlocks, blockSnapshot)
-					continue
-				}
-				blockSnapshot.SourcePath = value
-				content, readErr := s.readInstructionFileBlock(value)
-				if readErr != nil {
-					blockSnapshot.Error = readErr.Error()
-					rendered := fmt.Sprintf("Instruction block %d (file):\nUnable to load file %s: %s", sectionNumber, value, readErr.Error())
-					blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
-					appendSections = append(appendSections, rendered)
-				} else {
-					blockSnapshot.ResolvedContent = content
-					rendered := fmt.Sprintf("Instruction block %d (file):\n%s", sectionNumber, content)
-					blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
-					appendSections = append(appendSections, rendered)
-				}
-			default:
-				if value == "" {
-					resolvedBlocks = append(resolvedBlocks, blockSnapshot)
-					continue
-				}
-				blockSnapshot.Type = "text"
-				blockSnapshot.ResolvedContent = value
-				rendered := fmt.Sprintf("Instruction block %d (text):\n%s", sectionNumber, value)
-				blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
-				appendSections = append(appendSections, rendered)
-			}
-			resolvedBlocks = append(resolvedBlocks, blockSnapshot)
-		}
-
-		for _, block := range s.resolveProjectInstructionBlocks(sess) {
-			sectionNumber++
-			blockSnapshot := systemPromptBlockSnapshot{
-				Type:    strings.TrimSpace(block.Type),
-				Value:   strings.TrimSpace(block.Value),
-				Enabled: block.Enabled == nil || *block.Enabled,
-			}
-			if !blockSnapshot.Enabled {
+		case "text":
+			if value == "" {
 				resolvedBlocks = append(resolvedBlocks, blockSnapshot)
 				continue
 			}
-			section, sourcePath, estimatedTokens, resolveErr := s.resolveProjectInstructionBlockSection(sess, blockSnapshot.Type, blockSnapshot.Value, sectionNumber)
-			blockSnapshot.SourcePath = sourcePath
-			blockSnapshot.ResolvedContent = section
-			blockSnapshot.Error = resolveErr
-			blockSnapshot.EstimatedTokens = estimatedTokens
-			if section != "" {
-				appendSections = append(appendSections, section)
+			blockSnapshot.ResolvedContent = value
+			rendered := fmt.Sprintf("Instruction block %d (text):\n%s", sectionNumber, blockSnapshot.ResolvedContent)
+			blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
+			appendSections = append(appendSections, rendered)
+		case "file":
+			if value == "" {
+				resolvedBlocks = append(resolvedBlocks, blockSnapshot)
+				continue
 			}
-			resolvedBlocks = append(resolvedBlocks, blockSnapshot)
+			blockSnapshot.SourcePath = value
+			content, readErr := s.readInstructionFileBlock(value)
+			if readErr != nil {
+				blockSnapshot.Error = readErr.Error()
+				rendered := fmt.Sprintf("Instruction block %d (file):\nUnable to load file %s: %s", sectionNumber, value, readErr.Error())
+				blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
+				appendSections = append(appendSections, rendered)
+			} else {
+				blockSnapshot.ResolvedContent = content
+				rendered := fmt.Sprintf("Instruction block %d (file):\n%s", sectionNumber, content)
+				blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
+				appendSections = append(appendSections, rendered)
+			}
+		default:
+			if value == "" {
+				resolvedBlocks = append(resolvedBlocks, blockSnapshot)
+				continue
+			}
+			blockSnapshot.Type = "text"
+			blockSnapshot.ResolvedContent = value
+			rendered := fmt.Sprintf("Instruction block %d (text):\n%s", sectionNumber, value)
+			blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
+			appendSections = append(appendSections, rendered)
 		}
+		resolvedBlocks = append(resolvedBlocks, blockSnapshot)
+	}
 
-		if isThinkingSessionWithSettings(sess, settings) {
-			thinkingBlocks := resolveThinkingInstructionBlocksFromSettings(settings)
-			for _, block := range thinkingBlocks {
-				blockType := strings.TrimSpace(block.Type)
-				enabled := block.Enabled == nil || *block.Enabled
-				blockSnapshot := systemPromptBlockSnapshot{
-					Type:    "thinking_" + blockType,
-					Value:   strings.TrimSpace(block.Value),
-					Enabled: enabled,
-				}
-				sectionNumber++
-				if !enabled {
-					resolvedBlocks = append(resolvedBlocks, blockSnapshot)
-					continue
-				}
+	for _, block := range s.resolveProjectInstructionBlocks(sess) {
+		sectionNumber++
+		blockSnapshot := systemPromptBlockSnapshot{
+			Type:    strings.TrimSpace(block.Type),
+			Value:   strings.TrimSpace(block.Value),
+			Enabled: block.Enabled == nil || *block.Enabled,
+		}
+		if !blockSnapshot.Enabled {
+			resolvedBlocks = append(resolvedBlocks, blockSnapshot)
+			continue
+		}
+		section, sourcePath, estimatedTokens, resolveErr := s.resolveProjectInstructionBlockSection(sess, blockSnapshot.Type, blockSnapshot.Value, sectionNumber)
+		blockSnapshot.SourcePath = sourcePath
+		blockSnapshot.ResolvedContent = section
+		blockSnapshot.Error = resolveErr
+		blockSnapshot.EstimatedTokens = estimatedTokens
+		if section != "" {
+			appendSections = append(appendSections, section)
+		}
+		resolvedBlocks = append(resolvedBlocks, blockSnapshot)
+	}
+
+	if isThinkingSessionWithSettings(sess, settings) {
+		thinkingBlocks := resolveThinkingInstructionBlocksFromSettings(settings)
+		for _, block := range thinkingBlocks {
+			blockType := strings.TrimSpace(block.Type)
+			enabled := block.Enabled == nil || *block.Enabled
+			blockSnapshot := systemPromptBlockSnapshot{
+				Type:    "thinking_" + blockType,
+				Value:   strings.TrimSpace(block.Value),
+				Enabled: enabled,
+			}
+			sectionNumber++
+			if !enabled {
+				resolvedBlocks = append(resolvedBlocks, blockSnapshot)
+				continue
+			}
 			value := blockSnapshot.Value
 			switch blockType {
 			case "text":
@@ -6013,13 +6127,14 @@ func projectToResponse(project *storage.Project) ProjectResponse {
 	}
 
 	return ProjectResponse{
-		ID:        project.ID,
-		Name:      project.Name,
-		Folder:    project.Folder,
-		Settings:  normalizeProjectSettings(project.Settings),
-		IsSystem:  project.IsSystem,
-		CreatedAt: project.CreatedAt,
-		UpdatedAt: project.UpdatedAt,
+		ID:          project.ID,
+		Name:        project.Name,
+		Folder:      project.Folder,
+		Settings:    normalizeProjectSettings(project.Settings),
+		URLPatterns: normalizeProjectURLPatternsForResponse(project.URLPatterns),
+		IsSystem:    project.IsSystem,
+		CreatedAt:   project.CreatedAt,
+		UpdatedAt:   project.UpdatedAt,
 	}
 }
 
@@ -6032,6 +6147,102 @@ func normalizeFolder(folder *string) *string {
 		return nil
 	}
 	return &normalized
+}
+
+func normalizeProjectURLPatternsForResponse(patterns []string) []string {
+	normalized, err := normalizeProjectURLPatterns(patterns)
+	if err != nil {
+		return []string{}
+	}
+	return normalized
+}
+
+func normalizeProjectURLPatterns(patterns []string) ([]string, error) {
+	if len(patterns) == 0 {
+		return []string{}, nil
+	}
+	if len(patterns) > 500 {
+		return nil, fmt.Errorf("project URL patterns are limited to 500 entries")
+	}
+	out := make([]string, 0, len(patterns))
+	seen := make(map[string]struct{}, len(patterns))
+	for _, raw := range patterns {
+		pattern := strings.TrimSpace(raw)
+		if pattern == "" {
+			continue
+		}
+		if _, exists := seen[pattern]; exists {
+			continue
+		}
+		if err := validateProjectURLPattern(pattern); err != nil {
+			return nil, err
+		}
+		seen[pattern] = struct{}{}
+		out = append(out, pattern)
+	}
+	return out, nil
+}
+
+func validateProjectURLPattern(pattern string) error {
+	// WHY: the extension's auto-selection logic intentionally supports a small,
+	// deterministic subset of URLPattern syntax. Rejecting advanced tokens here
+	// keeps Caesar-saved mappings and extension matching behavior consistent.
+	if len(pattern) > 2048 {
+		return fmt.Errorf("invalid project URL pattern %q: pattern is too long", pattern)
+	}
+	if strings.ContainsAny(pattern, " \t\r\n{}()[]\\") {
+		return fmt.Errorf("invalid project URL pattern %q: use absolute URLs with literal components and '*' wildcards only", pattern)
+	}
+	separator := strings.Index(pattern, "://")
+	if separator <= 0 {
+		return fmt.Errorf("invalid project URL pattern %q: pattern must be an absolute URL such as https://example.com/*", pattern)
+	}
+	scheme := pattern[:separator]
+	if strings.Contains(scheme, "*") || !isLiteralURLScheme(scheme) {
+		return fmt.Errorf("invalid project URL pattern %q: URL scheme must be literal", pattern)
+	}
+	remainder := pattern[separator+3:]
+	if remainder == "" || strings.HasPrefix(remainder, "/") {
+		return fmt.Errorf("invalid project URL pattern %q: URL host is required", pattern)
+	}
+	endOfAuthority := len(remainder)
+	for _, marker := range []string{"/", "?", "#"} {
+		if idx := strings.Index(remainder, marker); idx >= 0 && idx < endOfAuthority {
+			endOfAuthority = idx
+		}
+	}
+	authority := remainder[:endOfAuthority]
+	if authority == "" {
+		return fmt.Errorf("invalid project URL pattern %q: URL host is required", pattern)
+	}
+	if strings.Contains(authority, "@") {
+		return fmt.Errorf("invalid project URL pattern %q: credentials are not supported in project URL patterns", pattern)
+	}
+	// Verify the literal shape after replacing wildcard tokens with safe text.
+	probe := strings.ReplaceAll(pattern, "*", "wildcard")
+	if parsed, err := url.Parse(probe); err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("invalid project URL pattern %q: pattern must be parseable as an absolute URL", pattern)
+	}
+	return nil
+}
+
+func isLiteralURLScheme(scheme string) bool {
+	if scheme == "" {
+		return false
+	}
+	for i, r := range scheme {
+		if i == 0 {
+			if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') {
+				return false
+			}
+			continue
+		}
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '+' || r == '-' || r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func normalizeProjectSettings(settings map[string]string) map[string]string {

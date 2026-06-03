@@ -131,13 +131,14 @@ type SubAgent struct {
 
 // Project represents a session grouping container optionally tied to a folder.
 type Project struct {
-	ID        string
-	Name      string
-	Folder    *string           // Single optional folder path
-	Settings  map[string]string // Project-scoped settings, such as project-only system prompt blocks.
-	IsSystem  bool              // System projects (Knowledge Base, Agent) cannot be deleted
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID          string
+	Name        string
+	Folder      *string           // Single optional folder path
+	Settings    map[string]string // Project-scoped settings, such as project-only system prompt blocks.
+	URLPatterns []string          // URLPattern-compatible absolute patterns used by browser extensions for project auto-detection.
+	IsSystem    bool              // System projects (Knowledge Base, Agent) cannot be deleted
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type ProjectDatabase struct {

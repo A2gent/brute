@@ -53,7 +53,7 @@ Starts both the HTTP API server and the TUI interface simultaneously.`,
 	rootCmd.Flags().StringVarP(&agentFlag, "agent", "a", "build", "Select agent type (build, plan)")
 	rootCmd.Flags().StringVarP(&continueFlag, "continue", "c", "", "Resume previous session by ID")
 	rootCmd.Flags().BoolVarP(&verboseFlag, "verbose", "v", false, "Verbose output")
-	rootCmd.Flags().IntVarP(&portFlag, "port", "p", 0, "HTTP API server port (0 = random available port)")
+	rootCmd.Flags().IntVarP(&portFlag, "port", "p", 5445, "HTTP API server port (5445 = default local app/extension port, 0 = random available port)")
 
 	// Server mode subcommand (HTTP API only, no TUI)
 	serverCmd := &cobra.Command{
@@ -61,7 +61,7 @@ Starts both the HTTP API server and the TUI interface simultaneously.`,
 		Short: "Run HTTP API server only",
 		RunE:  runServer,
 	}
-	serverCmd.Flags().IntVarP(&portFlag, "port", "p", 0, "HTTP API server port (0 = random available port)")
+	serverCmd.Flags().IntVarP(&portFlag, "port", "p", 5445, "HTTP API server port (5445 = default local app/extension port, 0 = random available port)")
 	rootCmd.AddCommand(serverCmd)
 
 	// Session management subcommand

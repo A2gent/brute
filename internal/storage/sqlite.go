@@ -237,6 +237,9 @@ func (s *SQLiteStore) migrate() error {
 		`ALTER TABLE projects ADD COLUMN folder TEXT`,
 		// Project-scoped settings hold per-project prompt assembly options.
 		`ALTER TABLE projects ADD COLUMN settings TEXT NOT NULL DEFAULT '{}'`,
+		// Browser-extension project auto-detection patterns. Stored as JSON to keep
+		// the project table compact and preserve the existing CRUD interface.
+		`ALTER TABLE projects ADD COLUMN url_patterns TEXT NOT NULL DEFAULT '[]'`,
 		// Migration: Add task_progress column to sessions
 		`ALTER TABLE sessions ADD COLUMN task_progress TEXT`,
 		// Session templates are reusable prompt snippets for pre-filling new sessions.
@@ -424,10 +427,17 @@ func (s *SQLiteStore) ensureSoulProjectDefaults() error {
 	if strings.Contains(content, "# A2gent Soul defaults") {
 		return nil
 	}
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	content += soulGitignoreManagedBlock
+
+	return os.WriteFile(gitignorePath, []byte(content), 0o644)
+}
 
 const (
-	projectInstructionBlocksSettingKey         = "A2GENT_PROJECT_INSTRUCTION_BLOCKS"
-	legacyAgentInstructionBlocksSettingKey     = "A2GENT_AGENT_INSTRUCTION_BLOCKS"
+	projectInstructionBlocksSettingKey        = "A2GENT_PROJECT_INSTRUCTION_BLOCKS"
+	legacyAgentInstructionBlocksSettingKey    = "A2GENT_AGENT_INSTRUCTION_BLOCKS"
 	legacyBranchTaskDocDirectorySettingPrefix = "A2GENT_PROJECT_BRANCH_TASK_DOC_DIRECTORY."
 	legacyBranchTaskDocModeSettingPrefix      = "A2GENT_PROJECT_BRANCH_TASK_DOC_MODE."
 	projectBranchTaskDocDirectorySettingKey   = "A2GENT_PROJECT_BRANCH_TASK_DOC_DIRECTORY"
@@ -463,6 +473,45 @@ func marshalProjectSettings(settings map[string]string) (string, error) {
 	return string(data), nil
 }
 
+func normalizeProjectURLPatterns(patterns []string) []string {
+	if len(patterns) == 0 {
+		return []string{}
+	}
+	normalized := make([]string, 0, len(patterns))
+	seen := make(map[string]struct{}, len(patterns))
+	for _, pattern := range patterns {
+		trimmed := strings.TrimSpace(pattern)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		normalized = append(normalized, trimmed)
+	}
+	return normalized
+}
+
+func marshalProjectURLPatterns(patterns []string) (string, error) {
+	data, err := json.Marshal(normalizeProjectURLPatterns(patterns))
+	if err != nil {
+		return "", fmt.Errorf("failed to encode project URL patterns: %w", err)
+	}
+	return string(data), nil
+}
+
+func unmarshalProjectURLPatterns(raw string) []string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return []string{}
+	}
+	var patterns []string
+	if err := json.Unmarshal([]byte(trimmed), &patterns); err != nil {
+		return []string{}
+	}
+	return normalizeProjectURLPatterns(patterns)
+}
 func unmarshalProjectSettings(raw string) map[string]string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -564,21 +613,40 @@ func (s *SQLiteStore) migrateProjectPromptSettingsFromAppSettings() error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 
+	type projectPromptSettingsRow struct {
+		projectID   string
+		rawSettings string
+	}
+	projectRows := []projectPromptSettingsRow{}
 	for rows.Next() {
-		var projectID string
 		var rawSettings sql.NullString
+		var projectID string
 		if err := rows.Scan(&projectID, &rawSettings); err != nil {
+			rows.Close()
 			return err
 		}
-		projectSettings := unmarshalProjectSettings(rawSettings.String)
+		projectRows = append(projectRows, projectPromptSettingsRow{
+			projectID:   projectID,
+			rawSettings: rawSettings.String,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+
+	for _, row := range projectRows {
+		projectSettings := unmarshalProjectSettings(row.rawSettings)
 		changed := false
 
-		legacyDirectory := strings.TrimSpace(settings[legacyBranchTaskDocDirectorySettingPrefix+projectID])
+		legacyDirectory := strings.TrimSpace(settings[legacyBranchTaskDocDirectorySettingPrefix+row.projectID])
 		if legacyDirectory != "" && projectSettings[projectBranchTaskDocDirectorySettingKey] == "" {
 			projectSettings[projectBranchTaskDocDirectorySettingKey] = legacyDirectory
-			mode := strings.TrimSpace(settings[legacyBranchTaskDocModeSettingPrefix+projectID])
+			mode := strings.TrimSpace(settings[legacyBranchTaskDocModeSettingPrefix+row.projectID])
 			if mode != "path" {
 				mode = "content"
 			}
@@ -602,19 +670,11 @@ func (s *SQLiteStore) migrateProjectPromptSettingsFromAppSettings() error {
 		if err != nil {
 			return err
 		}
-		if _, err := s.db.Exec(`UPDATE projects SET settings = ?, updated_at = ? WHERE id = ?`, encoded, time.Now(), projectID); err != nil {
-			return fmt.Errorf("failed to migrate project %s prompt settings: %w", projectID, err)
+		if _, err := s.db.Exec(`UPDATE projects SET settings = ?, updated_at = ? WHERE id = ?`, encoded, time.Now(), row.projectID); err != nil {
+			return fmt.Errorf("failed to migrate project %s prompt settings: %w", row.projectID, err)
 		}
 	}
-	return rows.Err()
-}
-
-	if content != "" && !strings.HasSuffix(content, "\n") {
-		content += "\n"
-	}
-	content += soulGitignoreManagedBlock
-
-	return os.WriteFile(gitignorePath, []byte(content), 0o644)
+	return nil
 }
 
 // SaveSession saves a session to the database
@@ -940,7 +1000,7 @@ func (s *SQLiteStore) ListSessionsByJob(jobID string) ([]*Session, error) {
 	return sessions, nil
 }
 
-// DeleteSession deletes a session
+// DeleteSession deletes a session.
 func (s *SQLiteStore) DeleteSession(id string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -987,17 +1047,22 @@ func (s *SQLiteStore) SaveProject(project *Project) error {
 	if err != nil {
 		return err
 	}
+	urlPatternsJSON, err := marshalProjectURLPatterns(project.URLPatterns)
+	if err != nil {
+		return err
+	}
 
 	_, err = s.db.Exec(`
-		INSERT INTO projects (id, name, folder, settings, is_system, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO projects (id, name, folder, settings, url_patterns, is_system, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			folder = excluded.folder,
 			settings = excluded.settings,
+			url_patterns = excluded.url_patterns,
 			is_system = excluded.is_system,
 			updated_at = excluded.updated_at
-	`, project.ID, project.Name, project.Folder, settingsJSON, project.IsSystem, project.CreatedAt, project.UpdatedAt)
+	`, project.ID, project.Name, project.Folder, settingsJSON, urlPatternsJSON, project.IsSystem, project.CreatedAt, project.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to save project: %w", err)
 	}
@@ -1010,12 +1075,13 @@ func (s *SQLiteStore) GetProject(id string) (*Project, error) {
 	var project Project
 	var folder sql.NullString
 	var settingsRaw sql.NullString
+	var urlPatternsRaw sql.NullString
 
 	err := s.db.QueryRow(`
-		SELECT id, name, folder, settings, is_system, created_at, updated_at
+		SELECT id, name, folder, settings, url_patterns, is_system, created_at, updated_at
 		FROM projects
 		WHERE id = ?
-	`, id).Scan(&project.ID, &project.Name, &folder, &settingsRaw, &project.IsSystem, &project.CreatedAt, &project.UpdatedAt)
+	`, id).Scan(&project.ID, &project.Name, &folder, &settingsRaw, &urlPatternsRaw, &project.IsSystem, &project.CreatedAt, &project.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("project not found: %s", id)
 	}
@@ -1027,6 +1093,7 @@ func (s *SQLiteStore) GetProject(id string) (*Project, error) {
 		project.Folder = &folder.String
 	}
 	project.Settings = unmarshalProjectSettings(settingsRaw.String)
+	project.URLPatterns = unmarshalProjectURLPatterns(urlPatternsRaw.String)
 
 	return &project, nil
 }
@@ -1034,7 +1101,7 @@ func (s *SQLiteStore) GetProject(id string) (*Project, error) {
 // ListProjects returns all projects ordered by name.
 func (s *SQLiteStore) ListProjects() ([]*Project, error) {
 	rows, err := s.db.Query(`
-		SELECT id, name, folder, settings, is_system, created_at, updated_at
+		SELECT id, name, folder, settings, url_patterns, is_system, created_at, updated_at
 		FROM projects
 		ORDER BY name COLLATE NOCASE ASC
 	`)
@@ -1048,7 +1115,8 @@ func (s *SQLiteStore) ListProjects() ([]*Project, error) {
 		var project Project
 		var folder sql.NullString
 		var settingsRaw sql.NullString
-		if err := rows.Scan(&project.ID, &project.Name, &folder, &settingsRaw, &project.IsSystem, &project.CreatedAt, &project.UpdatedAt); err != nil {
+		var urlPatternsRaw sql.NullString
+		if err := rows.Scan(&project.ID, &project.Name, &folder, &settingsRaw, &urlPatternsRaw, &project.IsSystem, &project.CreatedAt, &project.UpdatedAt); err != nil {
 			return nil, err
 		}
 
@@ -1056,6 +1124,7 @@ func (s *SQLiteStore) ListProjects() ([]*Project, error) {
 			project.Folder = &folder.String
 		}
 		project.Settings = unmarshalProjectSettings(settingsRaw.String)
+		project.URLPatterns = unmarshalProjectURLPatterns(urlPatternsRaw.String)
 
 		projects = append(projects, &project)
 	}

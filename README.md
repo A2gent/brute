@@ -149,15 +149,15 @@ brute
 # build only
 just build
 
-# API only
+# API only (uses the local app/extension default port 5445)
 brute server
 
-# force a fixed API port when needed
+# force a custom API port when needed
 brute --port 8080
 ```
 
-By default, the embedded HTTP API binds to port `0`, so the OS chooses a random free port for each process.  
-The selected URL is printed on startup (for example: `HTTP API server running on http://0.0.0.0:49162`).
+By default, the embedded HTTP API binds to port `5445`, which is also the default Caesar and Chrome extension endpoint.  
+Use `--port 0` only when you explicitly want the OS to choose a random free port; in that case the selected URL is printed on startup (for example: `HTTP API server running on http://0.0.0.0:49162`).
 
 ### 4.2 Docker
 

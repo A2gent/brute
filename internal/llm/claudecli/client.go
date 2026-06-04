@@ -19,7 +19,8 @@ import (
 const (
 	defaultExecutable      = "claude"
 	defaultMaxOutputBytes  = 4 * 1024 * 1024
-	claudeCodePromptPrefix = "You are running through Claude Code CLI. Complete the user's request and return the final answer to A2gent."
+	defaultPermissionMode  = "acceptEdits"
+	claudeCodePromptPrefix = "You are running through Claude Code CLI. Use Claude Code's native tools directly when you need to inspect or modify files, then return the final answer to A2gent. Do not print JSON tool calls for A2gent to execute."
 )
 
 // Options controls how the Claude Code CLI is invoked.
@@ -159,7 +160,7 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	if len(request.Messages) > 0 {
 		lastMsg = request.Messages[len(request.Messages)-1].Content
 	}
-	logging.LogRequestWithContent(model, len(request.Messages), false, lastMsg)
+	logging.LogRequestWithContent(model, len(request.Messages), len(request.Tools) > 0, lastMsg)
 
 	prompt := buildPrompt(request)
 	args := c.buildArgs(request, model, prompt)
@@ -235,7 +236,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	if len(request.Messages) > 0 {
 		lastMsg = request.Messages[len(request.Messages)-1].Content
 	}
-	logging.LogRequestWithContent(model, len(request.Messages), false, lastMsg)
+	logging.LogRequestWithContent(model, len(request.Messages), len(request.Tools) > 0, lastMsg)
 
 	prompt := buildPrompt(request)
 	args := c.buildStreamArgs(request, model, prompt)
@@ -407,7 +408,6 @@ func (c *Client) buildStreamArgs(request *llm.ChatRequest, model, prompt string)
 	}
 	return c.appendCommonArgs(args, request)
 }
-
 func (c *Client) appendCommonArgs(args []string, request *llm.ChatRequest) []string {
 	if systemPrompt := buildSystemPrompt(request.SystemPrompt); systemPrompt != "" {
 		args = append(args, "--append-system-prompt", systemPrompt)
@@ -417,8 +417,24 @@ func (c *Client) appendCommonArgs(args []string, request *llm.ChatRequest) []str
 	} else if sessionID := strings.TrimSpace(request.SessionID); isUUIDLike(sessionID) {
 		args = append(args, "--session-id", sessionID)
 	}
-	if c.options.PermissionMode != "" {
-		args = append(args, "--permission-mode", c.options.PermissionMode)
+	// WHY: Claude CLI is itself the tool-running agent for Anthropic. A2gent
+	// function schemas are not sent to the CLI, so expose Claude Code's native
+	// tools explicitly and auto-allow only the capabilities that correspond to the
+	// tools currently enabled in this A2gent request. This lets Sonnet edit files in
+	// non-interactive mode without waiting for an invisible permission prompt.
+	toolsArg, allowedArg, includeTools := claudeToolsArgs(request)
+	if includeTools {
+		args = append(args, "--tools", toolsArg)
+		if allowedArg != "" {
+			args = append(args, "--allowedTools", allowedArg)
+		}
+	}
+	permissionMode := c.options.PermissionMode
+	if permissionMode == "" {
+		permissionMode = defaultPermissionMode
+	}
+	if permissionMode != "" {
+		args = append(args, "--permission-mode", permissionMode)
 	}
 	if c.options.MaxBudgetUSD != "" {
 		args = append(args, "--max-budget-usd", c.options.MaxBudgetUSD)
@@ -667,6 +683,80 @@ func isExecutableFile(path string) bool {
 		return false
 	}
 	return info.Mode()&0o111 != 0
+}
+func claudeToolsArgs(request *llm.ChatRequest) (string, string, bool) {
+	if request == nil {
+		return "", "", true
+	}
+	toolNames := make(map[string]struct{}, len(request.Tools))
+	for _, tool := range request.Tools {
+		name := strings.TrimSpace(tool.Name)
+		if name != "" {
+			toolNames[name] = struct{}{}
+		}
+	}
+	if len(toolNames) == 0 {
+		return "", "", true
+	}
+
+	// Map A2gent tool availability to Claude Code's native tool names. We do not
+	// include web/notification/sub-agent tools because Claude CLI cannot execute
+	// A2gent server-backed integrations; those remain available through other
+	// providers that support A2gent tool calls.
+	allowed := make([]string, 0, 10)
+	if hasAnyTool(toolNames, "bash") {
+		allowed = append(allowed, "Bash")
+	}
+	if hasAnyTool(toolNames, "read", "grep", "glob", "find_files", "filter") {
+		allowed = append(allowed, "Glob", "Grep", "LS", "Read")
+	}
+	if hasAnyTool(toolNames, "edit", "replace_lines", "insert_lines") {
+		allowed = append(allowed, "Edit", "MultiEdit")
+	}
+	if hasAnyTool(toolNames, "write") {
+		allowed = append(allowed, "Write")
+	}
+	if len(allowed) == 0 {
+		return "", "", true
+	}
+	allowed = uniqueSorted(allowed)
+	joined := strings.Join(allowed, ",")
+	return joined, joined, true
+}
+
+func hasAnyTool(names map[string]struct{}, candidates ...string) bool {
+	for _, candidate := range candidates {
+		if _, ok := names[candidate]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func uniqueSorted(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	// Keep output deterministic for tests and easier CLI debugging.
+	order := map[string]int{"Bash": 1, "Edit": 2, "Glob": 3, "Grep": 4, "LS": 5, "MultiEdit": 6, "Read": 7, "Write": 8}
+	for i := 0; i < len(out); i++ {
+		for j := i + 1; j < len(out); j++ {
+			if order[out[j]] < order[out[i]] {
+				out[i], out[j] = out[j], out[i]
+			}
+		}
+	}
+	return out
 }
 
 func normalizeWorkDir(raw string) string {

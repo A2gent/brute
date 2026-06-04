@@ -59,6 +59,34 @@ func TestParseCLIResultAndUsage(t *testing.T) {
 	}
 }
 
+func TestClaudeToolsArgsMapsA2gentToolsToClaudeNativeTools(t *testing.T) {
+	request := &llm.ChatRequest{
+		Tools: []llm.ToolDefinition{
+			{Name: "read"},
+			{Name: "grep"},
+			{Name: "edit"},
+			{Name: "write"},
+			{Name: "bash"},
+			{Name: "telegram_send_message"}, // server-backed integration: not executable by Claude CLI
+		},
+	}
+
+	toolsArg, allowedArg, includeTools := claudeToolsArgs(request)
+	want := "Bash,Edit,Glob,Grep,LS,MultiEdit,Read,Write"
+	if !includeTools || toolsArg != want || allowedArg != want {
+		t.Fatalf("claudeToolsArgs() = (%q, %q, %v), want %q", toolsArg, allowedArg, includeTools, want)
+	}
+}
+
+func TestClaudeToolsArgsDisablesNativeToolsWhenOnlyServerBackedToolsExist(t *testing.T) {
+	toolsArg, allowedArg, includeTools := claudeToolsArgs(&llm.ChatRequest{
+		Tools: []llm.ToolDefinition{{Name: "telegram_send_message"}},
+	})
+	if !includeTools || toolsArg != "" || allowedArg != "" {
+		t.Fatalf("claudeToolsArgs() = (%q, %q, %v), want disabled tools", toolsArg, allowedArg, includeTools)
+	}
+}
+
 func TestClientChatInvokesClaudeExecutable(t *testing.T) {
 	tmp := t.TempDir()
 	argsFile := filepath.Join(tmp, "args.txt")
@@ -83,6 +111,10 @@ func TestClientChatInvokesClaudeExecutable(t *testing.T) {
 		Messages: []llm.Message{
 			{Role: "user", Content: "hello"},
 		},
+		Tools: []llm.ToolDefinition{
+			{Name: "read"},
+			{Name: "edit"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Chat returned error: %v", err)
@@ -91,12 +123,11 @@ func TestClientChatInvokesClaudeExecutable(t *testing.T) {
 		t.Fatalf("unexpected content: %q", resp.Content)
 	}
 
-	var args []string
 	rawArgs, err := os.ReadFile(argsFile)
 	if err != nil {
 		t.Fatalf("failed to read captured args: %v", err)
 	}
-	args = strings.Split(strings.TrimSpace(string(rawArgs)), "\n")
+	args := strings.Split(strings.TrimSpace(string(rawArgs)), "\n")
 	joined := strings.Join(args, "\n")
 	for _, want := range []string{
 		"-p",
@@ -108,6 +139,12 @@ func TestClientChatInvokesClaudeExecutable(t *testing.T) {
 		"--append-system-prompt",
 		"Be brief.",
 		"--no-session-persistence",
+		"--tools",
+		"Edit,Glob,Grep,LS,MultiEdit,Read",
+		"--allowedTools",
+		"Edit,Glob,Grep,LS,MultiEdit,Read",
+		"--permission-mode",
+		"acceptEdits",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("captured args missing %q: %#v", want, args)
@@ -170,6 +207,9 @@ func TestClientChatStreamInvokesClaudeStreamJSON(t *testing.T) {
 		"--verbose",
 		"--include-partial-messages",
 		"--no-session-persistence",
+		"--tools",
+		"--permission-mode",
+		"acceptEdits",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("captured args missing %q: %s", want, joined)

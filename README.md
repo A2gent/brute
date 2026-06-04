@@ -266,7 +266,7 @@ Environment variables are optional and mainly useful for headless/server workflo
 
 | Variable | Description |
 |---|---|
-| `ANTHROPIC_API_KEY` | Anthropic key |
+| `ANTHROPIC_API_KEY` | Anthropic key (legacy/API-compatible paths only; the Anthropic provider uses Claude Code CLI login) |
 | `KIMI_API_KEY` | Kimi key |
 | `GEMINI_API_KEY` | Gemini key |
 | `OPENAI_API_KEY` | OpenAI-compatible key |
@@ -277,7 +277,9 @@ Common optional variables:
 |---|---|---|
 | `AAGENT_PROVIDER` | `auto` | active provider (`anthropic`, `kimi`, `gemini`, `lmstudio`, `auto-router`) |
 | `AAGENT_MODEL` | provider-specific | model override |
-| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Anthropic endpoint |
+| `AAGENT_CLAUDE_CLI_PATH` | `claude` | Claude Code CLI executable used by the Anthropic provider |
+| `AAGENT_CLAUDE_CLI_PERMISSION_MODE` | `acceptEdits` | Claude CLI permission mode for non-interactive runs; set to `default`, `auto`, or `bypassPermissions` if needed |
+| `AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE` | `true` | disable Claude CLI session persistence for isolated A2gent turns |
 | `KIMI_BASE_URL` | `https://api.kimi.com/coding/v1` | Kimi endpoint |
 | `GEMINI_BASE_URL` | `https://generativelanguage.googleapis.com` | Gemini endpoint |
 | `LM_STUDIO_BASE_URL` | `http://localhost:1234/v1` | LM Studio endpoint |
@@ -402,9 +404,11 @@ Configure a provider in-agent first (`/provider` in TUI or Providers in web app)
 If you run headless, set one provider key via env:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-# or KIMI_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY
+export KIMI_API_KEY=...
+# or GEMINI_API_KEY / OPENAI_API_KEY
 ```
+
+For the Anthropic provider, install and log in to Claude Code CLI instead of configuring an API key; see 11.3.
 
 ### 11.2 Provider not available
 
@@ -413,11 +417,21 @@ export AAGENT_PROVIDER=auto-router
 export AAGENT_FALLBACK_PROVIDERS=anthropic,kimi,gemini
 ```
 
-### 11.3 TUI in container fails with `/dev/tty`
+### 11.3 Anthropic / Claude cannot edit files
+
+The Anthropic provider intentionally uses the local Claude Code CLI (`claude`) and your existing Claude login, not the Anthropic API. Ensure Claude Code is installed and available on `PATH`, or set:
+
+```bash
+export AAGENT_CLAUDE_CLI_PATH=/path/to/claude
+```
+
+A2gent runs Claude CLI in non-interactive mode with native Claude tools enabled and defaults to `AAGENT_CLAUDE_CLI_PERMISSION_MODE=acceptEdits` so Sonnet can inspect and edit files without a hidden permission prompt. If your environment requires a different Claude permission policy, override that variable.
+
+### 11.4 TUI in container fails with `/dev/tty`
 
 Run TUI from a real interactive terminal (`just docker-tui`) or use API mode (`just docker-api`).
 
-### 11.4 LM Studio + Tailscale in container
+### 11.5 LM Studio + Tailscale in container
 
 Use Tailscale IP, not MagicDNS hostname, e.g.:
 

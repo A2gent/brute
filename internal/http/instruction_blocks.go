@@ -160,13 +160,21 @@ func (s *Server) resolveProjectInstructionBlockSection(sess *session.Session, bl
 		if value == "" {
 			return "", "", 0, "Empty project file instruction block."
 		}
-		content, err := s.readInstructionFileBlock(value)
+		sourcePath := value
+		if !filepath.IsAbs(sourcePath) && sess != nil && sess.ProjectID != nil && strings.TrimSpace(*sess.ProjectID) != "" {
+			if project, err := s.store.GetProject(strings.TrimSpace(*sess.ProjectID)); err == nil && project != nil && project.Folder != nil {
+				// WHY: project-scoped file blocks should be portable between projects.
+				// WHAT: relative paths are resolved from the associated project folder.
+				sourcePath = filepath.Join(strings.TrimSpace(*project.Folder), sourcePath)
+			}
+		}
+		content, err := s.readInstructionFileBlock(sourcePath)
 		if err != nil {
-			section := fmt.Sprintf("Instruction block %d (project file):\nUnable to load file %s: %s", blockNumber, value, err.Error())
-			return section, value, estimateTokensApprox(section), err.Error()
+			section := fmt.Sprintf("Instruction block %d (project file):\nUnable to load file %s: %s", blockNumber, sourcePath, err.Error())
+			return section, sourcePath, estimateTokensApprox(section), err.Error()
 		}
 		section := fmt.Sprintf("Instruction block %d (project file):\n%s", blockNumber, content)
-		return section, value, estimateTokensApprox(section), ""
+		return section, sourcePath, estimateTokensApprox(section), ""
 	default:
 		if value == "" {
 			return "", "", 0, "Unsupported empty project instruction block."
@@ -452,14 +460,23 @@ func (s *Server) resolveBranchTaskDocSection(sess *session.Session, _ string, bl
 		return "", "", 0, "Failed to resolve current git branch: " + err.Error()
 	}
 
-	settings, err := s.store.GetSettings()
-	if err != nil {
-		return "", "", 0, "Failed to load settings: " + err.Error()
-	}
+	projectSettings := normalizeProjectSettings(project.Settings)
 	projectID := strings.TrimSpace(*sess.ProjectID)
+	projectDirectory, hasProjectDirectorySetting := projectSettings[projectBranchTaskDocDirectorySettingKey]
 	config := branchTaskDocConfig{
-		Directory: strings.TrimSpace(settings["A2GENT_PROJECT_BRANCH_TASK_DOC_DIRECTORY."+projectID]),
-		Mode:      strings.TrimSpace(settings["A2GENT_PROJECT_BRANCH_TASK_DOC_MODE."+projectID]),
+		Directory: strings.TrimSpace(projectDirectory),
+		Mode:      strings.TrimSpace(projectSettings[projectBranchTaskDocModeSettingKey]),
+	}
+	if !hasProjectDirectorySetting {
+		// WHY: older Caesar versions stored branch-doc settings in global app settings
+		// with a project-id suffix. Project settings are authoritative now, but keep a
+		// fallback so existing installations continue to resolve their documentation.
+		settings, err := s.store.GetSettings()
+		if err != nil {
+			return "", "", 0, "Failed to load legacy branch documentation settings: " + err.Error()
+		}
+		config.Directory = strings.TrimSpace(settings[legacyBranchTaskDocDirectorySettingPrefix+projectID])
+		config.Mode = strings.TrimSpace(settings[legacyBranchTaskDocModeSettingPrefix+projectID])
 	}
 	if config.Mode != "path" {
 		config.Mode = "content"

@@ -2,6 +2,8 @@ package http
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -188,6 +190,116 @@ func TestBuildSystemPromptForSession_IncludesEnvironmentContextForMainAgent(t *t
 	}
 	if !strings.Contains(systemPrompt, "Project root: "+projectRoot) {
 		t.Fatalf("expected main prompt to include project root %q, got: %q", projectRoot, systemPrompt)
+	}
+}
+
+func TestBuildSystemPromptForSession_IncludesProjectInstructionBlocks(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now()
+	projectRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectRoot, "AGENTS.md"), []byte("Project agent rules."), 0o644); err != nil {
+		t.Fatalf("failed to write AGENTS.md: %v", err)
+	}
+	projectBlocks := `[{"type":"project_agents_md","value":"","enabled":true},{"type":"text","value":"Project-only text rule.","enabled":true}]`
+	project := &storage.Project{
+		ID:     "project-instructions",
+		Name:   "Project Instructions",
+		Folder: &projectRoot,
+		Settings: map[string]string{
+			projectInstructionBlocksSettingKey: projectBlocks,
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatalf("failed to save project: %v", err)
+	}
+
+	sessionManager := session.NewManager(store)
+	server := NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
+
+	sess, err := sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	sess.ProjectID = &project.ID
+	if err := sessionManager.Save(sess); err != nil {
+		t.Fatalf("failed to save session: %v", err)
+	}
+
+	systemPrompt := server.buildSystemPromptForSession(sess)
+	if !strings.Contains(systemPrompt, "Project agent rules.") {
+		t.Fatalf("expected project AGENTS.md content in prompt, got: %q", systemPrompt)
+	}
+	if !strings.Contains(systemPrompt, "Project-only text rule.") {
+		t.Fatalf("expected project text block in prompt, got: %q", systemPrompt)
+	}
+}
+
+func TestBuildSystemPromptForSession_UsesProjectBranchTaskDocSettings(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now()
+	projectRoot := t.TempDir()
+	docsDir := filepath.Join(projectRoot, "docs", "tasks")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		t.Fatalf("failed to create docs dir: %v", err)
+	}
+	if _, err := runGitCommand(projectRoot, "init"); err != nil {
+		t.Fatalf("failed to init git repo: %v", err)
+	}
+	if _, err := runGitCommand(projectRoot, "checkout", "-b", "kurapov/PROJECT-123-custom-prompt"); err != nil {
+		t.Fatalf("failed to create branch: %v", err)
+	}
+	branchDocPath := filepath.Join(docsDir, "PROJECT-123-custom-prompt.md")
+	if err := os.WriteFile(branchDocPath, []byte("Branch-specific project instructions."), 0o644); err != nil {
+		t.Fatalf("failed to write branch doc: %v", err)
+	}
+
+	projectBlocks := `[{"type":"branch_task_doc","value":"","enabled":true}]`
+	project := &storage.Project{
+		ID:     "project-branch-doc-settings",
+		Name:   "Project Branch Docs",
+		Folder: &projectRoot,
+		Settings: map[string]string{
+			projectInstructionBlocksSettingKey:      projectBlocks,
+			projectBranchTaskDocDirectorySettingKey: docsDir,
+			projectBranchTaskDocModeSettingKey:      "content",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatalf("failed to save project: %v", err)
+	}
+
+	sessionManager := session.NewManager(store)
+	server := NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
+
+	sess, err := sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	sess.ProjectID = &project.ID
+	if err := sessionManager.Save(sess); err != nil {
+		t.Fatalf("failed to save session: %v", err)
+	}
+
+	systemPrompt := server.buildSystemPromptForSession(sess)
+	if !strings.Contains(systemPrompt, "Branch-specific project instructions.") {
+		t.Fatalf("expected branch task documentation from project settings in prompt, got: %q", systemPrompt)
+	}
+	if strings.Contains(systemPrompt, "Branch task documentation directory is not configured") {
+		t.Fatalf("did not expect legacy global settings error, got: %q", systemPrompt)
 	}
 }
 

@@ -339,9 +339,14 @@ func (s *Server) handleListJobSessions(w http.ResponseWriter, r *http.Request) {
 		if sess.ProjectID != nil {
 			projectID = *sess.ProjectID
 		}
+		jobID := ""
+		if sess.JobID != nil {
+			jobID = *sess.JobID
+		}
 		resp[i] = SessionListItem{
 			ID:                 sess.ID,
 			AgentID:            sess.AgentID,
+			JobID:              jobID,
 			ProjectID:          projectID,
 			Provider:           provider,
 			Model:              model,

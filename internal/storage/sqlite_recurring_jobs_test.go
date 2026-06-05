@@ -83,3 +83,62 @@ func TestProjectRecurringJobPersistenceAndDelete(t *testing.T) {
 		t.Fatalf("ListJobExecutions after DeleteProject returned %d executions, want 0", len(executions))
 	}
 }
+
+func TestListSessionsIncludesRecurringJobSessions(t *testing.T) {
+	store, err := NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC()
+	jobID := "job-visible-in-session-list"
+	regularSession := &Session{
+		ID:        "regular-session",
+		AgentID:   "build",
+		Title:     "Regular session",
+		Status:    "completed",
+		Metadata:  map[string]interface{}{},
+		CreatedAt: now.Add(-time.Minute),
+		UpdatedAt: now.Add(-time.Minute),
+	}
+	jobSession := &Session{
+		ID:        "job-session",
+		AgentID:   "build",
+		JobID:     &jobID,
+		Title:     "Scheduled session",
+		Status:    "completed",
+		Metadata:  map[string]interface{}{},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := store.SaveSession(regularSession); err != nil {
+		t.Fatalf("SaveSession regular: %v", err)
+	}
+	if err := store.SaveSession(jobSession); err != nil {
+		t.Fatalf("SaveSession job: %v", err)
+	}
+
+	sessions, err := store.ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("ListSessions returned %d sessions, want 2", len(sessions))
+	}
+
+	byID := map[string]*Session{}
+	for _, sess := range sessions {
+		byID[sess.ID] = sess
+	}
+	if byID[regularSession.ID] == nil {
+		t.Fatalf("ListSessions missing regular session %q", regularSession.ID)
+	}
+	listedJobSession := byID[jobSession.ID]
+	if listedJobSession == nil {
+		t.Fatalf("ListSessions missing recurring job session %q", jobSession.ID)
+	}
+	if listedJobSession.JobID == nil || *listedJobSession.JobID != jobID {
+		t.Fatalf("ListSessions job_id = %v, want %q", listedJobSession.JobID, jobID)
+	}
+}

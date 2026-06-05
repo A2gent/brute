@@ -41,6 +41,7 @@ type SessionResponse struct {
 	AgentID              string                       `json:"agent_id"`
 	ParentID             string                       `json:"parent_id,omitempty"`
 	LinkType             string                       `json:"link_type,omitempty"`
+	JobID                string                       `json:"job_id,omitempty"`
 	ProjectID            string                       `json:"project_id,omitempty"`
 	Provider             string                       `json:"provider,omitempty"`
 	Model                string                       `json:"model,omitempty"`
@@ -213,6 +214,7 @@ type SessionListItem struct {
 	AgentID            string                 `json:"agent_id"`
 	ParentID           string                 `json:"parent_id,omitempty"`
 	LinkType           string                 `json:"link_type,omitempty"`
+	JobID              string                 `json:"job_id,omitempty"`
 	ProjectID          string                 `json:"project_id,omitempty"`
 	Provider           string                 `json:"provider,omitempty"`
 	Model              string                 `json:"model,omitempty"`

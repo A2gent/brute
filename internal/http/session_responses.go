@@ -14,6 +14,10 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 	if sess.ProjectID != nil {
 		projectID = *sess.ProjectID
 	}
+	jobID := ""
+	if sess.JobID != nil {
+		jobID = *sess.JobID
+	}
 	provider, model := sessionProviderAndModel(sess)
 	routedProvider, routedModel := sessionRoutedProviderAndModel(sess)
 	snapshot := sessionSystemPromptSnapshot(sess)
@@ -52,6 +56,7 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		AgentID:              sess.AgentID,
 		ParentID:             parentID,
 		LinkType:             sessionLinkType(sess),
+		JobID:                jobID,
 		ProjectID:            projectID,
 		Provider:             provider,
 		Model:                model,

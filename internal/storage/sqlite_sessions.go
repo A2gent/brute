@@ -227,12 +227,11 @@ func (s *SQLiteStore) GetSessionSummary(id string) (*Session, error) {
 	return &sess, nil
 }
 
-// ListSessions lists all regular sessions plus Thinking job sessions.
+// ListSessions lists all sessions, including sessions created by recurring jobs.
 func (s *SQLiteStore) ListSessions() ([]*Session, error) {
 	rows, err := s.db.Query(`
 		SELECT id, agent_id, parent_id, job_id, project_id, title, status, metadata, task_progress, created_at, updated_at
-		FROM sessions 
-		WHERE job_id IS NULL OR project_id = 'project-thinking'
+		FROM sessions
 		ORDER BY created_at DESC
 	`)
 	if err != nil {

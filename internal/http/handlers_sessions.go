@@ -43,11 +43,16 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		if sess.ProjectID != nil {
 			projectID = *sess.ProjectID
 		}
+		jobID := ""
+		if sess.JobID != nil {
+			jobID = *sess.JobID
+		}
 		inputTokens, outputTokens := sessionInputOutputTokens(sess)
 		item := SessionListItem{
 			ID:                 sess.ID,
 			AgentID:            sess.AgentID,
 			ParentID:           parentID,
+			JobID:              jobID,
 			LinkType:           sessionLinkType(sess),
 			ProjectID:          projectID,
 			Provider:           provider,

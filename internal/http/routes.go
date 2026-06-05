@@ -54,6 +54,7 @@ func (s *Server) setupRoutes() {
 	s.registerAssetRoutes(r)
 	s.registerDeviceRoutes(r)
 	s.registerBrowserChromeRoutes(r)
+	s.registerBrowserExtensionRoutes(r)
 	s.registerSessionRoutes(r)
 	s.registerSessionTemplateRoutes(r)
 	s.registerProjectRoutes(r)

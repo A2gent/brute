@@ -25,19 +25,20 @@ import (
 
 // Server represents the HTTP API server
 type Server struct {
-	config         *config.Config
-	llmClient      llm.Client
-	toolManager    *tools.Manager
-	sessionManager *session.Manager
-	store          storage.Store
-	router         chi.Router
-	port           int
-	portMu         sync.RWMutex
-	portReady      chan int
-	speechClips    *speechcache.Store
-	runParentCtx   context.Context
-	activeRunsMu   sync.Mutex
-	activeRuns     map[string]map[string]context.CancelFunc
+	config                *config.Config
+	llmClient             llm.Client
+	toolManager           *tools.Manager
+	sessionManager        *session.Manager
+	store                 storage.Store
+	router                chi.Router
+	port                  int
+	portMu                sync.RWMutex
+	portReady             chan int
+	speechClips           *speechcache.Store
+	runParentCtx          context.Context
+	activeRunsMu          sync.Mutex
+	activeRuns            map[string]map[string]context.CancelFunc
+	chromeExtensionBridge *chromeExtensionBridge
 
 	// A2A gRPC tunnel (managed by a2a_tunnel.go)
 	tunnelMu     sync.Mutex
@@ -69,16 +70,16 @@ func NewServer(
 		}
 	}
 	s := &Server{
-		config:         cfg,
-		llmClient:      llmClient,
-		toolManager:    toolManager,
-		sessionManager: sessionManager,
-		store:          store,
-		port:           port,
-		portReady:      make(chan int, 1),
-		speechClips:    speechClips,
-		runParentCtx:   context.Background(),
-		activeRuns:     make(map[string]map[string]context.CancelFunc),
+		config:                cfg,
+		llmClient:             llmClient,
+		toolManager:           toolManager,
+		sessionManager:        sessionManager,
+		store:                 store,
+		port:                  port,
+		portReady:             make(chan int, 1),
+		runParentCtx:          context.Background(),
+		activeRuns:            make(map[string]map[string]context.CancelFunc),
+		chromeExtensionBridge: newChromeExtensionBridge(),
 	}
 
 	if settings, err := store.GetSettings(); err == nil {

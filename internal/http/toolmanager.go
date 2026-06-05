@@ -134,6 +134,7 @@ func (s *Server) registerServerBackedTools(manager *tools.Manager) {
 	manager.Register(newDelegateToSubAgentTool(s))
 	manager.Register(newDelegateToExternalAgentTool(s))
 	manager.Register(newDiscoverExternalAgentsTool(s))
+	manager.Register(newChromeExtensionTool(s))
 	manager.Register(newCreateLocalDockerAgentsBulkTool(s))
 	manager.RegisterQuestionTool(s.sessionManager)
 	manager.RegisterSessionTaskProgressTool(s.sessionManager)

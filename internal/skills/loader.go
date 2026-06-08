@@ -3,7 +3,6 @@ package skills
 import (
 	"bufio"
 	"bytes"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,28 +10,11 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// LoadSkillsFromDirectory loads all skills from a directory
+// LoadSkillsFromDirectory loads discoverable skills from a directory.
 func LoadSkillsFromDirectory(dir string, config *SkillConfig) ([]*Skill, error) {
 	skills := make([]*Skill, 0)
 
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-
-		// Skip hidden directories
-		if d.IsDir() {
-			if path != dir && strings.HasPrefix(d.Name(), ".") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		// Only process SKILL.md files or markdown files
-		if !isSkillFile(d.Name()) {
-			return nil
-		}
-
+	err := WalkDiscoverableSkillFiles(dir, func(path string, relPath string) error {
 		// Load skill
 		skill, err := LoadSkill(path)
 		if err != nil {
@@ -40,9 +22,7 @@ func LoadSkillsFromDirectory(dir string, config *SkillConfig) ([]*Skill, error) 
 			return nil
 		}
 
-		// Calculate relative path
-		relPath, _ := filepath.Rel(dir, path)
-		skill.RelativePath = filepath.ToSlash(relPath)
+		skill.RelativePath = relPath
 
 		// Apply configuration
 		skill.Strategy = GetSkillStrategy(skill.Name, config)
@@ -147,10 +127,4 @@ func deriveNameFromContent(content []byte, path string) string {
 
 	// Fallback to filename
 	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(filepath.Base(path)))
-}
-
-// isSkillFile checks if a file is a skill file (SKILL.md or *.md/*.markdown)
-func isSkillFile(name string) bool {
-	lower := strings.ToLower(name)
-	return lower == "skill.md" || strings.HasSuffix(lower, ".md") || strings.HasSuffix(lower, ".markdown")
 }

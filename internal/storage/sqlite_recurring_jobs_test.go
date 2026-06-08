@@ -84,6 +84,60 @@ func TestProjectRecurringJobPersistenceAndDelete(t *testing.T) {
 	}
 }
 
+func TestSaveJobExecutionUpdatesSessionID(t *testing.T) {
+	store, err := NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC()
+	job := &RecurringJob{
+		ID:               "job-exec-session-link",
+		Name:             "Execution session link",
+		ScheduleHuman:    "every hour",
+		ScheduleCron:     "0 * * * *",
+		TaskPrompt:       "Do the thing",
+		TaskPromptSource: "text",
+		Enabled:          true,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	if err := store.SaveJob(job); err != nil {
+		t.Fatalf("SaveJob: %v", err)
+	}
+
+	exec := &JobExecution{
+		ID:        "exec-link",
+		JobID:     job.ID,
+		Status:    "running",
+		StartedAt: now,
+	}
+	if err := store.SaveJobExecution(exec); err != nil {
+		t.Fatalf("SaveJobExecution initial: %v", err)
+	}
+
+	exec.SessionID = "session-created-after-exec"
+	exec.Status = "failed"
+	finishedAt := now.Add(time.Second)
+	exec.FinishedAt = &finishedAt
+	exec.Error = "provider unavailable"
+	if err := store.SaveJobExecution(exec); err != nil {
+		t.Fatalf("SaveJobExecution update: %v", err)
+	}
+
+	got, err := store.GetJobExecution(exec.ID)
+	if err != nil {
+		t.Fatalf("GetJobExecution: %v", err)
+	}
+	if got.SessionID != exec.SessionID {
+		t.Fatalf("SessionID = %q, want %q", got.SessionID, exec.SessionID)
+	}
+	if got.Status != "failed" || got.Error != exec.Error || got.FinishedAt == nil {
+		t.Fatalf("updated execution = %#v, want failed with error and finished_at", got)
+	}
+}
+
 func TestListSessionsIncludesRecurringJobSessions(t *testing.T) {
 	store, err := NewSQLiteStore(t.TempDir())
 	if err != nil {

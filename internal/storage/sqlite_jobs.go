@@ -155,9 +155,12 @@ func (s *SQLiteStore) SaveJobExecution(exec *JobExecution) error {
 		INSERT INTO job_executions (id, job_id, session_id, status, output, error, started_at, finished_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
+			job_id = excluded.job_id,
+			session_id = excluded.session_id,
 			status = excluded.status,
 			output = excluded.output,
 			error = excluded.error,
+			started_at = excluded.started_at,
 			finished_at = excluded.finished_at
 	`, exec.ID, exec.JobID, exec.SessionID, exec.Status, exec.Output, exec.Error, exec.StartedAt, exec.FinishedAt)
 	if err != nil {

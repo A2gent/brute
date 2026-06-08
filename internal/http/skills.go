@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -41,6 +40,7 @@ var integrationToolNameSet = func() map[string]struct{} {
 	}
 	return out
 }()
+
 func (s *Server) getSkillsFolder(settings map[string]string) string {
 	folder := strings.TrimSpace(settings[skillsFolderSettingKey])
 	if folder == "" {
@@ -263,39 +263,20 @@ func (s *Server) handleDiscoverSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	skills := make([]SkillFile, 0)
-	walkErr := filepath.WalkDir(resolvedFolder, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-
-		if d.IsDir() {
-			if path != resolvedFolder && strings.HasPrefix(d.Name(), ".") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		if !isMarkdownFile(d.Name()) {
-			return nil
-		}
-
-		relPath, err := filepath.Rel(resolvedFolder, path)
-		if err != nil {
-			return nil
-		}
-
+	skillsList := make([]SkillFile, 0)
+	walkErr := skills.WalkDiscoverableSkillFiles(resolvedFolder, func(path string, relPath string) error {
 		// Parse skill metadata (name and description from frontmatter)
 		name, description := parseSkillMetadata(path)
 		if name == "" {
-			name = strings.TrimSuffix(d.Name(), filepath.Ext(d.Name()))
+			baseName := filepath.Base(path)
+			name = strings.TrimSuffix(baseName, filepath.Ext(baseName))
 		}
 
-		skills = append(skills, SkillFile{
+		skillsList = append(skillsList, SkillFile{
 			Name:         name,
 			Description:  description,
 			Path:         path,
-			RelativePath: filepath.ToSlash(relPath),
+			RelativePath: relPath,
 		})
 		return nil
 	})
@@ -304,13 +285,13 @@ func (s *Server) handleDiscoverSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sort.Slice(skills, func(i, j int) bool {
-		return strings.ToLower(skills[i].RelativePath) < strings.ToLower(skills[j].RelativePath)
+	sort.Slice(skillsList, func(i, j int) bool {
+		return strings.ToLower(skillsList[i].RelativePath) < strings.ToLower(skillsList[j].RelativePath)
 	})
 
 	s.jsonResponse(w, http.StatusOK, SkillDiscoverResponse{
 		Folder: resolvedFolder,
-		Skills: skills,
+		Skills: skillsList,
 	})
 }
 
@@ -606,17 +587,24 @@ func (s *Server) handleDeleteSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Security check: ensure the path is within the skills folder
-	if !strings.HasPrefix(resolvedPath, resolvedFolder) {
+	// Security check: ensure the path is inside the configured skills folder.
+	relativePath, err := filepath.Rel(resolvedFolder, resolvedPath)
+	if err != nil || relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) || filepath.IsAbs(relativePath) {
 		s.errorResponse(w, http.StatusBadRequest, "Skill path is outside the skills folder")
 		return
 	}
 
-	// Get the skill directory (parent of SKILL.md)
-	skillDir := filepath.Dir(resolvedPath)
+	if _, ok := skills.DiscoverableSkillRelativePath(resolvedFolder, resolvedPath); !ok {
+		s.errorResponse(w, http.StatusBadRequest, "Path is not a discoverable skill")
+		return
+	}
 
-	// Delete the skill directory
-	if err := os.RemoveAll(skillDir); err != nil {
+	deletePath := resolvedPath
+	if skills.IsPackagedSkillManifest(resolvedFolder, resolvedPath) {
+		deletePath = filepath.Dir(resolvedPath)
+	}
+
+	if err := os.RemoveAll(deletePath); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Failed to delete skill: %v", err))
 		return
 	}
@@ -624,6 +612,6 @@ func (s *Server) handleDeleteSkill(w http.ResponseWriter, r *http.Request) {
 	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 		"message": fmt.Sprintf("Skill deleted successfully"),
-		"path":    skillDir,
+		"path":    deletePath,
 	})
 }

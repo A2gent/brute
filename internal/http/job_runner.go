@@ -130,6 +130,9 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 	}
 
 	exec.SessionID = sess.ID
+	if err := s.store.SaveJobExecution(exec); err != nil {
+		logging.Error("Failed to link execution record to session: %v", err)
+	}
 
 	providerType := s.resolveJobProviderType(job)
 	model := s.resolveModelForProvider(providerType)
@@ -142,24 +145,20 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 
 	effectiveTaskPrompt, resolveErr := jobs.ResolveTaskPrompt(job, s.resolveSessionWorkDir(sess))
 	if resolveErr != nil {
-		exec.Status = "failed"
-		exec.Error = "Failed to resolve task instructions: " + resolveErr.Error()
-		finishedAt := time.Now()
-		exec.FinishedAt = &finishedAt
-		s.store.SaveJobExecution(exec)
+		s.failJobExecution(exec, sess, "Failed to resolve task instructions: "+resolveErr.Error())
 		return exec, nil
 	}
 	if isThinkingJob {
 		effectiveTaskPrompt = thinkingRunTaskPrompt
 	}
+	sess.AddUserMessage(effectiveTaskPrompt)
+	if err := s.sessionManager.Save(sess); err != nil {
+		logging.Warn("Failed to persist job session prompt: %v", err)
+	}
 
 	target, clientErr := s.resolveExecutionTarget(ctx, providerType, model, effectiveTaskPrompt, sess)
 	if clientErr != nil {
-		exec.Status = "failed"
-		exec.Error = "Failed to initialize provider: " + clientErr.Error()
-		finishedAt := time.Now()
-		exec.FinishedAt = &finishedAt
-		s.store.SaveJobExecution(exec)
+		s.failJobExecution(exec, sess, "Failed to initialize provider: "+clientErr.Error())
 		return exec, nil
 	}
 	if setSessionRoutedProviderAndModel(sess, providerType, target.ProviderType, target.Model) {
@@ -179,7 +178,6 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 		UsePreviousResponse: target.StatefulResponses,
 	}
 	ag := agent.New(agentConfig, target.Client, s.toolManagerForSession(sess), s.sessionManager)
-	sess.AddUserMessage(effectiveTaskPrompt)
 	output, _, err := ag.Run(ctx, sess, effectiveTaskPrompt)
 
 	finishedAt := time.Now()
@@ -188,6 +186,12 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 	if err != nil {
 		exec.Status = "failed"
 		exec.Error = err.Error()
+		if sess.Status == session.StatusRunning {
+			sess.SetStatus(session.StatusFailed)
+			if err := s.sessionManager.Save(sess); err != nil {
+				logging.Warn("Failed to mark job session failed: %v", err)
+			}
+		}
 	} else {
 		exec.Status = "success"
 		exec.Output = output
@@ -209,6 +213,30 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 	}
 
 	return exec, nil
+}
+
+func (s *Server) failJobExecution(exec *storage.JobExecution, sess *session.Session, message string) {
+	exec.Status = "failed"
+	exec.Error = message
+	finishedAt := time.Now()
+	exec.FinishedAt = &finishedAt
+
+	if sess != nil {
+		if strings.TrimSpace(sess.Title) == "" {
+			sess.SetTitle("Recurring job failed")
+		}
+		if strings.TrimSpace(message) != "" {
+			sess.AddAssistantMessage(message, nil)
+		}
+		sess.SetStatus(session.StatusFailed)
+		if err := s.sessionManager.Save(sess); err != nil {
+			logging.Warn("Failed to mark job session failed: %v", err)
+		}
+	}
+
+	if err := s.store.SaveJobExecution(exec); err != nil {
+		logging.Error("Failed to update execution record: %v", err)
+	}
 }
 
 func (s *Server) assignSessionToJobProject(sess *session.Session, job *storage.RecurringJob) error {

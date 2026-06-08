@@ -18,6 +18,7 @@ import (
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/llm/gemini"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
+	"github.com/A2gent/brute/internal/llm/openaicodex"
 	"github.com/A2gent/brute/internal/llm/retry"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
@@ -206,6 +207,9 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 	}
 
 	exec.SessionID = sess.ID
+	if err := s.store.SaveJobExecution(exec); err != nil {
+		logging.Error("Failed to link execution record to session for job %s: %v", job.ID, err)
+	}
 	isThinkingJob := false
 	if thinking, thinkErr := s.isThinkingJob(job.ID); thinkErr != nil {
 		logging.Warn("Failed to check thinking job for project assignment: %v", thinkErr)
@@ -235,12 +239,12 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 	effectiveTaskPrompt, resolveErr := jobs.ResolveTaskPrompt(job, jobWorkDir)
 	if resolveErr != nil {
 		logging.Error("Failed to resolve task instructions for job %s: %v", job.ID, resolveErr)
-		exec.Status = "failed"
-		exec.Error = "Failed to resolve task instructions: " + resolveErr.Error()
-		finishedAt := time.Now()
-		exec.FinishedAt = &finishedAt
-		s.store.SaveJobExecution(exec)
+		s.failExecution(exec, sess, "Failed to resolve task instructions: "+resolveErr.Error())
 		return
+	}
+	sess.AddUserMessage(effectiveTaskPrompt)
+	if err := s.sessionManager.Save(sess); err != nil {
+		logging.Warn("Failed to persist job session prompt: %v", err)
 	}
 
 	agentConfig := agent.Config{
@@ -255,11 +259,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 	client, err := s.createLLMClient(providerType, model, jobWorkDir)
 	if err != nil {
 		logging.Error("Failed to initialize provider %s for job %s: %v", providerType, job.ID, err)
-		exec.Status = "failed"
-		exec.Error = "Failed to initialize provider: " + err.Error()
-		finishedAt := time.Now()
-		exec.FinishedAt = &finishedAt
-		s.store.SaveJobExecution(exec)
+		s.failExecution(exec, sess, "Failed to initialize provider: "+err.Error())
 		return
 	}
 
@@ -268,8 +268,6 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 	// Create a timeout context for job execution (default 30 minutes)
 	jobCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
-
-	sess.AddUserMessage(effectiveTaskPrompt)
 
 	output, _, err := ag.Run(jobCtx, sess, effectiveTaskPrompt)
 
@@ -280,6 +278,12 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 		logging.Error("Job %s failed: %v", job.ID, err)
 		exec.Status = "failed"
 		exec.Error = err.Error()
+		if sess.Status == session.StatusRunning {
+			sess.SetStatus(session.StatusFailed)
+			if err := s.sessionManager.Save(sess); err != nil {
+				logging.Warn("Failed to mark job session failed: %v", err)
+			}
+		}
 	} else {
 		logging.Info("Job %s completed successfully", job.ID)
 		exec.Status = "success"
@@ -311,6 +315,30 @@ func (s *Scheduler) rescheduleJobAfterAttempt(job *storage.RecurringJob, attempt
 
 	if err := s.store.SaveJob(job); err != nil {
 		logging.Error("Failed to update job %s after execution attempt: %v", job.ID, err)
+	}
+}
+
+func (s *Scheduler) failExecution(exec *storage.JobExecution, sess *session.Session, message string) {
+	exec.Status = "failed"
+	exec.Error = message
+	finishedAt := time.Now()
+	exec.FinishedAt = &finishedAt
+
+	if sess != nil {
+		if strings.TrimSpace(sess.Title) == "" {
+			sess.SetTitle("Recurring job failed")
+		}
+		if strings.TrimSpace(message) != "" {
+			sess.AddAssistantMessage(message, nil)
+		}
+		sess.SetStatus(session.StatusFailed)
+		if err := s.sessionManager.Save(sess); err != nil {
+			logging.Warn("Failed to mark job session failed: %v", err)
+		}
+	}
+
+	if err := s.store.SaveJobExecution(exec); err != nil {
+		logging.Error("Failed to update execution record for job %s: %v", exec.JobID, err)
 	}
 }
 
@@ -409,7 +437,7 @@ func (s *Scheduler) resolveJobProviderType(job *storage.RecurringJob) config.Pro
 }
 
 func (s *Scheduler) resolveModelForProvider(providerType config.ProviderType) string {
-	if config.IsFallbackAggregateRef(string(providerType)) || providerType == config.ProviderFallback {
+	if config.IsFallbackAggregateRef(string(providerType)) || providerType == config.ProviderFallback || providerType == config.ProviderAutoRouter {
 		return ""
 	}
 	provider := s.config.Providers[string(providerType)]
@@ -447,6 +475,9 @@ func (s *Scheduler) resolveContextWindowForProvider(providerType config.Provider
 }
 
 func (s *Scheduler) createLLMClient(providerType config.ProviderType, model string, workDir string) (llm.Client, error) {
+	if providerType == config.ProviderAutoRouter {
+		return nil, fmt.Errorf("automatic router requires dynamic prompt routing")
+	}
 	if config.IsFallbackAggregateRef(string(providerType)) || providerType == config.ProviderFallback {
 		return s.createFallbackChainClient(providerType, workDir)
 	}
@@ -475,6 +506,25 @@ func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model 
 	if baseURL == "" {
 		baseURL = strings.TrimSpace(def.DefaultURL)
 	}
+	envURLKeys := []string{strings.ToUpper(string(providerType)) + "_BASE_URL"}
+	if providerType == config.ProviderLMStudio {
+		envURLKeys = append([]string{"LM_STUDIO_BASE_URL"}, envURLKeys...)
+	}
+	for _, key := range envURLKeys {
+		if envURL := strings.TrimSpace(os.Getenv(key)); envURL != "" {
+			baseURL = envURL
+			break
+		}
+	}
+	if envURL := strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL")); envURL != "" && providerType == config.ProviderKimi {
+		baseURL = envURL
+	}
+	if providerType == config.ProviderOpenAICodex {
+		lower := strings.ToLower(strings.TrimSpace(baseURL))
+		if lower == "" || strings.Contains(lower, "api.openai.com") {
+			baseURL = strings.TrimSpace(def.DefaultURL)
+		}
+	}
 	modelName := strings.TrimSpace(model)
 	if modelName == "" {
 		modelName = s.resolveModelForProvider(providerType)
@@ -494,8 +544,14 @@ func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model 
 	}
 
 	apiKey := strings.TrimSpace(provider.APIKey)
+	if apiKey == "" && s.providerSupportsOAuth(providerType) && provider.OAuth != nil {
+		apiKey = strings.TrimSpace(provider.OAuth.AccessToken)
+	}
 	if apiKey == "" {
 		apiKey = s.apiKeyFromEnv(providerType)
+	}
+	if providerType == config.ProviderOpenCodeZen && apiKey == "" {
+		apiKey = "public"
 	}
 
 	if def.RequiresKey && apiKey == "" {
@@ -507,10 +563,19 @@ func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model 
 		// Google Gemini uses a dedicated client with OpenAI-compatible API + Gemini extensions
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return gemini.NewClient(apiKey, modelName, baseURL), nil
-	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenAI:
+	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenAI, config.ProviderOpenCodeZen:
 		// Other OpenAI-compatible providers
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return lmstudio.NewClient(apiKey, modelName, baseURL), nil
+	case config.ProviderOpenAICodex:
+		return openaicodex.NewClientWithOptions(apiKey, modelName, baseURL, openaicodex.Options{
+			PromptCacheKey:    provider.PromptCacheKey,
+			ReasoningEffort:   provider.ReasoningEffort,
+			TextVerbosity:     provider.TextVerbosity,
+			ServiceTier:       provider.ServiceTier,
+			MaxTokens:         provider.MaxTokens,
+			StatefulResponses: s.providerStatefulResponses(providerType),
+		}), nil
 	default:
 		return anthropic.NewClientWithBaseURL(apiKey, modelName, baseURL), nil
 	}
@@ -564,13 +629,23 @@ func (s *Scheduler) apiKeyEnvName(providerType config.ProviderType) string {
 		return "KIMI_API_KEY"
 	case config.ProviderOpenRouter:
 		return "OPENROUTER_API_KEY"
+	case config.ProviderOpenCodeZen:
+		return "OPENCODE_API_KEY"
 	case config.ProviderGoogle:
 		return "GOOGLE_API_KEY"
 	case config.ProviderOpenAI:
 		return "OPENAI_API_KEY"
+	case config.ProviderOpenAICodex:
+		return "OPENAI_API_KEY"
 	default:
 		return ""
 	}
+}
+
+func (s *Scheduler) providerStatefulResponses(providerType config.ProviderType) bool {
+	// Keep OpenAI Codex stateless in background jobs; the Codex backend requires
+	// full local conversation state for tool-heavy agent runs.
+	return false
 }
 
 func normalizeFallbackChainNodes(raw []config.FallbackChainNode) []config.FallbackChainNode {
@@ -665,7 +740,7 @@ func (s *Scheduler) fallbackNodesForProvider(providerRef config.ProviderType) ([
 
 func (s *Scheduler) providerConfiguredForUse(providerType config.ProviderType) bool {
 	def := config.GetProviderDefinition(providerType)
-	if def == nil || providerType == config.ProviderFallback {
+	if def == nil || providerType == config.ProviderFallback || providerType == config.ProviderAutoRouter {
 		return false
 	}
 	if providerType == config.ProviderAnthropic {
@@ -682,11 +757,18 @@ func (s *Scheduler) providerConfiguredForUse(providerType config.ProviderType) b
 	if !def.RequiresKey {
 		return true
 	}
+	if s.providerSupportsOAuth(providerType) && provider.OAuth != nil && strings.TrimSpace(provider.OAuth.AccessToken) != "" {
+		return true
+	}
 	apiKey := strings.TrimSpace(provider.APIKey)
 	if apiKey == "" {
 		apiKey = s.apiKeyFromEnv(providerType)
 	}
 	return apiKey != ""
+}
+
+func (s *Scheduler) providerSupportsOAuth(providerType config.ProviderType) bool {
+	return providerType == config.ProviderOpenAICodex
 }
 
 // calculateNextRun calculates the next run time based on cron expression

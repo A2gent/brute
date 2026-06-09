@@ -45,36 +45,56 @@ type dockerPSRow struct {
 }
 
 type LocalDockerAgent struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	Image     string            `json:"image"`
-	State     string            `json:"state"`
-	Status    string            `json:"status"`
-	CreatedAt string            `json:"created_at,omitempty"`
-	Ports     string            `json:"ports,omitempty"`
-	Labels    map[string]string `json:"labels,omitempty"`
-	Managed   bool              `json:"managed"`
-	Running   bool              `json:"running"`
-	HostPort  int               `json:"host_port,omitempty"`
-	APIURL    string            `json:"api_url,omitempty"`
+	ID             string                         `json:"id"`
+	Name           string                         `json:"name"`
+	Image          string                         `json:"image"`
+	State          string                         `json:"state"`
+	Status         string                         `json:"status"`
+	CreatedAt      string                         `json:"created_at,omitempty"`
+	Ports          string                         `json:"ports,omitempty"`
+	Labels         map[string]string              `json:"labels,omitempty"`
+	Managed        bool                           `json:"managed"`
+	Running        bool                           `json:"running"`
+	HostPort       int                            `json:"host_port,omitempty"`
+	APIURL         string                         `json:"api_url,omitempty"`
+	StartupSession *localDockerAgentStartupResult `json:"startup_session,omitempty"`
 }
 
 type createLocalDockerAgentRequest struct {
-	Name             string `json:"name"`
-	Image            string `json:"image"`
-	HostPort         int    `json:"host_port"`
-	LMStudioBaseURL  string `json:"lm_studio_base_url"`
-	AgentKind        string `json:"agent_kind"`
-	SystemPrompt     string `json:"system_prompt"`
-	SessionID        string `json:"session_id"`
-	ProjectID        string `json:"project_id"`
-	ProjectMountMode string `json:"project_mount_mode"`
+	Name             string                                `json:"name"`
+	Image            string                                `json:"image"`
+	HostPort         int                                   `json:"host_port"`
+	LMStudioBaseURL  string                                `json:"lm_studio_base_url"`
+	AgentKind        string                                `json:"agent_kind"`
+	SystemPrompt     string                                `json:"system_prompt"`
+	InitialPrompt    string                                `json:"initial_prompt"`
+	SessionID        string                                `json:"session_id"`
+	ProjectID        string                                `json:"project_id"`
+	ProjectMountMode string                                `json:"project_mount_mode"`
+	Project          localDockerAgentYAMLProject           `json:"project,omitempty"`
+	LLM              localDockerAgentYAMLLLM               `json:"llm,omitempty"`
+	Startup          localDockerAgentYAMLStartup           `json:"startup,omitempty"`
+	Tools            localDockerAgentYAMLTools             `json:"tools,omitempty"`
+	Environment      map[string]string                     `json:"environment,omitempty"`
+	Credentials      map[string]localDockerAgentCredential `json:"credentials,omitempty"`
+	Networking       localDockerAgentYAMLNetworking        `json:"networking,omitempty"`
+	Directories      localDockerAgentYAMLDirectories       `json:"directories,omitempty"`
+	Resources        localDockerAgentYAMLResources         `json:"resources,omitempty"`
+	Labels           map[string]string                     `json:"labels,omitempty"`
+	ConfigBaseDir    string                                `json:"-"`
 }
 
 type localDockerAgentCreateResult struct {
 	Agent   *LocalDockerAgent
 	Name    string
 	Warning string
+}
+
+type localDockerAgentStartupResult struct {
+	SessionID string `json:"session_id,omitempty"`
+	Status    string `json:"status,omitempty"`
+	AutoRun   bool   `json:"auto_run"`
+	Error     string `json:"error,omitempty"`
 }
 
 type buildLocalDockerAgentImageRequest struct {
@@ -198,12 +218,16 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 
 	lmStudioBaseURL := strings.TrimSpace(req.LMStudioBaseURL)
 	if lmStudioBaseURL == "" {
+		lmStudioBaseURL = strings.TrimSpace(req.LLM.LMStudioBaseURL)
+	}
+	if lmStudioBaseURL == "" {
 		lmStudioBaseURL = strings.TrimSpace(os.Getenv("LM_STUDIO_BASE_URL"))
 	}
-	if lmStudioBaseURL == "" && !s.llmProxyEnabled() {
+	useParentLLMProxy := s.llmProxyEnabled() && !localDockerAgentBypassesParentLLMProxy(req)
+	if lmStudioBaseURL == "" && !useParentLLMProxy {
 		lmStudioBaseURL = "http://host.docker.internal:1234/v1"
 	}
-	if s.llmProxyEnabled() {
+	if useParentLLMProxy {
 		lmStudioBaseURL = fmt.Sprintf("http://host.docker.internal:%d/v1", s.port)
 	}
 	agentKind := strings.TrimSpace(req.AgentKind)
@@ -212,14 +236,21 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 	sessionID := strings.TrimSpace(req.SessionID)
 	sessionIDLabel := sanitizeDockerLabelValue(sessionID)
 	projectID := strings.TrimSpace(req.ProjectID)
-	projectMountMode := strings.ToLower(strings.TrimSpace(req.ProjectMountMode))
+	if projectID == "" {
+		projectID = strings.TrimSpace(req.Project.ID)
+	}
+	rawProjectMountMode := strings.TrimSpace(req.ProjectMountMode)
+	if rawProjectMountMode == "" {
+		rawProjectMountMode = strings.TrimSpace(req.Project.Mount)
+	}
+	projectMountMode := strings.ToLower(rawProjectMountMode)
 	if projectMountMode == "" {
 		projectMountMode = "ro"
 	}
 	if projectMountMode != "ro" && projectMountMode != "rw" {
 		return nil, http.StatusBadRequest, fmt.Errorf("project_mount_mode must be either ro or rw")
 	}
-	if projectID == "" && strings.TrimSpace(req.ProjectMountMode) != "" {
+	if projectID == "" && rawProjectMountMode != "" {
 		return nil, http.StatusBadRequest, fmt.Errorf("project_id is required when project_mount_mode is set")
 	}
 
@@ -227,7 +258,15 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 	if err != nil {
 		return nil, http.StatusInternalServerError, fmt.Errorf("failed to resolve home directory")
 	}
-	dataDir := filepath.Join(home, ".a2gent-data", "local-agents", name)
+	dataDir := strings.TrimSpace(req.Directories.Data)
+	if dataDir == "" {
+		dataDir = filepath.Join(home, ".a2gent-data", "local-agents", name)
+	}
+	dataDir = expandHomePath(dataDir)
+	if !filepath.IsAbs(dataDir) {
+		dataDir = filepath.Join(home, dataDir)
+	}
+	dataDir = filepath.Clean(dataDir)
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, http.StatusInternalServerError, fmt.Errorf("failed to prepare local agent data directory: %w", err)
 	}
@@ -254,7 +293,14 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 		"--env", "HOME=/data",
 		"--env", "AAGENT_DATA_PATH=/data",
 		"--env", "LM_STUDIO_BASE_URL=" + lmStudioBaseURL,
-		"--env", disableToolsByDefaultSettingKey + "=true",
+	}
+	args, err = s.applyLocalDockerAgentToolsArgs(args, req.Tools)
+	if err != nil {
+		return nil, http.StatusBadRequest, err
+	}
+	args, err = appendLocalDockerAgentExtraArgs(args, req, req.ConfigBaseDir)
+	if err != nil {
+		return nil, http.StatusBadRequest, err
 	}
 	if projectID != "" {
 		projectIDLabel := sanitizeDockerLabelValue(projectID)
@@ -283,10 +329,14 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 		}
 		args = append(args, "--env", "A2GENT_PARENT_SESSION_ID="+sessionID)
 	}
-	if s.llmProxyEnabled() {
+	if useParentLLMProxy {
 		// Route child agent traffic through the parent's OpenAI-compatible proxy.
+		provider := localDockerAgentRuntimeProvider(req.LLM.Provider)
+		if provider == "" {
+			provider = "lmstudio"
+		}
 		args = append(args,
-			"--env", "AAGENT_PROVIDER=lmstudio",
+			"--env", "AAGENT_PROVIDER="+provider,
 			"--env", "A2GENT_PARENT_PROXY_URL="+proxyBaseURL,
 			"--env", "LM_STUDIO_BASE_URL="+proxyBaseURL+"/providers/lmstudio",
 			"--env", "OPENAI_API_KEY=a2gent-proxy",
@@ -314,6 +364,9 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 			Name:    name,
 			Warning: "Container started but details could not be loaded: " + err.Error(),
 		}, http.StatusCreated, nil
+	}
+	if startup := s.bootstrapLocalDockerAgentStartup(ctx, agent, req); startup != nil {
+		agent.StartupSession = startup
 	}
 	return &localDockerAgentCreateResult{Agent: agent}, http.StatusCreated, nil
 }

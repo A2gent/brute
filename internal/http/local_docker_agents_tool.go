@@ -245,3 +245,77 @@ func slugifyForDockerName(value string) string {
 }
 
 var _ tools.Tool = (*createLocalDockerAgentsBulkTool)(nil)
+
+type createLocalDockerAgentsFromYAMLTool struct {
+	server *Server
+}
+
+type createLocalDockerAgentsFromYAMLParams struct {
+	ConfigYAML string `json:"config_yaml,omitempty"`
+	ConfigPath string `json:"config_path,omitempty"`
+}
+
+func newCreateLocalDockerAgentsFromYAMLTool(server *Server) *createLocalDockerAgentsFromYAMLTool {
+	return &createLocalDockerAgentsFromYAMLTool{server: server}
+}
+
+func (t *createLocalDockerAgentsFromYAMLTool) Name() string {
+	return "create_local_docker_agents_from_yaml"
+}
+
+func (t *createLocalDockerAgentsFromYAMLTool) Description() string {
+	return `Create one or more local Dockerized Brute agents from an agent YAML config. Provide either config_yaml content or config_path. Recommended path for reusable configs is the Soul project agents/ folder, usually ~/.local/share/aagent/agents/*.yaml. YAML supports agent identity, batch defaults, project/workspace mounts, networking, credentials, tool allow/block lists, LLM provider/model routing, Docker Model Runner via llm.provider=dmr, resources, labels, and startup prompts.`
+}
+
+func (t *createLocalDockerAgentsFromYAMLTool) Schema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"config_yaml": map[string]interface{}{
+				"type":        "string",
+				"description": "Inline YAML config. Use when the agent just created the YAML content or wants to run without reading from disk.",
+			},
+			"config_path": map[string]interface{}{
+				"type":        "string",
+				"description": "Path to an agent YAML config file. Relative paths resolve from the server process working directory; absolute paths are recommended. Reusable configs should live in Soul under agents/*.yaml.",
+			},
+		},
+	}
+}
+
+func (t *createLocalDockerAgentsFromYAMLTool) Execute(ctx context.Context, params json.RawMessage) (*tools.Result, error) {
+	var p createLocalDockerAgentsFromYAMLParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid parameters: %w", err)
+	}
+	raw := []byte(p.ConfigYAML)
+	configPath := ""
+	if strings.TrimSpace(p.ConfigPath) != "" {
+		loaded, resolved, err := readLocalDockerAgentYAMLConfigFile(p.ConfigPath, "")
+		if err != nil {
+			return &tools.Result{Success: false, Error: err.Error()}, nil
+		}
+		raw = loaded
+		configPath = resolved
+	}
+	result, _, err := t.server.createLocalDockerAgentsFromYAML(ctx, raw, configPath)
+	if err != nil {
+		return &tools.Result{Success: false, Error: err.Error()}, nil
+	}
+	encoded, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode tool output: %w", err)
+	}
+	return &tools.Result{
+		Success: result.Success,
+		Output:  string(encoded),
+		Metadata: map[string]interface{}{
+			"requested":     result.Requested,
+			"created_count": result.CreatedCount,
+			"failed_count":  result.FailedCount,
+			"config_path":   result.ConfigPath,
+		},
+	}, nil
+}
+
+var _ tools.Tool = (*createLocalDockerAgentsFromYAMLTool)(nil)

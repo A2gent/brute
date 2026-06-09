@@ -303,7 +303,7 @@ func TestBuildSystemPromptForSession_UsesProjectBranchTaskDocSettings(t *testing
 	}
 }
 
-func TestServerRegistersCreateLocalDockerAgentsBulkTool(t *testing.T) {
+func TestServerRegistersCreateLocalDockerAgentsTools(t *testing.T) {
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create sqlite store: %v", err)
@@ -315,6 +315,9 @@ func TestServerRegistersCreateLocalDockerAgentsBulkTool(t *testing.T) {
 
 	if _, ok := server.toolManager.Get("create_local_docker_agents_bulk"); !ok {
 		t.Fatalf("expected create_local_docker_agents_bulk to be registered")
+	}
+	if _, ok := server.toolManager.Get("create_local_docker_agents_from_yaml"); !ok {
+		t.Fatalf("expected create_local_docker_agents_from_yaml to be registered")
 	}
 }
 

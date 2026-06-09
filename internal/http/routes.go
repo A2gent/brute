@@ -134,6 +134,7 @@ func (s *Server) registerIntegrationRoutes(r chi.Router) {
 		r.Post("/a2_registry/tunnel-reconnect", s.handleA2ATunnelReconnect)
 		r.Get("/a2_registry/local-agents", s.handleListLocalDockerAgents)
 		r.Post("/a2_registry/local-agents", s.handleCreateLocalDockerAgent)
+		r.Post("/a2_registry/local-agents/from-yaml", s.handleCreateLocalDockerAgentsFromYAML)
 		r.Post("/a2_registry/local-agents/build-image", s.handleBuildLocalDockerAgentImage)
 		r.Post("/a2_registry/local-agents/{containerID}/start", s.handleStartLocalDockerAgent)
 		r.Post("/a2_registry/local-agents/{containerID}/stop", s.handleStopLocalDockerAgent)

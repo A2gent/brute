@@ -118,6 +118,7 @@ func (t *EditTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 	if err := os.WriteFile(path, []byte(newContent), 0644); err != nil {
 		return nil, fmt.Errorf("failed to write file: %w", err)
 	}
+	invalidateIndexedSearch(t.workDir)
 
 	if p.ReplaceAll && count > 1 {
 		return &Result{

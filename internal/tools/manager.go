@@ -78,6 +78,8 @@ func NewManager(workDir string) *Manager {
 	m.Register(NewEditTool(workDir))
 	m.Register(NewReplaceLinesTool(workDir))
 	m.Register(NewInsertLinesTool(workDir))
+	m.Register(NewFileSearchTool(workDir))
+	m.Register(NewContentSearchTool(workDir))
 	m.Register(NewGlobTool(workDir))
 	m.Register(NewFindFilesTool(workDir))
 	m.Register(NewGrepTool(workDir))

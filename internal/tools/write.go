@@ -77,6 +77,7 @@ func (t *WriteTool) Execute(ctx context.Context, params json.RawMessage) (*Resul
 	if err := os.WriteFile(path, []byte(p.Content), 0644); err != nil {
 		return nil, fmt.Errorf("failed to write file: %w", err)
 	}
+	invalidateIndexedSearch(t.workDir)
 
 	action := "Created"
 	if existed {

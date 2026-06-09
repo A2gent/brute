@@ -113,6 +113,7 @@ func (t *InsertLinesTool) Execute(ctx context.Context, params json.RawMessage) (
 	if err := os.WriteFile(path, []byte(newContent), 0644); err != nil {
 		return nil, fmt.Errorf("failed to write file: %w", err)
 	}
+	invalidateIndexedSearch(t.workDir)
 
 	var msg string
 	if insertAfter == 0 {

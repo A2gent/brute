@@ -53,6 +53,7 @@ func (s *Server) handleListProjectTree(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusBadRequest, "Project folder path is not a directory")
 		return
 	}
+	warmProjectSearchIndex(resolvedRoot)
 
 	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
 	resolvedPath, normalizedRelPath, err := resolveMindPath(resolvedRoot, relPath)
@@ -325,6 +326,7 @@ func (s *Server) handleUpsertProjectFile(w http.ResponseWriter, r *http.Request)
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to write file: "+err.Error())
 		return
 	}
+	invalidateProjectSearchIndex(resolvedRoot)
 
 	s.jsonResponse(w, http.StatusOK, MindFileResponse{
 		RootFolder: resolvedRoot,
@@ -395,6 +397,7 @@ func (s *Server) handleDeleteProjectFile(w http.ResponseWriter, r *http.Request)
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete file: "+err.Error())
 		return
 	}
+	invalidateProjectSearchIndex(resolvedRoot)
 
 	s.jsonResponse(w, http.StatusOK, MindFileDeleteResponse{
 		RootFolder: resolvedRoot,
@@ -515,6 +518,7 @@ func (s *Server) handleMoveProjectFile(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to move: "+err.Error())
 		return
 	}
+	invalidateProjectSearchIndex(resolvedRoot)
 
 	s.jsonResponse(w, http.StatusOK, MoveMindFileResponse{
 		RootFolder: resolvedRoot,
@@ -579,6 +583,7 @@ func (s *Server) handleCreateProjectFolder(w http.ResponseWriter, r *http.Reques
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to create folder: "+err.Error())
 		return
 	}
+	invalidateProjectSearchIndex(resolvedRoot)
 
 	s.jsonResponse(w, http.StatusOK, CreateFolderResponse{
 		RootFolder: resolvedRoot,
@@ -675,6 +680,7 @@ func (s *Server) handleRenameProjectEntry(w http.ResponseWriter, r *http.Request
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to rename: "+err.Error())
 		return
 	}
+	invalidateProjectSearchIndex(resolvedRoot)
 
 	newRelPath, err := filepath.Rel(resolvedRoot, newResolved)
 	if err != nil {

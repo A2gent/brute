@@ -260,6 +260,27 @@ func TestProjectSearchSearchesCodeFileContent(t *testing.T) {
 	}
 }
 
+func TestProjectSearchFileModeSkipsContentMatches(t *testing.T) {
+	server, projectID, projectDir := newProjectFileTestServer(t)
+
+	if err := os.WriteFile(filepath.Join(projectDir, "app.ts"), []byte("export const onlyContentNeedle = true\n"), 0o644); err != nil {
+		t.Fatalf("failed to write code file: %v", err)
+	}
+
+	rec := requestProjectSearchMode(t, server, projectID, "onlyContentNeedle", "files")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var response ProjectSearchResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(response.ContentMatches) != 0 {
+		t.Fatalf("file-only project search should not return content matches: %+v", response.ContentMatches)
+	}
+}
+
 func newProjectFileTestServer(t *testing.T) (*Server, string, string) {
 	t.Helper()
 
@@ -304,6 +325,19 @@ func requestProjectSearch(t *testing.T, server *Server, projectID string, query 
 	t.Helper()
 
 	target := "/projects/search?projectID=" + url.QueryEscape(projectID) + "&query=" + url.QueryEscape(query)
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+	return rec
+}
+
+func requestProjectSearchMode(t *testing.T, server *Server, projectID string, query string, mode string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	target := "/projects/search?projectID=" + url.QueryEscape(projectID) + "&query=" + url.QueryEscape(query)
+	if mode != "" {
+		target += "&mode=" + url.QueryEscape(mode)
+	}
 	req := httptest.NewRequest(http.MethodGet, target, nil)
 	rec := httptest.NewRecorder()
 	server.router.ServeHTTP(rec, req)

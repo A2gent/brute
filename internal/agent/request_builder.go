@@ -188,9 +188,11 @@ Available tools allow you to:
 - Edit existing files with string replacement (edit)
 - Replace exact line ranges (replace_lines)
 - Insert lines at specific positions (insert_lines)
+- Fast indexed fuzzy file path/name search (file_search)
+- Fast indexed literal content search (content_search); use grep when regex is needed
 - Find files by pattern (glob)
 - Find files with include/exclude filters (find_files)
-- Search file contents (grep)
+- Search file contents with regular expressions (grep)
 - Filter text/file content to reduce context (filter)
 - Suggest quick UI branch-offs into new sessions for actionable follow-ups; use one suggestion per distinct follow-up when multiple independent issues deserve separate sessions (suggest_session)
 
@@ -221,9 +223,11 @@ const defaultBuiltInToolsGuidance = `Available tools allow you to:
 - Edit existing files with string replacement (edit)
 - Replace exact line ranges (replace_lines)
 - Insert lines at specific positions (insert_lines)
+- Fast indexed fuzzy file path/name search (file_search)
+- Fast indexed literal content search (content_search); use grep when regex is needed
 - Find files by pattern (glob)
 - Find files with include/exclude filters (find_files)
-- Search file contents (grep)
+- Search file contents with regular expressions (grep)
 - Filter text/file content to reduce context (filter)
 - Suggest quick UI branch-offs into new sessions for actionable follow-ups; use one suggestion per distinct follow-up when multiple independent issues deserve separate sessions (suggest_session)`
 

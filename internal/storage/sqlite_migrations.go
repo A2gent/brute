@@ -207,6 +207,20 @@ func (s *SQLiteStore) migrate() error {
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_project_pr_descriptions_project_id ON project_pr_descriptions(project_id)`,
+		`CREATE TABLE IF NOT EXISTS project_test_cache (
+			project_id TEXT NOT NULL,
+			repo_path TEXT NOT NULL DEFAULT '',
+			branch TEXT NOT NULL,
+			base_branch TEXT NOT NULL DEFAULT '',
+			scope_hash TEXT NOT NULL,
+			test_response TEXT NOT NULL DEFAULT '',
+			coverage_response TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL,
+			PRIMARY KEY(project_id, repo_path, branch, base_branch, scope_hash),
+			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_project_test_cache_project_id ON project_test_cache(project_id)`,
 	}
 
 	for _, m := range migrations {

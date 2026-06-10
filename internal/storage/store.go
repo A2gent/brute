@@ -152,6 +152,19 @@ type ProjectPRDescription struct {
 	UpdatedAt  time.Time
 }
 
+// ProjectTestCache stores branch-scoped test and coverage API results.
+type ProjectTestCache struct {
+	ProjectID            string
+	RepoPath             string
+	Branch               string
+	BaseBranch           string
+	ScopeHash            string
+	TestResponseJSON     string
+	CoverageResponseJSON string
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}
+
 type ProjectDatabase struct {
 	ID          string
 	ProjectID   string
@@ -187,6 +200,8 @@ type Store interface {
 	DeleteProject(id string) error
 	SaveProjectPRDescription(description *ProjectPRDescription) error
 	GetProjectPRDescription(projectID string, repoPath string, branch string, baseBranch string) (*ProjectPRDescription, error)
+	SaveProjectTestCache(cache *ProjectTestCache) error
+	GetProjectTestCache(projectID string, repoPath string, branch string, baseBranch string, scopeHash string) (*ProjectTestCache, error)
 
 	// Recurring job operations
 	SaveJob(job *RecurringJob) error

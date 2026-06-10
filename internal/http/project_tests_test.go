@@ -59,6 +59,96 @@ func TestAddsNumbers(t *testing.T) {
 	}
 }
 
+func TestBuildProjectTestsDiscoveryIncludesUncommittedNewTestFiles(t *testing.T) {
+	repoRoot := t.TempDir()
+	initMindGitTestRepo(t, repoRoot)
+	writeGitTestFile(t, repoRoot, "go.mod", "module example.com/project\n\ngo 1.24\n")
+	runGitForMindTest(t, repoRoot, "add", "go.mod")
+	runGitForMindTest(t, repoRoot, "-c", "commit.gpgsign=false", "commit", "-m", "add go module")
+	runGitForMindTest(t, repoRoot, "checkout", "-b", "feature/uncommitted-tests")
+
+	if err := os.MkdirAll(filepath.Join(repoRoot, "internal"), 0o755); err != nil {
+		t.Fatalf("failed to create test directory: %v", err)
+	}
+	testPath := filepath.ToSlash(filepath.Join("internal", "uncommitted_test.go"))
+	writeGitTestFile(t, repoRoot, testPath, `package internal
+
+import "testing"
+
+func TestUncommitted(t *testing.T) {}
+`)
+
+	discovery, err := buildProjectTestsDiscovery("project-1", "", repoRoot)
+	if err != nil {
+		t.Fatalf("buildProjectTestsDiscovery returned error: %v", err)
+	}
+	if !discovery.BranchChangesAvailable {
+		t.Fatal("expected branch changes to include uncommitted files")
+	}
+	if len(discovery.BranchTestFiles) != 1 {
+		t.Fatalf("expected 1 branch test file, got %d", len(discovery.BranchTestFiles))
+	}
+	file := discovery.BranchTestFiles[0]
+	if file.Path != testPath {
+		t.Fatalf("expected branch test file %q, got %q", testPath, file.Path)
+	}
+	if file.BranchScope != "added" {
+		t.Fatalf("expected added branch scope, got %q", file.BranchScope)
+	}
+	if len(file.Tests) != 1 || !file.Tests[0].BranchAdded {
+		t.Fatalf("expected uncommitted test to be marked branch-added: %#v", file.Tests)
+	}
+}
+
+func TestBuildProjectTestsDiscoveryMarksUncommittedAddedTestLines(t *testing.T) {
+	repoRoot := t.TempDir()
+	initMindGitTestRepo(t, repoRoot)
+	writeGitTestFile(t, repoRoot, "go.mod", "module example.com/project\n\ngo 1.24\n")
+	if err := os.MkdirAll(filepath.Join(repoRoot, "internal"), 0o755); err != nil {
+		t.Fatalf("failed to create test directory: %v", err)
+	}
+	testPath := filepath.ToSlash(filepath.Join("internal", "calc_test.go"))
+	writeGitTestFile(t, repoRoot, testPath, `package internal
+
+import "testing"
+
+func TestExisting(t *testing.T) {}
+`)
+	runGitForMindTest(t, repoRoot, "add", "go.mod", testPath)
+	runGitForMindTest(t, repoRoot, "-c", "commit.gpgsign=false", "commit", "-m", "add go tests")
+	runGitForMindTest(t, repoRoot, "checkout", "-b", "feature/uncommitted-test-line")
+
+	writeGitTestFile(t, repoRoot, testPath, `package internal
+
+import "testing"
+
+func TestExisting(t *testing.T) {}
+
+func TestUncommittedAddition(t *testing.T) {}
+`)
+
+	discovery, err := buildProjectTestsDiscovery("project-1", "", repoRoot)
+	if err != nil {
+		t.Fatalf("buildProjectTestsDiscovery returned error: %v", err)
+	}
+	if len(discovery.BranchTestFiles) != 1 {
+		t.Fatalf("expected 1 branch test file, got %d", len(discovery.BranchTestFiles))
+	}
+	file := discovery.BranchTestFiles[0]
+	if file.BranchScope != "changed" {
+		t.Fatalf("expected changed branch scope, got %q", file.BranchScope)
+	}
+	if len(file.Tests) != 2 {
+		t.Fatalf("expected 2 tests, got %d", len(file.Tests))
+	}
+	if file.Tests[0].BranchAdded {
+		t.Fatal("expected existing test not to be marked branch-added")
+	}
+	if !file.Tests[1].BranchAdded {
+		t.Fatal("expected uncommitted added test line to be marked branch-added")
+	}
+}
+
 func TestParseRSpecTestResultsSkipsLogPreambleAndCoverageTrailer(t *testing.T) {
 	output := `2026-06-10 Sidekiq connecting with options {:size=>10}
 {"version":"3.12.2","examples":[{"id":"./spec/models/widget_spec.rb[1:1]","description":"works","full_description":"Widget works","status":"passed","file_path":"./spec/models/widget_spec.rb","line_number":7,"run_time":0.012,"pending_message":null}],"summary":{"duration":0.012,"example_count":1,"failure_count":0,"pending_count":0}}

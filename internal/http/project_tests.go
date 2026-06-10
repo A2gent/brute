@@ -454,6 +454,101 @@ func newProjectTestsBranchCacheResponse(repoPath string, discovery ProjectTestsD
 	}
 }
 
+func loadProjectGitTestingScopeChangedFiles(repoRoot string, target projectGitBranchChangesTargetInfo) ([]ProjectGitCommitFile, error) {
+	merged := map[string]ProjectGitCommitFile{}
+	if target.Available {
+		files, err := loadProjectGitBranchChangedFiles(repoRoot, target)
+		if err != nil {
+			return nil, err
+		}
+		for _, file := range files {
+			merged[file.Path] = file
+		}
+	}
+
+	workingTreeFiles, err := loadProjectGitWorkingTreeChangedFiles(repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range workingTreeFiles {
+		if existing, ok := merged[file.Path]; ok {
+			merged[file.Path] = mergeProjectGitTestingScopeFile(existing, file)
+			continue
+		}
+		merged[file.Path] = file
+	}
+
+	files := make([]ProjectGitCommitFile, 0, len(merged))
+	for _, file := range merged {
+		files = append(files, file)
+	}
+	sort.SliceStable(files, func(i, j int) bool {
+		return files[i].Path < files[j].Path
+	})
+	return files, nil
+}
+
+func loadProjectGitWorkingTreeChangedFiles(repoRoot string) ([]ProjectGitCommitFile, error) {
+	statusOutput, err := runGitCommandPreserveLeading(repoRoot, "status", "--porcelain=v1", "--untracked-files=all")
+	if err != nil {
+		return nil, err
+	}
+	statuses := map[string]string{}
+	for _, file := range parseGitPorcelain(statusOutput) {
+		status := projectGitTestingScopeStatusFromPorcelain(file)
+		if status == "" {
+			continue
+		}
+		statuses[file.Path] = status
+	}
+	if len(statuses) == 0 {
+		return []ProjectGitCommitFile{}, nil
+	}
+
+	statsParts := make([]string, 0, 2)
+	if statsOutput, err := runGitCommandPreserveLeading(repoRoot, "diff", "--numstat", "--find-renames"); err == nil && strings.TrimSpace(statsOutput) != "" {
+		statsParts = append(statsParts, statsOutput)
+	}
+	if statsOutput, err := runGitCommandPreserveLeading(repoRoot, "diff", "--cached", "--numstat", "--find-renames"); err == nil && strings.TrimSpace(statsOutput) != "" {
+		statsParts = append(statsParts, statsOutput)
+	}
+	return mergeProjectGitCommitFiles(statuses, strings.Join(statsParts, "\n")), nil
+}
+
+func mergeProjectGitTestingScopeFile(existing ProjectGitCommitFile, dirty ProjectGitCommitFile) ProjectGitCommitFile {
+	merged := existing
+	if dirty.Status == "D" {
+		merged.Status = "D"
+	} else if existing.Status != "A" {
+		merged.Status = dirty.Status
+	}
+	merged.Additions += dirty.Additions
+	merged.Deletions += dirty.Deletions
+	merged.Binary = merged.Binary || dirty.Binary
+	return merged
+}
+
+func projectGitTestingScopeStatusFromPorcelain(file ProjectGitChangedFile) string {
+	if file.Untracked {
+		return "A"
+	}
+	indexStatus := strings.TrimSpace(file.IndexStatus)
+	worktreeStatus := strings.TrimSpace(file.WorktreeStatus)
+	if indexStatus == "D" || worktreeStatus == "D" {
+		return "D"
+	}
+	if indexStatus == "R" || worktreeStatus == "R" {
+		return "R"
+	}
+	if indexStatus == "A" || worktreeStatus == "A" {
+		return "A"
+	}
+	if indexStatus != "" || worktreeStatus != "" {
+		return "M"
+	}
+	return ""
+}
+
 func applyProjectTestsBranchCache(response *ProjectTestsBranchCacheResponse, cache *storage.ProjectTestCache) {
 	response.Cached = true
 	response.UpdatedAt = cache.UpdatedAt.UTC().Format(time.RFC3339)
@@ -490,6 +585,7 @@ func projectTestsBranchScopeHash(discovery ProjectTestsDiscoveryResponse) string
 		writeProjectTestsScopeHashPart(hash, "changed-code", string(payload))
 	}
 	if projectHasGitMetadata(discovery.RootFolder) {
+		writeProjectTestsWorkingTreeScopeHash(hash, discovery.RootFolder)
 		target := projectGitBranchChangesTarget(discovery.RootFolder)
 		if target.Available {
 			if diff, err := runGitCommandPreserveLeading(discovery.RootFolder, "diff", "--no-color", "--find-renames", target.BaseRef+"...HEAD"); err == nil {
@@ -498,6 +594,42 @@ func projectTestsBranchScopeHash(discovery ProjectTestsDiscoveryResponse) string
 		}
 	}
 	return fmt.Sprintf("%x", hash.Sum(nil))
+}
+
+func writeProjectTestsWorkingTreeScopeHash(hash hashWriter, repoRoot string) {
+	statusOutput, err := runGitCommandPreserveLeading(repoRoot, "status", "--porcelain=v1", "--untracked-files=all")
+	if err != nil {
+		return
+	}
+	writeProjectTestsScopeHashPart(hash, "worktree-status", statusOutput)
+	if diff, err := runGitCommandPreserveLeading(repoRoot, "diff", "--no-color", "--find-renames"); err == nil {
+		writeProjectTestsScopeHashPart(hash, "worktree-diff", diff)
+	}
+	if diff, err := runGitCommandPreserveLeading(repoRoot, "diff", "--cached", "--no-color", "--find-renames"); err == nil {
+		writeProjectTestsScopeHashPart(hash, "index-diff", diff)
+	}
+	for _, file := range parseGitPorcelain(statusOutput) {
+		if !file.Untracked {
+			continue
+		}
+		fullPath := filepath.Join(repoRoot, filepath.FromSlash(file.Path))
+		info, err := os.Stat(fullPath)
+		if err != nil {
+			writeProjectTestsScopeHashPart(hash, "untracked-file", file.Path)
+			continue
+		}
+		if info.IsDir() || info.Size() > 2*1024*1024 {
+			writeProjectTestsScopeHashPart(hash, "untracked-file", fmt.Sprintf("%s:%d:%d", file.Path, info.Size(), info.ModTime().UnixNano()))
+			continue
+		}
+		content, err := os.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+		writeProjectTestsScopeHashPart(hash, "untracked-file", file.Path)
+		_, _ = hash.Write(content)
+		_, _ = hash.Write([]byte{0})
+	}
 }
 
 func writeProjectTestsScopeHashPart(hash hashWriter, label string, value string) {
@@ -515,18 +647,18 @@ func buildProjectTestsDiscovery(_ string, repoPath string, repoRoot string) (Pro
 	target := projectGitBranchChangesTargetInfo{}
 	branchStatuses := map[string]string{}
 	branchChangedCodeFiles := map[string]bool{}
+	branchScopeAvailable := false
 	if projectHasGitMetadata(repoRoot) {
 		target = projectGitBranchChangesTarget(repoRoot)
-		if target.Available {
-			files, err := loadProjectGitBranchChangedFiles(repoRoot, target)
-			if err != nil {
-				return ProjectTestsDiscoveryResponse{}, err
-			}
-			for _, file := range files {
-				branchStatuses[file.Path] = file.Status
-				if classifyProjectTestFile(file.Path) == "" {
-					branchChangedCodeFiles[file.Path] = true
-				}
+		files, err := loadProjectGitTestingScopeChangedFiles(repoRoot, target)
+		if err != nil {
+			return ProjectTestsDiscoveryResponse{}, err
+		}
+		branchScopeAvailable = target.Available || len(files) > 0
+		for _, file := range files {
+			branchStatuses[file.Path] = file.Status
+			if classifyProjectTestFile(file.Path) == "" {
+				branchChangedCodeFiles[file.Path] = true
 			}
 		}
 	}
@@ -563,8 +695,8 @@ func buildProjectTestsDiscovery(_ string, repoPath string, repoRoot string) (Pro
 		addedLines := map[int]bool{}
 		if status == "A" {
 			addedLines[-1] = true
-		} else if target.Available && status != "" {
-			addedLines = projectGitAddedLineNumbers(repoRoot, target, rel)
+		} else if status != "" {
+			addedLines = projectGitTestingScopeAddedLineNumbers(repoRoot, target, status, rel)
 		}
 
 		nodes := parseProjectTestFile(repoRoot, rel, framework, addedLines)
@@ -639,7 +771,7 @@ func buildProjectTestsDiscovery(_ string, repoPath string, repoRoot string) (Pro
 		RepoPath:               repoPath,
 		CurrentBranch:          target.CurrentBranch,
 		BaseBranch:             target.BaseBranch,
-		BranchChangesAvailable: target.Available,
+		BranchChangesAvailable: branchScopeAvailable,
 		Frameworks:             frameworks,
 		TestFiles:              testFiles,
 		BranchTestFiles:        branchTestFiles,
@@ -1921,7 +2053,7 @@ func changedCodeFileSet(discovery ProjectTestsDiscoveryResponse) map[string]bool
 	}
 	if discovery.BranchChangesAvailable && projectHasGitMetadata(discovery.RootFolder) {
 		target := projectGitBranchChangesTarget(discovery.RootFolder)
-		files, err := loadProjectGitBranchChangedFiles(discovery.RootFolder, target)
+		files, err := loadProjectGitTestingScopeChangedFiles(discovery.RootFolder, target)
 		if err == nil {
 			for _, file := range files {
 				if classifyProjectTestFile(file.Path) == "" {
@@ -1968,12 +2100,24 @@ func sortProjectTestResults(results []ProjectTestResult) {
 	})
 }
 
-func projectGitAddedLineNumbers(repoRoot string, target projectGitBranchChangesTargetInfo, relPath string) map[int]bool {
+func projectGitTestingScopeAddedLineNumbers(repoRoot string, target projectGitBranchChangesTargetInfo, status string, relPath string) map[int]bool {
 	lines := map[int]bool{}
-	if !target.Available {
+	if status == "A" {
+		lines[-1] = true
 		return lines
 	}
-	diff, err := runGitCommandPreserveLeading(repoRoot, "diff", "--unified=0", "--no-color", "--find-renames", target.BaseRef+"...HEAD", "--", relPath)
+
+	baseRef := ""
+	if target.Available {
+		baseRef = target.BaseRef
+	} else if _, err := runGitCommand(repoRoot, "rev-parse", "--verify", "HEAD"); err == nil {
+		baseRef = "HEAD"
+	}
+	if baseRef == "" {
+		return lines
+	}
+
+	diff, err := runGitCommandPreserveLeading(repoRoot, "diff", "--unified=0", "--no-color", "--find-renames", baseRef, "--", relPath)
 	if err != nil {
 		return lines
 	}

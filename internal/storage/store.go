@@ -141,6 +141,17 @@ type Project struct {
 	UpdatedAt   time.Time
 }
 
+// ProjectPRDescription stores an editable pull request description for a project branch comparison.
+type ProjectPRDescription struct {
+	ProjectID  string
+	RepoPath   string
+	Branch     string
+	BaseBranch string
+	Content    string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
 type ProjectDatabase struct {
 	ID          string
 	ProjectID   string
@@ -174,6 +185,8 @@ type Store interface {
 	GetProject(id string) (*Project, error)
 	ListProjects() ([]*Project, error)
 	DeleteProject(id string) error
+	SaveProjectPRDescription(description *ProjectPRDescription) error
+	GetProjectPRDescription(projectID string, repoPath string, branch string, baseBranch string) (*ProjectPRDescription, error)
 
 	// Recurring job operations
 	SaveJob(job *RecurringJob) error

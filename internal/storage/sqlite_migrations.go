@@ -195,6 +195,18 @@ func (s *SQLiteStore) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_project_databases_project_id ON project_databases(project_id)`,
 		`ALTER TABLE sub_agents ADD COLUMN project_id TEXT`,
 		`CREATE INDEX IF NOT EXISTS idx_sub_agents_project_id ON sub_agents(project_id)`,
+		`CREATE TABLE IF NOT EXISTS project_pr_descriptions (
+			project_id TEXT NOT NULL,
+			repo_path TEXT NOT NULL DEFAULT '',
+			branch TEXT NOT NULL,
+			base_branch TEXT NOT NULL,
+			content TEXT NOT NULL,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL,
+			PRIMARY KEY(project_id, repo_path, branch, base_branch),
+			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_project_pr_descriptions_project_id ON project_pr_descriptions(project_id)`,
 	}
 
 	for _, m := range migrations {

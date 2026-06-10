@@ -107,6 +107,15 @@ type ProjectGitCommitMessageRequest struct {
 	RepoPath string `json:"repo_path,omitempty"`
 }
 
+type ProjectGitPRDescriptionRequest struct {
+	RepoPath string `json:"repo_path,omitempty"`
+}
+
+type ProjectGitPRDescriptionSaveRequest struct {
+	RepoPath string `json:"repo_path,omitempty"`
+	Content  string `json:"content"`
+}
+
 type ProjectGitFileDiffResponse struct {
 	Path    string `json:"path"`
 	Preview string `json:"preview"`
@@ -175,6 +184,17 @@ type ProjectGitBranchDiffResponse struct {
 
 type ProjectGitCommitMessageResponse struct {
 	Message string `json:"message"`
+}
+
+type ProjectGitPRDescriptionResponse struct {
+	ProjectID     string `json:"project_id"`
+	RepoPath      string `json:"repo_path"`
+	CurrentBranch string `json:"current_branch"`
+	BaseBranch    string `json:"base_branch"`
+	Available     bool   `json:"available"`
+	Content       string `json:"content"`
+	CreatedAt     string `json:"created_at,omitempty"`
+	UpdatedAt     string `json:"updated_at,omitempty"`
 }
 
 type ProjectGitPushRequest struct {

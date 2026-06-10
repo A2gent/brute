@@ -43,10 +43,16 @@ func (m *memStore) SaveProject(*storage.Project) error                        { 
 func (m *memStore) GetProject(string) (*storage.Project, error)               { return nil, nil }
 func (m *memStore) ListProjects() ([]*storage.Project, error)                 { return nil, nil }
 func (m *memStore) DeleteProject(string) error                                { return nil }
-func (m *memStore) SaveJob(*storage.RecurringJob) error                       { return nil }
-func (m *memStore) GetJob(string) (*storage.RecurringJob, error)              { return nil, nil }
-func (m *memStore) ListJobs() ([]*storage.RecurringJob, error)                { return nil, nil }
-func (m *memStore) DeleteJob(string) error                                    { return nil }
+func (m *memStore) SaveProjectPRDescription(*storage.ProjectPRDescription) error {
+	return nil
+}
+func (m *memStore) GetProjectPRDescription(string, string, string, string) (*storage.ProjectPRDescription, error) {
+	return nil, nil
+}
+func (m *memStore) SaveJob(*storage.RecurringJob) error          { return nil }
+func (m *memStore) GetJob(string) (*storage.RecurringJob, error) { return nil, nil }
+func (m *memStore) ListJobs() ([]*storage.RecurringJob, error)   { return nil, nil }
+func (m *memStore) DeleteJob(string) error                       { return nil }
 func (m *memStore) GetDueJobs(time.Time) ([]*storage.RecurringJob, error) {
 	return nil, nil
 }

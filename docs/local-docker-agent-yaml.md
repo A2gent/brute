@@ -8,6 +8,7 @@ The launcher is intentionally a Brute container launcher, not a replacement for 
 - Docker Model Runner is supported with `llm.provider: dmr`; the container uses Brute's OpenAI-compatible provider and `http://model-runner.docker.internal/engines/v1`.
 - Docker/MCP-style tool boundaries map to Brute's `tools.enabled`, `tools.disabled`, and `tools.mode`.
 - Docker runtime details map to `networking`, `directories`, `credentials`, `environment`, `resources`, and `labels`.
+- A2 Registry/Square registration maps to `registry`; use `registry.enabled: true` to register the running local container and configure its inbound tunnel.
 
 ## Minimal Single Agent
 
@@ -87,6 +88,38 @@ agent:
     auto_run: false
 ```
 
+## A2 Registry / Square registration
+
+`registry.enabled: true` registers the created container with an A2 Registry/Square instance after Docker startup and writes the returned API key into the child container's `a2_registry` integration so it can connect back through the NAT tunnel.
+
+For safety, YAML-driven registration defaults to `discoverable: false`; set `discoverable: true` only when you intentionally want a public listing. Parent agent credentials may auto-approve hidden/private child agents for tunnel connectivity, but public discoverability still remains a manual owner workflow.
+
+If omitted, `owner_email`, `registry_url`, `transport`, `square_grpc_addr`, and `square_ws_url` are inherited from the parent Brute `a2_registry` integration/settings when available. When `owner_email` is missing but the parent integration has an API key, Brute also tries `GET /agents/me` against the registry to resolve it automatically.
+
+```yaml
+version: "1"
+agent:
+  name: seo-structure-auditor
+  registry:
+    enabled: true
+    # owner_email and registry_url can be inherited from the parent a2_registry integration.
+    # owner_email: owner@example.com
+    # registry_url: https://a2gent.net
+    agent_name: SEO Structure Auditor
+    agent_handle: seo-structure-auditor
+    description: Audits live websites and local HTML/Markdown for SEO, accessibility, performance, and AI/browser readability.
+    network_access: behind_nat
+    agent_type: personal
+    category: marketing
+    discoverable: false
+    official_website: https://a2gent.net
+    supports_audio: false
+    supports_images: false
+    supports_video: false
+    price_per_session: 0.001
+    currency: USD
+```
+
 ## Fields
 
 - `version`: only `1` is supported.
@@ -98,6 +131,11 @@ agent:
 - `agent_kind`, `system_prompt`: Brute role label and system prompt.
 - `initial_prompt` or `startup.prompt`: initial session prompt. Prefer `startup.prompt`.
 - `startup.auto_run`: run the startup prompt immediately when true; otherwise create a queued child session.
+- `registry.enabled`: register the created container in A2 Registry/Square and configure the child `a2_registry` tunnel integration.
+- `registry.owner_email`, `registry.registry_url`, `registry.transport`, `registry.square_grpc_addr`, `registry.square_ws_url`: registry/tunnel connection settings; inherited from the parent `a2_registry` integration/settings when omitted.
+- `registry.agent_name`, `registry.agent_handle` (or aliases `agent_id`/`public_id`), `registry.description`, `registry.category`, `registry.agent_type`, `registry.network_access`, `registry.official_website`: public registry metadata.
+- `registry.discoverable`: public discoverability flag. YAML registration defaults to `false`; use `true` only with explicit intent and Square owner approval.
+- `registry.supports_audio`, `registry.supports_images`, `registry.supports_video`, `registry.price_per_request`, `registry.price_per_input_kb`, `registry.price_per_output_kb`, `registry.price_per_session`, `registry.currency`: modality and pricing metadata.
 - `session_id`: parent/source session label stored on the container and child startup session metadata.
 - `project.id` / `project.mount`: mount a Caesar project into `/workspace` as `ro` or `rw`.
 - `llm.provider`, `llm.model`, `llm.base_url`, `llm.lm_studio_base_url`: child agent provider/model routing.

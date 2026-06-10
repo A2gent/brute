@@ -314,3 +314,74 @@ agent:
 		t.Fatalf("expected workspace/project validation error, got %v", err)
 	}
 }
+
+func TestParseLocalDockerAgentYAMLConfigParsesRegistryMetadata(t *testing.T) {
+	raw := `version: 1
+agent:
+  name: seo-bot
+  registry:
+    enabled: true
+    registry_url: https://a2gent.net
+    owner_email: owner@example.com
+    agent_name: SEO Auditor
+    agent_handle: seo-auditor
+    description: Audits websites for SEO and accessibility.
+    network_access: behind_nat
+    agent_type: personal
+    category: marketing
+    discoverable: false
+    official_website: https://example.com
+    supports_audio: false
+    supports_images: true
+    supports_video: false
+    price_per_session: 0.02
+    currency: USD
+`
+
+	cfg, err := parseLocalDockerAgentYAMLConfig([]byte(raw))
+	if err != nil {
+		t.Fatalf("parseLocalDockerAgentYAMLConfig returned error: %v", err)
+	}
+	agents, err := cfg.expandAgents()
+	if err != nil {
+		t.Fatalf("expandAgents returned error: %v", err)
+	}
+	if len(agents) != 1 || !localDockerAgentYAMLRegistryEnabled(agents[0].Registry) {
+		t.Fatalf("registry config not parsed: %#v", agents)
+	}
+	req := agents[0].toRegisterRequest()
+	if req.RegistryURL != "https://a2gent.net" || req.OwnerEmail != "owner@example.com" || req.AgentHandle != "seo-auditor" {
+		t.Fatalf("registry request identity not parsed: %#v", req)
+	}
+	if req.Category != "marketing" || req.AgentType != "personal" || req.PricePerSession != 0.02 {
+		t.Fatalf("registry request metadata not parsed: %#v", req)
+	}
+	if req.Discoverable == nil || *req.Discoverable {
+		t.Fatalf("expected explicit hidden listing, got %#v", req.Discoverable)
+	}
+}
+
+func TestLocalDockerAgentYAMLRegistryDefaultsToHiddenDiscoverability(t *testing.T) {
+	raw := `version: 1
+agent:
+  name: private-seo-bot
+  registry:
+    enabled: true
+`
+
+	cfg, err := parseLocalDockerAgentYAMLConfig([]byte(raw))
+	if err != nil {
+		t.Fatalf("parseLocalDockerAgentYAMLConfig returned error: %v", err)
+	}
+	agents, err := cfg.expandAgents()
+	if err != nil {
+		t.Fatalf("expandAgents returned error: %v", err)
+	}
+	req := agents[0].toRegisterRequest()
+	if req.AgentName != "private-seo-bot" || req.AgentHandle != "private-seo-bot" {
+		t.Fatalf("expected registry request to default identity from container name: %#v", req)
+	}
+	if req.Discoverable == nil || *req.Discoverable {
+		t.Fatalf("YAML registration should default to hidden/non-discoverable, got %#v", req.Discoverable)
+	}
+}

@@ -264,7 +264,7 @@ func (t *createLocalDockerAgentsFromYAMLTool) Name() string {
 }
 
 func (t *createLocalDockerAgentsFromYAMLTool) Description() string {
-	return `Create one or more local Dockerized Brute agents from an agent YAML config. Provide either config_yaml content or config_path. Recommended path for reusable configs is the Soul project agents/ folder, usually ~/.local/share/aagent/agents/*.yaml. YAML supports agent identity, batch defaults, project/workspace mounts, networking, credentials, tool allow/block lists, LLM provider/model routing, Docker Model Runner via llm.provider=dmr, resources, labels, and startup prompts.`
+	return `Create one or more local Dockerized Brute agents from an agent YAML config. Provide either config_yaml content or config_path. Recommended path for reusable configs is the Soul project agents/ folder, usually ~/.local/share/aagent/agents/*.yaml. YAML supports agent identity, batch defaults, project/workspace mounts, networking, credentials, tool allow/block lists, LLM provider/model routing, Docker Model Runner via llm.provider=dmr, resources, labels, startup prompts, and optional A2 Registry/Square registration metadata.`
 }
 
 func (t *createLocalDockerAgentsFromYAMLTool) Schema() map[string]interface{} {

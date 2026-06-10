@@ -62,6 +62,7 @@ type localDockerAgentYAMLSpec struct {
 	LLM              localDockerAgentYAMLLLM               `yaml:"llm" json:"llm,omitempty"`
 	Startup          localDockerAgentYAMLStartup           `yaml:"startup" json:"startup,omitempty"`
 	Tools            localDockerAgentYAMLTools             `yaml:"tools" json:"tools,omitempty"`
+	Registry         localDockerAgentYAMLRegistry          `yaml:"registry" json:"registry,omitempty"`
 	Environment      map[string]string                     `yaml:"environment" json:"environment,omitempty"`
 	Credentials      map[string]localDockerAgentCredential `yaml:"credentials" json:"credentials,omitempty"`
 	Networking       localDockerAgentYAMLNetworking        `yaml:"networking" json:"networking,omitempty"`
@@ -91,6 +92,38 @@ type localDockerAgentYAMLTools struct {
 	Mode     string   `yaml:"mode" json:"mode,omitempty"`
 	Enabled  []string `yaml:"enabled" json:"enabled,omitempty"`
 	Disabled []string `yaml:"disabled" json:"disabled,omitempty"`
+}
+type localDockerAgentYAMLRegistry struct {
+	Enabled            *bool   `yaml:"enabled" json:"enabled,omitempty"`
+	RegistryURL        string  `yaml:"registry_url" json:"registry_url,omitempty"`
+	OwnerEmail         string  `yaml:"owner_email" json:"owner_email,omitempty"`
+	AgentName          string  `yaml:"agent_name" json:"agent_name,omitempty"`
+	AgentHandle        string  `yaml:"agent_handle" json:"agent_handle,omitempty"`
+	AgentID            string  `yaml:"agent_id" json:"agent_id,omitempty"`
+	PublicID           string  `yaml:"public_id" json:"public_id,omitempty"`
+	OrganizationHandle string  `yaml:"organization_handle" json:"organization_handle,omitempty"`
+	Description        string  `yaml:"description" json:"description,omitempty"`
+	NetworkAccess      string  `yaml:"network_access" json:"network_access,omitempty"`
+	EndpointURL        string  `yaml:"endpoint_url" json:"endpoint_url,omitempty"`
+	AgentType          string  `yaml:"agent_type" json:"agent_type,omitempty"`
+	Category           string  `yaml:"category" json:"category,omitempty"`
+	Discoverable       *bool   `yaml:"discoverable" json:"discoverable,omitempty"`
+	OfficialWebsite    string  `yaml:"official_website" json:"official_website,omitempty"`
+	AvatarPath         string  `yaml:"avatar_path" json:"avatar_path,omitempty"`
+	AvatarURL          string  `yaml:"avatar_url" json:"avatar_url,omitempty"`
+	SupportsAudio      *bool   `yaml:"supports_audio" json:"supports_audio,omitempty"`
+	SupportsImages     *bool   `yaml:"supports_images" json:"supports_images,omitempty"`
+	SupportsVideo      *bool   `yaml:"supports_video" json:"supports_video,omitempty"`
+	PricingModel       string  `yaml:"pricing_model" json:"pricing_model,omitempty"`
+	PricePerRequest    float64 `yaml:"price_per_request" json:"price_per_request,omitempty"`
+	PricePerInputKB    float64 `yaml:"price_per_input_kb" json:"price_per_input_kb,omitempty"`
+	PricePerOutputKB   float64 `yaml:"price_per_output_kb" json:"price_per_output_kb,omitempty"`
+	PricePerSession    float64 `yaml:"price_per_session" json:"price_per_session,omitempty"`
+	Currency           string  `yaml:"currency" json:"currency,omitempty"`
+	ConfigureContainer *bool   `yaml:"configure_container" json:"configure_container,omitempty"`
+	Transport          string  `yaml:"transport" json:"transport,omitempty"`
+	SquareGRPCAddr     string  `yaml:"square_grpc_addr" json:"square_grpc_addr,omitempty"`
+	SquareWSURL        string  `yaml:"square_ws_url" json:"square_ws_url,omitempty"`
 }
 
 type localDockerAgentCredential struct {
@@ -234,6 +267,7 @@ func mergeLocalDockerAgentYAMLSpec(base, override localDockerAgentYAMLSpec) loca
 	out.LLM = mergeLocalDockerAgentYAMLLLM(out.LLM, override.LLM)
 	out.Startup = mergeLocalDockerAgentYAMLStartup(out.Startup, override.Startup)
 	out.Tools = mergeLocalDockerAgentYAMLTools(out.Tools, override.Tools)
+	out.Registry = mergeLocalDockerAgentYAMLRegistry(out.Registry, override.Registry)
 	out.Environment = mergeStringMap(out.Environment, override.Environment)
 	out.Credentials = mergeCredentialMap(out.Credentials, override.Credentials)
 	out.Networking = mergeLocalDockerAgentYAMLNetworking(out.Networking, override.Networking)
@@ -293,6 +327,107 @@ func mergeLocalDockerAgentYAMLTools(base, override localDockerAgentYAMLTools) lo
 	}
 	if len(override.Disabled) > 0 {
 		out.Disabled = append([]string(nil), override.Disabled...)
+	}
+	return out
+}
+
+func mergeLocalDockerAgentYAMLRegistry(base, override localDockerAgentYAMLRegistry) localDockerAgentYAMLRegistry {
+	out := base
+	if override.Enabled != nil {
+		v := *override.Enabled
+		out.Enabled = &v
+	}
+	if strings.TrimSpace(override.RegistryURL) != "" {
+		out.RegistryURL = override.RegistryURL
+	}
+	if strings.TrimSpace(override.OwnerEmail) != "" {
+		out.OwnerEmail = override.OwnerEmail
+	}
+	if strings.TrimSpace(override.AgentName) != "" {
+		out.AgentName = override.AgentName
+	}
+	if strings.TrimSpace(override.AgentHandle) != "" {
+		out.AgentHandle = override.AgentHandle
+	}
+	if strings.TrimSpace(override.AgentID) != "" {
+		out.AgentID = override.AgentID
+	}
+	if strings.TrimSpace(override.PublicID) != "" {
+		out.PublicID = override.PublicID
+	}
+	if strings.TrimSpace(override.OrganizationHandle) != "" {
+		out.OrganizationHandle = override.OrganizationHandle
+	}
+	if strings.TrimSpace(override.Description) != "" {
+		out.Description = override.Description
+	}
+	if strings.TrimSpace(override.NetworkAccess) != "" {
+		out.NetworkAccess = override.NetworkAccess
+	}
+	if strings.TrimSpace(override.EndpointURL) != "" {
+		out.EndpointURL = override.EndpointURL
+	}
+	if strings.TrimSpace(override.AgentType) != "" {
+		out.AgentType = override.AgentType
+	}
+	if strings.TrimSpace(override.Category) != "" {
+		out.Category = override.Category
+	}
+	if override.Discoverable != nil {
+		v := *override.Discoverable
+		out.Discoverable = &v
+	}
+	if strings.TrimSpace(override.OfficialWebsite) != "" {
+		out.OfficialWebsite = override.OfficialWebsite
+	}
+	if strings.TrimSpace(override.AvatarPath) != "" {
+		out.AvatarPath = override.AvatarPath
+	}
+	if strings.TrimSpace(override.AvatarURL) != "" {
+		out.AvatarURL = override.AvatarURL
+	}
+	if override.SupportsAudio != nil {
+		v := *override.SupportsAudio
+		out.SupportsAudio = &v
+	}
+	if override.SupportsImages != nil {
+		v := *override.SupportsImages
+		out.SupportsImages = &v
+	}
+	if override.SupportsVideo != nil {
+		v := *override.SupportsVideo
+		out.SupportsVideo = &v
+	}
+	if strings.TrimSpace(override.PricingModel) != "" {
+		out.PricingModel = override.PricingModel
+	}
+	if override.PricePerRequest > 0 {
+		out.PricePerRequest = override.PricePerRequest
+	}
+	if override.PricePerInputKB > 0 {
+		out.PricePerInputKB = override.PricePerInputKB
+	}
+	if override.PricePerOutputKB > 0 {
+		out.PricePerOutputKB = override.PricePerOutputKB
+	}
+	if override.PricePerSession > 0 {
+		out.PricePerSession = override.PricePerSession
+	}
+	if strings.TrimSpace(override.Currency) != "" {
+		out.Currency = override.Currency
+	}
+	if override.ConfigureContainer != nil {
+		v := *override.ConfigureContainer
+		out.ConfigureContainer = &v
+	}
+	if strings.TrimSpace(override.Transport) != "" {
+		out.Transport = override.Transport
+	}
+	if strings.TrimSpace(override.SquareGRPCAddr) != "" {
+		out.SquareGRPCAddr = override.SquareGRPCAddr
+	}
+	if strings.TrimSpace(override.SquareWSURL) != "" {
+		out.SquareWSURL = override.SquareWSURL
 	}
 	return out
 }
@@ -420,6 +555,61 @@ func (spec localDockerAgentYAMLSpec) toCreateRequest() createLocalDockerAgentReq
 		Directories:      spec.Directories,
 		Resources:        spec.Resources,
 		Labels:           spec.Labels,
+	}
+}
+
+func localDockerAgentYAMLRegistryEnabled(registry localDockerAgentYAMLRegistry) bool {
+	if registry.Enabled == nil {
+		return false
+	}
+	return *registry.Enabled
+}
+
+func (spec localDockerAgentYAMLSpec) toRegisterRequest() registerLocalDockerAgentRequest {
+	registry := spec.Registry
+	// WHY: YAML-driven registration should be safe by default. A hidden registry
+	// record enables private A2A/tunnel use; public discovery requires an explicit
+	// `discoverable: true` plus Square owner approval outside this launcher.
+	discoverable := false
+	if registry.Discoverable != nil {
+		discoverable = *registry.Discoverable
+	}
+	agentName := strings.TrimSpace(registry.AgentName)
+	if agentName == "" {
+		agentName = strings.TrimSpace(spec.Name)
+	}
+	agentHandle := firstNonEmptyLocalAgentString(registry.AgentHandle, registry.AgentID, registry.PublicID)
+	if agentHandle == "" {
+		agentHandle = strings.TrimSpace(spec.Name)
+	}
+	return registerLocalDockerAgentRequest{
+		RegistryURL:        strings.TrimSpace(registry.RegistryURL),
+		OwnerEmail:         strings.TrimSpace(registry.OwnerEmail),
+		AgentName:          agentName,
+		AgentHandle:        strings.TrimSpace(agentHandle),
+		AgentID:            strings.TrimSpace(registry.AgentID),
+		PublicID:           strings.TrimSpace(registry.PublicID),
+		OrganizationHandle: strings.TrimSpace(registry.OrganizationHandle),
+		Description:        strings.TrimSpace(registry.Description),
+		NetworkAccess:      strings.TrimSpace(registry.NetworkAccess),
+		EndpointURL:        strings.TrimSpace(registry.EndpointURL),
+		AgentType:          strings.TrimSpace(registry.AgentType),
+		Category:           strings.TrimSpace(registry.Category),
+		Discoverable:       &discoverable,
+		OfficialWebsite:    strings.TrimSpace(registry.OfficialWebsite),
+		SupportsAudio:      registry.SupportsAudio,
+		SupportsImages:     registry.SupportsImages,
+		SupportsVideo:      registry.SupportsVideo,
+		PricingModel:       strings.TrimSpace(registry.PricingModel),
+		PricePerRequest:    registry.PricePerRequest,
+		PricePerInputKB:    registry.PricePerInputKB,
+		PricePerOutputKB:   registry.PricePerOutputKB,
+		PricePerSession:    registry.PricePerSession,
+		Currency:           strings.TrimSpace(registry.Currency),
+		ConfigureContainer: registry.ConfigureContainer,
+		Transport:          strings.TrimSpace(registry.Transport),
+		SquareGRPCAddr:     strings.TrimSpace(registry.SquareGRPCAddr),
+		SquareWSURL:        strings.TrimSpace(registry.SquareWSURL),
 	}
 }
 
@@ -853,21 +1043,34 @@ func (s *Server) createLocalDockerAgentsFromYAML(ctx context.Context, rawYAML []
 			}
 			continue
 		}
+		entry := map[string]interface{}{"index": i}
 		if createResult.Agent != nil {
-			result.Created = append(result.Created, map[string]interface{}{
-				"index": i,
-				"agent": createResult.Agent,
-			})
+			entry["agent"] = createResult.Agent
+			if localDockerAgentYAMLRegistryEnabled(spec.Registry) {
+				registerResp, _, registerErr := s.registerLocalDockerAgent(ctx, createResult.Agent, spec.toRegisterRequest())
+				if registerErr != nil {
+					entry["registry_error"] = registerErr.Error()
+					result.Failures = append(result.Failures, map[string]interface{}{
+						"index": i,
+						"name":  createReq.Name,
+						"error": "registry registration failed: " + registerErr.Error(),
+					})
+					if cfg.ContinueOnError != nil && !*cfg.ContinueOnError {
+						result.Created = append(result.Created, entry)
+						break
+					}
+				} else {
+					entry["registry"] = registerResp
+				}
+			}
 		} else {
-			result.Created = append(result.Created, map[string]interface{}{
-				"index": i,
-				"agent": map[string]interface{}{
-					"name":    createResult.Name,
-					"status":  "started",
-					"warning": createResult.Warning,
-				},
-			})
+			entry["agent"] = map[string]interface{}{
+				"name":    createResult.Name,
+				"status":  "started",
+				"warning": createResult.Warning,
+			}
 		}
+		result.Created = append(result.Created, entry)
 	}
 	result.CreatedCount = len(result.Created)
 	result.FailedCount = len(result.Failures)

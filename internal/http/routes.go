@@ -132,6 +132,7 @@ func (s *Server) registerIntegrationRoutes(r chi.Router) {
 		r.Get("/a2_registry/tunnel-status", s.handleA2ATunnelStatus)
 		r.Get("/a2_registry/tunnel-status/stream", s.handleA2ATunnelStatusStream)
 		r.Post("/a2_registry/tunnel-reconnect", s.handleA2ATunnelReconnect)
+			r.Post("/a2_registry/register-current", s.handleRegisterCurrentA2AAgent)
 		r.Get("/a2_registry/local-agents", s.handleListLocalDockerAgents)
 		r.Post("/a2_registry/local-agents", s.handleCreateLocalDockerAgent)
 		r.Post("/a2_registry/local-agents/from-yaml", s.handleCreateLocalDockerAgentsFromYAML)

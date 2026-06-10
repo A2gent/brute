@@ -24,7 +24,7 @@ const (
 	defaultLocalAgentBasePort   = 18080
 	defaultLocalAgentMaxPort    = 18180
 	defaultSquareGRPCAddr       = "a2gent.net:9001"
-	defaultLocalRegistryURL     = "http://localhost:5174"
+	defaultLocalRegistryURL     = "https://a2gent.net"
 	localAgentManagerLabelKey   = "a2gent.local_agent"
 	localAgentManagerLabelValue = "true"
 )

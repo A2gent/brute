@@ -271,6 +271,13 @@ func TestMoveProjectCoverageDirAsideRestoresOriginalDirectory(t *testing.T) {
 	if _, err := os.Stat(originalPath); !os.IsNotExist(err) {
 		t.Fatalf("expected original coverage directory to be moved aside, stat err: %v", err)
 	}
+	backupMatches, err := filepath.Glob(filepath.Join(repoRoot, "spec", ".a2gent-coverage-backup-*"))
+	if err != nil {
+		t.Fatalf("failed to inspect repo-local coverage backups: %v", err)
+	}
+	if len(backupMatches) != 0 {
+		t.Fatalf("expected coverage backup to stay out of repo, got %v", backupMatches)
+	}
 	if err := os.MkdirAll(coverageDir, 0o755); err != nil {
 		t.Fatalf("failed to create temporary coverage directory: %v", err)
 	}

@@ -2439,23 +2439,38 @@ func moveProjectCoverageDirAside(coverageDir string) (func() error, error) {
 	if strings.TrimSpace(coverageDir) == "" || coverageDir == "." || coverageDir == string(filepath.Separator) {
 		return nil, fmt.Errorf("invalid coverage directory %q", coverageDir)
 	}
-	parent := filepath.Dir(coverageDir)
-	backupDir := filepath.Join(parent, fmt.Sprintf(".a2gent-coverage-backup-%d", time.Now().UnixNano()))
+	// Keep the user's existing SimpleCov output outside the repo while per-test
+	// mapping runs, so interrupted coverage refreshes cannot pollute Git changes.
+	backupParent, err := os.MkdirTemp("", "a2gent-coverage-backup-*")
+	if err != nil {
+		return nil, err
+	}
+	backupDir := filepath.Join(backupParent, filepath.Base(coverageDir))
 	existed := false
 	if info, err := os.Stat(coverageDir); err == nil {
 		if !info.IsDir() {
+			_ = os.RemoveAll(backupParent)
 			return nil, fmt.Errorf("%s is not a directory", coverageDir)
 		}
 		if err := os.Rename(coverageDir, backupDir); err != nil {
+			_ = os.RemoveAll(backupParent)
 			return nil, err
 		}
 		existed = true
 	} else if !errors.Is(err, os.ErrNotExist) {
+		_ = os.RemoveAll(backupParent)
 		return nil, err
 	}
 	return func() error {
 		removeErr := os.RemoveAll(coverageDir)
+		defer os.RemoveAll(backupParent)
 		if existed {
+			if err := os.MkdirAll(filepath.Dir(coverageDir), 0o755); err != nil {
+				if removeErr != nil {
+					return fmt.Errorf("%v; %w", removeErr, err)
+				}
+				return err
+			}
 			if err := os.Rename(backupDir, coverageDir); err != nil {
 				if removeErr != nil {
 					return fmt.Errorf("%v; %w", removeErr, err)

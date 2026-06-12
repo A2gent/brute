@@ -216,3 +216,53 @@ func TestClientChatStreamInvokesClaudeStreamJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestCLIErrorMessageExtractsStreamJSONResult(t *testing.T) {
+	stdout := strings.Join([]string{
+		`{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"partial"}}}`,
+		`{"type":"result","subtype":"error","is_error":true,"error":"Rate limit exceeded. Retry later."}`,
+	}, "\n")
+
+	got := cliErrorMessage(os.ErrPermission, stdout, "")
+	if got != "Rate limit exceeded. Retry later." {
+		t.Fatalf("unexpected cli error message: %q", got)
+	}
+}
+
+func TestNormalizeClaudeCLIErrorMessageAddsTargetedHints(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "rate limit",
+			raw:  "Rate limit exceeded. Retry later.",
+			want: "hit a rate limit",
+		},
+		{
+			name: "credits",
+			raw:  "Your account is out of credits.",
+			want: "credits, quota, billing, or budget",
+		},
+		{
+			name: "permission",
+			raw:  "Tool use rejected: requires permission.",
+			want: "tool permission was denied",
+		},
+		{
+			name: "auth",
+			raw:  "Authentication failed: not logged in.",
+			want: "authentication is not ready",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := normalizeClaudeCLIErrorMessage(tc.raw)
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("normalizeClaudeCLIErrorMessage(%q) = %q, want hint containing %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}

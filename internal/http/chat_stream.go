@@ -119,9 +119,10 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 				sess.SetStatus(session.StatusPaused)
 				_ = s.sessionManager.Save(sess)
 				_ = writeEvent(ChatStreamEvent{
-					Type:   "error",
-					Error:  "Request was canceled before completion",
-					Status: string(sess.Status),
+					Type:     "error",
+					Error:    "Request was canceled before completion",
+					Status:   string(sess.Status),
+					Messages: s.messagesToResponse(sess.Messages),
 				})
 				return
 			}
@@ -129,9 +130,10 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			sess.SetStatus(session.StatusFailed)
 			_ = s.sessionManager.Save(sess)
 			_ = writeEvent(ChatStreamEvent{
-				Type:   "error",
-				Error:  "Workflow error: " + runErr.Error(),
-				Status: string(sess.Status),
+				Type:     "error",
+				Error:    "Workflow error: " + runErr.Error(),
+				Status:   string(sess.Status),
+				Messages: s.messagesToResponse(sess.Messages),
 			})
 			return
 		}
@@ -139,9 +141,10 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		sess.SetStatus(workflowSessionStatus(sess))
 		if saveErr := s.sessionManager.Save(sess); saveErr != nil {
 			_ = writeEvent(ChatStreamEvent{
-				Type:   "error",
-				Error:  "Failed to save workflow response: " + saveErr.Error(),
-				Status: string(sess.Status),
+				Type:     "error",
+				Error:    "Failed to save workflow response: " + saveErr.Error(),
+				Status:   string(sess.Status),
+				Messages: s.messagesToResponse(sess.Messages),
 			})
 			return
 		}
@@ -167,9 +170,10 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		sess.SetStatus(session.StatusFailed)
 		s.sessionManager.Save(sess)
 		_ = writeEvent(ChatStreamEvent{
-			Type:   "error",
-			Error:  "Provider configuration error: " + err.Error(),
-			Status: string(sess.Status),
+			Type:     "error",
+			Error:    "Provider configuration error: " + err.Error(),
+			Status:   string(sess.Status),
+			Messages: s.messagesToResponse(sess.Messages),
 		})
 		return
 	}
@@ -260,9 +264,10 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			sess.SetStatus(session.StatusPaused)
 			s.sessionManager.Save(sess)
 			_ = writeEvent(ChatStreamEvent{
-				Type:   "error",
-				Error:  "Request was canceled before completion.",
-				Status: string(sess.Status),
+				Type:     "error",
+				Error:    "Request was canceled before completion.",
+				Status:   string(sess.Status),
+				Messages: s.messagesToResponse(sess.Messages),
 			})
 			return
 		}
@@ -271,11 +276,16 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		sess.SetStatus(session.StatusFailed)
 		s.sessionManager.Save(sess)
 		_ = writeEvent(ChatStreamEvent{
-			Type:   "error",
-			Error:  "Agent error: " + adaptedErr.Error(),
-			Status: string(sess.Status),
+			Type:     "error",
+			Error:    "Agent error: " + adaptedErr.Error(),
+			Status:   string(sess.Status),
+			Messages: s.messagesToResponse(sess.Messages),
 		})
 		return
+	}
+
+	if event := s.inputRequiredStreamEvent(sess); event != nil {
+		_ = writeEvent(*event)
 	}
 
 	_ = writeEvent(ChatStreamEvent{
@@ -288,6 +298,26 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			OutputTokens: usage.OutputTokens,
 		},
 	})
+}
+
+func (s *Server) inputRequiredStreamEvent(sess *session.Session) *ChatStreamEvent {
+	if s == nil || sess == nil || sess.Status != session.StatusInputRequired {
+		return nil
+	}
+
+	var pending *session.QuestionData
+	if s.sessionManager != nil {
+		if question, err := s.sessionManager.GetPendingQuestion(sess.ID); err == nil {
+			pending = question
+		}
+	}
+
+	return &ChatStreamEvent{
+		Type:     "input_required",
+		Status:   string(sess.Status),
+		Messages: s.messagesToResponse(sess.Messages),
+		Question: pending,
+	}
 }
 
 func streamLastMessageResponse(s *Server, sess *session.Session) *MessageResponse {

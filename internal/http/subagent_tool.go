@@ -186,11 +186,24 @@ func (t *delegateToSubAgentTool) Execute(ctx context.Context, params json.RawMes
 	logging.Info("Sub-agent delegation started: parent=%s child=%s sub_agent=%s task=%s",
 		parentSessionID, childSess.ID, sa.Name, truncateForLog(task, 100))
 
-	content, usage, err := ag.Run(ctx, childSess, task)
+	content, usage, err := ag.RunWithEvents(ctx, childSess, task, func(ev agent.Event) {
+		if ev.Type == agent.EventProviderTrace && ev.Provider != nil {
+			t.server.applyProviderTraceToSession(childSess, target.ProviderType, ev.Provider)
+		}
+	})
 	if err != nil {
+		adaptedErr := t.server.adaptProviderErrorMessage(target.ProviderType, err)
+		childSess.AddAssistantMessage(fmt.Sprintf("Request failed: %s", adaptedErr.Error()), nil)
 		childSess.SetStatus(session.StatusFailed)
 		t.server.sessionManager.Save(childSess)
-		return saErrorResult(fmt.Sprintf("sub-agent '%s' failed: %s", sa.Name, err.Error())), nil
+		return saErrorResult(fmt.Sprintf("sub-agent '%s' failed: %s", sa.Name, adaptedErr.Error())), nil
+	}
+
+	if childSess.Status == session.StatusInputRequired {
+		if saveErr := t.server.sessionManager.Save(childSess); saveErr != nil {
+			logging.Warn("Failed to save input-required child session: %v", saveErr)
+		}
+		return saErrorResult(fmt.Sprintf("sub-agent '%s' is waiting for user input in child session %s", sa.Name, childSess.ID)), nil
 	}
 
 	logging.Info("Sub-agent delegation completed: child=%s input_tokens=%d output_tokens=%d",

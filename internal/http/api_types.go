@@ -4,6 +4,7 @@ package http
 import (
 	"encoding/json"
 	"github.com/A2gent/brute/internal/config"
+	"github.com/A2gent/brute/internal/session"
 	"time"
 )
 
@@ -164,6 +165,7 @@ type ChatStreamEvent struct {
 	Status                  string                 `json:"status,omitempty"`
 	Usage                   *UsageResponse         `json:"usage,omitempty"`
 	Error                   string                 `json:"error,omitempty"`
+	Question                *session.QuestionData  `json:"question,omitempty"`
 	ToolCalls               []StreamToolCallEvent  `json:"tool_calls,omitempty"`
 	ToolResult              *StreamToolResultEvent `json:"tool_result,omitempty"`
 	Provider                *StreamProviderEvent   `json:"provider,omitempty"`

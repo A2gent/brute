@@ -11,6 +11,7 @@ import (
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/tools"
+	"github.com/A2gent/brute/internal/tools/integrationtools"
 )
 
 type delegateToSubAgentTool struct {
@@ -249,6 +250,10 @@ func (s *Server) buildSubAgentToolManager(sess *session.Session, enabledTools []
 		manager = s.toolManager.Clone()
 	} else {
 		manager = tools.NewManager(workDir)
+		// WHY: project-scoped sub-agents get a fresh manager for their workdir; it
+		// must include integration-backed tools too, otherwise allowed tools like
+		// youtube_transcript fail at runtime with "tool not found".
+		integrationtools.Register(manager, s.store, s.speechClips, s.sessionManager)
 		s.registerServerBackedTools(manager)
 	}
 

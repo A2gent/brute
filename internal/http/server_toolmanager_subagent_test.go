@@ -79,6 +79,54 @@ func TestToolManagerForSession_SubAgentIgnoresGlobalDisabledTools(t *testing.T) 
 	}
 }
 
+func TestBuildSubAgentToolManager_IncludesIntegrationToolsForProjectWorkDir(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	sessionManager := session.NewManager(store)
+	server := NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
+
+	projectRoot := t.TempDir()
+	project := &storage.Project{
+		ID:        "project-youtube-subagent",
+		Name:      "YouTube Subagent Project",
+		Folder:    &projectRoot,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatalf("failed to save project: %v", err)
+	}
+
+	subSess, err := sessionManager.Create("subagent")
+	if err != nil {
+		t.Fatalf("failed to create sub-agent session: %v", err)
+	}
+	subSess.ProjectID = &project.ID
+
+	mgr := server.buildSubAgentToolManager(subSess, []string{"youtube_transcript"})
+	if _, ok := mgr.Get("youtube_transcript"); !ok {
+		t.Fatalf("expected youtube_transcript to be available for project-scoped sub-agent")
+	}
+	if _, ok := mgr.Get("exa_search"); ok {
+		t.Fatalf("did not expect unrelated integration tools to bypass sub-agent allow list")
+	}
+
+	// WHY: the failure reported in the UI was a missing tool, not YouTube network
+	// behavior. Execute with an invalid URL to prove the registered integration
+	// tool itself receives the call instead of Manager returning "tool not found".
+	result, err := mgr.Execute(t.Context(), "youtube_transcript", json.RawMessage(`{"url":"not a youtube url"}`))
+	if err != nil {
+		t.Fatalf("expected registered youtube_transcript tool, got manager error: %v", err)
+	}
+	if result == nil || result.Success || result.Error != "invalid youtube url" {
+		t.Fatalf("expected youtube_transcript validation error, got %#v", result)
+	}
+}
+
 func TestBuildSystemPromptForSession_UsesSubAgentInstructions(t *testing.T) {
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	if err != nil {

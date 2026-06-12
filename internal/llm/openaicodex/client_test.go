@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -151,6 +152,106 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 	}
 	if got, want := resp.Content, "ok"; got != want {
 		t.Fatalf("content = %q, want %q", got, want)
+	}
+}
+
+func TestChatStreamRequestsEventStreamAndEmitsDeltaBeforeCompletion(t *testing.T) {
+	firstDeltaSeen := make(chan struct{})
+	allowCompletion := make(chan struct{})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Path, "/responses"; got != want {
+			t.Fatalf("path = %q, want %q", got, want)
+		}
+		if accept := r.Header.Get("Accept"); !strings.Contains(accept, "text/event-stream") {
+			t.Fatalf("Accept = %q, want text/event-stream", accept)
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatalf("test response writer does not support flushing")
+		}
+
+		_, _ = w.Write([]byte(`event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"Hel","item_id":"msg_1","output_index":0,"sequence_number":1}
+
+`))
+		flusher.Flush()
+
+		select {
+		case <-allowCompletion:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("client did not observe first stream delta before completion")
+		}
+
+		_, _ = w.Write([]byte(`event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"lo","item_id":"msg_1","output_index":0,"sequence_number":2}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"Hello"}]}],"usage":{"input_tokens":3,"output_tokens":2}},"sequence_number":3}
+
+`))
+		flusher.Flush()
+	}))
+	defer server.Close()
+
+	client := NewClientWithOptions("token", "gpt-5.5", server.URL, Options{})
+	client.httpClient = server.Client()
+
+	resultCh := make(chan *llm.ChatResponse, 1)
+	errCh := make(chan error, 1)
+	deltas := make(chan string, 2)
+
+	go func() {
+		resp, err := client.ChatStream(t.Context(), &llm.ChatRequest{
+			Messages: []llm.Message{{Role: "user", Content: "hello"}},
+		}, func(event llm.StreamEvent) error {
+			if event.Type == llm.StreamEventContentDelta {
+				deltas <- event.ContentDelta
+				if event.ContentDelta == "Hel" {
+					select {
+					case <-firstDeltaSeen:
+					default:
+						close(firstDeltaSeen)
+					}
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- resp
+	}()
+
+	select {
+	case <-firstDeltaSeen:
+		close(allowCompletion)
+	case err := <-errCh:
+		t.Fatalf("ChatStream returned error before first delta: %v", err)
+	case <-resultCh:
+		t.Fatalf("ChatStream returned before first delta was observed")
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for first stream delta")
+	}
+
+	var resp *llm.ChatResponse
+	select {
+	case err := <-errCh:
+		t.Fatalf("ChatStream returned error: %v", err)
+	case resp = <-resultCh:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for ChatStream completion")
+	}
+
+	if got, want := resp.Content, "Hello"; got != want {
+		t.Fatalf("content = %q, want %q", got, want)
+	}
+	gotDeltas := []string{<-deltas, <-deltas}
+	if got, want := strings.Join(gotDeltas, ""), "Hello"; got != want {
+		t.Fatalf("stream deltas joined = %q, want %q", got, want)
 	}
 }
 

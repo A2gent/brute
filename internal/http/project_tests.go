@@ -22,9 +22,10 @@ import (
 )
 
 const (
-	projectTestFrameworkRSpec = "rspec"
-	projectTestFrameworkGo    = "go"
-	projectTestFrameworkJest  = "jest"
+	projectTestFrameworkRSpec  = "rspec"
+	projectTestFrameworkGo     = "go"
+	projectTestFrameworkJest   = "jest"
+	projectTestFrameworkVitest = "vitest"
 )
 
 type ProjectTestFrameworkInfo struct {
@@ -223,6 +224,15 @@ type projectTestSelection struct {
 type projectTestCommandExecution struct {
 	Command    ProjectTestRunCommand
 	OutputPath string
+}
+
+type projectTestPlanError struct {
+	message string
+	status  string
+}
+
+func (e projectTestPlanError) Error() string {
+	return e.message
 }
 
 var (
@@ -664,6 +674,7 @@ func buildProjectTestsDiscovery(_ string, repoPath string, repoRoot string) (Pro
 	}
 
 	detections := detectProjectTestFrameworks(repoRoot)
+	javaScriptFramework := projectJavaScriptTestFramework(detections)
 	testFiles := make([]ProjectTestFile, 0)
 
 	err := filepath.WalkDir(repoRoot, func(path string, entry os.DirEntry, walkErr error) error {
@@ -686,7 +697,7 @@ func buildProjectTestsDiscovery(_ string, repoPath string, repoRoot string) (Pro
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
-		framework := classifyProjectTestFile(rel)
+		framework := classifyProjectTestFileForJavaScriptFramework(rel, javaScriptFramework)
 		if framework == "" {
 			return nil
 		}
@@ -739,8 +750,8 @@ func buildProjectTestsDiscovery(_ string, repoPath string, repoRoot string) (Pro
 		}
 	}
 
-	frameworks := make([]ProjectTestFrameworkInfo, 0, 3)
-	for _, id := range []string{projectTestFrameworkRSpec, projectTestFrameworkGo, projectTestFrameworkJest} {
+	frameworks := make([]ProjectTestFrameworkInfo, 0, 4)
+	for _, id := range []string{projectTestFrameworkRSpec, projectTestFrameworkGo, projectTestFrameworkVitest, projectTestFrameworkJest} {
 		info := detections[id]
 		if testCounts[id] > 0 {
 			info.Available = true
@@ -755,6 +766,9 @@ func buildProjectTestsDiscovery(_ string, repoPath string, repoRoot string) (Pro
 		case projectTestFrameworkGo:
 			info.SupportsCoverage = true
 			info.CoverageMode = "per-test branch mapping and aggregate coverprofile"
+		case projectTestFrameworkVitest:
+			info.SupportsCoverage = true
+			info.CoverageMode = "aggregate V8/Istanbul coverage"
 		case projectTestFrameworkJest:
 			info.SupportsCoverage = true
 			info.CoverageMode = "aggregate Istanbul coverage"
@@ -780,9 +794,10 @@ func buildProjectTestsDiscovery(_ string, repoPath string, repoRoot string) (Pro
 
 func detectProjectTestFrameworks(repoRoot string) map[string]ProjectTestFrameworkInfo {
 	frameworks := map[string]ProjectTestFrameworkInfo{
-		projectTestFrameworkRSpec: {ID: projectTestFrameworkRSpec, Label: "RSpec"},
-		projectTestFrameworkGo:    {ID: projectTestFrameworkGo, Label: "Go test"},
-		projectTestFrameworkJest:  {ID: projectTestFrameworkJest, Label: "Jest"},
+		projectTestFrameworkRSpec:  {ID: projectTestFrameworkRSpec, Label: "RSpec"},
+		projectTestFrameworkGo:     {ID: projectTestFrameworkGo, Label: "Go test"},
+		projectTestFrameworkJest:   {ID: projectTestFrameworkJest, Label: "Jest"},
+		projectTestFrameworkVitest: {ID: projectTestFrameworkVitest, Label: "Vitest"},
 	}
 
 	if projectTestFileExists(repoRoot, ".rspec") || projectTestDirExists(repoRoot, "spec") || projectTestFileContains(repoRoot, "Gemfile", "rspec") {
@@ -797,7 +812,13 @@ func detectProjectTestFrameworks(repoRoot string) map[string]ProjectTestFramewor
 		info.Reason = "go.mod found"
 		frameworks[projectTestFrameworkGo] = info
 	}
-	if projectTestPackageJSONHasJest(repoRoot) {
+	if projectTestPackageJSONHasTestRunner(repoRoot, projectTestFrameworkVitest) {
+		info := frameworks[projectTestFrameworkVitest]
+		info.Available = true
+		info.Reason = "package.json references vitest"
+		frameworks[projectTestFrameworkVitest] = info
+	}
+	if projectTestPackageJSONHasTestRunner(repoRoot, projectTestFrameworkJest) {
 		info := frameworks[projectTestFrameworkJest]
 		info.Available = true
 		info.Reason = "package.json references jest"
@@ -808,6 +829,10 @@ func detectProjectTestFrameworks(repoRoot string) map[string]ProjectTestFramewor
 }
 
 func classifyProjectTestFile(relPath string) string {
+	return classifyProjectTestFileForJavaScriptFramework(relPath, projectTestFrameworkJest)
+}
+
+func classifyProjectTestFileForJavaScriptFramework(relPath string, javaScriptFramework string) string {
 	path := filepath.ToSlash(relPath)
 	lower := strings.ToLower(path)
 	base := strings.ToLower(filepath.Base(path))
@@ -819,15 +844,34 @@ func classifyProjectTestFile(relPath string) string {
 	}
 	if strings.Contains(lower, "/__tests__/") || strings.HasPrefix(lower, "__tests__/") {
 		if isJestTestExtension(base) {
-			return projectTestFrameworkJest
+			return normalizeProjectJavaScriptTestFramework(javaScriptFramework)
 		}
 	}
 	for _, marker := range []string{".test.", ".spec."} {
 		if strings.Contains(base, marker) && isJestTestExtension(base) {
-			return projectTestFrameworkJest
+			return normalizeProjectJavaScriptTestFramework(javaScriptFramework)
 		}
 	}
 	return ""
+}
+
+func projectJavaScriptTestFramework(detections map[string]ProjectTestFrameworkInfo) string {
+	if detections[projectTestFrameworkVitest].Available {
+		return projectTestFrameworkVitest
+	}
+	if detections[projectTestFrameworkJest].Available {
+		return projectTestFrameworkJest
+	}
+	return projectTestFrameworkJest
+}
+
+func normalizeProjectJavaScriptTestFramework(framework string) string {
+	switch framework {
+	case projectTestFrameworkVitest:
+		return projectTestFrameworkVitest
+	default:
+		return projectTestFrameworkJest
+	}
 }
 
 func isJestTestExtension(base string) bool {
@@ -851,6 +895,8 @@ func parseProjectTestFile(repoRoot string, relPath string, framework string, add
 		return parseGoTests(relPath, string(content), addedLines)
 	case projectTestFrameworkJest:
 		return parseJestTests(relPath, string(content), addedLines)
+	case projectTestFrameworkVitest:
+		return parseVitestTests(relPath, string(content), addedLines)
 	default:
 		return []ProjectTestNode{}
 	}
@@ -877,6 +923,25 @@ func parseRSpecTests(relPath string, content string, addedLines map[int]bool) []
 
 func parseJestTests(relPath string, content string, addedLines map[int]bool) []ProjectTestNode {
 	return parseIndentedTests(relPath, content, projectTestFrameworkJest, func(line string) (string, string, bool) {
+		matches := jestTestLinePattern.FindStringSubmatch(line)
+		if matches == nil {
+			return "", "", false
+		}
+		kind := matches[1]
+		name := firstNonEmptyProjectTestMatch(matches, 2)
+		if name == "" {
+			name = kind
+		}
+		nodeType := "test"
+		if kind == "describe" {
+			nodeType = "group"
+		}
+		return nodeType, name, true
+	}, addedLines)
+}
+
+func parseVitestTests(relPath string, content string, addedLines map[int]bool) []ProjectTestNode {
+	return parseIndentedTests(relPath, content, projectTestFrameworkVitest, func(line string) (string, string, bool) {
 		matches := jestTestLinePattern.FindStringSubmatch(line)
 		if matches == nil {
 			return "", "", false
@@ -1093,18 +1158,29 @@ func executeProjectFrameworkTests(ctx context.Context, repoRoot string, discover
 	case projectTestFrameworkGo:
 		command, args, planErr = buildGoTestCommand(discovery, mode, req)
 	case projectTestFrameworkJest:
-		command, args, outputPath, planErr = buildJestTestCommand(repoRoot, discovery, mode, req)
+		command, args, outputPath, planErr = buildJavaScriptTestCommand(repoRoot, discovery, projectTestFrameworkJest, mode, req)
+	case projectTestFrameworkVitest:
+		command, args, outputPath, planErr = buildJavaScriptTestCommand(repoRoot, discovery, projectTestFrameworkVitest, mode, req)
 	default:
 		planErr = fmt.Errorf("unsupported framework %q", framework)
 	}
 	if planErr != nil {
+		status := projectTestPlanErrorStatus(planErr)
+		errorText := ""
+		outputText := ""
+		if status == "skipped" {
+			outputText = planErr.Error()
+		} else {
+			errorText = planErr.Error()
+		}
 		result := ProjectTestResult{
 			ID:        framework + ":plan-error",
 			Framework: framework,
-			Name:      framework,
-			FullName:  framework,
-			Status:    "failed",
-			Error:     planErr.Error(),
+			Name:      projectTestFrameworkLabel(framework),
+			FullName:  planErr.Error(),
+			Status:    status,
+			Output:    outputText,
+			Error:     errorText,
 		}
 		return []ProjectTestResult{result}, []ProjectTestRunCommand{}
 	}
@@ -1133,7 +1209,7 @@ func buildRSpecTestCommand(repoRoot string, discovery ProjectTestsDiscoveryRespo
 	case "branch":
 		paths := branchProjectTestPaths(discovery, projectTestFrameworkRSpec)
 		if len(paths) == 0 {
-			return "", nil, errors.New("no RSpec test files changed on this branch")
+			return "", nil, projectTestNoBranchFilesError(projectTestFrameworkRSpec)
 		}
 		args = append(args, paths...)
 		return command, args, nil
@@ -1160,6 +1236,21 @@ func buildRSpecTestCommand(repoRoot string, discovery ProjectTestsDiscoveryRespo
 	}
 }
 
+func projectTestPlanErrorStatus(err error) string {
+	var planErr projectTestPlanError
+	if errors.As(err, &planErr) && strings.TrimSpace(planErr.status) != "" {
+		return planErr.status
+	}
+	return "failed"
+}
+
+func projectTestNoBranchFilesError(framework string) error {
+	return projectTestPlanError{
+		message: fmt.Sprintf("no %s test files changed on this branch", projectTestFrameworkLabel(framework)),
+		status:  "skipped",
+	}
+}
+
 func buildGoTestCommand(discovery ProjectTestsDiscoveryResponse, mode string, req ProjectTestsRunRequest) (string, []string, error) {
 	args := []string{"test", "-json"}
 	selection, hasSelection := findProjectTestSelection(discovery, req)
@@ -1169,7 +1260,7 @@ func buildGoTestCommand(discovery ProjectTestsDiscoveryResponse, mode string, re
 	case "branch":
 		packages := branchProjectTestPackages(discovery, projectTestFrameworkGo)
 		if len(packages) == 0 {
-			return "", nil, errors.New("no Go test files changed on this branch")
+			return "", nil, projectTestNoBranchFilesError(projectTestFrameworkGo)
 		}
 		args = append(args, packages...)
 	case "file":
@@ -1190,24 +1281,29 @@ func buildGoTestCommand(discovery ProjectTestsDiscoveryResponse, mode string, re
 	return "go", args, nil
 }
 
-func buildJestTestCommand(repoRoot string, discovery ProjectTestsDiscoveryResponse, mode string, req ProjectTestsRunRequest) (string, []string, string, error) {
-	outputFile, err := os.CreateTemp("", "a2gent-jest-results-*.json")
+func buildJavaScriptTestCommand(repoRoot string, discovery ProjectTestsDiscoveryResponse, framework string, mode string, req ProjectTestsRunRequest) (string, []string, string, error) {
+	outputFile, err := os.CreateTemp("", "a2gent-"+framework+"-results-*.json")
 	if err != nil {
 		return "", nil, "", err
 	}
 	outputPath := outputFile.Name()
 	_ = outputFile.Close()
 
-	command, args := projectJestCommand(repoRoot)
-	args = append(args, "--runInBand", "--json", "--outputFile", outputPath, "--testLocationInResults")
+	command, args := projectJavaScriptTestCommand(repoRoot, framework)
+	switch framework {
+	case projectTestFrameworkVitest:
+		args = append(args, "run", "--reporter=json", "--outputFile", outputPath)
+	default:
+		args = append(args, "--runInBand", "--json", "--outputFile", outputPath, "--testLocationInResults")
+	}
 
 	selection, hasSelection := findProjectTestSelection(discovery, req)
 	switch mode {
 	case "project":
 	case "branch":
-		paths := branchProjectTestPaths(discovery, projectTestFrameworkJest)
+		paths := branchProjectTestPaths(discovery, framework)
 		if len(paths) == 0 {
-			return "", nil, "", errors.New("no Jest test files changed on this branch")
+			return "", nil, "", projectTestNoBranchFilesError(framework)
 		}
 		args = append(args, paths...)
 	case "file":
@@ -1278,7 +1374,13 @@ func parseProjectTestCommandResults(repoRoot string, discovery ProjectTestsDisco
 			return results
 		}
 	case projectTestFrameworkJest:
-		if results := parseJestTestResults(repoRoot, execution.OutputPath); len(results) > 0 {
+		if results := parseJavaScriptTestResults(repoRoot, execution.OutputPath, projectTestFrameworkJest); len(results) > 0 {
+			_ = os.Remove(execution.OutputPath)
+			return results
+		}
+		_ = os.Remove(execution.OutputPath)
+	case projectTestFrameworkVitest:
+		if results := parseJavaScriptTestResults(repoRoot, execution.OutputPath, projectTestFrameworkVitest); len(results) > 0 {
 			_ = os.Remove(execution.OutputPath)
 			return results
 		}
@@ -1419,7 +1521,7 @@ func parseGoTestResults(discovery ProjectTestsDiscoveryResponse, output string) 
 	return results
 }
 
-func parseJestTestResults(repoRoot string, outputPath string) []ProjectTestResult {
+func parseJavaScriptTestResults(repoRoot string, outputPath string, framework string) []ProjectTestResult {
 	if outputPath == "" {
 		return nil
 	}
@@ -1435,7 +1537,7 @@ func parseJestTestResults(repoRoot string, outputPath string) []ProjectTestResul
 		Title           string        `json:"title"`
 		FullName        string        `json:"fullName"`
 		Status          string        `json:"status"`
-		Duration        int64         `json:"duration"`
+		Duration        float64       `json:"duration"`
 		FailureMessages []string      `json:"failureMessages"`
 		Location        *jestLocation `json:"location"`
 	}
@@ -1460,14 +1562,14 @@ func parseJestTestResults(repoRoot string, outputPath string) []ProjectTestResul
 				line = assertion.Location.Line
 			}
 			results = append(results, ProjectTestResult{
-				ID:         projectTestNodeID(projectTestFrameworkJest, path, line),
-				Framework:  projectTestFrameworkJest,
+				ID:         projectTestNodeID(framework, path, line),
+				Framework:  framework,
 				Name:       nonEmptyProjectTestName(assertion.Title, assertion.FullName),
 				FullName:   nonEmptyProjectTestName(assertion.FullName, assertion.Title),
 				Path:       path,
 				Line:       line,
 				Status:     normalizeProjectTestStatus(assertion.Status),
-				DurationMs: assertion.Duration,
+				DurationMs: int64(math.Round(assertion.Duration)),
 				Error:      strings.Join(assertion.FailureMessages, "\n"),
 			})
 		}
@@ -1494,7 +1596,9 @@ func buildProjectTestsCoverage(ctx context.Context, repoRoot string, repoPath st
 		case projectTestFrameworkGo:
 			response.Reports = append(response.Reports, buildGoProjectTestCoverage(ctx, repoRoot, discovery, changedFiles))
 		case projectTestFrameworkJest:
-			response.Reports = append(response.Reports, buildJestProjectTestCoverage(ctx, repoRoot, changedFiles))
+			response.Reports = append(response.Reports, buildJavaScriptProjectTestCoverage(ctx, repoRoot, projectTestFrameworkJest, changedFiles))
+		case projectTestFrameworkVitest:
+			response.Reports = append(response.Reports, buildJavaScriptProjectTestCoverage(ctx, repoRoot, projectTestFrameworkVitest, changedFiles))
 		case projectTestFrameworkRSpec:
 			response.Reports = append(response.Reports, buildRSpecProjectTestCoverage(ctx, repoRoot, discovery, changedFiles))
 		}
@@ -1647,32 +1751,41 @@ func buildGoProjectTestCoverage(ctx context.Context, repoRoot string, discovery 
 	return report
 }
 
-func buildJestProjectTestCoverage(ctx context.Context, repoRoot string, changedFiles map[string]bool) ProjectTestCoverageReport {
+func buildJavaScriptProjectTestCoverage(ctx context.Context, repoRoot string, framework string, changedFiles map[string]bool) ProjectTestCoverageReport {
+	note := "Jest coverage is aggregate. Jest does not expose a standard per-test-to-file mapping without custom instrumentation."
+	mode := "istanbul aggregate"
+	if framework == projectTestFrameworkVitest {
+		note = "Vitest coverage is aggregate. Vitest does not expose a standard per-test-to-file mapping without custom instrumentation."
+		mode = "v8/istanbul aggregate"
+	}
 	report := ProjectTestCoverageReport{
-		Framework: projectTestFrameworkJest,
+		Framework: framework,
 		Supported: true,
-		Mode:      "istanbul aggregate",
+		Mode:      mode,
 		Files:     []ProjectTestCoverageFile{},
 		Commands:  []ProjectTestRunCommand{},
-		Notes: []string{
-			"Jest coverage is aggregate. Jest does not expose a standard per-test-to-file mapping without custom instrumentation.",
-		},
+		Notes:     []string{note},
 	}
-	coverageDir, err := os.MkdirTemp("", "a2gent-jest-coverage-*")
+	coverageDir, err := os.MkdirTemp("", "a2gent-"+framework+"-coverage-*")
 	if err != nil {
 		report.Notes = append(report.Notes, err.Error())
 		return report
 	}
 	defer os.RemoveAll(coverageDir)
 
-	command, args := projectJestCommand(repoRoot)
-	args = append(args, "--runInBand", "--coverage", "--coverageReporters=json", "--coverageDirectory", coverageDir)
-	execution := runProjectTestCommand(ctx, repoRoot, projectTestFrameworkJest, command, args, nil)
+	command, args := projectJavaScriptTestCommand(repoRoot, framework)
+	switch framework {
+	case projectTestFrameworkVitest:
+		args = append(args, "run", "--coverage", "--coverage.reporter=json", "--coverage.reportsDirectory", coverageDir)
+	default:
+		args = append(args, "--runInBand", "--coverage", "--coverageReporters=json", "--coverageDirectory", coverageDir)
+	}
+	execution := runProjectTestCommand(ctx, repoRoot, framework, command, args, nil)
 	report.Commands = append(report.Commands, execution.Command)
 
 	files, parseErr := parseIstanbulCoverage(filepath.Join(coverageDir, "coverage-final.json"), repoRoot, changedFiles)
 	if parseErr != nil {
-		report.Notes = append(report.Notes, "Failed to parse Jest coverage: "+parseErr.Error())
+		report.Notes = append(report.Notes, "Failed to parse "+projectTestFrameworkLabel(framework)+" coverage: "+parseErr.Error())
 		return report
 	}
 	report.Files = files
@@ -2146,20 +2259,26 @@ func projectGitTestingScopeAddedLineNumbers(repoRoot string, target projectGitBr
 	return lines
 }
 
-func projectJestCommand(repoRoot string) (string, []string) {
-	if projectTestUsesManagedRuntime(repoRoot, projectTestFrameworkJest, "npx") {
-		return "npx", []string{"--no-install", "jest"}
+func projectJavaScriptTestCommand(repoRoot string, framework string) (string, []string) {
+	binary := "jest"
+	if framework == projectTestFrameworkVitest {
+		binary = "vitest"
 	}
-	local := filepath.Join(repoRoot, "node_modules", ".bin", "jest")
+	local := filepath.Join(repoRoot, "node_modules", ".bin", binary)
 	if info, err := os.Stat(local); err == nil && !info.IsDir() {
 		return local, []string{}
 	}
-	return "npx", []string{"--no-install", "jest"}
+	return "npx", []string{"--no-install", binary}
 }
 
 func projectTestRuntimeCommand(repoRoot string, framework string, command string, args []string) (string, []string) {
 	if !projectTestUsesManagedRuntime(repoRoot, framework, command) {
 		return command, args
+	}
+	if projectTestUsesNodeRuntime(framework, command) {
+		if runtimeCommand, runtimeArgs, ok := projectTestNVMRuntimeCommand(repoRoot, command, args); ok {
+			return runtimeCommand, runtimeArgs
+		}
 	}
 	if projectTestCommandExists("mise") {
 		wrappedArgs := append([]string{"exec", "--", command}, args...)
@@ -2177,6 +2296,9 @@ func projectTestRuntimeCommand(repoRoot string, framework string, command string
 }
 
 func projectTestUsesManagedRuntime(repoRoot string, framework string, command string) bool {
+	if projectTestUsesNodeRuntime(framework, command) && projectTestNVMRuntimeAvailable(repoRoot) && projectTestProjectDeclaresRuntime(repoRoot, framework, command) {
+		return true
+	}
 	if projectTestCommandExists("mise") && projectTestProjectDeclaresRuntime(repoRoot, framework, command) {
 		return true
 	}
@@ -2193,7 +2315,7 @@ func projectTestProjectDeclaresRuntime(repoRoot string, framework string, comman
 	switch framework {
 	case projectTestFrameworkRSpec:
 		return projectTestFileExists(repoRoot, ".ruby-version") || projectToolVersionsContains(repoRoot, "ruby")
-	case projectTestFrameworkJest:
+	case projectTestFrameworkJest, projectTestFrameworkVitest:
 		return projectTestFileExists(repoRoot, ".nvmrc") ||
 			projectTestFileExists(repoRoot, ".node-version") ||
 			projectToolVersionsContains(repoRoot, "nodejs") ||
@@ -2206,7 +2328,7 @@ func projectTestProjectDeclaresRuntime(repoRoot string, framework string, comman
 	if base == "bundle" || base == "rspec" || base == "ruby" {
 		return projectTestFileExists(repoRoot, ".ruby-version") || projectToolVersionsContains(repoRoot, "ruby")
 	}
-	if base == "node" || base == "npm" || base == "npx" || base == "yarn" {
+	if base == "node" || base == "npm" || base == "npx" || base == "yarn" || base == "pnpm" || base == "jest" || base == "vitest" {
 		return projectTestFileExists(repoRoot, ".nvmrc") ||
 			projectTestFileExists(repoRoot, ".node-version") ||
 			projectToolVersionsContains(repoRoot, "nodejs") ||
@@ -2216,6 +2338,64 @@ func projectTestProjectDeclaresRuntime(repoRoot string, framework string, comman
 		return projectToolVersionsContains(repoRoot, "golang") || projectToolVersionsContains(repoRoot, "go")
 	}
 	return false
+}
+
+func projectTestUsesNodeRuntime(framework string, command string) bool {
+	if framework == projectTestFrameworkJest || framework == projectTestFrameworkVitest {
+		return true
+	}
+	switch filepath.Base(command) {
+	case "node", "npm", "npx", "yarn", "pnpm", "jest", "vitest":
+		return true
+	default:
+		return false
+	}
+}
+
+func projectTestNVMRuntimeAvailable(repoRoot string) bool {
+	nvmDir := projectTestNVMDir()
+	return nvmDir != "" && projectTestFileExists(repoRoot, ".nvmrc") && projectTestFileExists(nvmDir, "nvm.sh")
+}
+
+func projectTestNVMRuntimeCommand(repoRoot string, command string, args []string) (string, []string, bool) {
+	version := projectTestNVMVersion(repoRoot)
+	if version == "" || !projectTestNVMRuntimeAvailable(repoRoot) {
+		return "", nil, false
+	}
+	parts := []string{
+		"source " + shellQuote(filepath.Join(projectTestNVMDir(), "nvm.sh")),
+		"nvm exec --silent " + shellQuote(version) + " " + shellQuote(command),
+	}
+	for _, arg := range args {
+		parts[1] += " " + shellQuote(arg)
+	}
+	return "bash", []string{"-lc", strings.Join(parts, " && ")}, true
+}
+
+func projectTestNVMDir() string {
+	if dir := strings.TrimSpace(os.Getenv("NVM_DIR")); dir != "" {
+		return dir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".nvm")
+}
+
+func projectTestNVMVersion(repoRoot string) string {
+	content, err := os.ReadFile(filepath.Join(repoRoot, ".nvmrc"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		return line
+	}
+	return ""
 }
 
 func projectToolVersionsContains(repoRoot string, toolName string) bool {
@@ -2258,13 +2438,70 @@ func projectTestFileContains(repoRoot string, relPath string, needle string) boo
 	return strings.Contains(strings.ToLower(string(content)), strings.ToLower(needle))
 }
 
-func projectTestPackageJSONHasJest(repoRoot string) bool {
+type projectTestPackageJSON struct {
+	Scripts         map[string]string `json:"scripts"`
+	Dependencies    map[string]string `json:"dependencies"`
+	DevDependencies map[string]string `json:"devDependencies"`
+}
+
+func projectTestPackageJSONHasTestRunner(repoRoot string, runner string) bool {
 	content, err := os.ReadFile(filepath.Join(repoRoot, "package.json"))
 	if err != nil {
 		return false
 	}
-	lower := strings.ToLower(string(content))
-	return strings.Contains(lower, "\"jest\"") || strings.Contains(lower, " jest ") || strings.Contains(lower, "jest --")
+	var pkg projectTestPackageJSON
+	if err := json.Unmarshal(content, &pkg); err != nil {
+		return false
+	}
+	for name := range pkg.Dependencies {
+		if projectTestPackageNameMatchesRunner(name, runner) {
+			return true
+		}
+	}
+	for name := range pkg.DevDependencies {
+		if projectTestPackageNameMatchesRunner(name, runner) {
+			return true
+		}
+	}
+	for _, script := range pkg.Scripts {
+		if projectTestScriptInvokesRunner(script, runner) {
+			return true
+		}
+	}
+	return false
+}
+
+func projectTestPackageNameMatchesRunner(name string, runner string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	switch runner {
+	case projectTestFrameworkVitest:
+		return name == "vitest" || strings.HasPrefix(name, "@vitest/")
+	case projectTestFrameworkJest:
+		return name == "jest" ||
+			name == "jest-cli" ||
+			strings.HasPrefix(name, "@jest/") ||
+			strings.HasPrefix(name, "jest-") ||
+			strings.HasSuffix(name, "-jest")
+	default:
+		return false
+	}
+}
+
+func projectTestScriptInvokesRunner(script string, runner string) bool {
+	for _, token := range strings.FieldsFunc(script, func(r rune) bool {
+		switch r {
+		case '/', '.', '_', '-', '@':
+			return false
+		default:
+			return !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9')
+		}
+	}) {
+		token = strings.Trim(token, `"'`)
+		if filepath.Base(token) == runner {
+			return true
+		}
+	}
+	return false
 }
 
 func shouldSkipProjectTestDir(name string) bool {
@@ -2301,8 +2538,30 @@ func firstNonEmptyProjectTestMatch(matches []string, start int) string {
 	return ""
 }
 
+func shellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
 func projectTestNodeID(framework string, path string, line int) string {
 	return fmt.Sprintf("%s:%s:%d", framework, filepath.ToSlash(path), line)
+}
+
+func projectTestFrameworkLabel(framework string) string {
+	switch framework {
+	case projectTestFrameworkRSpec:
+		return "RSpec"
+	case projectTestFrameworkGo:
+		return "Go test"
+	case projectTestFrameworkVitest:
+		return "Vitest"
+	case projectTestFrameworkJest:
+		return "Jest"
+	default:
+		return framework
+	}
 }
 
 func projectTestBranchScope(status string) string {

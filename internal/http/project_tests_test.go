@@ -1,9 +1,11 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -146,6 +148,171 @@ func TestUncommittedAddition(t *testing.T) {}
 	}
 	if !file.Tests[1].BranchAdded {
 		t.Fatal("expected uncommitted added test line to be marked branch-added")
+	}
+}
+
+func TestBuildProjectTestsDiscoveryDetectsVitestWithoutJestDomFalsePositive(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeGitTestFile(t, repoRoot, "package.json", `{
+  "scripts": {
+    "test": "pnpm test:unit",
+    "test:unit": "vitest run"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "vitest": "3.1.1"
+  }
+}`)
+	if err := os.MkdirAll(filepath.Join(repoRoot, "src"), 0o755); err != nil {
+		t.Fatalf("failed to create source directory: %v", err)
+	}
+	writeGitTestFile(t, repoRoot, "src/user.test.ts", `describe("user", () => {
+  test("loads", () => {})
+})
+`)
+
+	discovery, err := buildProjectTestsDiscovery("project-1", "", repoRoot)
+	if err != nil {
+		t.Fatalf("buildProjectTestsDiscovery returned error: %v", err)
+	}
+
+	var vitestInfo ProjectTestFrameworkInfo
+	var jestInfo ProjectTestFrameworkInfo
+	for _, framework := range discovery.Frameworks {
+		switch framework.ID {
+		case projectTestFrameworkVitest:
+			vitestInfo = framework
+		case projectTestFrameworkJest:
+			jestInfo = framework
+		}
+	}
+	if !vitestInfo.Available || vitestInfo.TestCount != 1 {
+		t.Fatalf("expected Vitest to be available with one test, got %#v", vitestInfo)
+	}
+	if jestInfo.Available || jestInfo.TestCount != 0 {
+		t.Fatalf("expected jest-dom not to mark Jest available, got %#v", jestInfo)
+	}
+	if len(discovery.TestFiles) != 1 {
+		t.Fatalf("expected one test file, got %d", len(discovery.TestFiles))
+	}
+	if discovery.TestFiles[0].Framework != projectTestFrameworkVitest {
+		t.Fatalf("expected Vitest test file, got %q", discovery.TestFiles[0].Framework)
+	}
+}
+
+func TestBuildJavaScriptTestCommandUsesVitestRunReporter(t *testing.T) {
+	repoRoot := t.TempDir()
+	command, args, outputPath, err := buildJavaScriptTestCommand(repoRoot, ProjectTestsDiscoveryResponse{}, projectTestFrameworkVitest, "project", ProjectTestsRunRequest{})
+	if err != nil {
+		t.Fatalf("buildJavaScriptTestCommand returned error: %v", err)
+	}
+	defer os.Remove(outputPath)
+
+	if command != "npx" {
+		t.Fatalf("expected npx fallback command, got %q", command)
+	}
+	wantPrefix := []string{"--no-install", "vitest", "run", "--reporter=json", "--outputFile"}
+	if len(args) != len(wantPrefix)+1 {
+		t.Fatalf("expected %d args, got %d: %#v", len(wantPrefix)+1, len(args), args)
+	}
+	for index, want := range wantPrefix {
+		if args[index] != want {
+			t.Fatalf("expected arg %d to be %q, got %q in %#v", index, want, args[index], args)
+		}
+	}
+	if args[len(args)-1] != outputPath {
+		t.Fatalf("expected output path arg %q, got %q", outputPath, args[len(args)-1])
+	}
+}
+
+func TestParseJavaScriptTestResultsParsesVitestFloatDurations(t *testing.T) {
+	repoRoot := t.TempDir()
+	resultPath := filepath.Join(repoRoot, "vitest-results.json")
+	payload := map[string]any{
+		"testResults": []map[string]any{
+			{
+				"name": filepath.Join(repoRoot, "src", "models", "user.test.ts"),
+				"assertionResults": []map[string]any{
+					{
+						"title":           "loads",
+						"fullName":        "User loads",
+						"status":          "passed",
+						"duration":        0.7909,
+						"failureMessages": []string{},
+					},
+				},
+			},
+		},
+	}
+	content, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed to encode payload: %v", err)
+	}
+	if err := os.WriteFile(resultPath, content, 0o644); err != nil {
+		t.Fatalf("failed to write result file: %v", err)
+	}
+
+	results := parseJavaScriptTestResults(repoRoot, resultPath, projectTestFrameworkVitest)
+	if len(results) != 1 {
+		t.Fatalf("expected one result, got %d", len(results))
+	}
+	if results[0].Framework != projectTestFrameworkVitest {
+		t.Fatalf("expected Vitest framework, got %q", results[0].Framework)
+	}
+	if results[0].Path != "src/models/user.test.ts" {
+		t.Fatalf("expected normalized path, got %q", results[0].Path)
+	}
+	if results[0].DurationMs != 1 {
+		t.Fatalf("expected rounded 1ms duration, got %d", results[0].DurationMs)
+	}
+}
+
+func TestProjectTestRuntimeCommandUsesNVMForNodeProjects(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeGitTestFile(t, repoRoot, ".nvmrc", "25\n")
+	nvmDir := t.TempDir()
+	writeGitTestFile(t, nvmDir, "nvm.sh", "# test nvm shim\n")
+	t.Setenv("NVM_DIR", nvmDir)
+
+	command, args := projectTestRuntimeCommand(repoRoot, projectTestFrameworkVitest, "npx", []string{"--no-install", "vitest", "run", "src/a b.test.ts"})
+	if command != "bash" {
+		t.Fatalf("expected bash nvm wrapper, got %q with args %#v", command, args)
+	}
+	if len(args) != 2 || args[0] != "-lc" {
+		t.Fatalf("expected bash -lc wrapper args, got %#v", args)
+	}
+	for _, fragment := range []string{
+		"source '" + filepath.Join(nvmDir, "nvm.sh") + "'",
+		"nvm exec --silent '25' 'npx' '--no-install' 'vitest' 'run' 'src/a b.test.ts'",
+	} {
+		if !strings.Contains(args[1], fragment) {
+			t.Fatalf("expected nvm script to contain %q, got %q", fragment, args[1])
+		}
+	}
+}
+
+func TestExecuteProjectTestsSkipsEmptyBranchTestScope(t *testing.T) {
+	repoRoot := t.TempDir()
+	discovery := ProjectTestsDiscoveryResponse{
+		RootFolder: repoRoot,
+		Frameworks: []ProjectTestFrameworkInfo{
+			{ID: projectTestFrameworkVitest, Available: true, TestCount: 1},
+		},
+		TestFiles: []ProjectTestFile{
+			{ID: "vitest:src/user.test.ts", Framework: projectTestFrameworkVitest, Path: "src/user.test.ts"},
+		},
+		BranchTestFiles: []ProjectTestFile{},
+	}
+
+	response := executeProjectTests(context.Background(), repoRoot, "", discovery, ProjectTestsRunRequest{
+		Framework: "all",
+		Mode:      "branch",
+	})
+	if response.Summary.Failed != 0 || response.Summary.Skipped != 1 {
+		t.Fatalf("expected skipped no-op branch result, got summary %#v", response.Summary)
+	}
+	if len(response.Results) != 1 || response.Results[0].Status != "skipped" {
+		t.Fatalf("expected one skipped result, got %#v", response.Results)
 	}
 }
 

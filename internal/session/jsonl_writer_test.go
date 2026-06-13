@@ -49,6 +49,10 @@ func (m *memStore) SaveProjectPRDescription(*storage.ProjectPRDescription) error
 func (m *memStore) GetProjectPRDescription(string, string, string, string) (*storage.ProjectPRDescription, error) {
 	return nil, nil
 }
+func (m *memStore) SaveProjectTestCache(*storage.ProjectTestCache) error { return nil }
+func (m *memStore) GetProjectTestCache(string, string, string, string, string) (*storage.ProjectTestCache, error) {
+	return nil, nil
+}
 func (m *memStore) SaveJob(*storage.RecurringJob) error          { return nil }
 func (m *memStore) GetJob(string) (*storage.RecurringJob, error) { return nil, nil }
 func (m *memStore) ListJobs() ([]*storage.RecurringJob, error)   { return nil, nil }
@@ -88,6 +92,14 @@ func (m *memStore) SaveSubAgent(*storage.SubAgent) error            { return nil
 func (m *memStore) GetSubAgent(string) (*storage.SubAgent, error)   { return nil, nil }
 func (m *memStore) ListSubAgents() ([]*storage.SubAgent, error)     { return nil, nil }
 func (m *memStore) DeleteSubAgent(string) error                     { return nil }
+func (m *memStore) SaveAgentDefinition(*storage.AgentDefinitionRecord) error { return nil }
+func (m *memStore) GetAgentDefinition(string) (*storage.AgentDefinitionRecord, error) {
+	return nil, nil
+}
+func (m *memStore) ListAgentDefinitions() ([]*storage.AgentDefinitionRecord, error) {
+	return nil, nil
+}
+func (m *memStore) DeleteAgentDefinition(string) error { return nil }
 func (m *memStore) SaveProjectDatabase(*storage.ProjectDatabase) error {
 	return nil
 }

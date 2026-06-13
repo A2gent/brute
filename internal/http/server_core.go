@@ -39,6 +39,7 @@ type Server struct {
 	activeRunsMu          sync.Mutex
 	activeRuns            map[string]map[string]context.CancelFunc
 	chromeExtensionBridge *chromeExtensionBridge
+	dockerRuntime         *dockerRuntimeManager
 
 	// A2A gRPC tunnel (managed by a2a_tunnel.go)
 	tunnelMu     sync.Mutex
@@ -81,6 +82,7 @@ func NewServer(
 		activeRuns:            make(map[string]map[string]context.CancelFunc),
 		chromeExtensionBridge: newChromeExtensionBridge(),
 	}
+	s.dockerRuntime = newDockerRuntimeManager(s)
 
 	if settings, err := store.GetSettings(); err == nil {
 		folder := strings.TrimSpace(settings[sessionsFolderSettingKey])
@@ -135,6 +137,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	go s.runTelegramDuplexLoop(ctx)
 	go s.runA2ATunnelIfConfigured()
+	go s.dockerRuntime.runIdleReaper(ctx)
 
 	server := &http.Server{
 		Addr:    addr,

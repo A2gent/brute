@@ -221,6 +221,16 @@ func (s *SQLiteStore) migrate() error {
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_project_test_cache_project_id ON project_test_cache(project_id)`,
+		// Stored unified agent definitions (docker/remote runtime installations).
+		`CREATE TABLE IF NOT EXISTS agent_definitions (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			runtime TEXT NOT NULL,
+			definition_yaml TEXT NOT NULL,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_definitions_runtime ON agent_definitions(runtime)`,
 	}
 
 	for _, m := range migrations {

@@ -132,7 +132,7 @@ func (s *Server) registerIntegrationRoutes(r chi.Router) {
 		r.Get("/a2_registry/tunnel-status", s.handleA2ATunnelStatus)
 		r.Get("/a2_registry/tunnel-status/stream", s.handleA2ATunnelStatusStream)
 		r.Post("/a2_registry/tunnel-reconnect", s.handleA2ATunnelReconnect)
-			r.Post("/a2_registry/register-current", s.handleRegisterCurrentA2AAgent)
+		r.Post("/a2_registry/register-current", s.handleRegisterCurrentA2AAgent)
 		r.Get("/a2_registry/local-agents", s.handleListLocalDockerAgents)
 		r.Post("/a2_registry/local-agents", s.handleCreateLocalDockerAgent)
 		r.Post("/a2_registry/local-agents/from-yaml", s.handleCreateLocalDockerAgentsFromYAML)
@@ -332,6 +332,16 @@ func (s *Server) registerSubAgentRoutes(r chi.Router) {
 		r.Put("/{subAgentID}", s.handleUpdateSubAgent)
 		r.Delete("/{subAgentID}", s.handleDeleteSubAgent)
 		r.Post("/{subAgentID}/instruction-estimate", s.handleEstimateSubAgentInstructions)
+		r.Get("/{subAgentID}/yaml", s.handleExportSubAgentYAML)
+	})
+
+	// Unified agent model across host sub-agents and local Docker agents.
+	r.Route("/unified-agents", func(r chi.Router) {
+		r.Get("/", s.handleListUnifiedAgents)
+		r.Post("/import-yaml", s.handleImportAgentYAML)
+		r.Post("/{agentDefID}/start", s.handleStartUnifiedAgent)
+		r.Get("/{agentDefID}/yaml", s.handleExportAgentDefinitionYAML)
+		r.Delete("/{agentDefID}", s.handleDeleteAgentDefinition)
 	})
 }
 

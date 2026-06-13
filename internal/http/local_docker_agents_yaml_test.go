@@ -385,3 +385,19 @@ agent:
 		t.Fatalf("YAML registration should default to hidden/non-discoverable, got %#v", req.Discoverable)
 	}
 }
+
+func TestParsePublishedHostPorts(t *testing.T) {
+	ports := "0.0.0.0:18080->8080/tcp, [::]:18080->8080/tcp, 9300/tcp, 127.0.0.1:19090-19091->9090-9091/tcp"
+	got := map[int]bool{}
+	for _, port := range parsePublishedHostPorts(ports) {
+		got[port] = true
+	}
+	for _, port := range []int{18080, 19090, 19091} {
+		if !got[port] {
+			t.Fatalf("expected parsed host port %d from %q; got %#v", port, ports, got)
+		}
+	}
+	if got[9300] {
+		t.Fatalf("container-only ports should not be treated as published host ports: %#v", got)
+	}
+}

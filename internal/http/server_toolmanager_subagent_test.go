@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/A2gent/brute/internal/agentdef"
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/speechcache"
@@ -195,8 +196,8 @@ func TestBuildSystemPromptForSession_UsesSubAgentInstructions(t *testing.T) {
 	if !strings.Contains(systemPrompt, "Operating system:") || !strings.Contains(systemPrompt, "Current time:") {
 		t.Fatalf("expected sub-agent prompt to include OS and current time, got: %q", systemPrompt)
 	}
-	if strings.Contains(systemPrompt, "Available sub-agents for delegation:") {
-		t.Fatalf("expected sub-agent prompt to omit main-agent sub-agent listing")
+	if strings.Contains(systemPrompt, "Available Docker-backed configured agents for delegation:") {
+		t.Fatalf("expected sub-agent prompt to omit main-agent configured-agent listing")
 	}
 }
 
@@ -238,6 +239,61 @@ func TestBuildSystemPromptForSession_IncludesEnvironmentContextForMainAgent(t *t
 	}
 	if !strings.Contains(systemPrompt, "Project root: "+projectRoot) {
 		t.Fatalf("expected main prompt to include project root %q, got: %q", projectRoot, systemPrompt)
+	}
+}
+
+func TestBuildSystemPromptForSession_IncludesStoredAgentDefinitions(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now()
+	definitionYAML := `
+version: "1"
+agent:
+  id: youtube-transcriber-gemini
+  name: YouTube Transcriber (Gemini)
+runtime:
+  type: docker
+llm:
+  provider: google
+  model: models/gemini-3.1-pro-preview
+tools:
+  mode: allow
+  enabled:
+    - youtube_transcript
+workspace:
+  scope: none
+`
+	if err := store.SaveAgentDefinition(&storage.AgentDefinitionRecord{
+		ID:             "youtube-transcriber-gemini",
+		Name:           "YouTube Transcriber (Gemini)",
+		Runtime:        agentdef.RuntimeDocker,
+		DefinitionYAML: definitionYAML,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("failed to save agent definition: %v", err)
+	}
+
+	sessionManager := session.NewManager(store)
+	server := NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
+	sess, err := sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	systemPrompt := server.buildSystemPromptForSession(sess)
+	if !strings.Contains(systemPrompt, "Available Docker-backed configured agents for delegation:") {
+		t.Fatalf("expected configured agent listing, got: %q", systemPrompt)
+	}
+	if !strings.Contains(systemPrompt, "youtube-transcriber-gemini") || !strings.Contains(systemPrompt, "YouTube Transcriber (Gemini)") {
+		t.Fatalf("expected stored YAML agent in prompt, got: %q", systemPrompt)
+	}
+	if !strings.Contains(systemPrompt, "Provider: google") || !strings.Contains(systemPrompt, "Model: models/gemini-3.1-pro-preview") || !strings.Contains(systemPrompt, "Tools: 1 tools") {
+		t.Fatalf("expected stored YAML agent metadata in prompt, got: %q", systemPrompt)
 	}
 }
 
@@ -366,6 +422,9 @@ func TestServerRegistersCreateLocalDockerAgentsTools(t *testing.T) {
 	}
 	if _, ok := server.toolManager.Get("create_local_docker_agents_from_yaml"); !ok {
 		t.Fatalf("expected create_local_docker_agents_from_yaml to be registered")
+	}
+	if _, ok := server.toolManager.Get("import_agent_definition_yaml"); !ok {
+		t.Fatalf("expected import_agent_definition_yaml to be registered")
 	}
 }
 

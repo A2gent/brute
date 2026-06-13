@@ -85,6 +85,7 @@ func (s *Server) toolManagerForWorkflowNode(child *session.Session, node workflo
 	// recursive delegation that blocks parent tool completion.
 	scoped := manager.Clone()
 	scoped.Unregister("delegate_to_subagent")
+	scoped.Unregister("delegate_to_agent")
 	return scoped
 }
 

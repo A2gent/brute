@@ -3,6 +3,7 @@ package http
 
 import (
 	"encoding/json"
+	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/storage"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -152,17 +153,22 @@ func (s *Server) handleUpdateSubAgent(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to update sub-agent: "+err.Error())
 		return
 	}
+	removedContainers := s.removeManagedContainersForAgentDefinition(r.Context(), sa.ID, "")
+	if len(removedContainers) > 0 {
+		logging.Info("Removed stale Docker containers after updating agent %s: %s", sa.ID, strings.Join(removedContainers, ", "))
+	}
 
 	s.jsonResponse(w, http.StatusOK, s.subAgentToResponse(sa))
 }
 
 func (s *Server) handleDeleteSubAgent(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "subAgentID")
+	removedContainers := s.removeManagedContainersForAgentDefinition(r.Context(), id, "")
 	if err := s.store.DeleteSubAgent(id); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete sub-agent: "+err.Error())
 		return
 	}
-	s.jsonResponse(w, http.StatusOK, map[string]bool{"deleted": true})
+	s.jsonResponse(w, http.StatusOK, map[string]interface{}{"deleted": true, "removed_containers": removedContainers})
 }
 
 // handleEstimateSubAgentInstructions returns a system prompt snapshot for an

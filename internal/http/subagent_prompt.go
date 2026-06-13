@@ -4,42 +4,125 @@ package http
 import (
 	"encoding/json"
 	"fmt"
+
 	"github.com/A2gent/brute/internal/agent"
+	"github.com/A2gent/brute/internal/agentdef"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/storage"
 	"strings"
 )
 
+type configuredAgentPromptEntry struct {
+	ID       string
+	Name     string
+	Provider string
+	Model    string
+	Tools    string
+}
+
 func (s *Server) resolveSubAgentsSection() (string, int) {
+	entries := []configuredAgentPromptEntry{}
+	seen := map[string]struct{}{}
+
 	agents, err := s.store.ListSubAgents()
 	if err != nil {
 		logging.Warn("Failed to list sub-agents for system prompt: %v", err)
-		return "", 0
+	} else {
+		for _, sa := range agents {
+			if sa == nil {
+				continue
+			}
+			entry := configuredAgentPromptEntry{
+				ID:       strings.TrimSpace(sa.ID),
+				Name:     strings.TrimSpace(sa.Name),
+				Provider: strings.TrimSpace(sa.Provider),
+				Model:    strings.TrimSpace(sa.Model),
+				Tools:    "all tools",
+			}
+			if entry.ID == "" {
+				continue
+			}
+			if entry.Provider == "" {
+				entry.Provider = "default"
+			}
+			if entry.Model == "" {
+				entry.Model = "default"
+			}
+			if entry.Name == "" {
+				entry.Name = entry.ID
+			}
+			if len(sa.EnabledTools) > 0 {
+				entry.Tools = fmt.Sprintf("%d tools", len(sa.EnabledTools))
+			}
+			entries = append(entries, entry)
+			seen[entry.ID] = struct{}{}
+		}
 	}
-	if len(agents) == 0 {
+
+	definitions, err := s.store.ListAgentDefinitions()
+	if err != nil {
+		logging.Warn("Failed to list stored agent definitions for system prompt: %v", err)
+	} else {
+		for _, record := range definitions {
+			if record == nil {
+				continue
+			}
+			def, parseErr := agentdef.ParseYAML([]byte(record.DefinitionYAML))
+			if parseErr != nil {
+				logging.Warn("Failed to parse stored agent definition %s for system prompt: %v", record.ID, parseErr)
+				continue
+			}
+			if def.Runtime.Type != agentdef.RuntimeDocker {
+				continue
+			}
+			entry := configuredAgentPromptEntry{
+				ID:       strings.TrimSpace(def.Agent.ID),
+				Name:     strings.TrimSpace(def.Agent.Name),
+				Provider: strings.TrimSpace(def.LLM.Provider),
+				Model:    strings.TrimSpace(def.LLM.Model),
+				Tools:    "all tools",
+			}
+			if entry.ID == "" {
+				entry.ID = strings.TrimSpace(record.ID)
+			}
+			if entry.ID == "" {
+				continue
+			}
+			if _, exists := seen[entry.ID]; exists {
+				continue
+			}
+			if entry.Name == "" {
+				entry.Name = strings.TrimSpace(record.Name)
+			}
+			if entry.Name == "" {
+				entry.Name = entry.ID
+			}
+			if entry.Provider == "" {
+				entry.Provider = "default"
+			}
+			if entry.Model == "" {
+				entry.Model = "default"
+			}
+			if def.Tools.Mode == agentdef.ToolsModeAllow {
+				entry.Tools = fmt.Sprintf("%d tools", len(def.Tools.Enabled))
+			}
+			entries = append(entries, entry)
+			seen[entry.ID] = struct{}{}
+		}
+	}
+
+	if len(entries) == 0 {
 		return "", 0
 	}
 
-	lines := make([]string, 0, len(agents)+4)
-	lines = append(lines, "Available sub-agents for delegation:")
-	lines = append(lines, "Use the delegate_to_subagent tool to delegate tasks to these sub-agents. Each sub-agent runs in its own session with its own context window.")
+	lines := make([]string, 0, len(entries)+4)
+	lines = append(lines, "Available Docker-backed configured agents for delegation:")
+	lines = append(lines, "Use the delegate_to_agent tool to delegate tasks to these agents (delegate_to_subagent is a backwards-compatible alias). Local configured agents run in warm Docker containers with their own child session.")
 	lines = append(lines, "")
-	for _, sa := range agents {
-		providerLabel := strings.TrimSpace(sa.Provider)
-		if providerLabel == "" {
-			providerLabel = "default"
-		}
-		modelLabel := strings.TrimSpace(sa.Model)
-		if modelLabel == "" {
-			modelLabel = "default"
-		}
-		toolsLabel := "all tools"
-		if len(sa.EnabledTools) > 0 {
-			toolsLabel = fmt.Sprintf("%d tools", len(sa.EnabledTools))
-		}
+	for _, entry := range entries {
 		lines = append(lines, fmt.Sprintf("- ID: %s | Name: %s | Provider: %s | Model: %s | Tools: %s",
-			sa.ID, sa.Name, providerLabel, modelLabel, toolsLabel))
+			entry.ID, entry.Name, entry.Provider, entry.Model, entry.Tools))
 	}
 
 	section := strings.Join(lines, "\n")

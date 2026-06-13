@@ -242,7 +242,7 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 	hostPort := req.HostPort
 	if hostPort <= 0 {
 		var err error
-		hostPort, err = findAvailablePort(defaultLocalAgentBasePort, defaultLocalAgentMaxPort)
+		hostPort, err = findAvailablePort(ctx, defaultLocalAgentBasePort, defaultLocalAgentMaxPort)
 		if err != nil {
 			return nil, http.StatusInternalServerError, fmt.Errorf("no available host port found in local agent range")
 		}
@@ -1181,6 +1181,45 @@ func parseHostPort(ports string) int {
 	return 0
 }
 
+func parsePublishedHostPorts(ports string) []int {
+	if ports == "" {
+		return nil
+	}
+	seen := map[int]struct{}{}
+	for _, chunk := range strings.Split(ports, ",") {
+		chunk = strings.TrimSpace(chunk)
+		arrow := strings.Index(chunk, "->")
+		if arrow == -1 {
+			continue
+		}
+		hostSide := chunk[:arrow]
+		colon := strings.LastIndex(hostSide, ":")
+		if colon == -1 || colon+1 >= len(hostSide) {
+			continue
+		}
+		rawPort := strings.TrimSpace(hostSide[colon+1:])
+		if dash := strings.Index(rawPort, "-"); dash >= 0 {
+			start, startErr := strconv.Atoi(strings.TrimSpace(rawPort[:dash]))
+			end, endErr := strconv.Atoi(strings.TrimSpace(rawPort[dash+1:]))
+			if startErr != nil || endErr != nil || start <= 0 || end < start {
+				continue
+			}
+			for port := start; port <= end; port++ {
+				seen[port] = struct{}{}
+			}
+			continue
+		}
+		if port, err := strconv.Atoi(rawPort); err == nil && port > 0 {
+			seen[port] = struct{}{}
+		}
+	}
+	portsOut := make([]int, 0, len(seen))
+	for port := range seen {
+		portsOut = append(portsOut, port)
+	}
+	return portsOut
+}
+
 func isBruteContainer(row dockerPSRow, labels map[string]string) bool {
 	if strings.EqualFold(labels[localAgentManagerLabelKey], localAgentManagerLabelValue) {
 		return true
@@ -1261,14 +1300,50 @@ func findLocalBruteContainer(ctx context.Context, containerID string) (*LocalDoc
 	return nil, fmt.Errorf("container %q not found", containerID)
 }
 
-func findAvailablePort(start, end int) (int, error) {
-	for port := start; port <= end; port++ {
-		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-		if err != nil {
+func dockerPublishedHostPorts(ctx context.Context) map[int]struct{} {
+	used := map[int]struct{}{}
+	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	output, err := runCommand(cmdCtx, "docker", "ps", "-a", "--format", "{{json .}}")
+	if err != nil {
+		return used
+	}
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
 			continue
 		}
+		var row dockerPSRow
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			continue
+		}
+		for _, port := range parsePublishedHostPorts(row.Ports) {
+			used[port] = struct{}{}
+		}
+	}
+	return used
+}
+
+func hostPortListenable(port int) bool {
+	for _, host := range []string{"127.0.0.1", "0.0.0.0"} {
+		ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
+		if err != nil {
+			return false
+		}
 		_ = ln.Close()
-		return port, nil
+	}
+	return true
+}
+
+func findAvailablePort(ctx context.Context, start, end int) (int, error) {
+	usedByDocker := dockerPublishedHostPorts(ctx)
+	for port := start; port <= end; port++ {
+		if _, used := usedByDocker[port]; used {
+			continue
+		}
+		if hostPortListenable(port) {
+			return port, nil
+		}
 	}
 	return 0, fmt.Errorf("no available ports in range %d-%d", start, end)
 }

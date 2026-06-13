@@ -116,6 +116,19 @@ type MCPServer struct {
 	UpdatedAt           time.Time
 }
 
+// AgentDefinitionRecord stores a unified agent definition (YAML) as a local
+// installation. Saved sub_agents are also converted to Docker definitions at
+// execution/export time; this table holds imported docker/remote definitions
+// and their machine-specific bindings.
+type AgentDefinitionRecord struct {
+	ID             string
+	Name           string
+	Runtime        string // "docker" | "remote"
+	DefinitionYAML string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
 // SubAgent represents a reusable sub-agent configuration.
 type SubAgent struct {
 	ID                string
@@ -241,6 +254,12 @@ type Store interface {
 	GetSubAgent(id string) (*SubAgent, error)
 	ListSubAgents() ([]*SubAgent, error)
 	DeleteSubAgent(id string) error
+
+	// Stored unified agent definition operations
+	SaveAgentDefinition(def *AgentDefinitionRecord) error
+	GetAgentDefinition(id string) (*AgentDefinitionRecord, error)
+	ListAgentDefinitions() ([]*AgentDefinitionRecord, error)
+	DeleteAgentDefinition(id string) error
 
 	// Project Database operations
 	SaveProjectDatabase(db *ProjectDatabase) error

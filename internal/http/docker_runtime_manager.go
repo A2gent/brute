@@ -93,15 +93,13 @@ func (m *dockerRuntimeManager) creationLock(containerName string) *sync.Mutex {
 	return lock
 }
 
-// resolveWorkspaceBinding applies the definition's workspace policy at
-// delegation time. currentProjectID is the parent session's project, used only
-// for the current_project scope.
+// resolveWorkspaceBinding applies the definition's single-project workspace policy
+// at delegation time. Broad scopes are represented by a stable binding token for
+// compatibility with older tests/helpers; Docker container creation uses
+// Server.resolveDockerWorkspaceBinding so it can expand project folders.
 func resolveWorkspaceBinding(def *agentdef.Definition, currentProjectID string) (projectID string, mount string, err error) {
-	mount = def.Workspace.Mount
-	if mount == "" {
-		mount = agentdef.WorkspaceMountRO
-	}
-	switch def.Workspace.Scope {
+	mount = normalizedDockerWorkspaceMount(def)
+	switch strings.TrimSpace(def.Workspace.Scope) {
 	case "", agentdef.WorkspaceScopeNone:
 		return "", "", nil
 	case agentdef.WorkspaceScopeCurrentProject:
@@ -118,8 +116,202 @@ func resolveWorkspaceBinding(def *agentdef.Definition, currentProjectID string) 
 			return "", "", fmt.Errorf("agent %q uses configured_project scope but local.project_bindings.configured_project is not set", def.Agent.ID)
 		}
 		return projectID, mount, nil
+	case agentdef.WorkspaceScopeAllProjects:
+		return dockerRuntimeAllProjectsBinding, mount, nil
+	case agentdef.WorkspaceScopeSelectedProjects:
+		if len(selectedProjectBindingIDs(def)) == 0 {
+			return "", "", fmt.Errorf("agent %q uses selected_projects scope but local.project_bindings.selected_projects is not set", def.Agent.ID)
+		}
+		return dockerRuntimeSelectedProjectsBinding, mount, nil
 	default:
 		return "", "", fmt.Errorf("workspace scope %q is not supported by the docker runtime yet", def.Workspace.Scope)
+	}
+}
+
+const (
+	dockerRuntimeWorkspaceRoot           = "/workspace"
+	dockerRuntimeAllProjectsBinding      = "all-projects"
+	dockerRuntimeSelectedProjectsBinding = "selected-projects"
+)
+
+type dockerWorkspaceBinding struct {
+	Scope                string
+	ProjectID            string
+	Mount                string
+	ContainerNameBinding string
+	ProjectMounts        []dockerWorkspaceProjectMount
+}
+
+type dockerWorkspaceProjectMount struct {
+	ProjectID     string
+	HostPath      string
+	ContainerPath string
+	Mode          string
+}
+
+func normalizedDockerWorkspaceMount(def *agentdef.Definition) string {
+	mount := agentdef.WorkspaceMountRO
+	if def != nil {
+		if configured := strings.ToLower(strings.TrimSpace(def.Workspace.Mount)); configured != "" {
+			mount = configured
+		}
+	}
+	return mount
+}
+
+func selectedProjectBindingIDs(def *agentdef.Definition) []string {
+	if def == nil || len(def.Local.ProjectBindings) == 0 {
+		return nil
+	}
+	return splitProjectBindingList(def.Local.ProjectBindings[agentdef.WorkspaceScopeSelectedProjects])
+}
+
+func splitProjectBindingList(raw string) []string {
+	seen := map[string]struct{}{}
+	ids := []string{}
+	for _, part := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r' || r == '\t' || r == ' '
+	}) {
+		id := strings.TrimSpace(part)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func (s *Server) resolveDockerWorkspaceBinding(def *agentdef.Definition, currentProjectID string) (dockerWorkspaceBinding, error) {
+	if def == nil {
+		return dockerWorkspaceBinding{}, fmt.Errorf("agent definition is empty")
+	}
+	mount := normalizedDockerWorkspaceMount(def)
+	scope := strings.TrimSpace(def.Workspace.Scope)
+	binding := dockerWorkspaceBinding{Scope: scope, Mount: mount}
+
+	switch scope {
+	case "", agentdef.WorkspaceScopeNone:
+		binding.Mount = ""
+		return binding, nil
+	case agentdef.WorkspaceScopeCurrentProject:
+		projectID := strings.TrimSpace(currentProjectID)
+		if projectID == "" {
+			binding.Mount = ""
+			return binding, nil
+		}
+		binding.ProjectID = projectID
+		binding.ContainerNameBinding = projectID
+		return binding, nil
+	case agentdef.WorkspaceScopeConfiguredProject:
+		projectID := strings.TrimSpace(def.Local.ProjectBindings[agentdef.WorkspaceScopeConfiguredProject])
+		if projectID == "" {
+			return binding, fmt.Errorf("agent %q uses configured_project scope but local.project_bindings.configured_project is not set", def.Agent.ID)
+		}
+		binding.ProjectID = projectID
+		binding.ContainerNameBinding = projectID
+		return binding, nil
+	case agentdef.WorkspaceScopeSelectedProjects:
+		ids := selectedProjectBindingIDs(def)
+		if len(ids) == 0 {
+			return binding, fmt.Errorf("agent %q uses selected_projects scope but local.project_bindings.selected_projects is not set", def.Agent.ID)
+		}
+		mounts, err := s.resolveSelectedProjectWorkspaceMounts(ids, mount)
+		if err != nil {
+			return binding, err
+		}
+		binding.ContainerNameBinding = dockerRuntimeSelectedProjectsBinding
+		binding.ProjectMounts = mounts
+		return binding, nil
+	case agentdef.WorkspaceScopeAllProjects:
+		mounts, err := s.resolveAllProjectWorkspaceMounts(mount)
+		if err != nil {
+			return binding, err
+		}
+		binding.ContainerNameBinding = dockerRuntimeAllProjectsBinding
+		binding.ProjectMounts = mounts
+		return binding, nil
+	default:
+		return binding, fmt.Errorf("workspace scope %q is not supported by the docker runtime yet", def.Workspace.Scope)
+	}
+}
+
+func (s *Server) resolveAllProjectWorkspaceMounts(mount string) ([]dockerWorkspaceProjectMount, error) {
+	projects, err := s.store.ListProjects()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list projects for all_projects workspace: %w", err)
+	}
+	usedPaths := map[string]struct{}{}
+	mounts := make([]dockerWorkspaceProjectMount, 0, len(projects))
+	for _, project := range projects {
+		if project == nil || project.Folder == nil || strings.TrimSpace(*project.Folder) == "" {
+			continue
+		}
+		resolved, err := s.resolveProjectWorkspaceMount(project.ID, mount, usedPaths)
+		if err != nil {
+			logging.Warn("Docker runtime: skipping project %s for all_projects workspace: %v", project.ID, err)
+			continue
+		}
+		mounts = append(mounts, resolved)
+	}
+	if len(mounts) == 0 {
+		return nil, fmt.Errorf("workspace.scope all_projects found no configured project folders to mount")
+	}
+	return mounts, nil
+}
+
+func (s *Server) resolveSelectedProjectWorkspaceMounts(projectIDs []string, mount string) ([]dockerWorkspaceProjectMount, error) {
+	usedPaths := map[string]struct{}{}
+	mounts := make([]dockerWorkspaceProjectMount, 0, len(projectIDs))
+	for _, projectID := range projectIDs {
+		resolved, err := s.resolveProjectWorkspaceMount(projectID, mount, usedPaths)
+		if err != nil {
+			return nil, err
+		}
+		mounts = append(mounts, resolved)
+	}
+	return mounts, nil
+}
+
+func (s *Server) resolveProjectWorkspaceMount(projectID string, mount string, usedPaths map[string]struct{}) (dockerWorkspaceProjectMount, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return dockerWorkspaceProjectMount{}, fmt.Errorf("project id is empty")
+	}
+	hostPath, err := s.resolveProjectRootFolder(projectID)
+	if err != nil {
+		return dockerWorkspaceProjectMount{}, fmt.Errorf("project %s cannot be mounted: %w", projectID, err)
+	}
+	return dockerWorkspaceProjectMount{
+		ProjectID:     projectID,
+		HostPath:      hostPath,
+		ContainerPath: dockerWorkspaceContainerPath(projectID, usedPaths),
+		Mode:          mount,
+	}, nil
+}
+
+func dockerWorkspaceContainerPath(projectID string, usedPaths map[string]struct{}) string {
+	base := slugifyForDockerName(projectID)
+	if base == "" {
+		base = "project"
+	}
+	candidate := dockerRuntimeWorkspaceRoot + "/" + base
+	if usedPaths == nil {
+		return candidate
+	}
+	if _, ok := usedPaths[candidate]; !ok {
+		usedPaths[candidate] = struct{}{}
+		return candidate
+	}
+	for i := 2; ; i++ {
+		candidate = fmt.Sprintf("%s/%s-%d", dockerRuntimeWorkspaceRoot, base, i)
+		if _, ok := usedPaths[candidate]; !ok {
+			usedPaths[candidate] = struct{}{}
+			return candidate
+		}
 	}
 }
 
@@ -131,12 +323,12 @@ func (m *dockerRuntimeManager) ensureAgentContainer(ctx context.Context, def *ag
 		return nil, fmt.Errorf("definition is not a docker runtime agent")
 	}
 
-	projectID, mount, err := resolveWorkspaceBinding(def, currentProjectID)
+	workspace, err := m.server.resolveDockerWorkspaceBinding(def, currentProjectID)
 	if err != nil {
 		return nil, err
 	}
 
-	containerName := containerNameForAgent(def.Agent.ID, projectID)
+	containerName := containerNameForAgent(def.Agent.ID, workspace.ContainerNameBinding)
 	lock := m.creationLock(containerName)
 	lock.Lock()
 	defer lock.Unlock()
@@ -159,7 +351,7 @@ func (m *dockerRuntimeManager) ensureAgentContainer(ctx context.Context, def *ag
 			}
 			logging.Warn("Docker runtime: stopped container %s cannot restart because its host port is unavailable; recreating with automatic port selection", containerName)
 			removeDockerContainerByName(ctx, containerName)
-			agent, err = m.createAgentContainer(ctx, def, containerName, projectID, mount)
+			agent, err = m.createAgentContainer(ctx, def, containerName, workspace)
 			if err != nil {
 				return nil, err
 			}
@@ -170,7 +362,7 @@ func (m *dockerRuntimeManager) ensureAgentContainer(ctx context.Context, def *ag
 			return nil, fmt.Errorf("container %s started but could not be inspected: %w", containerName, findErr)
 		}
 	default:
-		agent, err = m.createAgentContainer(ctx, def, containerName, projectID, mount)
+		agent, err = m.createAgentContainer(ctx, def, containerName, workspace)
 		if err != nil {
 			return nil, err
 		}
@@ -179,7 +371,7 @@ func (m *dockerRuntimeManager) ensureAgentContainer(ctx context.Context, def *ag
 	if agent.HostPort == 0 || strings.TrimSpace(agent.APIURL) == "" {
 		logging.Warn("Docker runtime: container %s has no published API port; recreating it", containerName)
 		removeDockerContainerByName(ctx, containerName)
-		agent, err = m.createAgentContainer(ctx, def, containerName, projectID, mount)
+		agent, err = m.createAgentContainer(ctx, def, containerName, workspace)
 		if err != nil {
 			return nil, err
 		}
@@ -199,25 +391,43 @@ func (m *dockerRuntimeManager) ensureAgentContainer(ctx context.Context, def *ag
 	return agent, nil
 }
 
-func (m *dockerRuntimeManager) createAgentContainer(ctx context.Context, def *agentdef.Definition, containerName string, projectID string, mount string) (*LocalDockerAgent, error) {
+func (m *dockerRuntimeManager) createAgentContainer(ctx context.Context, def *agentdef.Definition, containerName string, workspace dockerWorkspaceBinding) (*LocalDockerAgent, error) {
 	req := localDockerCreateRequestBaseFromDefinition(def)
 	req.Name = containerName
-	req.ProjectID = projectID
+	req.ProjectID = workspace.ProjectID
 	req.ProjectMountMode = ""
-	if prompt := strings.TrimSpace(m.server.composeDockerAgentSystemPrompt(def, projectID)); prompt != "" {
+	if prompt := strings.TrimSpace(m.server.composeDockerAgentSystemPrompt(def, workspace.ProjectID)); prompt != "" {
 		req.SystemPrompt = prompt
 	}
-	if projectID != "" {
-		req.ProjectMountMode = mount
+	if workspace.ProjectID != "" {
+		req.ProjectMountMode = workspace.Mount
+	}
+	if len(workspace.ProjectMounts) > 0 {
+		// WHY: broad read-only agents need multiple project folders without giving
+		// the container the whole host project parent. Mount each configured project
+		// under /workspace/<project-id> using the existing explicit-volume path.
+		for _, projectMount := range workspace.ProjectMounts {
+			req.Directories.Volumes = append(req.Directories.Volumes, localDockerAgentYAMLVolumeMount{
+				HostPath:      projectMount.HostPath,
+				ContainerPath: projectMount.ContainerPath,
+				Mode:          projectMount.Mode,
+			})
+		}
+	if len(workspace.ProjectMounts) > 0 {
+		req.SystemPrompt = appendDockerMultiProjectWorkspacePrompt(req.SystemPrompt, workspace.ProjectMounts)
+	}
 	}
 	if req.Labels == nil {
 		req.Labels = map[string]string{}
 	}
 	req.Labels[dockerRuntimeManagedLabelKey] = "true"
 	req.Labels[dockerRuntimeAgentDefLabelKey] = def.Agent.ID
+	if len(workspace.ProjectMounts) > 0 {
+		req.Labels["a2gent.workspace_scope"] = workspace.Scope
+	}
 
 	createCtx, cancel := context.WithTimeout(ctx, dockerRuntimeCreateTimeout)
-	logging.Info("Docker runtime: creating container %s for agent %s (project=%s mount=%s)", containerName, def.Agent.ID, projectID, mount)
+	logging.Info("Docker runtime: creating container %s for agent %s (workspace=%s project=%s mounts=%d mode=%s)", containerName, def.Agent.ID, workspace.Scope, workspace.ProjectID, len(workspace.ProjectMounts), workspace.Mount)
 	result, _, createErr := m.server.createLocalDockerAgent(createCtx, req)
 	cancel()
 	if createErr != nil && req.HostPort > 0 && isDockerPortAllocationError(createErr) {
@@ -308,6 +518,31 @@ func (s *Server) rewriteDockerWorkspacePrompt(prompt string, projectID string) s
 		prompt += "\n\n" + dockerWorkspaceNote
 	}
 	return prompt
+}
+
+func appendDockerMultiProjectWorkspacePrompt(prompt string, mounts []dockerWorkspaceProjectMount) string {
+	prompt = strings.TrimSpace(prompt)
+	if len(mounts) == 0 {
+		return prompt
+	}
+	lines := []string{"Docker workspace note: multiple project roots are mounted read-only under /workspace:"}
+	for _, mount := range mounts {
+		if strings.TrimSpace(mount.ProjectID) == "" || strings.TrimSpace(mount.ContainerPath) == "" {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- %s: %s", mount.ProjectID, mount.ContainerPath))
+	}
+	if len(lines) == 1 {
+		return prompt
+	}
+	note := strings.Join(lines, "\n")
+	if strings.Contains(prompt, note) {
+		return prompt
+	}
+	if prompt == "" {
+		return note
+	}
+	return prompt + "\n\n" + note
 }
 
 // runIdleReaper periodically stops managed containers that have not received a

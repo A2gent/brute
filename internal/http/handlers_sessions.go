@@ -680,7 +680,7 @@ func (s *Server) resumeSessionAfterQuestionAnswer(sessionID string, userAnswer s
 			ContextWindow:       target.ContextWindow,
 			UsePreviousResponse: target.StatefulResponses,
 		}
-		ag := agent.New(agentConfig, target.Client, s.toolManagerForSession(sess), s.sessionManager)
+		ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 		_, _, err = ag.RunWithEvents(runCtx, sess, userAnswer, func(ev agent.Event) {
 			if ev.Type == agent.EventProviderTrace && ev.Provider != nil {
 				s.applyProviderTraceToSession(sess, target.ProviderType, ev.Provider)

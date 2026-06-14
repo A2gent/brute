@@ -64,7 +64,7 @@ Cron expression:`, scheduleText)
 		UsePreviousResponse: target.StatefulResponses,
 	}
 
-	ag := agent.New(agentConfig, target.Client, s.toolManagerForSession(sess), s.sessionManager)
+	ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 	cronExpr, _, err := ag.Run(ctx, sess, prompt)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse schedule: %w", err)
@@ -177,7 +177,7 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 		ContextWindow:       target.ContextWindow,
 		UsePreviousResponse: target.StatefulResponses,
 	}
-	ag := agent.New(agentConfig, target.Client, s.toolManagerForSession(sess), s.sessionManager)
+	ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 	output, _, err := ag.Run(ctx, sess, effectiveTaskPrompt)
 
 	finishedAt := time.Now()

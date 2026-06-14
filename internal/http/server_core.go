@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/A2gent/brute/internal/a2atunnel"
 	"github.com/A2gent/brute/internal/config"
+	"github.com/A2gent/brute/internal/contextcompress"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
@@ -40,6 +41,7 @@ type Server struct {
 	activeRuns            map[string]map[string]context.CancelFunc
 	chromeExtensionBridge *chromeExtensionBridge
 	dockerRuntime         *dockerRuntimeManager
+	contextCompressor     *contextcompress.Compressor
 
 	// A2A gRPC tunnel (managed by a2a_tunnel.go)
 	tunnelMu     sync.Mutex
@@ -81,6 +83,7 @@ func NewServer(
 		runParentCtx:          context.Background(),
 		activeRuns:            make(map[string]map[string]context.CancelFunc),
 		chromeExtensionBridge: newChromeExtensionBridge(),
+		contextCompressor:     contextcompress.NewCompressorWithSessionStore(contextcompress.Config{Enabled: true}, sessionManager),
 	}
 	s.dockerRuntime = newDockerRuntimeManager(s)
 

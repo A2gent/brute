@@ -193,7 +193,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		ContextWindow:       target.ContextWindow,
 		UsePreviousResponse: target.StatefulResponses,
 	}
-	ag := agent.New(agentConfig, target.Client, s.toolManagerForSession(sess), s.sessionManager)
+	ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 
 	content, usage, err := ag.RunWithEvents(runCtx, sess, req.Message, func(ev agent.Event) {
 		switch ev.Type {

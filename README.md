@@ -285,6 +285,7 @@ Common optional variables:
 | `LM_STUDIO_BASE_URL` | `http://localhost:1234/v1` | LM Studio endpoint |
 | `AAGENT_DATA_PATH` | `~/.local/share/aagent` | data directory |
 | `AAGENT_FALLBACK_PROVIDERS` | - | fallback chain list |
+| `A2GENT_TOOL_RESULT_COMPRESSION_ENABLED` | `false` | enable optional session-scoped compression of large LLM-bound tool results; compressed requests keep deterministic markers and allow `context_retrieve` lookup by hash while leaving exact `read`/`write`/`edit` outputs unchanged by default |
 
 ## 6. Common Commands
 

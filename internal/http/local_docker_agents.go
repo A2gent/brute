@@ -1001,7 +1001,9 @@ func boolPtr(v bool) *bool {
 	return &v
 }
 
-func runCommand(ctx context.Context, command string, args ...string) (string, error) {
+var runCommand = defaultRunCommand
+
+func defaultRunCommand(ctx context.Context, command string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, command, args...)
 	output, err := cmd.CombinedOutput()
 	trimmed := strings.TrimSpace(string(output))

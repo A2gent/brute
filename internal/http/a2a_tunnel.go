@@ -229,7 +229,7 @@ func (s *Server) makeA2AAgentFactory() a2atunnel.AgentRunnerBuilder {
 			ContextWindow:       target.ContextWindow,
 			UsePreviousResponse: target.StatefulResponses,
 		}
-		return agent.New(cfg, target.Client, toolManager, s.sessionManager), nil
+		return s.newAgentFromConfig(cfg, target.Client, toolManager), nil
 	}
 }
 
@@ -603,7 +603,7 @@ func (s *Server) resumeSessionAfterExternalToolResult(sessionID string) {
 			ContextWindow:       target.ContextWindow,
 			UsePreviousResponse: target.StatefulResponses,
 		}
-		ag := agent.New(agentConfig, target.Client, s.toolManagerForSession(sess), s.sessionManager)
+		ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 		_, _, err = ag.RunWithEvents(runCtx, sess, "", func(ev agent.Event) {
 			if ev.Type == agent.EventProviderTrace && ev.Provider != nil {
 				s.applyProviderTraceToSession(sess, target.ProviderType, ev.Provider)

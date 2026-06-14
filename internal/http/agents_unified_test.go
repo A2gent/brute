@@ -365,8 +365,13 @@ llm:
 	}
 }
 
-func TestImportDockerAgentYAMLRejectsUnsupportedScope(t *testing.T) {
-	server, _ := newUnifiedAgentsTestServer(t)
+func TestImportDockerAgentYAMLAcceptsAllProjectsScope(t *testing.T) {
+	server, store := newUnifiedAgentsTestServer(t)
+	projectRoot := t.TempDir()
+	project := &storage.Project{ID: "proj-app", Name: "App", Folder: &projectRoot, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatalf("failed to save project: %v", err)
+	}
 
 	yamlDef := `
 agent:
@@ -375,13 +380,131 @@ runtime:
   type: docker
 workspace:
   scope: all_projects
+  mount: ro
 `
 	body, _ := json.Marshal(importAgentYAMLRequest{ConfigYAML: yamlDef})
 	req := httptest.NewRequest(http.MethodPost, "/unified-agents/import-yaml", strings.NewReader(string(body)))
 	rec := httptest.NewRecorder()
 	server.handleImportAgentYAML(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for all_projects scope, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for all_projects scope, got %d: %s", rec.Code, rec.Body.String())
+	}
+	record, err := store.GetAgentDefinition("broad-agent")
+	if err != nil {
+		t.Fatalf("all_projects definition was not stored: %v", err)
+	}
+	def, err := agentdef.ParseYAML([]byte(record.DefinitionYAML))
+	if err != nil {
+		t.Fatalf("stored all_projects definition is invalid: %v", err)
+	}
+	if def.Workspace.Scope != agentdef.WorkspaceScopeAllProjects || def.Workspace.Mount != agentdef.WorkspaceMountRO {
+		t.Fatalf("stored workspace scope/mount wrong: %+v", def.Workspace)
+	}
+}
+
+func TestImportDockerAgentYAMLValidatesSelectedProjectsBinding(t *testing.T) {
+	server, store := newUnifiedAgentsTestServer(t)
+	appRoot := t.TempDir()
+	apiRoot := t.TempDir()
+	for _, project := range []*storage.Project{
+		{ID: "proj-app", Name: "App", Folder: &appRoot, CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		{ID: "proj-api", Name: "API", Folder: &apiRoot, CreatedAt: time.Now(), UpdatedAt: time.Now()},
+	} {
+		if err := store.SaveProject(project); err != nil {
+			t.Fatalf("failed to save project %s: %v", project.ID, err)
+		}
+	}
+
+	yamlDef := `
+agent:
+  id: selected-agent
+runtime:
+  type: docker
+workspace:
+  scope: selected_projects
+  mount: ro
+local:
+  project_bindings:
+    selected_projects: proj-app, proj-api
+`
+	body, _ := json.Marshal(importAgentYAMLRequest{ConfigYAML: yamlDef})
+	req := httptest.NewRequest(http.MethodPost, "/unified-agents/import-yaml", strings.NewReader(string(body)))
+	rec := httptest.NewRecorder()
+	server.handleImportAgentYAML(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for selected_projects scope, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	missingBinding := strings.Replace(yamlDef, "    selected_projects: proj-app, proj-api\n", "", 1)
+	body, _ = json.Marshal(importAgentYAMLRequest{ConfigYAML: missingBinding})
+	req = httptest.NewRequest(http.MethodPost, "/unified-agents/import-yaml", strings.NewReader(string(body)))
+	rec = httptest.NewRecorder()
+	server.handleImportAgentYAML(rec, req)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "selected_projects") {
+		t.Fatalf("expected selected_projects binding validation error, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestImportDockerAgentDefinitionUpdateRemovesStaleManagedContainers(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+	yamlDef := `
+agent:
+  id: stale-agent
+runtime:
+  type: docker
+workspace:
+  scope: current_project
+`
+	body, _ := json.Marshal(importAgentYAMLRequest{ConfigYAML: yamlDef})
+	req := httptest.NewRequest(http.MethodPost, "/unified-agents/import-yaml", strings.NewReader(string(body)))
+	rec := httptest.NewRecorder()
+	server.handleImportAgentYAML(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected initial import 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	oldRunCommand := runCommand
+	var removed []string
+	runCommand = func(ctx context.Context, command string, args ...string) (string, error) {
+		if command != "docker" {
+			return "", nil
+		}
+		if len(args) > 0 && args[0] == "ps" {
+			row := dockerPSRow{
+				ID:     "old-container-id",
+				Image:  "a2gent-brute:latest",
+				State:  "running",
+				Status: "Up",
+				Names:  "agent-stale-agent__project-old",
+				Ports:  "0.0.0.0:18080->8080/tcp",
+				Labels: localAgentManagerLabelKey + "=" + localAgentManagerLabelValue + "," + dockerRuntimeAgentDefLabelKey + "=stale-agent",
+			}
+			encoded, _ := json.Marshal(row)
+			return string(encoded), nil
+		}
+		if len(args) >= 3 && args[0] == "rm" && args[1] == "-f" {
+			removed = append(removed, args[2])
+			return "", nil
+		}
+		return "", nil
+	}
+	t.Cleanup(func() { runCommand = oldRunCommand })
+
+	req = httptest.NewRequest(http.MethodPost, "/unified-agents/import-yaml", strings.NewReader(string(body)))
+	rec = httptest.NewRecorder()
+	server.handleImportAgentYAML(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected update import 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(removed) != 1 || removed[0] != "old-container-id" {
+		t.Fatalf("expected stale container to be removed, got %#v", removed)
+	}
+	var result importAgentYAMLResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to decode import result: %v", err)
+	}
+	if len(result.RemovedContainers) != 1 || result.RemovedContainers[0] != "agent-stale-agent__project-old" {
+		t.Fatalf("expected removed container name in response, got %#v", result.RemovedContainers)
 	}
 }
 

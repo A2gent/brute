@@ -3,6 +3,7 @@ package http
 
 import (
 	"encoding/json"
+	"github.com/A2gent/brute/internal/contextcompress"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/tools"
@@ -139,6 +140,9 @@ func (s *Server) registerServerBackedTools(manager *tools.Manager) {
 	manager.Register(newImportAgentDefinitionYAMLTool(s))
 	manager.Register(newCreateLocalDockerAgentsBulkTool(s))
 	manager.Register(newCreateLocalDockerAgentsFromYAMLTool(s))
+	if s.contextCompressor != nil {
+		manager.Register(contextcompress.NewRetrieveTool(s.contextCompressor))
+	}
 	manager.RegisterQuestionTool(s.sessionManager)
 	manager.RegisterSessionTaskProgressTool(s.sessionManager)
 	manager.RegisterSQLQueryTool(s.store)

@@ -13,6 +13,7 @@ type Config struct {
 	CompactionTriggerPercent float64
 	CompactionPrompt         string
 	UsePreviousResponse      bool
+	CompressToolResults      bool
 }
 
 // EventType is emitted while the agent executes a run.
@@ -31,6 +32,7 @@ const (
 	envCompactionPrompt         = "AAGENT_CONTEXT_COMPACTION_PROMPT"
 	envSystemPrompt             = "AAGENT_SYSTEM_PROMPT"
 	envSystemPromptAppend       = "AAGENT_SYSTEM_PROMPT_APPEND"
+	envCompressToolResults      = "A2GENT_TOOL_RESULT_COMPRESSION_ENABLED"
 )
 
 const (

@@ -376,7 +376,7 @@ func (s *Server) handleTelegramInboundMessage(
 		ContextWindow:       target.ContextWindow,
 		UsePreviousResponse: target.StatefulResponses,
 	}
-	ag := agent.New(agentConfig, target.Client, s.toolManagerForSession(sess), s.sessionManager)
+	ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 
 	response, _, err := ag.Run(ctx, sess, llmUserMessage)
 	if err != nil {

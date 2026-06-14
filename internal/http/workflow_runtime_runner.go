@@ -423,7 +423,7 @@ func (s *Server) executeWorkflowNode(
 		ContextWindow:       target.ContextWindow,
 		UsePreviousResponse: target.StatefulResponses,
 	}
-	ag := agent.New(agentConfig, target.Client, s.toolManagerForWorkflowNode(child, node), s.sessionManager)
+	ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForWorkflowNode(child, node))
 	content, _, runErr := ag.RunWithEvents(ctx, child, nodePrompt, func(ev agent.Event) {
 		if ev.Type == agent.EventProviderTrace && ev.Provider != nil {
 			s.applyProviderTraceToSession(child, target.ProviderType, ev.Provider)

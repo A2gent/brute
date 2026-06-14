@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -51,6 +52,7 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 					IsError:    tr.IsError,
 					Metadata:   tr.Metadata,
 					Name:       tr.Name,
+					DurationMs: tr.DurationMs,
 				}
 			}
 		}
@@ -58,7 +60,7 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 		messages = append(messages, msg)
 	}
 
-	return &llm.ChatRequest{
+	request := &llm.ChatRequest{
 		Model:              a.config.Model,
 		Messages:           messages,
 		Tools:              a.toolManager.GetDefinitions(),
@@ -67,6 +69,11 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 		SessionID:          sess.ID,
 		PreviousResponseID: previousResponseID,
 	}
+	if a.config.CompressToolResults && a.compressor != nil {
+		compressed, _ := a.compressor.CompressRequest(context.Background(), sess.ID, request)
+		return compressed
+	}
+	return request
 }
 
 func (a *Agent) buildCompactionRequest(sess *session.Session, prompt string) *llm.ChatRequest {
@@ -101,6 +108,7 @@ func (a *Agent) buildCompactionRequest(sess *session.Session, prompt string) *ll
 					IsError:    tr.IsError,
 					Metadata:   tr.Metadata,
 					Name:       tr.Name,
+					DurationMs: tr.DurationMs,
 				}
 			}
 		}

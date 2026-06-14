@@ -524,9 +524,11 @@ func writeMessage(b *strings.Builder, msg llm.Message) {
 			b.WriteString(" error=true")
 		}
 		b.WriteString("]\n")
-		if content := strings.TrimSpace(tr.Content); content != "" {
-			b.WriteString(content)
-			b.WriteString("\n")
+		if tr.Content != "" {
+			b.WriteString(tr.Content)
+			if !strings.HasSuffix(tr.Content, "\n") {
+				b.WriteString("\n")
+			}
 		}
 	}
 	b.WriteString("\n")

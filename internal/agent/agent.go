@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/A2gent/brute/internal/contextcompress"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
@@ -17,10 +18,16 @@ type Agent struct {
 	llmClient      llm.Client
 	toolManager    *tools.Manager
 	sessionManager *session.Manager
+	compressor     *contextcompress.Compressor
 }
 
 // New creates a new agent
 func New(config Config, llmClient llm.Client, toolManager *tools.Manager, sessionManager *session.Manager) *Agent {
+	return NewWithCompressor(config, llmClient, toolManager, sessionManager, nil)
+}
+
+// NewWithCompressor creates an agent with optional pre-send tool-result compression.
+func NewWithCompressor(config Config, llmClient llm.Client, toolManager *tools.Manager, sessionManager *session.Manager, compressor *contextcompress.Compressor) *Agent {
 	if config.MaxSteps == 0 {
 		config.MaxSteps = 50
 	}
@@ -35,12 +42,24 @@ func New(config Config, llmClient llm.Client, toolManager *tools.Manager, sessio
 	if appendPrompt != "" && !systemPromptExplicit {
 		config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + appendPrompt
 	}
+	if !config.CompressToolResults {
+		config.CompressToolResults = strings.EqualFold(strings.TrimSpace(os.Getenv(envCompressToolResults)), "true")
+	}
+	if compressor == nil && sessionManager != nil {
+		compressor = contextcompress.NewCompressorWithSessionStore(contextcompress.Config{Enabled: true}, sessionManager)
+	}
+	if config.CompressToolResults && compressor != nil && toolManager != nil {
+		if _, ok := toolManager.Get(contextcompress.RetrievalToolName); !ok {
+			toolManager.Register(contextcompress.NewRetrieveTool(compressor))
+		}
+	}
 
 	return &Agent{
 		config:         config,
 		llmClient:      llmClient,
 		toolManager:    toolManager,
 		sessionManager: sessionManager,
+		compressor:     compressor,
 	}
 }
 

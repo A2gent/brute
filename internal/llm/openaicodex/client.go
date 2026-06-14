@@ -496,7 +496,7 @@ func buildInputItems(messages []llm.Message) []responsesInputItem {
 		switch role {
 		case "tool":
 			for _, tr := range msg.ToolResults {
-				output := strings.TrimSpace(tr.Content)
+				output := tr.Content
 				items = append(items, responsesInputItem{
 					Type:   "function_call_output",
 					CallID: strings.TrimSpace(tr.ToolCallID),

@@ -240,13 +240,8 @@ func (s *Server) importAgentYAMLDefinition(ctx context.Context, req importAgentY
 // The warm container is created lazily by the docker runtime manager on first
 // delegation, so the workspace binding resolves against the real session.
 func (s *Server) importDockerAgentDefinition(ctx context.Context, def *agentdef.Definition) (*importAgentYAMLResult, int, error) {
-	if _, _, err := resolveWorkspaceBinding(def, ""); err != nil && def.Workspace.Scope != agentdef.WorkspaceScopeCurrentProject {
+	if err := s.validateDockerDefinitionWorkspaceBindings(def); err != nil {
 		return nil, http.StatusBadRequest, err
-	}
-	if binding := strings.TrimSpace(def.Local.ProjectBindings[agentdef.WorkspaceScopeConfiguredProject]); binding != "" {
-		if _, err := s.store.GetProject(binding); err != nil {
-			return nil, http.StatusBadRequest, fmt.Errorf("Agent definition binds unknown project %s; fix local.project_bindings or remove the binding", binding)
-		}
 	}
 
 	id := def.Agent.ID
@@ -304,6 +299,40 @@ func (s *Server) importDockerAgentDefinition(ctx context.Context, def *agentdef.
 		RemovedContainers: removedContainers,
 		Note:              "Container starts on first delegation and is reused warm per project binding.",
 	}, status, nil
+}
+
+func (s *Server) validateDockerDefinitionWorkspaceBindings(def *agentdef.Definition) error {
+	if def == nil {
+		return fmt.Errorf("agent definition is empty")
+	}
+	switch strings.TrimSpace(def.Workspace.Scope) {
+	case "", agentdef.WorkspaceScopeNone, agentdef.WorkspaceScopeCurrentProject:
+		return nil
+	case agentdef.WorkspaceScopeConfiguredProject:
+		projectID := strings.TrimSpace(def.Local.ProjectBindings[agentdef.WorkspaceScopeConfiguredProject])
+		if projectID == "" {
+			return errAgentDefinitionMissingProjectBinding
+		}
+		if _, err := s.store.GetProject(projectID); err != nil {
+			return fmt.Errorf("Agent definition binds unknown project %s; fix local.project_bindings or remove the binding", projectID)
+		}
+		return nil
+	case agentdef.WorkspaceScopeSelectedProjects:
+		projectIDs := selectedProjectBindingIDs(def)
+		if len(projectIDs) == 0 {
+			return &agentDefinitionImportError{"workspace.scope is selected_projects but local.project_bindings.selected_projects is not set"}
+		}
+		for _, projectID := range projectIDs {
+			if _, err := s.store.GetProject(projectID); err != nil {
+				return fmt.Errorf("Agent definition binds unknown project %s; fix local.project_bindings.selected_projects or remove the binding", projectID)
+			}
+		}
+		return nil
+	case agentdef.WorkspaceScopeAllProjects:
+		return nil
+	default:
+		return errAgentDefinitionWorkspaceScopeUnsupported(def.Workspace.Scope)
+	}
 }
 
 func (s *Server) handleExportAgentDefinitionYAML(w http.ResponseWriter, r *http.Request) {
@@ -488,8 +517,9 @@ func localDockerCreateRequestBaseFromDefinition(def *agentdef.Definition) create
 }
 
 // localDockerCreateRequestFromDefinition maps a canonical docker-runtime
-// definition onto the existing local Docker agent create request, resolving
-// the workspace binding eagerly (used by the import flow).
+// definition onto the existing local Docker agent create request. Broad
+// multi-project scopes resolve later in the runtime manager because import does
+// not know which containers must be created yet.
 func localDockerCreateRequestFromDefinition(def *agentdef.Definition) (createLocalDockerAgentRequest, error) {
 	req := localDockerCreateRequestBaseFromDefinition(def)
 
@@ -503,13 +533,19 @@ func localDockerCreateRequestFromDefinition(def *agentdef.Definition) (createLoc
 		}
 		req.ProjectID = projectID
 		req.ProjectMountMode = def.Workspace.Mount
+	case agentdef.WorkspaceScopeSelectedProjects:
+		if len(selectedProjectBindingIDs(def)) == 0 {
+			return req, &agentDefinitionImportError{"workspace.scope is selected_projects but local.project_bindings.selected_projects is not set"}
+		}
+		// selected_projects expands to per-project volumes at delegation time.
+	case agentdef.WorkspaceScopeAllProjects:
+		// all_projects expands to per-project volumes at delegation time.
 	default:
 		return req, errAgentDefinitionWorkspaceScopeUnsupported(def.Workspace.Scope)
 	}
 
 	return req, nil
 }
-
 var errAgentDefinitionMissingProjectBinding = &agentDefinitionImportError{
 	"workspace.scope is configured_project but local.project_bindings.configured_project is not set",
 }

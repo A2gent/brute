@@ -1,9 +1,19 @@
 package http
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 )
+
+func resetLocalDockerPortReservationsForTest() {
+	localDockerPortReservations.Lock()
+	localDockerPortReservations.ports = map[int]struct{}{}
+	localDockerPortReservations.Unlock()
+}
 
 func TestParseLocalDockerAgentYAMLConfigSingleAgent(t *testing.T) {
 	raw := `version: 1
@@ -399,5 +409,104 @@ func TestParsePublishedHostPorts(t *testing.T) {
 	}
 	if got[9300] {
 		t.Fatalf("container-only ports should not be treated as published host ports: %#v", got)
+	}
+}
+
+func TestReserveAvailableLocalDockerPortSkipsInProcessReservations(t *testing.T) {
+	resetLocalDockerPortReservationsForTest()
+	t.Cleanup(resetLocalDockerPortReservationsForTest)
+
+	oldRunCommand := runCommand
+	runCommand = func(ctx context.Context, command string, args ...string) (string, error) {
+		if command == "docker" && len(args) > 0 && args[0] == "ps" {
+			return "", nil
+		}
+		return "", nil
+	}
+	t.Cleanup(func() { runCommand = oldRunCommand })
+	oldHostPortListenable := hostPortListenable
+	hostPortListenable = func(port int) bool { return true }
+	t.Cleanup(func() { hostPortListenable = oldHostPortListenable })
+
+	first, releaseFirst, err := reserveAvailableLocalDockerPort(context.Background(), 18080, 18082)
+	if err != nil {
+		t.Fatalf("first reservation failed: %v", err)
+	}
+	defer releaseFirst()
+	second, releaseSecond, err := reserveAvailableLocalDockerPort(context.Background(), 18080, 18082)
+	if err != nil {
+		t.Fatalf("second reservation failed: %v", err)
+	}
+	defer releaseSecond()
+	if first == second {
+		t.Fatalf("parallel reservations must not receive the same port: %d", first)
+	}
+}
+
+func TestCreateLocalDockerAgentRetriesAutoPortCollision(t *testing.T) {
+	resetLocalDockerPortReservationsForTest()
+	t.Cleanup(resetLocalDockerPortReservationsForTest)
+
+	server, _ := newUnifiedAgentsTestServer(t)
+	oldRunCommand := runCommand
+	oldHostPortListenable := hostPortListenable
+	hostPortListenable = func(port int) bool { return true }
+	t.Cleanup(func() { hostPortListenable = oldHostPortListenable })
+	var runPorts []string
+	runCommand = func(ctx context.Context, command string, args ...string) (string, error) {
+		if command != "docker" {
+			return "", nil
+		}
+		if len(args) > 0 && args[0] == "ps" {
+			if len(runPorts) == 0 {
+				return "", nil
+			}
+			row := dockerPSRow{
+				ID:     "container-id",
+				Image:  "a2gent-brute:latest",
+				State:  "running",
+				Status: "Up",
+				Names:  "retry-agent",
+				Ports:  "0.0.0.0:" + runPorts[len(runPorts)-1] + "->8080/tcp",
+				Labels: localAgentManagerLabelKey + "=" + localAgentManagerLabelValue,
+			}
+			encoded, _ := json.Marshal(row)
+			return string(encoded), nil
+		}
+		if len(args) > 0 && args[0] == "run" {
+			for i := 0; i < len(args)-1; i++ {
+				if args[i] == "--publish" {
+					runPorts = append(runPorts, strings.TrimSuffix(args[i+1], ":8080"))
+					break
+				}
+			}
+			if len(runPorts) == 1 {
+				return "", fmt.Errorf("docker: Error response from daemon: Bind for 0.0.0.0:%s failed: port is already allocated", runPorts[0])
+			}
+			return "container-id", nil
+		}
+		if len(args) > 0 && args[0] == "rm" {
+			return "", nil
+		}
+		return "", nil
+	}
+	t.Cleanup(func() { runCommand = oldRunCommand })
+
+	result, status, err := server.createLocalDockerAgent(context.Background(), createLocalDockerAgentRequest{
+		Name:        "retry-agent",
+		Image:       "a2gent-brute:latest",
+		Directories: localDockerAgentYAMLDirectories{Data: t.TempDir()},
+	})
+	if err != nil || status != http.StatusCreated {
+		t.Fatalf("createLocalDockerAgent failed: status=%d err=%v", status, err)
+	}
+	if result == nil || result.Agent == nil || result.Agent.HostPort == 0 {
+		t.Fatalf("expected created agent details after retry, got %#v", result)
+	}
+	if len(runPorts) != 2 {
+		t.Fatalf("expected docker run to be retried once, got ports %#v", runPorts)
+	}
+	if runPorts[0] == runPorts[1] {
+		t.Fatalf("retry should use a different host port, got %#v", runPorts)
 	}
 }

@@ -14,8 +14,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/A2gent/brute/internal/logging"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -28,6 +30,29 @@ const (
 	localAgentManagerLabelKey   = "a2gent.local_agent"
 	localAgentManagerLabelValue = "true"
 )
+
+var localDockerPortReservations = struct {
+	sync.Mutex
+	ports map[int]struct{}
+}{ports: map[int]struct{}{}}
+
+func reserveLocalDockerPort(port int) (func(), bool) {
+	if port <= 0 {
+		return func() {}, true
+	}
+	localDockerPortReservations.Lock()
+	if _, reserved := localDockerPortReservations.ports[port]; reserved {
+		localDockerPortReservations.Unlock()
+		return func() {}, false
+	}
+	localDockerPortReservations.ports[port] = struct{}{}
+	localDockerPortReservations.Unlock()
+	return func() {
+		localDockerPortReservations.Lock()
+		delete(localDockerPortReservations.ports, port)
+		localDockerPortReservations.Unlock()
+	}, true
+}
 
 var dockerContainerIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 
@@ -239,16 +264,34 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 		image = defaultLocalAgentImage
 	}
 
+	autoHostPort := req.HostPort <= 0
 	hostPort := req.HostPort
-	if hostPort <= 0 {
-		var err error
-		hostPort, err = findAvailablePort(ctx, defaultLocalAgentBasePort, defaultLocalAgentMaxPort)
+	portReleases := []func(){}
+	defer func() {
+		for i := len(portReleases) - 1; i >= 0; i-- {
+			portReleases[i]()
+		}
+	}()
+	var err error
+	if autoHostPort {
+		var releaseHostPort func()
+		hostPort, releaseHostPort, err = reserveAvailableLocalDockerPort(ctx, defaultLocalAgentBasePort, defaultLocalAgentMaxPort)
 		if err != nil {
 			return nil, http.StatusInternalServerError, fmt.Errorf("no available host port found in local agent range")
 		}
+		portReleases = append(portReleases, releaseHostPort)
 	}
 	if hostPort < 1 || hostPort > 65535 {
 		return nil, http.StatusBadRequest, fmt.Errorf("host_port must be between 1 and 65535")
+	}
+	if !autoHostPort {
+		var reserved bool
+		var releaseHostPort func()
+		releaseHostPort, reserved = reserveLocalDockerPort(hostPort)
+		if !reserved {
+			return nil, http.StatusBadRequest, fmt.Errorf("host_port %d is already being assigned to another local agent", hostPort)
+		}
+		portReleases = append(portReleases, releaseHostPort)
 	}
 
 	lmStudioBaseURL := strings.TrimSpace(req.LMStudioBaseURL)
@@ -314,83 +357,108 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 		}
 		projectRoot = resolvedRoot
 	}
-
-	runCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
 	proxyBaseURL := fmt.Sprintf("http://host.docker.internal:%d/v1", s.port)
-	args := []string{
-		"run", "-d",
-		"--name", name,
-		"--label", localAgentManagerLabelKey + "=" + localAgentManagerLabelValue,
-		"--label", "a2gent.role=brute",
-		"--publish", fmt.Sprintf("%d:8080", hostPort),
-		"--volume", dataDir + ":/data",
-		"--env", "HOME=/data",
-		"--env", "AAGENT_DATA_PATH=/data",
-		"--env", "LM_STUDIO_BASE_URL=" + lmStudioBaseURL,
-	}
-	args, err = s.applyLocalDockerAgentToolsArgs(args, req.Tools)
-	if err != nil {
-		return nil, http.StatusBadRequest, err
-	}
-	args, err = appendLocalDockerAgentExtraArgs(args, req, req.ConfigBaseDir)
-	if err != nil {
-		return nil, http.StatusBadRequest, err
-	}
-	if projectID != "" {
-		projectIDLabel := sanitizeDockerLabelValue(projectID)
-		if projectIDLabel != "" {
-			args = append(args, "--label", "a2gent.project_id="+projectIDLabel)
+	buildRunArgs := func(publishedPort int) ([]string, error) {
+		args := []string{
+			"run", "-d",
+			"--name", name,
+			"--label", localAgentManagerLabelKey + "=" + localAgentManagerLabelValue,
+			"--label", "a2gent.role=brute",
+			"--publish", fmt.Sprintf("%d:8080", publishedPort),
+			"--volume", dataDir + ":/data",
+			"--env", "HOME=/data",
+			"--env", "AAGENT_DATA_PATH=/data",
+			"--env", "LM_STUDIO_BASE_URL=" + lmStudioBaseURL,
 		}
-		args = append(args, "--label", "a2gent.project_mount_mode="+projectMountMode)
-		projectMount := projectRoot + ":/workspace"
-		if projectMountMode == "ro" {
-			projectMount += ":ro"
+		var err error
+		args, err = s.applyLocalDockerAgentToolsArgs(args, req.Tools)
+		if err != nil {
+			return nil, err
 		}
-		args = append(args, "--volume", projectMount)
-	}
-	if agentKind != "" {
-		if agentKindLabel != "" {
-			args = append(args, "--label", "a2gent.agent_kind="+agentKindLabel)
+		args, err = appendLocalDockerAgentExtraArgs(args, req, req.ConfigBaseDir)
+		if err != nil {
+			return nil, err
 		}
-		args = append(args, "--env", "A2GENT_AGENT_KIND="+agentKind)
-	}
-	if systemPrompt != "" {
-		args = append(args, "--env", "AAGENT_SYSTEM_PROMPT="+systemPrompt)
-	}
-	if sessionID != "" {
-		if sessionIDLabel != "" {
-			args = append(args, "--label", "a2gent.session_id="+sessionIDLabel)
+		if projectID != "" {
+			projectIDLabel := sanitizeDockerLabelValue(projectID)
+			if projectIDLabel != "" {
+				args = append(args, "--label", "a2gent.project_id="+projectIDLabel)
+			}
+			args = append(args, "--label", "a2gent.project_mount_mode="+projectMountMode)
+			projectMount := projectRoot + ":/workspace"
+			if projectMountMode == "ro" {
+				projectMount += ":ro"
+			}
+			args = append(args, "--volume", projectMount)
 		}
-		args = append(args, "--env", "A2GENT_PARENT_SESSION_ID="+sessionID)
-	}
-	if useParentLLMProxy {
-		// Route child agent traffic through the parent's OpenAI-compatible proxy.
-		provider := localDockerAgentRuntimeProvider(req.LLM.Provider)
-		if provider == "" {
-			provider = "lmstudio"
+		if agentKind != "" {
+			if agentKindLabel != "" {
+				args = append(args, "--label", "a2gent.agent_kind="+agentKindLabel)
+			}
+			args = append(args, "--env", "A2GENT_AGENT_KIND="+agentKind)
 		}
-		args = append(args,
-			"--env", "AAGENT_PROVIDER="+provider,
-			"--env", "A2GENT_PARENT_PROXY_URL="+proxyBaseURL,
-			"--env", "LM_STUDIO_BASE_URL="+proxyBaseURL+"/providers/lmstudio",
-			"--env", "OPENAI_API_KEY=a2gent-proxy",
-			"--env", "OPENAI_BASE_URL="+proxyBaseURL+"/providers/openai",
-			"--env", "KIMI_API_KEY=a2gent-proxy",
-			"--env", "KIMI_BASE_URL="+proxyBaseURL+"/providers/kimi",
-			"--env", "GOOGLE_API_KEY=a2gent-proxy",
-			"--env", "GOOGLE_BASE_URL="+proxyBaseURL+"/providers/google",
-			"--env", "OPENROUTER_API_KEY=a2gent-proxy",
-			"--env", "OPENROUTER_BASE_URL="+proxyBaseURL+"/providers/openrouter",
-			"--env", "ANTHROPIC_API_KEY=a2gent-proxy",
-		)
+		if systemPrompt != "" {
+			args = append(args, "--env", "AAGENT_SYSTEM_PROMPT="+systemPrompt)
+		}
+		if sessionID != "" {
+			if sessionIDLabel != "" {
+				args = append(args, "--label", "a2gent.session_id="+sessionIDLabel)
+			}
+			args = append(args, "--env", "A2GENT_PARENT_SESSION_ID="+sessionID)
+		}
+		if useParentLLMProxy {
+			// Route child agent traffic through the parent's OpenAI-compatible proxy.
+			provider := localDockerAgentRuntimeProvider(req.LLM.Provider)
+			if provider == "" {
+				provider = "lmstudio"
+			}
+			args = append(args,
+				"--env", "AAGENT_PROVIDER="+provider,
+				"--env", "A2GENT_PARENT_PROXY_URL="+proxyBaseURL,
+				"--env", "LM_STUDIO_BASE_URL="+proxyBaseURL+"/providers/lmstudio",
+				"--env", "OPENAI_API_KEY=a2gent-proxy",
+				"--env", "OPENAI_BASE_URL="+proxyBaseURL+"/providers/openai",
+				"--env", "KIMI_API_KEY=a2gent-proxy",
+				"--env", "KIMI_BASE_URL="+proxyBaseURL+"/providers/kimi",
+				"--env", "GOOGLE_API_KEY=a2gent-proxy",
+				"--env", "GOOGLE_BASE_URL="+proxyBaseURL+"/providers/google",
+				"--env", "OPENROUTER_API_KEY=a2gent-proxy",
+				"--env", "OPENROUTER_BASE_URL="+proxyBaseURL+"/providers/openrouter",
+				"--env", "ANTHROPIC_API_KEY=a2gent-proxy",
+			)
+		}
+		// Docker port mapping publishes hostPort -> container:8080, so force the
+		// child server to bind to 8080 inside the container.
+		return append(args, image, "server", "--port", "8080"), nil
 	}
-	// Docker port mapping publishes hostPort -> container:8080, so force the
-	// child server to bind to 8080 inside the container.
-	args = append(args, image, "server", "--port", "8080")
-	_, err = runCommand(runCtx, "docker", args...)
-	if err != nil {
-		return nil, http.StatusBadRequest, fmt.Errorf("failed to start local agent container: %w", err)
+
+	maxAttempts := 1
+	if autoHostPort {
+		maxAttempts = 5
+	}
+	for attempt := 1; ; attempt++ {
+		runCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		args, buildErr := buildRunArgs(hostPort)
+		if buildErr != nil {
+			cancel()
+			return nil, http.StatusBadRequest, buildErr
+		}
+		_, err = runCommand(runCtx, "docker", args...)
+		cancel()
+		if err == nil {
+			break
+		}
+		if !autoHostPort || !isDockerPortAllocationError(err) || attempt >= maxAttempts {
+			return nil, http.StatusBadRequest, fmt.Errorf("failed to start local agent container: %w", err)
+		}
+		logging.Warn("Local Docker agent: auto-selected host port %d was rejected by Docker; retrying with another port", hostPort)
+		removeDockerContainerByName(ctx, name)
+		var releaseHostPort func()
+		hostPort, releaseHostPort, err = reserveAvailableLocalDockerPort(ctx, defaultLocalAgentBasePort, defaultLocalAgentMaxPort)
+		if err != nil {
+			return nil, http.StatusInternalServerError, fmt.Errorf("no available host port found in local agent range")
+		}
+		portReleases = append(portReleases, releaseHostPort)
 	}
 
 	agent, err := findLocalBruteContainer(ctx, name)
@@ -1326,7 +1394,17 @@ func dockerPublishedHostPorts(ctx context.Context) map[int]struct{} {
 	return used
 }
 
-func hostPortListenable(port int) bool {
+func localDockerReservedHostPorts() map[int]struct{} {
+	localDockerPortReservations.Lock()
+	defer localDockerPortReservations.Unlock()
+	reserved := make(map[int]struct{}, len(localDockerPortReservations.ports))
+	for port := range localDockerPortReservations.ports {
+		reserved[port] = struct{}{}
+	}
+	return reserved
+}
+
+var hostPortListenable = func(port int) bool {
 	for _, host := range []string{"127.0.0.1", "0.0.0.0"} {
 		ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
 		if err != nil {
@@ -1337,10 +1415,13 @@ func hostPortListenable(port int) bool {
 	return true
 }
 
-func findAvailablePort(ctx context.Context, start, end int) (int, error) {
+func firstAvailableLocalDockerPort(ctx context.Context, start, end int, reserved map[int]struct{}) (int, error) {
 	usedByDocker := dockerPublishedHostPorts(ctx)
 	for port := start; port <= end; port++ {
 		if _, used := usedByDocker[port]; used {
+			continue
+		}
+		if _, used := reserved[port]; used {
 			continue
 		}
 		if hostPortListenable(port) {
@@ -1348,4 +1429,23 @@ func findAvailablePort(ctx context.Context, start, end int) (int, error) {
 		}
 	}
 	return 0, fmt.Errorf("no available ports in range %d-%d", start, end)
+}
+
+func reserveAvailableLocalDockerPort(ctx context.Context, start, end int) (int, func(), error) {
+	localDockerPortReservations.Lock()
+	defer localDockerPortReservations.Unlock()
+	port, err := firstAvailableLocalDockerPort(ctx, start, end, localDockerPortReservations.ports)
+	if err != nil {
+		return 0, func() {}, err
+	}
+	localDockerPortReservations.ports[port] = struct{}{}
+	return port, func() {
+		localDockerPortReservations.Lock()
+		delete(localDockerPortReservations.ports, port)
+		localDockerPortReservations.Unlock()
+	}, nil
+}
+
+func findAvailablePort(ctx context.Context, start, end int) (int, error) {
+	return firstAvailableLocalDockerPort(ctx, start, end, localDockerReservedHostPorts())
 }

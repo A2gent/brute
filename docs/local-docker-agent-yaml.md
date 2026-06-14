@@ -128,6 +128,7 @@ agent:
 - `agent`: one agent spec.
 - `agents`: a list of agent specs for batch creation.
 - `name`, `name_prefix`, `start_port`, `image`, `host_port`: container identity and port assignment.
+  When `host_port` is omitted or non-positive, Brute auto-selects a host port from the local agent range and reserves it inside the parent process while `docker run` is in flight. If Docker still reports a port-allocation race, Brute retries with another auto-selected port before failing.
 - `agent_kind`, `system_prompt`: Brute role label and system prompt.
 - `initial_prompt` or `startup.prompt`: initial session prompt. Prefer `startup.prompt`.
 - `startup.auto_run`: run the startup prompt immediately when true; otherwise create a queued child session.

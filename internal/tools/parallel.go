@@ -21,6 +21,7 @@ var parallelUnsupportedTools = map[string]string{
 	"parallel":             "recursive parallel calls are not allowed",
 	"delegate_to_subagent": "sub-agent delegation must be called as a top-level tool call",
 	"browser_chrome":       "browser automation is stateful and must be called sequentially as a top-level tool call",
+	"suggest_session":      "session suggestions should be created as top-level tool calls after the main work, not inside parallel results",
 }
 
 // ParallelTool executes independent tool calls concurrently and returns ordered results.
@@ -58,7 +59,7 @@ func (t *ParallelTool) Name() string {
 }
 
 func (t *ParallelTool) Description() string {
-	return "Run multiple independent tool calls concurrently in one call. Use this for parallel codebase exploration, such as several grep/read/find_files/bash searches that do not depend on each other. Do not use this for recursive parallel calls, delegate_to_subagent, or browser_chrome; call those as top-level tool calls instead."
+	return "Run multiple independent tool calls concurrently in one call. Use this for parallel codebase exploration, such as several grep/read/find_files/bash searches that do not depend on each other. Do not use this for recursive parallel calls, delegate_to_subagent, browser_chrome, or suggest_session; call those as top-level tool calls instead."
 }
 
 func (t *ParallelTool) Schema() map[string]interface{} {
@@ -73,7 +74,7 @@ func (t *ParallelTool) Schema() map[string]interface{} {
 					"properties": map[string]interface{}{
 						"tool": map[string]interface{}{
 							"type":        "string",
-							"description": "Tool name to execute for this parallel step. Cannot be parallel, delegate_to_subagent, or browser_chrome.",
+							"description": "Tool name to execute for this parallel step. Cannot be parallel, delegate_to_subagent, browser_chrome, or suggest_session.",
 						},
 						"args": map[string]interface{}{
 							"type":        "object",

@@ -35,6 +35,28 @@ func (m *MockLLM) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.Chat
 	return m.Response, nil
 }
 
+func TestDefaultSystemPromptIncludesSessionWidgetConventions(t *testing.T) {
+	prompts := map[string]string{
+		"default system prompt":        DefaultSystemPrompt(),
+		"built-in tools guidance only": DefaultBuiltInToolsGuidance(),
+	}
+
+	for name, prompt := range prompts {
+		t.Run(name, func(t *testing.T) {
+			for _, expected := range []string{
+				"Output/widget conventions",
+				"plain text paths with optional line ranges",
+				"a2gent-map JSON block",
+				"terminal fallback is the address list",
+			} {
+				if !strings.Contains(prompt, expected) {
+					t.Fatalf("expected prompt to mention %q, got:\n%s", expected, prompt)
+				}
+			}
+		})
+	}
+}
+
 func TestMaybeCompactContext(t *testing.T) {
 	os.Unsetenv("AAGENT_CONTEXT_COMPACTION_TRIGGER_PERCENT")
 	os.Unsetenv("AAGENT_CONTEXT_COMPACTION_PROMPT")

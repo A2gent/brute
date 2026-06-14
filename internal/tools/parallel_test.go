@@ -264,6 +264,25 @@ func TestParallelTool_Execute(t *testing.T) {
 		}
 	})
 
+	t.Run("disallow session suggestions inside parallel", func(t *testing.T) {
+		params := map[string]interface{}{
+			"steps": []map[string]interface{}{
+				{"tool": "suggest_session", "title": "Follow up", "prompt": "Inspect separately."},
+			},
+		}
+		raw, _ := json.Marshal(params)
+		result, err := parallel.Execute(context.Background(), raw)
+		if err != nil {
+			t.Fatalf("Execute returned error: %v", err)
+		}
+		if result.Success {
+			t.Fatalf("expected failure, got output: %s", result.Output)
+		}
+		if !strings.Contains(result.Error, "top-level tool calls") {
+			t.Fatalf("unexpected error: %s", result.Error)
+		}
+	})
+
 	t.Run("returns when context is cancelled while a step is still running", func(t *testing.T) {
 		params := map[string]interface{}{
 			"steps": []map[string]interface{}{

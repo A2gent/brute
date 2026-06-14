@@ -204,6 +204,10 @@ Available tools allow you to:
 - Filter text/file content to reduce context (filter)
 - Suggest quick UI branch-offs into new sessions for actionable follow-ups; use one suggestion per distinct follow-up when multiple independent issues deserve separate sessions (suggest_session)
 
+Output/widget conventions:
+- Reference project files as plain text paths with optional line ranges, e.g. src/app.ts:42 or src/app.ts:42-48. Avoid wrapping file references in code when they should be clickable in UI.
+- For location results, include normal readable addresses first, then add an optional fenced a2gent-map JSON block with {"title":"...","points":[{"label":"...","address":"...","lat":0,"lng":0}]}. The terminal fallback is the address list; Caesar renders the map when coordinates or addresses are present.
+
 Be concise but thorough. Complete the user's task step by step.`
 
 const defaultSystemPromptWithoutBuiltInTools = `You are an AI coding assistant. You help users with software engineering tasks.
@@ -237,7 +241,11 @@ const defaultBuiltInToolsGuidance = `Available tools allow you to:
 - Find files with include/exclude filters (find_files)
 - Search file contents with regular expressions (grep)
 - Filter text/file content to reduce context (filter)
-- Suggest quick UI branch-offs into new sessions for actionable follow-ups; use one suggestion per distinct follow-up when multiple independent issues deserve separate sessions (suggest_session)`
+- Suggest quick UI branch-offs into new sessions for actionable follow-ups; use one suggestion per distinct follow-up when multiple independent issues deserve separate sessions (suggest_session)
+
+Output/widget conventions:
+- Reference project files as plain text paths with optional line ranges, e.g. src/app.ts:42 or src/app.ts:42-48. Avoid wrapping file references in code when they should be clickable in UI.
+- For location results, include normal readable addresses first, then add an optional fenced a2gent-map JSON block with {"title":"...","points":[{"label":"...","address":"...","lat":0,"lng":0}]}. The terminal fallback is the address list; Caesar renders the map when coordinates or addresses are present.`
 
 func (a *Agent) buildCompactionRequestFromMessages(messagesToSummarize []session.Message, prompt string) *llm.ChatRequest {
 	var sb strings.Builder

@@ -508,7 +508,12 @@ func (s *Server) handleProjectGitHistory(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if !projectHasGitMetadata(targetRepoRoot) {
-		s.errorResponse(w, http.StatusBadRequest, "Target folder does not contain a .git directory")
+		s.jsonResponse(w, http.StatusOK, ProjectGitHistoryResponse{
+			RootFolder:    targetRepoRoot,
+			CurrentBranch: "",
+			Branches:      []ProjectGitBranch{},
+			Commits:       []ProjectGitHistoryCommit{},
+		})
 		return
 	}
 

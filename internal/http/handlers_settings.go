@@ -59,8 +59,17 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func settingsResponse(settings map[string]string) SettingsResponse {
+	out := make(map[string]string, len(settings)+1)
+	for key, value := range settings {
+		out[key] = value
+	}
+	if strings.TrimSpace(out[toolResultCompressionSettingKey]) == "" {
+		// WHY: The UI should render the effective runtime default, not a missing key,
+		// so new installs and existing users both see compression enabled by default.
+		out[toolResultCompressionSettingKey] = "true"
+	}
 	return SettingsResponse{
-		Settings:                               settings,
+		Settings:                               out,
 		DefaultSystemPrompt:                    agent.DefaultSystemPrompt(),
 		DefaultSystemPromptWithoutBuiltInTools: agent.DefaultSystemPromptWithoutBuiltInTools(),
 	}

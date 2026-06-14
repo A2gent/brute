@@ -17,15 +17,19 @@ func (s *Server) newAgentFromConfig(cfg agent.Config, client llm.Client, manager
 }
 
 func (s *Server) toolResultCompressionEnabled() bool {
-	if strings.EqualFold(strings.TrimSpace(os.Getenv(toolResultCompressionSettingKey)), "true") {
-		return true
+	if raw := strings.TrimSpace(os.Getenv(toolResultCompressionSettingKey)); raw != "" {
+		return !strings.EqualFold(raw, "false")
 	}
 	if s == nil || s.store == nil {
-		return false
+		return true
 	}
 	settings, err := s.store.GetSettings()
 	if err != nil || settings == nil {
-		return false
+		return true
 	}
-	return strings.EqualFold(strings.TrimSpace(settings[toolResultCompressionSettingKey]), "true")
+	raw := strings.TrimSpace(settings[toolResultCompressionSettingKey])
+	if raw == "" {
+		return true
+	}
+	return !strings.EqualFold(raw, "false")
 }

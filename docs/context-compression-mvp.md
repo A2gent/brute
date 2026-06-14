@@ -32,8 +32,9 @@ To ensure no subtle bugs are introduced during tool result formatting, provider 
 - The exact structure, order, and `ToolCallID` mappings of the tool messages are preserved.
 
 ## Configuration
-The compression feature is strictly opt-in to maintain backward compatibility.
-Enable it by setting the following environment variable:
+The compression feature is enabled by default.
+You can disable it explicitly with:
 ```bash
-A2GENT_TOOL_RESULT_COMPRESSION_ENABLED=true
+A2GENT_TOOL_RESULT_COMPRESSION_ENABLED=false
 ```
+The web UI also exposes this setting and defaults it to enabled for agents that do not yet have an explicit saved value.

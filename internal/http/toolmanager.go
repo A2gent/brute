@@ -169,7 +169,24 @@ func (s *Server) bootstrapDisabledToolsByDefault() {
 	if settings == nil {
 		settings = map[string]string{}
 	}
+	envDisabledTools := strings.TrimSpace(os.Getenv(disabledToolsSettingKey))
 	if strings.TrimSpace(settings[disableToolsByDefaultAppliedSettingKey]) != "" {
+		if envDisabledTools != "" && s.disabledToolsSettingDisablesAllTools(settings[disabledToolsSettingKey]) {
+			previous := make(map[string]string, len(settings))
+			for key, value := range settings {
+				previous[key] = value
+			}
+			// WHY: Older Docker sub-agent data dirs may already contain the old
+			// bootstrap fallback that disabled every tool. When the parent supplies
+			// an explicit env policy, migrate that stale value without touching
+			// user-customized partial disabled-tool settings.
+			settings[disabledToolsSettingKey] = envDisabledTools
+			if err := s.store.SaveSettings(settings); err != nil {
+				logging.Warn("Failed to repair disabled-tools bootstrap setting: %v", err)
+				return
+			}
+			syncSettingsToEnv(previous, settings)
+		}
 		return
 	}
 
@@ -179,21 +196,28 @@ func (s *Server) bootstrapDisabledToolsByDefault() {
 	}
 
 	if strings.TrimSpace(settings[disabledToolsSettingKey]) == "" {
-		defs := s.toolManager.GetDefinitions()
-		names := make([]string, 0, len(defs))
-		for _, def := range defs {
-			name := strings.TrimSpace(def.Name)
-			if name != "" {
-				names = append(names, name)
+		if envDisabledTools != "" {
+			// WHY: Docker sub-agents pass their allow/deny policy via env on first
+			// boot. Persist that explicit policy instead of replacing it with the
+			// safe fallback that disables every tool.
+			settings[disabledToolsSettingKey] = envDisabledTools
+		} else {
+			defs := s.toolManager.GetDefinitions()
+			names := make([]string, 0, len(defs))
+			for _, def := range defs {
+				name := strings.TrimSpace(def.Name)
+				if name != "" {
+					names = append(names, name)
+				}
 			}
+			sort.Strings(names)
+			encoded, err := json.Marshal(names)
+			if err != nil {
+				logging.Warn("Failed to encode disabled tools bootstrap value: %v", err)
+				return
+			}
+			settings[disabledToolsSettingKey] = string(encoded)
 		}
-		sort.Strings(names)
-		encoded, err := json.Marshal(names)
-		if err != nil {
-			logging.Warn("Failed to encode disabled tools bootstrap value: %v", err)
-			return
-		}
-		settings[disabledToolsSettingKey] = string(encoded)
 	}
 
 	settings[disableToolsByDefaultAppliedSettingKey] = time.Now().UTC().Format(time.RFC3339)
@@ -202,6 +226,30 @@ func (s *Server) bootstrapDisabledToolsByDefault() {
 		return
 	}
 	syncSettingsToEnv(previous, settings)
+}
+
+func (s *Server) disabledToolsSettingDisablesAllTools(raw string) bool {
+	if s == nil || s.toolManager == nil || strings.TrimSpace(raw) == "" {
+		return false
+	}
+	disabled := resolveDisabledToolNames(map[string]string{disabledToolsSettingKey: raw})
+	if len(disabled) == 0 {
+		return false
+	}
+	defs := s.toolManager.GetDefinitions()
+	if len(defs) == 0 {
+		return false
+	}
+	for _, def := range defs {
+		name := strings.TrimSpace(def.Name)
+		if name == "" {
+			continue
+		}
+		if _, ok := disabled[name]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func resolveDisabledToolNames(settings map[string]string) map[string]struct{} {

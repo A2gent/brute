@@ -430,6 +430,7 @@ func TestServerRegistersCreateLocalDockerAgentsTools(t *testing.T) {
 
 func TestBootstrapDisabledToolsByDefault(t *testing.T) {
 	t.Setenv(disableToolsByDefaultSettingKey, "true")
+	t.Setenv(disabledToolsSettingKey, "")
 
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	if err != nil {
@@ -464,8 +465,63 @@ func TestBootstrapDisabledToolsByDefault(t *testing.T) {
 	}
 }
 
+func TestBootstrapDisabledToolsByDefault_UsesEnvDisabledToolsPolicy(t *testing.T) {
+	t.Setenv(disableToolsByDefaultSettingKey, "true")
+	t.Setenv(disabledToolsSettingKey, `["delegate_to_agent","suggest_session"]`)
+
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	sessionManager := session.NewManager(store)
+	_ = NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
+
+	settings, err := store.GetSettings()
+	if err != nil {
+		t.Fatalf("failed to load settings: %v", err)
+	}
+	if got := strings.TrimSpace(settings[disabledToolsSettingKey]); got != `["delegate_to_agent","suggest_session"]` {
+		t.Fatalf("expected disabled tools policy from env, got %q", got)
+	}
+}
+
+func TestBootstrapDisabledToolsByDefault_RepairsStaleAllDisabledPolicyFromEnv(t *testing.T) {
+	t.Setenv(disableToolsByDefaultSettingKey, "true")
+	t.Setenv(disabledToolsSettingKey, "")
+
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	sessionManager := session.NewManager(store)
+	first := NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
+	settings, err := store.GetSettings()
+	if err != nil {
+		t.Fatalf("failed to load settings: %v", err)
+	}
+	if !first.disabledToolsSettingDisablesAllTools(settings[disabledToolsSettingKey]) {
+		t.Fatalf("test setup expected stale all-tools disabled policy, got %q", settings[disabledToolsSettingKey])
+	}
+
+	t.Setenv(disabledToolsSettingKey, `["delegate_to_agent","suggest_session"]`)
+	_ = NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
+
+	after, err := store.GetSettings()
+	if err != nil {
+		t.Fatalf("failed to load repaired settings: %v", err)
+	}
+	if got := strings.TrimSpace(after[disabledToolsSettingKey]); got != `["delegate_to_agent","suggest_session"]` {
+		t.Fatalf("expected stale all-disabled policy to be repaired from env, got %q", got)
+	}
+}
+
 func TestBootstrapDisabledToolsByDefault_DoesNotReapplyAfterMarker(t *testing.T) {
 	t.Setenv(disableToolsByDefaultSettingKey, "true")
+	t.Setenv(disabledToolsSettingKey, "")
 
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	if err != nil {

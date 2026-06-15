@@ -127,6 +127,23 @@ func TestSQLQueryToolExecuteRejectsInvalidInputsBeforeConnecting(t *testing.T) {
 	}
 }
 
+func TestSQLQueryToolExecuteAllowsRawRedisEngine(t *testing.T) {
+	tool := NewSQLQueryTool(nil)
+	result := executeSQLQueryTool(t, tool, map[string]interface{}{
+		"dsn":    "redis://127.0.0.1:1/0",
+		"engine": "redis",
+		"query":  "GET session:1",
+		"limit":  1,
+	})
+
+	if result.Success {
+		t.Fatalf("expected connection failure for unavailable redis fixture, got success: %s", result.Output)
+	}
+	if strings.Contains(strings.ToLower(result.Error), "engine") {
+		t.Fatalf("redis should pass engine validation before connecting, got %q", result.Error)
+	}
+}
+
 func TestSQLQueryToolSchemaAdvertisesValidatedPagination(t *testing.T) {
 	tool := NewSQLQueryTool(nil)
 
@@ -140,6 +157,17 @@ func TestSQLQueryToolSchemaAdvertisesValidatedPagination(t *testing.T) {
 	properties, ok := tool.Schema()["properties"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("schema properties missing or wrong type: %#v", tool.Schema()["properties"])
+	}
+	engineSchema, ok := properties["engine"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("engine schema missing or wrong type: %#v", properties["engine"])
+	}
+	engineEnums, ok := engineSchema["enum"].([]string)
+	if !ok {
+		t.Fatalf("engine enum missing or wrong type: %#v", engineSchema["enum"])
+	}
+	if !containsString(engineEnums, "redis") {
+		t.Fatalf("engine schema should advertise redis support, got %#v", engineEnums)
 	}
 	limitSchema, ok := properties["limit"].(map[string]interface{})
 	if !ok {
@@ -172,4 +200,13 @@ func executeSQLQueryTool(t *testing.T, tool *SQLQueryTool, params map[string]int
 		t.Fatal("Execute returned nil result")
 	}
 	return result
+}
+
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }

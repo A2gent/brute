@@ -99,10 +99,11 @@ type StreamEvent struct {
 
 	ContentDelta string
 
-	ToolCallIndex  int
-	ToolCallID     string
-	ToolCallName   string
-	ToolInputDelta string
+	ToolCallIndex            int
+	ToolCallID               string
+	ToolCallName             string
+	ToolInputDelta           string
+	ToolCallThoughtSignature string
 
 	Usage TokenUsage
 

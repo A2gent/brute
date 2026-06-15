@@ -471,19 +471,23 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 				if tc.Function.Arguments != "" {
 					result.ToolCalls[idx].Input += tc.Function.Arguments
 				}
-				if tc.Function.ThoughtSignature != "" {
-					result.ToolCalls[idx].ThoughtSignature += tc.Function.ThoughtSignature
-				}
+				// Preserve Gemini thought signatures through OpenAI-compatible proxies so
+				// replayed function calls remain valid after tool execution.
+				sigDelta := tc.Function.ThoughtSignature
 				if tc.ExtraContent != nil && tc.ExtraContent.Google.ThoughtSignature != "" {
-					result.ToolCalls[idx].ThoughtSignature += tc.ExtraContent.Google.ThoughtSignature
+					sigDelta += tc.ExtraContent.Google.ThoughtSignature
+				}
+				if sigDelta != "" {
+					result.ToolCalls[idx].ThoughtSignature += sigDelta
 				}
 				if onEvent != nil {
 					if err := onEvent(llm.StreamEvent{
-						Type:           llm.StreamEventToolCallDelta,
-						ToolCallIndex:  tc.Index,
-						ToolCallID:     tc.ID,
-						ToolCallName:   tc.Function.Name,
-						ToolInputDelta: tc.Function.Arguments,
+						Type:                     llm.StreamEventToolCallDelta,
+						ToolCallIndex:            tc.Index,
+						ToolCallID:               tc.ID,
+						ToolCallName:             tc.Function.Name,
+						ToolInputDelta:           tc.Function.Arguments,
+						ToolCallThoughtSignature: sigDelta,
 					}); err != nil {
 						return nil, err
 					}

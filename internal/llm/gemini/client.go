@@ -450,11 +450,12 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 				}
 				if onEvent != nil {
 					if err := onEvent(llm.StreamEvent{
-						Type:           llm.StreamEventToolCallDelta,
-						ToolCallIndex:  tc.Index,
-						ToolCallID:     tc.ID,
-						ToolCallName:   tc.Function.Name,
-						ToolInputDelta: tc.Function.Arguments,
+						Type:                     llm.StreamEventToolCallDelta,
+						ToolCallIndex:            tc.Index,
+						ToolCallID:               tc.ID,
+						ToolCallName:             tc.Function.Name,
+						ToolInputDelta:           tc.Function.Arguments,
+						ToolCallThoughtSignature: sigDelta,
 					}); err != nil {
 						return nil, err
 					}

@@ -46,13 +46,77 @@ type proxyMessage struct {
 	ToolCalls  []proxyToolCall `json:"tool_calls,omitempty"`
 }
 
+type proxyGoogleExtra struct {
+	ThoughtSignature string `json:"thought_signature,omitempty"`
+}
+
+type proxyExtraContent struct {
+	Google proxyGoogleExtra `json:"google,omitempty"`
+}
+
 type proxyToolCall struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Function struct {
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
-	} `json:"function"`
+	Index        *int               `json:"index,omitempty"`
+	ID           string             `json:"id"`
+	Type         string             `json:"type"`
+	Function     proxyToolFunction  `json:"function"`
+	ExtraContent *proxyExtraContent `json:"extra_content,omitempty"`
+}
+
+type proxyToolFunction struct {
+	Name             string `json:"name"`
+	Arguments        string `json:"arguments"`
+	ThoughtSignature string `json:"thought_signature,omitempty"`
+}
+
+func proxyToolCallFromLLM(tc llm.ToolCall) proxyToolCall {
+	item := proxyToolCall{
+		ID:   strings.TrimSpace(tc.ID),
+		Type: "function",
+	}
+	item.Function.Name = strings.TrimSpace(tc.Name)
+	item.Function.Arguments = strings.TrimSpace(tc.Input)
+	setProxyToolCallThoughtSignature(&item, tc.ThoughtSignature)
+	return item
+}
+
+func proxyToolCallFromStreamEvent(event llm.StreamEvent) proxyToolCall {
+	item := proxyToolCall{
+		Index: intPtr(event.ToolCallIndex),
+		ID:    strings.TrimSpace(event.ToolCallID),
+		Type:  "function",
+	}
+	item.Function.Name = strings.TrimSpace(event.ToolCallName)
+	item.Function.Arguments = strings.TrimSpace(event.ToolInputDelta)
+	setProxyToolCallThoughtSignature(&item, event.ToolCallThoughtSignature)
+	return item
+}
+
+func setProxyToolCallThoughtSignature(tc *proxyToolCall, raw string) {
+	if tc == nil {
+		return
+	}
+	sig := strings.TrimSpace(raw)
+	if sig == "" {
+		return
+	}
+	// WHY: Gemini requires thought_signature when replaying function calls after
+	// tool results. Put it in both places used by Gemini-compatible APIs.
+	tc.Function.ThoughtSignature = sig
+	tc.ExtraContent = &proxyExtraContent{Google: proxyGoogleExtra{ThoughtSignature: sig}}
+}
+
+func proxyToolCallThoughtSignature(tc proxyToolCall) string {
+	if sig := strings.TrimSpace(tc.Function.ThoughtSignature); sig != "" {
+		return sig
+	}
+	if tc.ExtraContent != nil {
+		return strings.TrimSpace(tc.ExtraContent.Google.ThoughtSignature)
+	}
+	return ""
+}
+
+func intPtr(v int) *int {
+	return &v
 }
 
 type proxyTool struct {
@@ -386,10 +450,9 @@ func (s *Server) handleLLMProxyChatCompletionsStream(
 		_ = writeChunk(contentChunk)
 		if len(resp.ToolCalls) > 0 {
 			toolCalls := make([]proxyToolCall, 0, len(resp.ToolCalls))
-			for _, tc := range resp.ToolCalls {
-				item := proxyToolCall{ID: tc.ID, Type: "function"}
-				item.Function.Name = tc.Name
-				item.Function.Arguments = tc.Input
+			for i, tc := range resp.ToolCalls {
+				item := proxyToolCallFromLLM(tc)
+				item.Index = intPtr(i)
 				toolCalls = append(toolCalls, item)
 			}
 			_ = writeChunk(proxyChatStreamChunk{
@@ -448,9 +511,7 @@ func (s *Server) handleLLMProxyChatCompletionsStream(
 				},
 			})
 		case llm.StreamEventToolCallDelta:
-			tc := proxyToolCall{ID: event.ToolCallID, Type: "function"}
-			tc.Function.Name = event.ToolCallName
-			tc.Function.Arguments = event.ToolInputDelta
+			tc := proxyToolCallFromStreamEvent(event)
 			return writeChunk(proxyChatStreamChunk{
 				ID:      requestID,
 				Object:  "chat.completion.chunk",
@@ -541,13 +602,9 @@ func proxyChatResponseFromLLM(resp *llm.ChatResponse, providerType config.Provid
 	}
 	if len(resp.ToolCalls) > 0 {
 		toolCalls := make([]proxyToolCall, 0, len(resp.ToolCalls))
-		for _, tc := range resp.ToolCalls {
-			item := proxyToolCall{
-				ID:   tc.ID,
-				Type: "function",
-			}
-			item.Function.Name = tc.Name
-			item.Function.Arguments = tc.Input
+		for i, tc := range resp.ToolCalls {
+			item := proxyToolCallFromLLM(tc)
+			item.Index = intPtr(i)
 			toolCalls = append(toolCalls, item)
 		}
 		message.ToolCalls = toolCalls
@@ -612,9 +669,10 @@ func buildProxyLLMRequest(req *proxyChatRequest, resolvedModel string) (*llm.Cha
 				converted.ToolCalls = make([]llm.ToolCall, 0, len(msg.ToolCalls))
 				for _, tc := range msg.ToolCalls {
 					converted.ToolCalls = append(converted.ToolCalls, llm.ToolCall{
-						ID:    strings.TrimSpace(tc.ID),
-						Name:  strings.TrimSpace(tc.Function.Name),
-						Input: strings.TrimSpace(tc.Function.Arguments),
+						ID:               strings.TrimSpace(tc.ID),
+						Name:             strings.TrimSpace(tc.Function.Name),
+						Input:            strings.TrimSpace(tc.Function.Arguments),
+						ThoughtSignature: proxyToolCallThoughtSignature(tc),
 					})
 				}
 			}

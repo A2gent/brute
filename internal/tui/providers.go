@@ -13,6 +13,7 @@ import (
 	"github.com/A2gent/brute/internal/llm/anthropic"
 	"github.com/A2gent/brute/internal/llm/autorouter"
 	"github.com/A2gent/brute/internal/llm/claudecli"
+	"github.com/A2gent/brute/internal/llm/cursorcli"
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/llm/gemini"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
@@ -144,6 +145,8 @@ func (m Model) showStaticModels() (tea.Model, tea.Cmd) {
 			"google/gemini-2.5-pro",
 			"meta-llama/llama-4-maverick",
 		}
+	case config.ProviderCursor:
+		m.availableModels = []string{"composer-2.5", "composer-latest", "auto"}
 	case config.ProviderAnthropic:
 		m.availableModels = []string{
 			"claude-opus-4-6",
@@ -310,6 +313,8 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenAI:
 			// Other OpenAI-compatible providers
 			return lmstudio.NewClient(apiKey, model, baseURL), model, nil
+		case config.ProviderCursor:
+			return cursorcli.NewClientWithOptions(model, cursorcli.Options{WorkDir: m.appConfig.WorkDir, APIKey: apiKey}), model, nil
 		case config.ProviderAnthropic:
 			return claudecli.NewClient(model, m.appConfig.WorkDir), model, nil
 		default:
@@ -497,6 +502,8 @@ func providerAPIKeyEnvName(providerType config.ProviderType) string {
 		return "KIMI_API_KEY"
 	case config.ProviderAnthropic:
 		return "ANTHROPIC_API_KEY"
+	case config.ProviderCursor:
+		return "CURSOR_API_KEY"
 	case config.ProviderOpenRouter:
 		return "OPENROUTER_API_KEY"
 	case config.ProviderGoogle:

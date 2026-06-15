@@ -3,10 +3,14 @@ package http
 
 import (
 	"fmt"
+	"os"
+	"strings"
+
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/anthropic"
 	"github.com/A2gent/brute/internal/llm/claudecli"
+	"github.com/A2gent/brute/internal/llm/cursorcli"
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/llm/gemini"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
@@ -14,9 +18,16 @@ import (
 	"github.com/A2gent/brute/internal/llm/retry"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/storage"
-	"os"
-	"strings"
 )
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
 
 const llmProviderProxyEnabledSettingKey = "A2GENT_LLM_PROVIDER_PROXY_ENABLED"
 
@@ -135,6 +146,17 @@ func (s *Server) createBaseLLMClientForSession(providerType config.ProviderType,
 		}
 		return claudecli.NewClient(modelName, s.resolveSessionWorkDir(sess)), nil
 	}
+	if providerType == config.ProviderCursor {
+		modelName := strings.TrimSpace(model)
+		if modelName == "" {
+			modelName = s.resolveModelForProvider(providerType)
+		}
+		provider := s.config.Providers[string(providerType)]
+		return cursorcli.NewClientWithOptions(modelName, cursorcli.Options{
+			WorkDir: s.resolveSessionWorkDir(sess),
+			APIKey:  firstNonEmpty(strings.TrimSpace(provider.APIKey), s.apiKeyFromEnv(providerType)),
+		}), nil
+	}
 	return s.createBaseLLMClient(providerType, model)
 }
 
@@ -179,6 +201,12 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 
 	if providerType == config.ProviderAnthropic {
 		return claudecli.NewClient(modelName, s.resolveSessionWorkDir(nil)), nil
+	}
+	if providerType == config.ProviderCursor {
+		return cursorcli.NewClientWithOptions(modelName, cursorcli.Options{
+			WorkDir: s.resolveSessionWorkDir(nil),
+			APIKey:  firstNonEmpty(strings.TrimSpace(provider.APIKey), s.apiKeyFromEnv(providerType)),
+		}), nil
 	}
 
 	if parentProxyURL := strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_URL")); parentProxyURL != "" {
@@ -284,6 +312,8 @@ func (s *Server) apiKeyEnvName(providerType config.ProviderType) string {
 	switch providerType {
 	case config.ProviderAnthropic:
 		return "ANTHROPIC_API_KEY"
+	case config.ProviderCursor:
+		return "CURSOR_API_KEY"
 	case config.ProviderKimi:
 		return "KIMI_API_KEY"
 	case config.ProviderOpenRouter:
@@ -455,6 +485,9 @@ func (s *Server) providerConfiguredForUse(providerType config.ProviderType) bool
 	}
 	if providerType == config.ProviderAnthropic {
 		return claudecli.IsAvailable()
+	}
+	if providerType == config.ProviderCursor {
+		return cursorcli.IsAvailable()
 	}
 	provider := s.config.Providers[string(providerType)]
 	baseURL := strings.TrimSpace(provider.BaseURL)

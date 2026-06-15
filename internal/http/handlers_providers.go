@@ -523,6 +523,16 @@ func (s *Server) handleListOpenCodeZenModels(w http.ResponseWriter, r *http.Requ
 	s.handleListOpenAICompatibleModels(w, r, config.ProviderOpenCodeZen, "OpenCode Zen")
 }
 
+func (s *Server) handleListCursorModels(w http.ResponseWriter, r *http.Request) {
+	s.jsonResponse(w, http.StatusOK, ListProviderModelsResponse{
+		Models: []string{
+			"composer-2.5",
+			"composer-latest",
+			"auto",
+		},
+	})
+}
+
 func (s *Server) handleListAnthropicModels(w http.ResponseWriter, r *http.Request) {
 	s.jsonResponse(w, http.StatusOK, ListProviderModelsResponse{
 		Models: []string{

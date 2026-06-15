@@ -15,6 +15,7 @@ import (
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/anthropic"
 	"github.com/A2gent/brute/internal/llm/claudecli"
+	"github.com/A2gent/brute/internal/llm/cursorcli"
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/llm/gemini"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
@@ -27,6 +28,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
 )
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
 
 const thinkingJobIDSettingKey = "A2GENT_THINKING_JOB_ID"
 const thinkingProjectID = "project-thinking"
@@ -533,6 +543,12 @@ func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model 
 	if providerType == config.ProviderAnthropic {
 		return claudecli.NewClient(modelName, workDir), nil
 	}
+	if providerType == config.ProviderCursor {
+		return cursorcli.NewClientWithOptions(modelName, cursorcli.Options{
+			WorkDir: workDir,
+			APIKey:  firstNonEmpty(strings.TrimSpace(provider.APIKey), s.apiKeyFromEnv(providerType)),
+		}), nil
+	}
 
 	if parentProxyURL := strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_URL")); parentProxyURL != "" {
 		proxyBaseURL := normalizeOpenAIBaseURL(strings.TrimRight(parentProxyURL, "/") + "/providers/" + string(providerType))
@@ -625,6 +641,8 @@ func (s *Scheduler) apiKeyEnvName(providerType config.ProviderType) string {
 	switch providerType {
 	case config.ProviderAnthropic:
 		return "ANTHROPIC_API_KEY"
+	case config.ProviderCursor:
+		return "CURSOR_API_KEY"
 	case config.ProviderKimi:
 		return "KIMI_API_KEY"
 	case config.ProviderOpenRouter:
@@ -745,6 +763,9 @@ func (s *Scheduler) providerConfiguredForUse(providerType config.ProviderType) b
 	}
 	if providerType == config.ProviderAnthropic {
 		return claudecli.IsAvailable()
+	}
+	if providerType == config.ProviderCursor {
+		return cursorcli.IsAvailable()
 	}
 	provider := s.config.Providers[string(providerType)]
 	baseURL := strings.TrimSpace(provider.BaseURL)

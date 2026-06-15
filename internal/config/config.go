@@ -82,6 +82,7 @@ const (
 	ProviderOpenCodeZen ProviderType = "opencode_zen"
 	ProviderLMStudio    ProviderType = "lmstudio"
 	ProviderAnthropic   ProviderType = "anthropic"
+	ProviderCursor      ProviderType = "cursor"
 	ProviderGoogle      ProviderType = "google"
 	ProviderOpenAI      ProviderType = "openai"
 	ProviderOpenAICodex ProviderType = "openai_codex"
@@ -157,6 +158,14 @@ func SupportedProviders() []ProviderDefinition {
 			RequiresKey:   false,
 			DefaultModel:  "claude-opus-4-6",
 			ContextWindow: 200000,
+		},
+		{
+			Type:          ProviderCursor,
+			DisplayName:   "Cursor Composer (Cursor CLI)",
+			DefaultURL:    "",
+			RequiresKey:   false,
+			DefaultModel:  "composer-2.5",
+			ContextWindow: 0,
 		},
 		{
 			Type:          ProviderGoogle,

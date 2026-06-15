@@ -8,6 +8,13 @@ import (
 	"testing"
 )
 
+func TestNormalizeQueryHandlesQuotedRelativePaths(t *testing.T) {
+	input := "  `./src\\components/SearchBox.tsx`  "
+	if got := NormalizeQuery(input); got != "src/components/SearchBox.tsx" {
+		t.Fatalf("NormalizeQuery() = %q", got)
+	}
+}
+
 func TestIndexSearchesPathsAndSkipsDependencyFolders(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "src/components/SearchBox.tsx", "export function SearchBox() { return null }\n")

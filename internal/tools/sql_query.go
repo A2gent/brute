@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/A2gent/brute/internal/dbtool"
 	"github.com/A2gent/brute/internal/storage"
@@ -51,11 +52,14 @@ func (t *SQLQueryTool) Schema() map[string]interface{} {
 			},
 			"limit": map[string]interface{}{
 				"type":        "integer",
-				"description": "Maximum number of rows to return (default 50).",
+				"description": "Maximum number of rows to return (default 50, max 1000).",
+				"minimum":     1,
+				"maximum":     1000,
 			},
 			"offset": map[string]interface{}{
 				"type":        "integer",
 				"description": "Offset for pagination (default 0).",
+				"minimum":     0,
 			},
 			"format": map[string]interface{}{
 				"type":        "string",
@@ -74,7 +78,7 @@ func (t *SQLQueryTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 	}
 
 	query, ok := args["query"].(string)
-	if !ok {
+	if !ok || strings.TrimSpace(query) == "" {
 		return &Result{Success: false, Error: "query is required"}, nil
 	}
 
@@ -82,40 +86,46 @@ func (t *SQLQueryTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 	if l, ok := args["limit"].(float64); ok {
 		limit = int(l)
 	}
+	// Require bounded pagination before opening a DB connection so accidental
+	// model-generated calls cannot request unbounded result sets.
+	if limit <= 0 || limit > 1000 {
+		return &Result{Success: false, Error: "limit must be between 1 and 1000"}, nil
+	}
 
 	offset := 0
 	if o, ok := args["offset"].(float64); ok {
 		offset = int(o)
 	}
+	if offset < 0 {
+		return &Result{Success: false, Error: "offset must be greater than or equal to 0"}, nil
+	}
 
 	format := "csv"
 	if f, ok := args["format"].(string); ok {
-		format = f
+		format = strings.ToLower(strings.TrimSpace(f))
+		if format == "" {
+			format = "csv"
+		}
+	}
+	if format != "csv" && format != "json" {
+		return &Result{Success: false, Error: "format must be one of: csv, json"}, nil
 	}
 
 	var cfg dbtool.Config
 
 	connectionName, hasConnName := args["connection_name"].(string)
 	dsn, hasDsn := args["dsn"].(string)
+	connectionName = strings.TrimSpace(connectionName)
+	dsn = strings.TrimSpace(dsn)
 
 	if hasConnName && connectionName != "" {
-		// ToolContext / Session ProjectId is not strictly passed to tools right now cleanly without a larger refactor in Execute method signature.
-		// For now we will rely on DSN or maybe fetch it differently. Wait, I can modify the ToolContext / session? 
-		// Actually, I can retrieve the ProjectID if it is passed in the context. Is it? Let's check `manager.Execute` signature.
-		// It only takes ctx. I can try to extract project ID from context if it's there.
-		
-		// For now, let's just use a global or something if we really need it, but realistically I can't look up by project ID here easily if context doesn't have it.
-		// Let's modify so connectionName checks all databases and matches by name if it's unique, or we can look up project ID from context if we inject it.
-		// For now let's just mock the ProjectID extraction.
-		
-		var projectID string
-		// Try to find the project ID from context. 
-		if pID, ok := ctx.Value("projectID").(string); ok && pID != "" {
-			projectID = pID
-		}
-		
+		projectID, _ := ctx.Value("projectID").(string)
+		projectID = strings.TrimSpace(projectID)
 		if projectID == "" {
 			return &Result{Success: false, Error: "connection_name requires an active project context (project ID not found in context)"}, nil
+		}
+		if t.store == nil {
+			return &Result{Success: false, Error: "connection_name requires project database storage to be configured"}, nil
 		}
 
 		dbs, err := t.store.ListProjectDatabases(projectID)
@@ -124,7 +134,9 @@ func (t *SQLQueryTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 		}
 
 		var matchedDB *storage.ProjectDatabase
+		available := make([]string, 0, len(dbs))
 		for _, db := range dbs {
+			available = append(available, db.Name)
 			if db.Name == connectionName {
 				matchedDB = db
 				break
@@ -132,27 +144,27 @@ func (t *SQLQueryTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 		}
 
 		if matchedDB == nil {
-			available := ""
-			for _, db := range dbs {
-				available += db.Name + ", "
-			}
-			return &Result{Success: false, Error: fmt.Sprintf("database connection '%s' not found in project. Available: %s", connectionName, available)}, nil
+			return &Result{Success: false, Error: fmt.Sprintf("database connection %q not found in project. Available: %s", connectionName, strings.Join(available, ", "))}, nil
 		}
 
 		cfg = dbtool.Config{
-			Engine:     matchedDB.Engine,
-			DSN:        matchedDB.DSN,
+			Engine:     strings.TrimSpace(matchedDB.Engine),
+			DSN:        strings.TrimSpace(matchedDB.DSN),
 			IsReadOnly: matchedDB.IsReadOnly,
 		}
 	} else if hasDsn && dsn != "" {
 		engine, _ := args["engine"].(string)
+		engine = strings.ToLower(strings.TrimSpace(engine))
 		if engine == "" {
 			return &Result{Success: false, Error: "engine is required when using raw dsn"}, nil
+		}
+		if engine != "postgres" && engine != "mysql" && engine != "sqlite" {
+			return &Result{Success: false, Error: "engine must be one of: postgres, mysql, sqlite"}, nil
 		}
 		cfg = dbtool.Config{
 			Engine:     engine,
 			DSN:        dsn,
-			IsReadOnly: false, // Assume raw connections allow execution unless restricted by the user credentials
+			IsReadOnly: false, // Raw DSN permissions are controlled by the provided database credentials.
 		}
 	} else {
 		return &Result{Success: false, Error: "either connection_name or dsn must be provided"}, nil

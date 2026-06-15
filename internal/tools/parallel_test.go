@@ -44,6 +44,23 @@ func (t *outputOnlyFailTool) Execute(_ context.Context, _ json.RawMessage) (*Res
 	return &Result{Success: false, Output: `[{"step":1,"error":"tool not found: missing"}]`}, nil
 }
 
+type metadataFailTool struct{}
+
+func (t *metadataFailTool) Name() string        { return "test_metadata_fail" }
+func (t *metadataFailTool) Description() string { return "fails with metadata" }
+func (t *metadataFailTool) Schema() map[string]interface{} {
+	return map[string]interface{}{"type": "object"}
+}
+func (t *metadataFailTool) Execute(_ context.Context, _ json.RawMessage) (*Result, error) {
+	return &Result{
+		Success: false,
+		Error:   "child failed",
+		Metadata: map[string]interface{}{
+			"child_session_id": "child-1",
+		},
+	}, nil
+}
+
 func TestParallelTool_Execute(t *testing.T) {
 	manager := NewManager(t.TempDir())
 	manager.Register(&emitTool{})
@@ -333,5 +350,28 @@ func TestManagerExecuteParallel_PreservesOutputOnlyFailure(t *testing.T) {
 	}
 	if !strings.Contains(results[0].Content, "tool not found: missing") {
 		t.Fatalf("expected structured failure output to be preserved, got: %s", results[0].Content)
+	}
+}
+
+func TestManagerExecuteParallel_PreservesFailureMetadata(t *testing.T) {
+	manager := NewManager(t.TempDir())
+	manager.Register(&metadataFailTool{})
+
+	results := manager.ExecuteParallel(context.Background(), []llm.ToolCall{
+		{
+			ID:    "tc-metadata-fail",
+			Name:  "test_metadata_fail",
+			Input: `{}`,
+		},
+	})
+
+	if len(results) != 1 {
+		t.Fatalf("expected one result, got %d", len(results))
+	}
+	if !results[0].IsError {
+		t.Fatalf("expected error result: %#v", results[0])
+	}
+	if results[0].Metadata["child_session_id"] != "child-1" {
+		t.Fatalf("expected failure metadata to be preserved, got %#v", results[0].Metadata)
 	}
 }

@@ -4,10 +4,15 @@
 package http
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	nethttp "net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -18,9 +23,11 @@ import (
 )
 
 const (
-	dockerDelegationStartTimeout = 30 * time.Second
-	dockerDelegationTaskTimeout  = 5 * time.Minute
-	delegationResponseMaxChars   = 4000
+	dockerDelegationStartTimeout       = 30 * time.Second
+	defaultDockerDelegationTaskTimeout = 30 * time.Minute
+	dockerDelegationTaskTimeoutEnvVar  = "A2GENT_DOCKER_DELEGATION_TIMEOUT"
+	delegationResponseMaxChars         = 4000
+	dockerDelegationStreamBodyLimit    = 1024 * 1024
 )
 
 type delegateToAgentTool struct {
@@ -34,6 +41,19 @@ type delegateToAgentParams struct {
 
 func newDelegateToAgentTool(server *Server) *delegateToAgentTool {
 	return &delegateToAgentTool{server: server}
+}
+
+func dockerDelegationTaskTimeout() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(dockerDelegationTaskTimeoutEnvVar))
+	if raw == "" {
+		return defaultDockerDelegationTaskTimeout
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil || parsed <= 0 {
+		logging.Warn("Invalid %s=%q, using default %s", dockerDelegationTaskTimeoutEnvVar, raw, defaultDockerDelegationTaskTimeout)
+		return defaultDockerDelegationTaskTimeout
+	}
+	return parsed
 }
 
 func (t *delegateToAgentTool) Name() string {
@@ -176,15 +196,21 @@ func (s *Server) runDockerDefinitionDelegation(ctx context.Context, agentID stri
 // container is reused warm: a stopped container is started and health-checked,
 // but `docker run` never happens per delegation.
 func (s *Server) runDockerAgentDelegation(ctx context.Context, agent *LocalDockerAgent, task string) (*tools.Result, error) {
-	daErrorResult := func(errMsg string) *tools.Result {
+	daErrorResult := func(errMsg string, extra ...map[string]interface{}) *tools.Result {
+		metadata := map[string]interface{}{
+			"agent_name":    agent.Name,
+			"agent_id":      agent.ID,
+			"agent_runtime": "docker",
+		}
+		for _, items := range extra {
+			for key, value := range items {
+				metadata[key] = value
+			}
+		}
 		return &tools.Result{
-			Success: false,
-			Error:   errMsg,
-			Metadata: map[string]interface{}{
-				"agent_name":    agent.Name,
-				"agent_id":      agent.ID,
-				"agent_runtime": "docker",
-			},
+			Success:  false,
+			Error:    errMsg,
+			Metadata: metadata,
 		}
 	}
 
@@ -207,9 +233,10 @@ func (s *Server) runDockerAgentDelegation(ctx context.Context, agent *LocalDocke
 
 	parentSessionID, _ := ctx.Value("session_id").(string)
 
-	taskCtx, cancel := context.WithTimeout(ctx, dockerDelegationTaskTimeout)
+	taskTimeout := dockerDelegationTaskTimeout()
+	taskCtx, cancel := context.WithTimeout(ctx, taskTimeout)
 	defer cancel()
-	client := &nethttp.Client{Timeout: dockerDelegationTaskTimeout}
+	client := &nethttp.Client{}
 
 	healthCtx, healthCancel := context.WithTimeout(taskCtx, dockerDelegationStartTimeout)
 	err := waitForLocalDockerAgentHTTP(healthCtx, client, agent.APIURL)
@@ -235,8 +262,16 @@ func (s *Server) runDockerAgentDelegation(ctx context.Context, agent *LocalDocke
 		parentSessionID, agent.Name, created.ID, truncateForLog(task, 100))
 
 	var chatResp ChatResponse
-	if err := postLocalDockerAgentJSON(taskCtx, client, baseURL+"/sessions/"+created.ID+"/chat", ChatRequest{Message: task}, &chatResp); err != nil {
-		return daErrorResult(fmt.Sprintf("docker agent '%s' failed: %s", agent.Name, err.Error())), nil
+	chatResp, err = postLocalDockerAgentChatStream(taskCtx, client, baseURL+"/sessions/"+created.ID+"/chat/stream", ChatRequest{Message: task}, func(event ChatStreamEvent) {
+		s.dockerRuntime.touch(agent.Name)
+		s.logDockerDelegationStreamEvent(agent.Name, created.ID, event)
+	})
+	if err != nil {
+		return daErrorResult(fmt.Sprintf("docker agent '%s' failed (child session %s): %s", agent.Name, created.ID, err.Error()), map[string]interface{}{
+			"child_session_id": created.ID,
+			"agent_api_url":    agent.APIURL,
+			"logs_command":     fmt.Sprintf("docker logs --tail 200 %s", agent.Name),
+		}), nil
 	}
 	// Refresh idleness after the task so the reaper measures from completion.
 	s.dockerRuntime.touch(agent.Name)
@@ -269,6 +304,123 @@ func (s *Server) runDockerAgentDelegation(ctx context.Context, agent *LocalDocke
 			"child_session_id": created.ID,
 		},
 	}, nil
+}
+
+func postLocalDockerAgentChatStream(ctx context.Context, client *nethttp.Client, url string, payload ChatRequest, onEvent func(ChatStreamEvent)) (ChatResponse, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return ChatResponse{}, err
+	}
+	req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return ChatResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return ChatResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, dockerDelegationStreamBodyLimit))
+		msg := strings.TrimSpace(string(respBody))
+		if msg == "" {
+			msg = resp.Status
+		}
+		return ChatResponse{}, fmt.Errorf("POST %s failed: %s", url, msg)
+	}
+
+	var chatResp ChatResponse
+	reader := bufio.NewReader(resp.Body)
+	sawEvent := false
+	lastType := ""
+	for {
+		line, readErr := reader.ReadString('\n')
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			sawEvent = true
+			var event ChatStreamEvent
+			if err := json.Unmarshal([]byte(trimmed), &event); err != nil {
+				return chatResp, fmt.Errorf("failed to decode stream event from %s: %w", url, err)
+			}
+			lastType = strings.TrimSpace(event.Type)
+			applyDockerDelegationStreamEvent(&chatResp, event)
+			if onEvent != nil {
+				onEvent(event)
+			}
+			switch event.Type {
+			case "done":
+				return chatResp, nil
+			case "error":
+				message := strings.TrimSpace(event.Error)
+				if message == "" {
+					message = "docker agent stream failed"
+				}
+				return chatResp, errors.New(message)
+			}
+		}
+		if readErr == nil {
+			continue
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		return chatResp, fmt.Errorf("failed reading stream from %s: %w", url, readErr)
+	}
+
+	if sawEvent {
+		return chatResp, fmt.Errorf("stream from %s ended before terminal event (last event=%s status=%s)", url, firstNonEmptyLocalAgentString(lastType, "unknown"), firstNonEmptyLocalAgentString(chatResp.Status, "unknown"))
+	}
+	return chatResp, fmt.Errorf("stream from %s ended without events", url)
+}
+
+func applyDockerDelegationStreamEvent(resp *ChatResponse, event ChatStreamEvent) {
+	if resp == nil {
+		return
+	}
+	if status := strings.TrimSpace(event.Status); status != "" {
+		resp.Status = status
+	}
+	if len(event.Messages) > 0 {
+		resp.Messages = event.Messages
+	}
+	if event.Usage != nil {
+		resp.Usage = *event.Usage
+	}
+	if event.Type == "done" {
+		resp.Content = event.Content
+	}
+}
+
+func (s *Server) logDockerDelegationStreamEvent(agentName string, childSessionID string, event ChatStreamEvent) {
+	switch event.Type {
+	case "status":
+		logging.Info("Docker agent delegation status: container=%s child=%s status=%s", agentName, childSessionID, firstNonEmptyLocalAgentString(event.Status, "unknown"))
+	case "tool_executing":
+		logging.Info("Docker agent delegation tool started: container=%s child=%s step=%d tools=%s", agentName, childSessionID, event.Step, streamToolCallNames(event.ToolCalls))
+	case "tool_completed":
+		logging.Info("Docker agent delegation tool completed: container=%s child=%s step=%d status=%s", agentName, childSessionID, event.Step, firstNonEmptyLocalAgentString(event.Status, "unknown"))
+	case "input_required":
+		logging.Warn("Docker agent delegation needs input: container=%s child=%s status=%s", agentName, childSessionID, firstNonEmptyLocalAgentString(event.Status, "input_required"))
+	case "error":
+		logging.Warn("Docker agent delegation stream error: container=%s child=%s error=%s", agentName, childSessionID, truncateForLog(event.Error, 300))
+	case "done":
+		logging.Info("Docker agent delegation completed: container=%s child=%s status=%s response_chars=%d", agentName, childSessionID, firstNonEmptyLocalAgentString(event.Status, "unknown"), len(event.Content))
+	}
+}
+
+func streamToolCallNames(calls []StreamToolCallEvent) string {
+	if len(calls) == 0 {
+		return "none"
+	}
+	names := make([]string, 0, len(calls))
+	for i, call := range calls {
+		if i >= 4 {
+			names = append(names, "...")
+			break
+		}
+		names = append(names, firstNonEmptyLocalAgentString(strings.TrimSpace(call.Name), "unknown"))
+	}
+	return strings.Join(names, ",")
 }
 
 func emptyDockerDelegationMessage(agentName string, childSessionID string, chatResp ChatResponse) string {

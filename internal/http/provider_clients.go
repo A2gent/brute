@@ -139,25 +139,24 @@ func (s *Server) createLLMClient(providerType config.ProviderType, model string,
 }
 
 func (s *Server) createBaseLLMClientForSession(providerType config.ProviderType, model string, sess *session.Session) (llm.Client, error) {
+	modelName := strings.TrimSpace(model)
+	if modelName == "" {
+		modelName = s.resolveModelForProvider(providerType)
+	}
+	if client, ok := s.createParentProxyLLMClient(providerType, modelName); ok {
+		return client, nil
+	}
 	if providerType == config.ProviderAnthropic {
-		modelName := strings.TrimSpace(model)
-		if modelName == "" {
-			modelName = s.resolveModelForProvider(providerType)
-		}
 		return claudecli.NewClient(modelName, s.resolveSessionWorkDir(sess)), nil
 	}
 	if providerType == config.ProviderCursor {
-		modelName := strings.TrimSpace(model)
-		if modelName == "" {
-			modelName = s.resolveModelForProvider(providerType)
-		}
 		provider := s.config.Providers[string(providerType)]
 		return cursorcli.NewClientWithOptions(modelName, cursorcli.Options{
 			WorkDir: s.resolveSessionWorkDir(sess),
 			APIKey:  firstNonEmpty(strings.TrimSpace(provider.APIKey), s.apiKeyFromEnv(providerType)),
 		}), nil
 	}
-	return s.createBaseLLMClient(providerType, model)
+	return s.createBaseLLMClient(providerType, modelName)
 }
 
 func (s *Server) createBaseLLMClient(providerType config.ProviderType, model string) (llm.Client, error) {
@@ -198,7 +197,9 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 	if modelName == "" {
 		modelName = s.resolveModelForProvider(providerType)
 	}
-
+	if client, ok := s.createParentProxyLLMClient(providerType, modelName); ok {
+		return client, nil
+	}
 	if providerType == config.ProviderAnthropic {
 		return claudecli.NewClient(modelName, s.resolveSessionWorkDir(nil)), nil
 	}
@@ -207,15 +208,6 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 			WorkDir: s.resolveSessionWorkDir(nil),
 			APIKey:  firstNonEmpty(strings.TrimSpace(provider.APIKey), s.apiKeyFromEnv(providerType)),
 		}), nil
-	}
-
-	if parentProxyURL := strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_URL")); parentProxyURL != "" {
-		proxyBaseURL := normalizeOpenAIBaseURL(strings.TrimRight(parentProxyURL, "/") + "/providers/" + string(providerType))
-		proxyAPIKey := strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_KEY"))
-		if proxyAPIKey == "" {
-			proxyAPIKey = "a2gent-proxy"
-		}
-		return lmstudio.NewClient(proxyAPIKey, modelName, proxyBaseURL), nil
 	}
 
 	apiKey := strings.TrimSpace(provider.APIKey)
@@ -282,6 +274,26 @@ func (s *Server) createFallbackChainClient(providerRef config.ProviderType, sess
 	}
 	start := sessionFallbackStartIndex(sess, providerRef)
 	return fallback.NewClient(nodes, fallback.WithMaxRetries(retries), fallback.WithStartIndex(start)), nil
+}
+
+func (s *Server) createParentProxyLLMClient(providerType config.ProviderType, modelName string) (llm.Client, bool) {
+	parentProxyURL := strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_URL"))
+	if parentProxyURL == "" {
+		return nil, false
+	}
+	// WHY: Docker sub-agents inherit the parent host's provider through Brute's
+	// OpenAI-compatible proxy. Host-only providers such as Claude CLI must run on
+	// the parent machine, not inside the child container where the CLI is absent.
+	proxyBaseURL := normalizeOpenAIBaseURL(strings.TrimRight(parentProxyURL, "/") + "/providers/" + string(providerType))
+	proxyAPIKey := strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_KEY"))
+	if proxyAPIKey == "" {
+		proxyAPIKey = "a2gent-proxy"
+	}
+	return lmstudio.NewClient(proxyAPIKey, modelName, proxyBaseURL), true
+}
+
+func (s *Server) parentProxyAvailable() bool {
+	return strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_URL")) != ""
 }
 
 func normalizeOpenAIBaseURL(raw string) string {
@@ -482,6 +494,9 @@ func (s *Server) providerConfiguredForUse(providerType config.ProviderType) bool
 	def := config.GetProviderDefinition(providerType)
 	if def == nil || providerType == config.ProviderFallback || providerType == config.ProviderAutoRouter {
 		return false
+	}
+	if s.parentProxyAvailable() {
+		return true
 	}
 	if providerType == config.ProviderAnthropic {
 		return claudecli.IsAvailable()

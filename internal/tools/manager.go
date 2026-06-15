@@ -198,6 +198,7 @@ func (m *Manager) ExecuteParallel(ctx context.Context, calls []llm.ToolCall) []l
 				}
 				tr.Content = fmt.Sprintf("Error: %s", message)
 				tr.IsError = true
+				tr.Metadata = result.Metadata
 				logging.LogToolExecution(toolName, false, duration)
 				logging.Debug("Tool %s failed: %s", toolName, message)
 			} else {

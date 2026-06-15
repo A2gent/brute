@@ -19,7 +19,7 @@ func (s *Server) setupRoutes() {
 	// HTTP-only/server mode enables it explicitly before Run.
 	r.Use(s.httpAccessLogMiddleware)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(5 * time.Minute))
+	r.Use(middleware.Timeout(serverRequestTimeout()))
 
 	// CORS configuration - allow all origins for flexibility
 	allowedOrigins := s.config.EffectiveCORSAllowedOrigins()
@@ -45,6 +45,7 @@ func (s *Server) setupRoutes() {
 	// A2A Agent Card (Well-Known URI per A2A spec)
 	r.Get("/.well-known/agent-card.json", s.handleAgentCard)
 
+	s.registerSystemRoutes(r)
 	s.registerA2ARoutes(r)
 	s.registerSettingsRoutes(r)
 	s.registerLLMProxyRoutes(r)
@@ -67,6 +68,22 @@ func (s *Server) setupRoutes() {
 	s.registerSkillRoutes(r)
 
 	s.router = r
+}
+
+func serverRequestTimeout() time.Duration {
+	timeout := dockerDelegationTaskTimeout() + time.Minute
+	if timeout < 5*time.Minute {
+		return 5 * time.Minute
+	}
+	return timeout
+}
+
+func (s *Server) registerSystemRoutes(r chi.Router) {
+	// System maintenance endpoints used by Caesar's Agents maintenance panel.
+	r.Route("/system", func(r chi.Router) {
+		r.Post("/rebuild", s.handleRebuildBrute)
+		r.Post("/sub-agent-containers/restart", s.handleRestartRunningSubAgentContainers)
+	})
 }
 
 func (s *Server) registerA2ARoutes(r chi.Router) {

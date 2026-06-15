@@ -54,6 +54,10 @@ agents:
     system_prompt: Review the final diff for regressions.
 ```
 
+## Parent LLM proxy
+
+By default, Docker sub-agents use the parent Brute server's OpenAI-compatible LLM proxy (`A2GENT_PARENT_PROXY_URL`) instead of resolving provider credentials or host-only CLIs inside the container. This is especially important for `llm.provider: anthropic`: Claude Code CLI remains installed on the host machine, while the Docker child sends chat requests to `/v1/providers/anthropic/...` on the parent. Only set `llm.base_url`, `lm_studio_base_url`, or `llm.provider: dmr` when the container must bypass the parent proxy and talk to a model endpoint directly.
+
 ## Docker Model Runner
 
 ```yaml

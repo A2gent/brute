@@ -23,6 +23,7 @@ const (
 	EventAssistantDelta EventType = "assistant_delta"
 	EventStepCompleted  EventType = "step_completed"
 	EventToolExecuting  EventType = "tool_executing"
+	EventToolProgress   EventType = "tool_progress"
 	EventToolCompleted  EventType = "tool_completed"
 	EventProviderTrace  EventType = "provider_trace"
 )
@@ -78,12 +79,13 @@ type compactionConfig struct {
 
 // Event describes a streaming update from the agent.
 type Event struct {
-	Type       EventType
-	Step       int
-	Delta      string
-	ToolCalls  []ToolCallEvent  // Populated for EventToolExecuting
-	ToolResult *ToolResultEvent // Populated for EventToolCompleted (single result)
-	Provider   *ProviderTraceEvent
+	Type         EventType
+	Step         int
+	Delta        string
+	ToolCalls    []ToolCallEvent // Populated for EventToolExecuting
+	ToolProgress *ToolProgressEvent
+	ToolResult   *ToolResultEvent // Populated for EventToolCompleted (single result)
+	Provider     *ProviderTraceEvent
 }
 
 // ToolCallEvent represents a tool call being executed.
@@ -101,6 +103,14 @@ type ToolResultEvent struct {
 	Content    string
 	IsError    bool
 	DurationMs int64
+}
+
+type ToolProgressEvent struct {
+	ToolCallID string
+	ToolName   string
+	Status     string
+	Content    string
+	Metadata   map[string]interface{}
 }
 
 type ProviderTraceEvent struct {

@@ -1,13 +1,35 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/llm"
 )
+
+type proxyTestStreamingClient struct {
+	events []llm.StreamEvent
+	final  *llm.ChatResponse
+}
+
+func (c proxyTestStreamingClient) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatResponse, error) {
+	return c.final, nil
+}
+
+func (c proxyTestStreamingClient) ChatStream(ctx context.Context, request *llm.ChatRequest, onEvent func(llm.StreamEvent) error) (*llm.ChatResponse, error) {
+	for _, event := range c.events {
+		if onEvent != nil {
+			if err := onEvent(event); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return c.final, nil
+}
 
 func TestProxyChatResponseFromLLMPreservesToolCallThoughtSignature(t *testing.T) {
 	resp := &llm.ChatResponse{
@@ -62,6 +84,97 @@ func TestProxyToolCallFromStreamEventPreservesThoughtSignature(t *testing.T) {
 	if toolCall.ExtraContent == nil || toolCall.ExtraContent.Google.ThoughtSignature != "stream-signature" {
 		t.Fatalf("extra_content thought_signature not preserved: %#v", toolCall.ExtraContent)
 	}
+}
+
+func TestLLMProxyStreamFlushesFinalToolCalls(t *testing.T) {
+	client := proxyTestStreamingClient{
+		final: &llm.ChatResponse{
+			ToolCalls: []llm.ToolCall{{
+				ID:    "call_grep",
+				Name:  "grep",
+				Input: `{"pattern":"TODO"}`,
+			}},
+		},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/v1/providers/openai_codex/chat/completions", nil)
+
+	(&Server{}).handleLLMProxyChatCompletionsStream(rec, req, client, &llm.ChatRequest{}, "gpt-test")
+
+	chunks := proxyStreamChunksFromBody(t, rec.Body.String())
+	var found bool
+	for _, chunk := range chunks {
+		if len(chunk.Choices) == 0 || len(chunk.Choices[0].Delta.ToolCalls) == 0 {
+			continue
+		}
+		toolCall := chunk.Choices[0].Delta.ToolCalls[0]
+		if toolCall.ID == "call_grep" && toolCall.Function.Name == "grep" && toolCall.Function.Arguments == `{"pattern":"TODO"}` {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected final tool call chunk, got stream:\n%s", rec.Body.String())
+	}
+}
+
+func TestLLMProxyStreamFinalToolCallDoesNotDuplicateStreamedArguments(t *testing.T) {
+	client := proxyTestStreamingClient{
+		events: []llm.StreamEvent{
+			{Type: llm.StreamEventToolCallDelta, ToolCallIndex: 0, ToolCallID: "call_grep", ToolInputDelta: `{"pattern":`},
+			{Type: llm.StreamEventToolCallDelta, ToolCallIndex: 0, ToolInputDelta: `"TODO"}`},
+		},
+		final: &llm.ChatResponse{
+			ToolCalls: []llm.ToolCall{{
+				ID:    "call_grep",
+				Name:  "grep",
+				Input: `{"pattern":"TODO"}`,
+			}},
+		},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/v1/providers/openai_codex/chat/completions", nil)
+
+	(&Server{}).handleLLMProxyChatCompletionsStream(rec, req, client, &llm.ChatRequest{}, "gpt-test")
+
+	chunks := proxyStreamChunksFromBody(t, rec.Body.String())
+	var foundFinalName bool
+	for _, chunk := range chunks {
+		if len(chunk.Choices) == 0 || len(chunk.Choices[0].Delta.ToolCalls) == 0 {
+			continue
+		}
+		toolCall := chunk.Choices[0].Delta.ToolCalls[0]
+		if toolCall.Function.Name == "grep" {
+			foundFinalName = true
+			if toolCall.Function.Arguments != "" {
+				t.Fatalf("final name-bearing tool chunk duplicated arguments: %#v", toolCall)
+			}
+		}
+	}
+	if !foundFinalName {
+		t.Fatalf("expected final tool-call name chunk, got stream:\n%s", rec.Body.String())
+	}
+}
+
+func proxyStreamChunksFromBody(t *testing.T, body string) []proxyChatStreamChunk {
+	t.Helper()
+	chunks := []proxyChatStreamChunk{}
+	for _, block := range strings.Split(body, "\n\n") {
+		line := strings.TrimSpace(block)
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data: "))
+		if payload == "" || payload == "[DONE]" {
+			continue
+		}
+		var chunk proxyChatStreamChunk
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			t.Fatalf("failed to decode stream chunk %q: %v", payload, err)
+		}
+		chunks = append(chunks, chunk)
+	}
+	return chunks
 }
 
 func TestBuildProxyLLMRequestPreservesToolCallThoughtSignature(t *testing.T) {

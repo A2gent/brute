@@ -11,6 +11,7 @@ import (
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
+	"github.com/A2gent/brute/internal/tools"
 )
 
 // loop implements the main agentic loop
@@ -189,7 +190,23 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			}
 			onEvent(Event{Type: EventToolExecuting, Step: step, ToolCalls: toolCallEvents})
 		}
-		toolResults := a.toolManager.ExecuteParallel(ctx, response.ToolCalls)
+		toolCtx := ctx
+		if onEvent != nil {
+			toolCtx = tools.WithProgressCallback(ctx, func(progress tools.ProgressEvent) {
+				onEvent(Event{
+					Type: EventToolProgress,
+					Step: step,
+					ToolProgress: &ToolProgressEvent{
+						ToolCallID: progress.ToolCallID,
+						ToolName:   progress.ToolName,
+						Status:     progress.Status,
+						Content:    progress.Content,
+						Metadata:   progress.Metadata,
+					},
+				})
+			})
+		}
+		toolResults := a.toolManager.ExecuteParallel(toolCtx, response.ToolCalls)
 
 		// Convert results
 		sessionResults := make([]session.ToolResult, len(toolResults))

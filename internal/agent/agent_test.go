@@ -356,6 +356,84 @@ func (loopNoopTool) Execute(ctx context.Context, params json.RawMessage) (*tools
 	return &tools.Result{Success: true, Output: "ok"}, nil
 }
 
+type loopProgressTool struct{}
+
+func (loopProgressTool) Name() string { return "progress_test" }
+
+func (loopProgressTool) Description() string { return "Progress test tool" }
+
+func (loopProgressTool) Schema() map[string]interface{} {
+	return map[string]interface{}{
+		"type":       "object",
+		"properties": map[string]interface{}{},
+	}
+}
+
+func (loopProgressTool) Execute(ctx context.Context, params json.RawMessage) (*tools.Result, error) {
+	tools.ReportProgress(ctx, tools.ProgressEvent{
+		ToolName: "progress_test",
+		Status:   "child_session_created",
+		Content:  "child session ready",
+		Metadata: map[string]interface{}{
+			"child_session_id": "child-123",
+		},
+	})
+	return &tools.Result{Success: true, Output: "ok"}, nil
+}
+
+func TestLoopEmitsToolProgressEvents(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	sm := session.NewManager(store)
+	sess, err := sm.Create("test-agent")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	sess.AddUserMessage("run progress tool")
+
+	mockLLM := &MockLLM{
+		Responses: []*llm.ChatResponse{
+			{ToolCalls: []llm.ToolCall{{ID: "call-progress", Name: "progress_test", Input: `{}`}}},
+			{Content: "done"},
+		},
+	}
+	manager := tools.NewManager(t.TempDir())
+	manager.Register(loopProgressTool{})
+	ag := New(Config{MaxSteps: 3}, mockLLM, manager, sm)
+
+	var events []Event
+	content, _, err := ag.RunWithEvents(context.Background(), sess, "run progress tool", func(event Event) {
+		events = append(events, event)
+	})
+	if err != nil {
+		t.Fatalf("RunWithEvents returned error: %v", err)
+	}
+	if content != "done" {
+		t.Fatalf("content = %q, want done", content)
+	}
+
+	for _, event := range events {
+		if event.Type != EventToolProgress || event.ToolProgress == nil {
+			continue
+		}
+		if event.ToolProgress.ToolCallID != "call-progress" {
+			t.Fatalf("progress tool_call_id = %q, want call-progress", event.ToolProgress.ToolCallID)
+		}
+		if event.ToolProgress.Status != "child_session_created" {
+			t.Fatalf("progress status = %q, want child_session_created", event.ToolProgress.Status)
+		}
+		if got := event.ToolProgress.Metadata["child_session_id"]; got != "child-123" {
+			t.Fatalf("progress child_session_id = %#v, want child-123", got)
+		}
+		return
+	}
+	t.Fatalf("expected %s event, got %#v", EventToolProgress, events)
+}
+
 func TestLoopFailsWhenMaxStepsReachedWithoutFinalAssistantContent(t *testing.T) {
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	if err != nil {

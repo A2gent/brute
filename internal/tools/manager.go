@@ -29,6 +29,40 @@ type Result struct {
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
+// ProgressEvent lets long-running tools publish non-final status to the active
+// chat stream without committing a tool result to the transcript.
+type ProgressEvent struct {
+	ToolCallID string                 `json:"tool_call_id,omitempty"`
+	ToolName   string                 `json:"tool_name,omitempty"`
+	Status     string                 `json:"status,omitempty"`
+	Content    string                 `json:"content,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type ProgressCallback func(ProgressEvent)
+
+type progressCallbackContextKey struct{}
+
+// WithProgressCallback attaches a tool progress callback to ctx.
+func WithProgressCallback(ctx context.Context, callback ProgressCallback) context.Context {
+	if callback == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, progressCallbackContextKey{}, callback)
+}
+
+// ReportProgress emits a progress event when ctx carries a callback.
+func ReportProgress(ctx context.Context, event ProgressEvent) {
+	callback, _ := ctx.Value(progressCallbackContextKey{}).(ProgressCallback)
+	if callback == nil {
+		return
+	}
+	if event.ToolCallID == "" {
+		event.ToolCallID, _ = ctx.Value("tool_call_id").(string)
+	}
+	callback(event)
+}
+
 // Manager manages available tools
 type Manager struct {
 	tools   map[string]Tool

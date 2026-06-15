@@ -490,13 +490,15 @@ func (s *Server) handleLLMProxyChatCompletionsStream(
 		return
 	}
 
+	streamedContent := false
+	streamedToolArguments := map[int]bool{}
 	finalResp, streamErr := streamingClient.ChatStream(r.Context(), chatReq, func(event llm.StreamEvent) error {
 		switch event.Type {
 		case llm.StreamEventContentDelta:
 			if strings.TrimSpace(event.ContentDelta) == "" {
 				return nil
 			}
-			return writeChunk(proxyChatStreamChunk{
+			err := writeChunk(proxyChatStreamChunk{
 				ID:      requestID,
 				Object:  "chat.completion.chunk",
 				Created: createdAt,
@@ -510,8 +512,15 @@ func (s *Server) handleLLMProxyChatCompletionsStream(
 					},
 				},
 			})
+			if err == nil {
+				streamedContent = true
+			}
+			return err
 		case llm.StreamEventToolCallDelta:
 			tc := proxyToolCallFromStreamEvent(event)
+			if strings.TrimSpace(event.ToolInputDelta) != "" {
+				streamedToolArguments[event.ToolCallIndex] = true
+			}
 			return writeChunk(proxyChatStreamChunk{
 				ID:      requestID,
 				Object:  "chat.completion.chunk",
@@ -546,6 +555,48 @@ func (s *Server) handleLLMProxyChatCompletionsStream(
 		if usage.InputTokens == 0 && usage.OutputTokens == 0 {
 			usage = finalResp.Usage
 		}
+	}
+
+	if finalResp != nil && strings.TrimSpace(finalResp.Content) != "" && !streamedContent {
+		_ = writeChunk(proxyChatStreamChunk{
+			ID:      requestID,
+			Object:  "chat.completion.chunk",
+			Created: createdAt,
+			Model:   model,
+			Choices: []proxyChatStreamDelta{
+				{
+					Index: 0,
+					Delta: proxyChatMessageDelta{
+						Content: finalResp.Content,
+					},
+				},
+			},
+		})
+	}
+	if finalResp != nil && len(finalResp.ToolCalls) > 0 {
+		toolCalls := make([]proxyToolCall, 0, len(finalResp.ToolCalls))
+		for i, tc := range finalResp.ToolCalls {
+			item := proxyToolCallFromLLM(tc)
+			item.Index = intPtr(i)
+			if streamedToolArguments[i] {
+				item.Function.Arguments = ""
+			}
+			toolCalls = append(toolCalls, item)
+		}
+		_ = writeChunk(proxyChatStreamChunk{
+			ID:      requestID,
+			Object:  "chat.completion.chunk",
+			Created: createdAt,
+			Model:   model,
+			Choices: []proxyChatStreamDelta{
+				{
+					Index: 0,
+					Delta: proxyChatMessageDelta{
+						ToolCalls: toolCalls,
+					},
+				},
+			},
+		})
 	}
 
 	if finishReason == "" {

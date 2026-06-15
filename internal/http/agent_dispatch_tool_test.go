@@ -5,8 +5,13 @@ import (
 	"encoding/json"
 	stdhttp "net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/A2gent/brute/internal/agentdef"
+	"github.com/A2gent/brute/internal/storage"
 )
 
 func TestEmptyDockerDelegationMessageIncludesToolLoopDiagnostics(t *testing.T) {
@@ -29,6 +34,74 @@ func TestEmptyDockerDelegationMessageIncludesToolLoopDiagnostics(t *testing.T) {
 	} {
 		if !strings.Contains(message, expected) {
 			t.Fatalf("expected diagnostic to contain %q, got %q", expected, message)
+		}
+	}
+}
+
+func TestRewriteDockerDelegationTaskMapsCurrentProjectHostPaths(t *testing.T) {
+	server, store := newUnifiedAgentsTestServer(t)
+	projectRoot := t.TempDir()
+	project := &storage.Project{
+		ID:        "project-1",
+		Name:      "Project One",
+		Folder:    &projectRoot,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatalf("failed to save project: %v", err)
+	}
+
+	task := "Project root: " + projectRoot + ". Read " + filepath.Join(projectRoot, "brute", "internal", "http") + "."
+	got := server.rewriteDockerDelegationTask(task, dockerWorkspaceBinding{
+		Scope:     agentdef.WorkspaceScopeCurrentProject,
+		ProjectID: project.ID,
+		Mount:     agentdef.WorkspaceMountRW,
+	})
+
+	if strings.Contains(got, projectRoot) {
+		t.Fatalf("rewritten task should not expose host project root:\n%s", got)
+	}
+	for _, expected := range []string{
+		"Docker delegation workspace:",
+		"Use /workspace as the mounted project root",
+		"Project root: /workspace.",
+		"/workspace/brute/internal/http",
+		"(rw)",
+	} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("expected rewritten task to contain %q:\n%s", expected, got)
+		}
+	}
+}
+
+func TestRewriteDockerDelegationTaskMapsMultiProjectMounts(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+	root := t.TempDir()
+	apiRoot := filepath.Join(root, "api")
+	webRoot := filepath.Join(root, "web")
+	task := "Compare " + apiRoot + " with " + filepath.Join(webRoot, "src") + "."
+
+	got := server.rewriteDockerDelegationTask(task, dockerWorkspaceBinding{
+		Scope: agentdef.WorkspaceScopeSelectedProjects,
+		Mount: agentdef.WorkspaceMountRO,
+		ProjectMounts: []dockerWorkspaceProjectMount{
+			{ProjectID: "proj-api", HostPath: apiRoot, ContainerPath: "/workspace/proj-api", Mode: agentdef.WorkspaceMountRO},
+			{ProjectID: "proj-web", HostPath: webRoot, ContainerPath: "/workspace/proj-web", Mode: agentdef.WorkspaceMountRW},
+		},
+	})
+
+	if strings.Contains(got, apiRoot) || strings.Contains(got, webRoot) {
+		t.Fatalf("rewritten task should not expose host mounted paths:\n%s", got)
+	}
+	for _, expected := range []string{
+		"Mounted project roots:",
+		"proj-api: /workspace/proj-api (ro)",
+		"proj-web: /workspace/proj-web (rw)",
+		"Compare /workspace/proj-api with /workspace/proj-web/src.",
+	} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("expected rewritten task to contain %q:\n%s", expected, got)
 		}
 	}
 }

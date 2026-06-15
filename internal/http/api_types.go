@@ -157,21 +157,22 @@ type ChatResponse struct {
 }
 
 type ChatStreamEvent struct {
-	Type                    string                 `json:"type"`
-	Delta                   string                 `json:"delta,omitempty"`
-	Content                 string                 `json:"content,omitempty"`
-	Message                 *MessageResponse       `json:"message,omitempty"`
-	Messages                []MessageResponse      `json:"messages,omitempty"`
-	Status                  string                 `json:"status,omitempty"`
-	Usage                   *UsageResponse         `json:"usage,omitempty"`
-	Error                   string                 `json:"error,omitempty"`
-	Question                *session.QuestionData  `json:"question,omitempty"`
-	ToolCalls               []StreamToolCallEvent  `json:"tool_calls,omitempty"`
-	ToolResult              *StreamToolResultEvent `json:"tool_result,omitempty"`
-	Provider                *StreamProviderEvent   `json:"provider,omitempty"`
-	Workflow                interface{}            `json:"workflow,omitempty"`
-	WorkflowTranscriptEntry interface{}            `json:"workflow_transcript_entry,omitempty"`
-	Step                    int                    `json:"step,omitempty"`
+	Type                    string                   `json:"type"`
+	Delta                   string                   `json:"delta,omitempty"`
+	Content                 string                   `json:"content,omitempty"`
+	Message                 *MessageResponse         `json:"message,omitempty"`
+	Messages                []MessageResponse        `json:"messages,omitempty"`
+	Status                  string                   `json:"status,omitempty"`
+	Usage                   *UsageResponse           `json:"usage,omitempty"`
+	Error                   string                   `json:"error,omitempty"`
+	Question                *session.QuestionData    `json:"question,omitempty"`
+	ToolCalls               []StreamToolCallEvent    `json:"tool_calls,omitempty"`
+	ToolProgress            *StreamToolProgressEvent `json:"tool_progress,omitempty"`
+	ToolResult              *StreamToolResultEvent   `json:"tool_result,omitempty"`
+	Provider                *StreamProviderEvent     `json:"provider,omitempty"`
+	Workflow                interface{}              `json:"workflow,omitempty"`
+	WorkflowTranscriptEntry interface{}              `json:"workflow_transcript_entry,omitempty"`
+	Step                    int                      `json:"step,omitempty"`
 }
 
 // StreamToolCallEvent represents a tool call in a stream event.
@@ -180,6 +181,14 @@ type StreamToolCallEvent struct {
 	Name             string          `json:"name"`
 	Input            json.RawMessage `json:"input"`
 	ThoughtSignature string          `json:"thought_signature,omitempty"`
+}
+
+type StreamToolProgressEvent struct {
+	ToolCallID string                 `json:"tool_call_id,omitempty"`
+	ToolName   string                 `json:"tool_name,omitempty"`
+	Status     string                 `json:"status,omitempty"`
+	Content    string                 `json:"content,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // StreamToolResultEvent represents a tool result in a stream event.

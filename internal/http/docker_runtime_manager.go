@@ -327,7 +327,13 @@ func (m *dockerRuntimeManager) ensureAgentContainer(ctx context.Context, def *ag
 	if err != nil {
 		return nil, err
 	}
+	return m.ensureAgentContainerForWorkspace(ctx, def, workspace)
+}
 
+func (m *dockerRuntimeManager) ensureAgentContainerForWorkspace(ctx context.Context, def *agentdef.Definition, workspace dockerWorkspaceBinding) (*LocalDockerAgent, error) {
+	if def == nil || def.Runtime.Type != agentdef.RuntimeDocker {
+		return nil, fmt.Errorf("definition is not a docker runtime agent")
+	}
 	containerName := containerNameForAgent(def.Agent.ID, workspace.ContainerNameBinding)
 	lock := m.creationLock(containerName)
 	lock.Lock()
@@ -338,6 +344,7 @@ func (m *dockerRuntimeManager) ensureAgentContainer(ctx context.Context, def *ag
 	}
 
 	agent, findErr := findLocalBruteContainer(ctx, containerName)
+	var err error
 	switch {
 	case findErr == nil && agent.Running:
 		// Warm reuse.
@@ -413,9 +420,7 @@ func (m *dockerRuntimeManager) createAgentContainer(ctx context.Context, def *ag
 				Mode:          projectMount.Mode,
 			})
 		}
-	if len(workspace.ProjectMounts) > 0 {
 		req.SystemPrompt = appendDockerMultiProjectWorkspacePrompt(req.SystemPrompt, workspace.ProjectMounts)
-	}
 	}
 	if req.Labels == nil {
 		req.Labels = map[string]string{}

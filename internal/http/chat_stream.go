@@ -218,6 +218,21 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 				Message:   streamLastMessageResponse(s, sess),
 				ToolCalls: toolCalls,
 			})
+		case agent.EventToolProgress:
+			if ev.ToolProgress == nil {
+				return
+			}
+			_ = writeEvent(ChatStreamEvent{
+				Type: "tool_progress",
+				Step: ev.Step,
+				ToolProgress: &StreamToolProgressEvent{
+					ToolCallID: ev.ToolProgress.ToolCallID,
+					ToolName:   ev.ToolProgress.ToolName,
+					Status:     ev.ToolProgress.Status,
+					Content:    ev.ToolProgress.Content,
+					Metadata:   ev.ToolProgress.Metadata,
+				},
+			})
 		case agent.EventToolCompleted:
 			event := ChatStreamEvent{
 				Type:   "tool_completed",

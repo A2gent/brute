@@ -1,12 +1,14 @@
+//go:build ignore
+
 package tools
 
 import (
 	"context"
-	"path/filepath"
-	"os"
-	"io/fs"
 	"fmt"
 	"github.com/bmatcuk/doublestar/v4"
+	"io/fs"
+	"os"
+	"path/filepath"
 )
 
 // To be pasted into find_files.go

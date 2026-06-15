@@ -43,8 +43,8 @@ func (t *SQLQueryTool) Schema() map[string]interface{} {
 			},
 			"engine": map[string]interface{}{
 				"type":        "string",
-				"description": "Database engine (postgres, mysql, sqlite). Required if using raw dsn.",
-				"enum":        []string{"postgres", "mysql", "sqlite"},
+				"description": "Database engine (postgres, mysql, sqlite, redis). Required if using raw dsn.",
+				"enum":        []string{"postgres", "mysql", "sqlite", "redis"},
 			},
 			"query": map[string]interface{}{
 				"type":        "string",
@@ -158,8 +158,8 @@ func (t *SQLQueryTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 		if engine == "" {
 			return &Result{Success: false, Error: "engine is required when using raw dsn"}, nil
 		}
-		if engine != "postgres" && engine != "mysql" && engine != "sqlite" {
-			return &Result{Success: false, Error: "engine must be one of: postgres, mysql, sqlite"}, nil
+		if engine != "postgres" && engine != "mysql" && engine != "sqlite" && engine != "redis" {
+			return &Result{Success: false, Error: "engine must be one of: postgres, mysql, sqlite, redis"}, nil
 		}
 		cfg = dbtool.Config{
 			Engine:     engine,

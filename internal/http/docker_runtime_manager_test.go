@@ -64,34 +64,33 @@ func TestResolveWorkspaceBinding(t *testing.T) {
 		t.Fatal("configured_project without binding must fail")
 	}
 
-		broad := &agentdef.Definition{
-			Agent:     agentdef.AgentMeta{ID: "x"},
-			Runtime:   agentdef.Runtime{Type: agentdef.RuntimeDocker},
-			Workspace: agentdef.Workspace{Scope: agentdef.WorkspaceScopeAllProjects},
-		}
-		projectID, mount, err = resolveWorkspaceBinding(broad, "")
-		if err != nil || projectID != dockerRuntimeAllProjectsBinding || mount != agentdef.WorkspaceMountRO {
-			t.Fatalf("all_projects should use a stable broad-workspace binding: %q %q %v", projectID, mount, err)
-		}
+	broad := &agentdef.Definition{
+		Agent:     agentdef.AgentMeta{ID: "x"},
+		Runtime:   agentdef.Runtime{Type: agentdef.RuntimeDocker},
+		Workspace: agentdef.Workspace{Scope: agentdef.WorkspaceScopeAllProjects},
+	}
+	projectID, mount, err = resolveWorkspaceBinding(broad, "")
+	if err != nil || projectID != dockerRuntimeAllProjectsBinding || mount != agentdef.WorkspaceMountRO {
+		t.Fatalf("all_projects should use a stable broad-workspace binding: %q %q %v", projectID, mount, err)
+	}
 
-		selected := &agentdef.Definition{
-			Agent:     agentdef.AgentMeta{ID: "x"},
-			Runtime:   agentdef.Runtime{Type: agentdef.RuntimeDocker},
-			Workspace: agentdef.Workspace{Scope: agentdef.WorkspaceScopeSelectedProjects},
-			Local: agentdef.Local{
-				ProjectBindings: map[string]string{agentdef.WorkspaceScopeSelectedProjects: "proj-a, proj-b"},
-			},
-		}
-		projectID, mount, err = resolveWorkspaceBinding(selected, "")
-		if err != nil || projectID != dockerRuntimeSelectedProjectsBinding || mount != agentdef.WorkspaceMountRO {
-			t.Fatalf("selected_projects should use a stable broad-workspace binding: %q %q %v", projectID, mount, err)
-		}
-		selected.Local.ProjectBindings = nil
-		if _, _, err = resolveWorkspaceBinding(selected, ""); err == nil {
-			t.Fatal("selected_projects without binding must fail")
-		}
+	selected := &agentdef.Definition{
+		Agent:     agentdef.AgentMeta{ID: "x"},
+		Runtime:   agentdef.Runtime{Type: agentdef.RuntimeDocker},
+		Workspace: agentdef.Workspace{Scope: agentdef.WorkspaceScopeSelectedProjects},
+		Local: agentdef.Local{
+			ProjectBindings: map[string]string{agentdef.WorkspaceScopeSelectedProjects: "proj-a, proj-b"},
+		},
+	}
+	projectID, mount, err = resolveWorkspaceBinding(selected, "")
+	if err != nil || projectID != dockerRuntimeSelectedProjectsBinding || mount != agentdef.WorkspaceMountRO {
+		t.Fatalf("selected_projects should use a stable broad-workspace binding: %q %q %v", projectID, mount, err)
+	}
+	selected.Local.ProjectBindings = nil
+	if _, _, err = resolveWorkspaceBinding(selected, ""); err == nil {
+		t.Fatal("selected_projects without binding must fail")
+	}
 }
-
 
 func TestResolveDockerWorkspaceBindingAllAndSelectedProjects(t *testing.T) {
 	server, store := newUnifiedAgentsTestServer(t)
@@ -115,12 +114,19 @@ func TestResolveDockerWorkspaceBindingAllAndSelectedProjects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve all_projects failed: %v", err)
 	}
-	if binding.ContainerNameBinding != dockerRuntimeAllProjectsBinding || len(binding.ProjectMounts) != 2 {
+	if binding.ContainerNameBinding != dockerRuntimeAllProjectsBinding {
 		t.Fatalf("unexpected all_projects binding: %+v", binding)
 	}
+	seenProjects := map[string]bool{}
 	for _, mount := range binding.ProjectMounts {
+		seenProjects[mount.ProjectID] = true
 		if mount.Mode != agentdef.WorkspaceMountRO || !strings.HasPrefix(mount.ContainerPath, dockerRuntimeWorkspaceRoot+"/") {
 			t.Fatalf("project mount should be read-only under /workspace: %+v", mount)
+		}
+	}
+	for _, projectID := range []string{"proj-app", "proj-api"} {
+		if !seenProjects[projectID] {
+			t.Fatalf("all_projects binding missing %s mount: %+v", projectID, binding)
 		}
 	}
 

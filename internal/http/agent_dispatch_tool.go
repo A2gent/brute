@@ -242,6 +242,9 @@ func (s *Server) runDockerAgentDelegation(ctx context.Context, agent *LocalDocke
 	s.dockerRuntime.touch(agent.Name)
 
 	responseText := strings.TrimSpace(chatResp.Content)
+	if responseText == "" {
+		return daErrorResult(emptyDockerDelegationMessage(agent.Name, created.ID, chatResp)), nil
+	}
 	if len(responseText) > delegationResponseMaxChars {
 		responseText = responseText[:delegationResponseMaxChars] + "\n...(truncated)"
 	}
@@ -266,6 +269,47 @@ func (s *Server) runDockerAgentDelegation(ctx context.Context, agent *LocalDocke
 			"child_session_id": created.ID,
 		},
 	}, nil
+}
+
+func emptyDockerDelegationMessage(agentName string, childSessionID string, chatResp ChatResponse) string {
+	status := strings.TrimSpace(chatResp.Status)
+	if status == "" {
+		status = "unknown"
+	}
+	message := fmt.Sprintf("docker agent %q returned empty response (child session %s, status=%s)", agentName, childSessionID, status)
+	if len(chatResp.Messages) == 0 {
+		return message
+	}
+
+	for i := len(chatResp.Messages) - 1; i >= 0; i-- {
+		msg := chatResp.Messages[i]
+		if strings.TrimSpace(msg.Content) == "" {
+			continue
+		}
+		content := truncateForLog(strings.TrimSpace(msg.Content), 500)
+		return message + "; last non-empty message: " + content
+	}
+
+	toolCalls := 0
+	toolResults := 0
+	lastToolName := ""
+	lastToolResultLen := 0
+	lastToolErrored := false
+	for _, msg := range chatResp.Messages {
+		toolCalls += len(msg.ToolCalls)
+		for _, result := range msg.ToolResults {
+			toolResults++
+			lastToolName = strings.TrimSpace(result.Name)
+			lastToolResultLen = len(result.Content)
+			lastToolErrored = result.IsError
+		}
+	}
+	if toolCalls > 0 || toolResults > 0 {
+		// WHAT: expose enough child-session diagnostics to identify a tool loop while
+		// avoiding raw tool output, which can be very large or user-sensitive.
+		return fmt.Sprintf("%s; child produced no final assistant text after %d tool call(s) and %d tool result(s); last_tool=%s last_tool_result_chars=%d last_tool_error=%t", message, toolCalls, toolResults, firstNonEmptyLocalAgentString(lastToolName, "unknown"), lastToolResultLen, lastToolErrored)
+	}
+	return message
 }
 
 var _ tools.Tool = (*delegateToAgentTool)(nil)

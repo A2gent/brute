@@ -45,9 +45,17 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 
 		// Check step limit
 		if step >= a.config.MaxSteps {
-			sess.SetStatus(session.StatusCompleted)
+			// WHY: returning the last non-empty assistant message hides tool loops as
+			// successful delegations. Surface the orchestration failure explicitly so
+			// callers can debug the child agent instead of receiving an empty response.
+			message := fmt.Sprintf("Agent stopped after reaching maximum step limit (%d) before producing a final answer.", a.config.MaxSteps)
+			sess.AddAssistantMessageWithMetadata(message, nil, map[string]interface{}{
+				"max_steps_exceeded": true,
+				"max_steps":          a.config.MaxSteps,
+			})
+			sess.SetStatus(session.StatusFailed)
 			a.sessionManager.Save(sess)
-			return a.getLastAssistantContent(sess), totalUsage, nil
+			return "", totalUsage, errors.New(message)
 		}
 
 		step++

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -335,5 +336,59 @@ func TestLoopFailsAfterRepeatedEmptyFinalResponses(t *testing.T) {
 	}
 	if strings.Contains(lastMsg.Content, "raw html from tool") {
 		t.Fatalf("failure message should not include raw tool output: %q", lastMsg.Content)
+	}
+}
+
+type loopNoopTool struct{}
+
+func (loopNoopTool) Name() string { return "noop" }
+
+func (loopNoopTool) Description() string { return "No-op test tool" }
+
+func (loopNoopTool) Schema() map[string]interface{} {
+	return map[string]interface{}{
+		"type":       "object",
+		"properties": map[string]interface{}{},
+	}
+}
+
+func (loopNoopTool) Execute(ctx context.Context, params json.RawMessage) (*tools.Result, error) {
+	return &tools.Result{Success: true, Output: "ok"}, nil
+}
+
+func TestLoopFailsWhenMaxStepsReachedWithoutFinalAssistantContent(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	sm := session.NewManager(store)
+	sess, err := sm.Create("test-agent")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	sess.AddUserMessage("keep calling a tool")
+
+	mockLLM := &MockLLM{
+		Response: &llm.ChatResponse{ToolCalls: []llm.ToolCall{{ID: "call-noop", Name: "noop", Input: `{}`}}},
+	}
+	manager := tools.NewManager(t.TempDir())
+	manager.Register(loopNoopTool{})
+	ag := New(Config{MaxSteps: 2}, mockLLM, manager, sm)
+
+	content, _, err := ag.RunWithEvents(context.Background(), sess, "keep calling a tool", nil)
+	if err == nil {
+		t.Fatalf("expected max steps error, got content=%q", content)
+	}
+	if !strings.Contains(err.Error(), "maximum step limit") {
+		t.Fatalf("expected max steps error, got %v", err)
+	}
+	if sess.Status != session.StatusFailed {
+		t.Fatalf("expected failed session, got %s", sess.Status)
+	}
+	lastMsg := sess.Messages[len(sess.Messages)-1]
+	if lastMsg.Role != "assistant" || !strings.Contains(lastMsg.Content, "maximum step limit") {
+		t.Fatalf("expected explicit max-step failure assistant message, got role=%q content=%q", lastMsg.Role, lastMsg.Content)
 	}
 }

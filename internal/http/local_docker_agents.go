@@ -146,6 +146,7 @@ type registerLocalDockerAgentRequest struct {
 	Category           string  `json:"category"`
 	Discoverable       *bool   `json:"discoverable"`
 	OfficialWebsite    string  `json:"official_website"`
+	AvatarURL          string  `json:"avatar_url"`
 	SupportsAudio      *bool   `json:"supports_audio"`
 	SupportsImages     *bool   `json:"supports_images"`
 	SupportsVideo      *bool   `json:"supports_video"`
@@ -196,6 +197,7 @@ type squareRegisterAgentRequest struct {
 	Currency           string  `json:"currency"`
 	Discoverable       *bool   `json:"discoverable,omitempty"`
 	OfficialWebsite    string  `json:"official_website,omitempty"`
+	AvatarURL          string  `json:"avatar_url,omitempty"`
 	SupportsImages     *bool   `json:"supports_images,omitempty"`
 	SupportsAudio      *bool   `json:"supports_audio,omitempty"`
 	SupportsVideo      *bool   `json:"supports_video,omitempty"`
@@ -761,9 +763,9 @@ func (s *Server) registerLocalDockerAgent(ctx context.Context, agent *LocalDocke
 
 	agentName := strings.TrimSpace(req.AgentName)
 	if agentName == "" {
-		agentName = agent.Name
+		agentName = firstNonEmptyLocalAgentString(agent.Labels["a2gent.agent_name"], agent.Name)
 	}
-	description := strings.TrimSpace(req.Description)
+	description := firstNonEmptyLocalAgentString(req.Description, agent.Labels["a2gent.agent_description"])
 	if description == "" {
 		description = "Local dockerized Brute agent"
 	}
@@ -798,10 +800,11 @@ func (s *Server) registerLocalDockerAgent(ctx context.Context, agent *LocalDocke
 		// WHY: Square treats organization-scoped handles as business agents.
 		agentType = "business"
 	}
-	category := strings.TrimSpace(req.Category)
+	category := firstNonEmptyLocalAgentString(req.Category, agent.Labels["a2gent.agent_category"])
 	if category == "" {
 		category = "other"
 	}
+	avatarURL := firstNonEmptyLocalAgentString(req.AvatarURL, agent.Labels["a2gent.agent_avatar_url"], agent.Labels["a2gent.agent_icon_url"])
 
 	discoverable := true
 	if req.Discoverable != nil {
@@ -846,50 +849,18 @@ func (s *Server) registerLocalDockerAgent(ctx context.Context, agent *LocalDocke
 		Currency:           currency,
 		Discoverable:       &discoverable,
 		OfficialWebsite:    strings.TrimSpace(req.OfficialWebsite),
+		AvatarURL:          strings.TrimSpace(avatarURL),
 		SupportsImages:     &supportsImages,
 		SupportsAudio:      &supportsAudio,
 		SupportsVideo:      &supportsVideo,
 	}
 
-	payload, err := json.Marshal(registerReq)
+	registerResp, _, statusCode, err := postSquareAgentRegistration(ctx, registryURL, registerReq, defaults.APIKey)
 	if err != nil {
-		return nil, http.StatusInternalServerError, fmt.Errorf("failed to build registration payload")
-	}
-
-	registerCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	httpReq, err := http.NewRequestWithContext(registerCtx, http.MethodPost, registryURL+"/agents/register", bytes.NewReader(payload))
-	if err != nil {
-		return nil, http.StatusInternalServerError, fmt.Errorf("failed to prepare registry request")
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	if strings.TrimSpace(defaults.APIKey) != "" {
-		// WHY: the parent A2 Registry API key can prove owner identity for private
-		// child-agent registration without embedding a personal email in YAML.
-		httpReq.Header.Set("Authorization", "Bearer "+strings.TrimSpace(defaults.APIKey))
+		return nil, statusCode, err
 	}
 
 	httpClient := &http.Client{Timeout: 15 * time.Second}
-	resp, err := httpClient.Do(httpReq)
-	if err != nil {
-		return nil, http.StatusBadGateway, fmt.Errorf("registry request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg := strings.TrimSpace(string(respBody))
-		if msg == "" {
-			msg = resp.Status
-		}
-		return nil, http.StatusBadGateway, fmt.Errorf("registry registration failed: %s", msg)
-	}
-
-	var registerResp squareRegisterAgentResponse
-	if err := json.Unmarshal(respBody, &registerResp); err != nil {
-		return nil, http.StatusBadGateway, fmt.Errorf("registry returned invalid response")
-	}
-
 	configureContainer := true
 	if req.ConfigureContainer != nil {
 		configureContainer = *req.ConfigureContainer

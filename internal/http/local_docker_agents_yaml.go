@@ -47,6 +47,11 @@ type localDockerAgentYAMLConfig struct {
 
 type localDockerAgentYAMLSpec struct {
 	Name             string                                `yaml:"name" json:"name,omitempty"`
+	Description      string                                `yaml:"description" json:"description,omitempty"`
+	Emoji            string                                `yaml:"emoji" json:"emoji,omitempty"`
+	IconURL          string                                `yaml:"icon_url" json:"icon_url,omitempty"`
+	AvatarURL        string                                `yaml:"avatar_url" json:"avatar_url,omitempty"`
+	Category         string                                `yaml:"category" json:"category,omitempty"`
 	NamePrefix       string                                `yaml:"name_prefix" json:"name_prefix,omitempty"`
 	StartPort        int                                   `yaml:"start_port" json:"start_port,omitempty"`
 	Image            string                                `yaml:"image" json:"image,omitempty"`
@@ -229,6 +234,21 @@ func mergeLocalDockerAgentYAMLSpec(base, override localDockerAgentYAMLSpec) loca
 	out := base
 	if strings.TrimSpace(override.Name) != "" {
 		out.Name = override.Name
+	}
+	if strings.TrimSpace(override.Description) != "" {
+		out.Description = override.Description
+	}
+	if strings.TrimSpace(override.Emoji) != "" {
+		out.Emoji = override.Emoji
+	}
+	if strings.TrimSpace(override.IconURL) != "" {
+		out.IconURL = override.IconURL
+	}
+	if strings.TrimSpace(override.AvatarURL) != "" {
+		out.AvatarURL = override.AvatarURL
+	}
+	if strings.TrimSpace(override.Category) != "" {
+		out.Category = override.Category
 	}
 	if strings.TrimSpace(override.NamePrefix) != "" {
 		out.NamePrefix = override.NamePrefix
@@ -522,6 +542,7 @@ func mergeCredentialMap(base, override map[string]localDockerAgentCredential) ma
 }
 
 func (spec localDockerAgentYAMLSpec) toCreateRequest() createLocalDockerAgentRequest {
+	labels := localDockerAgentYAMLMetadataLabels(spec)
 	projectID := strings.TrimSpace(spec.ProjectID)
 	if projectID == "" {
 		projectID = strings.TrimSpace(spec.Project.ID)
@@ -554,8 +575,35 @@ func (spec localDockerAgentYAMLSpec) toCreateRequest() createLocalDockerAgentReq
 		Networking:       spec.Networking,
 		Directories:      spec.Directories,
 		Resources:        spec.Resources,
-		Labels:           spec.Labels,
+		Labels:           labels,
 	}
+}
+
+func localDockerAgentYAMLMetadataLabels(spec localDockerAgentYAMLSpec) map[string]string {
+	labels := mergeStringMap(nil, spec.Labels)
+	setDefaultLabel := func(key, value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		if strings.TrimSpace(labels[key]) == "" {
+			labels[key] = value
+		}
+	}
+
+	// WHY: ad-hoc YAML-created containers may later be registered manually from
+	// Caesar. Mirror presentation metadata into labels so the register action uses
+	// the same description/category/avatar as YAML-driven registration.
+	setDefaultLabel("a2gent.agent_name", firstNonEmptyLocalAgentString(spec.Registry.AgentName, spec.Name))
+	setDefaultLabel("a2gent.agent_emoji", spec.Emoji)
+	setDefaultLabel("a2gent.agent_description", firstNonEmptyLocalAgentString(spec.Description, spec.Registry.Description))
+	setDefaultLabel("a2gent.agent_category", firstNonEmptyLocalAgentString(spec.Category, spec.Registry.Category))
+	setDefaultLabel("a2gent.agent_icon_url", spec.IconURL)
+	setDefaultLabel("a2gent.agent_avatar_url", firstNonEmptyLocalAgentString(spec.AvatarURL, spec.Registry.AvatarURL, spec.Registry.AvatarPath, spec.IconURL))
+	return labels
 }
 
 func localDockerAgentYAMLRegistryEnabled(registry localDockerAgentYAMLRegistry) bool {
@@ -578,6 +626,9 @@ func (spec localDockerAgentYAMLSpec) toRegisterRequest() registerLocalDockerAgen
 	if agentName == "" {
 		agentName = strings.TrimSpace(spec.Name)
 	}
+	description := firstNonEmptyLocalAgentString(registry.Description, spec.Description)
+	category := firstNonEmptyLocalAgentString(registry.Category, spec.Category)
+	avatarURL := firstNonEmptyLocalAgentString(registry.AvatarURL, spec.AvatarURL, registry.AvatarPath, spec.IconURL)
 	agentHandle := firstNonEmptyLocalAgentString(registry.AgentHandle, registry.AgentID, registry.PublicID)
 	if agentHandle == "" {
 		agentHandle = strings.TrimSpace(spec.Name)
@@ -590,13 +641,14 @@ func (spec localDockerAgentYAMLSpec) toRegisterRequest() registerLocalDockerAgen
 		AgentID:            strings.TrimSpace(registry.AgentID),
 		PublicID:           strings.TrimSpace(registry.PublicID),
 		OrganizationHandle: strings.TrimSpace(registry.OrganizationHandle),
-		Description:        strings.TrimSpace(registry.Description),
+		Description:        description,
 		NetworkAccess:      strings.TrimSpace(registry.NetworkAccess),
 		EndpointURL:        strings.TrimSpace(registry.EndpointURL),
 		AgentType:          strings.TrimSpace(registry.AgentType),
-		Category:           strings.TrimSpace(registry.Category),
+		Category:           category,
 		Discoverable:       &discoverable,
 		OfficialWebsite:    strings.TrimSpace(registry.OfficialWebsite),
+		AvatarURL:          avatarURL,
 		SupportsAudio:      registry.SupportsAudio,
 		SupportsImages:     registry.SupportsImages,
 		SupportsVideo:      registry.SupportsVideo,

@@ -66,6 +66,8 @@ type AgentMeta struct {
 	ID          string `yaml:"id" json:"id"`
 	Name        string `yaml:"name" json:"name"`
 	Emoji       string `yaml:"emoji,omitempty" json:"emoji,omitempty"`
+	IconURL     string `yaml:"icon_url,omitempty" json:"icon_url,omitempty"`
+	AvatarURL   string `yaml:"avatar_url,omitempty" json:"avatar_url,omitempty"`
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 	Kind        string `yaml:"kind,omitempty" json:"kind,omitempty"`
 }
@@ -146,6 +148,8 @@ type Publish struct {
 // PublishSquare configures Square marketplace metadata.
 type PublishSquare struct {
 	Category     string `yaml:"category,omitempty" json:"category,omitempty"`
+	IconURL      string `yaml:"icon_url,omitempty" json:"icon_url,omitempty"`
+	AvatarURL    string `yaml:"avatar_url,omitempty" json:"avatar_url,omitempty"`
 	Discoverable bool   `yaml:"discoverable,omitempty" json:"discoverable,omitempty"`
 }
 
@@ -191,6 +195,11 @@ func (d *Definition) Normalize() {
 	}
 	d.Agent.ID = strings.TrimSpace(d.Agent.ID)
 	d.Agent.Name = strings.TrimSpace(d.Agent.Name)
+	d.Agent.Emoji = strings.TrimSpace(d.Agent.Emoji)
+	d.Agent.IconURL = strings.TrimSpace(d.Agent.IconURL)
+	d.Agent.AvatarURL = strings.TrimSpace(d.Agent.AvatarURL)
+	d.Agent.Description = strings.TrimSpace(d.Agent.Description)
+	d.Agent.Kind = strings.TrimSpace(d.Agent.Kind)
 	d.Runtime.Type = strings.ToLower(strings.TrimSpace(d.Runtime.Type))
 	if d.Runtime.Type == "" {
 		d.Runtime.Type = RuntimeDocker
@@ -210,6 +219,9 @@ func (d *Definition) Normalize() {
 	}
 	d.LLM.Provider = strings.TrimSpace(d.LLM.Provider)
 	d.LLM.Model = strings.TrimSpace(d.LLM.Model)
+	d.Publish.Square.Category = strings.ToLower(strings.TrimSpace(d.Publish.Square.Category))
+	d.Publish.Square.IconURL = strings.TrimSpace(d.Publish.Square.IconURL)
+	d.Publish.Square.AvatarURL = strings.TrimSpace(d.Publish.Square.AvatarURL)
 }
 
 // Validate checks enum fields and required identity after Normalize.

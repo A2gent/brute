@@ -85,6 +85,36 @@ func TestExportSubAgentYAML(t *testing.T) {
 	}
 }
 
+func TestLocalDockerCreateRequestBaseFromDefinitionCarriesPublishMetadata(t *testing.T) {
+	def := &agentdef.Definition{
+		Agent: agentdef.AgentMeta{
+			ID:          "dev-code-reviewer",
+			Name:        "Code Reviewer",
+			Emoji:       "🔍",
+			Description: "Reviews code changes for correctness and regressions.",
+			IconURL:     "https://example.com/agent-icon.png",
+			Kind:        "reviewer",
+		},
+		Runtime: agentdef.Runtime{Type: agentdef.RuntimeDocker},
+		Publish: agentdef.Publish{Square: agentdef.PublishSquare{
+			Category:  "engineering",
+			AvatarURL: "https://example.com/avatar.png",
+		}},
+	}
+
+	req := localDockerCreateRequestBaseFromDefinition(def)
+	labels := req.Labels
+	if labels["a2gent.agent_name"] != "Code Reviewer" || labels["a2gent.agent_description"] != "Reviews code changes for correctness and regressions." {
+		t.Fatalf("definition identity metadata was not converted to labels: %#v", labels)
+	}
+	if labels["a2gent.agent_category"] != "engineering" || labels["a2gent.agent_avatar_url"] != "https://example.com/avatar.png" {
+		t.Fatalf("publish metadata was not converted to labels: %#v", labels)
+	}
+	if labels["a2gent.agent_icon_url"] != "https://example.com/agent-icon.png" {
+		t.Fatalf("agent icon metadata was not converted to labels: %#v", labels)
+	}
+}
+
 func TestImportHostAgentYAMLMigratesToDockerDefinition(t *testing.T) {
 	server, store := newUnifiedAgentsTestServer(t)
 

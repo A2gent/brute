@@ -5,6 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/A2gent/brute/internal/a2atunnel"
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/contextcompress"
@@ -15,13 +24,6 @@ import (
 	"github.com/A2gent/brute/internal/storage"
 	"github.com/A2gent/brute/internal/tools"
 	"github.com/go-chi/chi/v5"
-	"net"
-	"net/http"
-	"os"
-	"path/filepath"
-	"strings"
-	"sync"
-	"time"
 )
 
 // Server represents the HTTP API server
@@ -40,6 +42,10 @@ type Server struct {
 	activeRunsMu          sync.Mutex
 	activeRuns            map[string]map[string]context.CancelFunc
 	chromeExtensionBridge *chromeExtensionBridge
+	httpAccessLogMu       sync.RWMutex
+	httpAccessLogWriter   io.Writer
+	httpAccessLogEnabled  bool
+	httpAccessLogSeq      uint64
 	dockerRuntime         *dockerRuntimeManager
 	contextCompressor     *contextcompress.Compressor
 

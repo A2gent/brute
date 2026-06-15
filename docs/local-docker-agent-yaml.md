@@ -9,6 +9,7 @@ The launcher is intentionally a Brute container launcher, not a replacement for 
 - Docker/MCP-style tool boundaries map to Brute's `tools.enabled`, `tools.disabled`, and `tools.mode`.
 - Docker runtime details map to `networking`, `directories`, `credentials`, `environment`, `resources`, and `labels`.
 - A2 Registry/Square registration maps to `registry`; use `registry.enabled: true` to register the running local container and configure its inbound tunnel.
+- Reusable unified definitions can also carry presentation metadata with `agent.description`, `agent.avatar_url`, and `publish.square.category` / `publish.square.avatar_url`; Brute copies that metadata onto managed Docker containers so Caesar can display and publish it.
 
 ## Minimal Single Agent
 
@@ -16,6 +17,8 @@ The launcher is intentionally a Brute container launcher, not a replacement for 
 version: "1"
 agent:
   name: code-reviewer
+  description: Reviews code changes for correctness and regressions.
+  avatar_url: https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f50d.png
   image: a2gent-brute:latest
   host_port: 18080
   agent_kind: reviewer
@@ -113,6 +116,7 @@ agent:
     category: marketing
     discoverable: false
     official_website: https://a2gent.net
+    avatar_url: https://a2gent.net/a2gent.jpg
     supports_audio: false
     supports_images: false
     supports_video: false
@@ -134,7 +138,7 @@ agent:
 - `startup.auto_run`: run the startup prompt immediately when true; otherwise create a queued child session.
 - `registry.enabled`: register the created container in A2 Registry/Square and configure the child `a2_registry` tunnel integration.
 - `registry.owner_email`, `registry.registry_url`, `registry.transport`, `registry.square_grpc_addr`, `registry.square_ws_url`: registry/tunnel connection settings; inherited from the parent `a2_registry` integration/settings when omitted.
-- `registry.agent_name`, `registry.agent_handle` (or aliases `agent_id`/`public_id`), `registry.description`, `registry.category`, `registry.agent_type`, `registry.network_access`, `registry.official_website`: public registry metadata.
+- `registry.agent_name`, `registry.agent_handle` (or aliases `agent_id`/`public_id`), `registry.description`, `registry.category`, `registry.agent_type`, `registry.network_access`, `registry.official_website`, `registry.avatar_url`: public registry metadata.
 - `registry.discoverable`: public discoverability flag. YAML registration defaults to `false`; use `true` only with explicit intent and Square owner approval.
 - `registry.supports_audio`, `registry.supports_images`, `registry.supports_video`, `registry.price_per_request`, `registry.price_per_input_kb`, `registry.price_per_output_kb`, `registry.price_per_session`, `registry.currency`: modality and pricing metadata.
 - `session_id`: parent/source session label stored on the container and child startup session metadata.

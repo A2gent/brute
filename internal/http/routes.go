@@ -15,7 +15,9 @@ import (
 func (s *Server) setupRoutes() {
 	r := chi.NewRouter()
 
-	// Middleware (no logger to avoid polluting TUI output)
+	// Middleware. The access logger is disabled by default so TUI mode remains clean;
+	// HTTP-only/server mode enables it explicitly before Run.
+	r.Use(s.httpAccessLogMiddleware)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(5 * time.Minute))
 

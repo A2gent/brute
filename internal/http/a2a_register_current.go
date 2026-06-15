@@ -43,6 +43,7 @@ type registerCurrentA2AAgentRequest struct {
 	SquareGRPCAddr     string  `json:"square_grpc_addr"`
 	SquareWSURL        string  `json:"square_ws_url"`
 	OfficialWebsite    string  `json:"official_website"`
+	AvatarURL          string  `json:"avatar_url"`
 	OrganizationHandle string  `json:"organization_handle"`
 }
 
@@ -196,6 +197,7 @@ func (s *Server) registerCurrentA2AAgent(ctx context.Context, req registerCurren
 		Currency:           currency,
 		Discoverable:       &discoverable,
 		OfficialWebsite:    strings.TrimSpace(req.OfficialWebsite),
+		AvatarURL:          strings.TrimSpace(req.AvatarURL),
 		SupportsImages:     &supportsImages,
 		SupportsAudio:      &supportsAudio,
 		SupportsVideo:      &supportsVideo,
@@ -325,7 +327,7 @@ func postSquareAgentRegistration(ctx context.Context, registryURL string, regist
 	if err != nil {
 		return squareRegisterAgentResponse{}, nil, http.StatusInternalServerError, fmt.Errorf("failed to prepare registry request")
 	}
-	httpReq.Header.Set("Content-Type", "application/json")	
+	httpReq.Header.Set("Content-Type", "application/json")
 	if strings.TrimSpace(bearerToken) != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+strings.TrimSpace(bearerToken))
 	}

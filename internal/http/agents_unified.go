@@ -487,6 +487,16 @@ func localDockerCreateRequestBaseFromDefinition(def *agentdef.Definition) create
 		HostPort:     def.Local.HostPort,
 		AgentKind:    strings.TrimSpace(def.Agent.Kind),
 		SystemPrompt: strings.TrimSpace(def.Instructions.System),
+		Labels: map[string]string{
+			// WHY: local Docker containers are what Caesar registers in Square,
+			// so portable definition metadata must ride along as Docker labels.
+			"a2gent.agent_name":        strings.TrimSpace(def.Agent.Name),
+			"a2gent.agent_emoji":       strings.TrimSpace(def.Agent.Emoji),
+			"a2gent.agent_description": strings.TrimSpace(def.Agent.Description),
+			"a2gent.agent_category":    strings.TrimSpace(def.Publish.Square.Category),
+			"a2gent.agent_icon_url":    firstNonEmptyLocalAgentString(def.Publish.Square.IconURL, def.Agent.IconURL),
+			"a2gent.agent_avatar_url":  firstNonEmptyLocalAgentString(def.Publish.Square.AvatarURL, def.Agent.AvatarURL),
+		},
 		LLM: localDockerAgentYAMLLLM{
 			Provider: def.LLM.Provider,
 			Model:    def.LLM.Model,
@@ -546,6 +556,7 @@ func localDockerCreateRequestFromDefinition(def *agentdef.Definition) (createLoc
 
 	return req, nil
 }
+
 var errAgentDefinitionMissingProjectBinding = &agentDefinitionImportError{
 	"workspace.scope is configured_project but local.project_bindings.configured_project is not set",
 }

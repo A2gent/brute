@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -19,6 +20,11 @@ func TestParseLocalDockerAgentYAMLConfigSingleAgent(t *testing.T) {
 	raw := `version: 1
 agent:
   name: review-bot
+  description: Reviews code with a strict checklist.
+  emoji: "🔍"
+  icon_url: https://example.com/icon.png
+  avatar_url: https://example.com/avatar.png
+  category: engineering
   image: a2gent-brute:dev
   host_port: 18111
   agent_kind: reviewer
@@ -110,6 +116,13 @@ agent:
 	}
 	if agent.Labels["purpose"] != "review" {
 		t.Fatalf("labels not parsed: %#v", agent.Labels)
+	}
+	req := agent.toCreateRequest()
+	if req.Labels["a2gent.agent_description"] != "Reviews code with a strict checklist." || req.Labels["a2gent.agent_category"] != "engineering" {
+		t.Fatalf("presentation metadata was not mirrored to labels: %#v", req.Labels)
+	}
+	if req.Labels["a2gent.agent_avatar_url"] != "https://example.com/avatar.png" || req.Labels["a2gent.agent_icon_url"] != "https://example.com/icon.png" {
+		t.Fatalf("icon metadata was not mirrored to labels: %#v", req.Labels)
 	}
 }
 
@@ -341,6 +354,7 @@ agent:
     category: marketing
     discoverable: false
     official_website: https://example.com
+    avatar_url: https://example.com/avatar.png
     supports_audio: false
     supports_images: true
     supports_video: false
@@ -365,6 +379,9 @@ agent:
 	}
 	if req.Category != "marketing" || req.AgentType != "personal" || req.PricePerSession != 0.02 {
 		t.Fatalf("registry request metadata not parsed: %#v", req)
+	}
+	if req.AvatarURL != "https://example.com/avatar.png" {
+		t.Fatalf("registry request avatar_url not parsed: %#v", req)
 	}
 	if req.Discoverable == nil || *req.Discoverable {
 		t.Fatalf("expected explicit hidden listing, got %#v", req.Discoverable)
@@ -508,5 +525,48 @@ func TestCreateLocalDockerAgentRetriesAutoPortCollision(t *testing.T) {
 	}
 	if runPorts[0] == runPorts[1] {
 		t.Fatalf("retry should use a different host port, got %#v", runPorts)
+	}
+}
+
+func TestRegisterLocalDockerAgentDefaultsMetadataFromContainerLabels(t *testing.T) {
+	var got squareRegisterAgentRequest
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/agents/register" {
+			t.Fatalf("unexpected registry request: %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode registry request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"agent":{"id":"agent-1","name":%q,"agent_handle":"code-reviewer","public_id":"code-reviewer"},"api_key":"sq_key"}`, got.Name)
+	}))
+	defer registry.Close()
+
+	server := &Server{}
+	_, status, err := server.registerLocalDockerAgent(context.Background(), &LocalDockerAgent{
+		ID:       "container-1",
+		Name:     "agent-dev-code-reviewer",
+		HostPort: 18080,
+		APIURL:   "http://127.0.0.1:18080",
+		Labels: map[string]string{
+			"a2gent.agent_name":        "Code Reviewer",
+			"a2gent.agent_description": "Reviews code changes for correctness and regressions.",
+			"a2gent.agent_category":    "engineering",
+			"a2gent.agent_avatar_url":  "https://example.com/avatar.png",
+		},
+	}, registerLocalDockerAgentRequest{
+		RegistryURL:        registry.URL,
+		OwnerEmail:         "owner@example.com",
+		AgentHandle:        "code-reviewer",
+		ConfigureContainer: boolPtr(false),
+	})
+	if err != nil {
+		t.Fatalf("registerLocalDockerAgent returned error: status=%d err=%v", status, err)
+	}
+	if got.Name != "Code Reviewer" || got.Description != "Reviews code changes for correctness and regressions." {
+		t.Fatalf("container label identity metadata not used: %#v", got)
+	}
+	if got.Category != "engineering" || got.AvatarURL != "https://example.com/avatar.png" {
+		t.Fatalf("container label publish metadata not used: %#v", got)
 	}
 }

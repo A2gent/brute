@@ -441,6 +441,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	// Create HTTP server
 	server := httpserver.NewServer(cfg, llmClient, toolManager, sessionManager, store, clipStore, portFlag)
+	server.EnableHTTPAccessLog(os.Stdout)
 
 	// Setup graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())

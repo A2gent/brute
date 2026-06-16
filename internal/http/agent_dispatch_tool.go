@@ -284,6 +284,7 @@ func (s *Server) runDockerAgentDelegationWithWorkspace(ctx context.Context, agen
 
 	logging.Info("Docker agent delegation started: parent=%s container=%s child=%s task=%s",
 		parentSessionID, agent.Name, created.ID, truncateForLog(task, 100))
+	s.recordDockerDelegationChildSession(parentSessionID, agent, created.ID, workspace)
 	s.reportDockerDelegationToolProgress(ctx, agent, created.ID, workspace, "child_session_created", "Docker sub-agent session created. Waiting for output stream.", map[string]interface{}{
 		"agent_api_url": agent.APIURL,
 	})
@@ -296,9 +297,10 @@ func (s *Server) runDockerAgentDelegationWithWorkspace(ctx context.Context, agen
 	})
 	if err != nil {
 		return daErrorResult(fmt.Sprintf("docker agent '%s' failed (child session %s): %s", agent.Name, created.ID, err.Error()), map[string]interface{}{
-			"child_session_id": created.ID,
-			"agent_api_url":    agent.APIURL,
-			"logs_command":     fmt.Sprintf("docker logs --tail 200 %s", agent.Name),
+			"child_session_id":  created.ID,
+			"parent_session_id": parentSessionID,
+			"agent_api_url":     agent.APIURL,
+			"logs_command":      fmt.Sprintf("docker logs --tail 200 %s", agent.Name),
 		}), nil
 	}
 	// Refresh idleness after the task so the reaper measures from completion.
@@ -306,18 +308,24 @@ func (s *Server) runDockerAgentDelegationWithWorkspace(ctx context.Context, agen
 
 	responseText := strings.TrimSpace(chatResp.Content)
 	if responseText == "" {
-		return daErrorResult(emptyDockerDelegationMessage(agent.Name, created.ID, chatResp)), nil
+		return daErrorResult(emptyDockerDelegationMessage(agent.Name, created.ID, chatResp), map[string]interface{}{
+			"child_session_id":  created.ID,
+			"parent_session_id": parentSessionID,
+			"agent_api_url":     agent.APIURL,
+		}), nil
 	}
 	if len(responseText) > delegationResponseMaxChars {
 		responseText = responseText[:delegationResponseMaxChars] + "\n...(truncated)"
 	}
 
 	payload := map[string]interface{}{
-		"success":          true,
-		"agent_runtime":    "docker",
-		"agent_name":       agent.Name,
-		"child_session_id": created.ID,
-		"response":         responseText,
+		"success":           true,
+		"agent_runtime":     "docker",
+		"agent_name":        agent.Name,
+		"child_session_id":  created.ID,
+		"parent_session_id": parentSessionID,
+		"agent_api_url":     agent.APIURL,
+		"response":          responseText,
 	}
 	if workspace != nil {
 		payload["docker_workspace"] = dockerWorkspaceMetadata(*workspace)
@@ -327,9 +335,11 @@ func (s *Server) runDockerAgentDelegationWithWorkspace(ctx context.Context, agen
 		return nil, fmt.Errorf("failed to encode tool output: %w", err)
 	}
 	metadata := map[string]interface{}{
-		"agent_runtime":    "docker",
-		"agent_name":       agent.Name,
-		"child_session_id": created.ID,
+		"agent_runtime":     "docker",
+		"agent_name":        agent.Name,
+		"child_session_id":  created.ID,
+		"parent_session_id": parentSessionID,
+		"agent_api_url":     agent.APIURL,
 	}
 	if workspace != nil {
 		metadata["docker_workspace"] = dockerWorkspaceMetadata(*workspace)

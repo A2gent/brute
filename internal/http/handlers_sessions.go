@@ -390,6 +390,12 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		sess, err = s.sessionManager.GetSummary(sessionID)
 	}
 	if err != nil {
+		if resp, ok, proxyErr := s.getDockerDelegatedSession(r.Context(), sessionID, includeMessages, includeMetadata); ok {
+			s.jsonResponse(w, http.StatusOK, resp)
+			return
+		} else if proxyErr != nil {
+			logging.Debug("Docker session proxy lookup failed for %s: %v", sessionID, proxyErr)
+		}
 		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
 		return
 	}

@@ -283,6 +283,7 @@ func (s *Server) registerProjectRoutes(r chi.Router) {
 		r.Post("/git/discard", s.handleProjectGitDiscardFile)
 		r.Post("/git/commit-message", s.handleProjectGitCommitMessageSuggestion)
 		r.Post("/git/pr-description/generate", s.handleGenerateProjectGitPRDescription)
+		r.Post("/git/review-overlay/generate", s.handleGenerateProjectGitReviewOverlay)
 		r.Post("/git/push", s.handleProjectGitPush)
 		r.Post("/git/pull", s.handleProjectGitPull)
 		r.Post("/git/checkout", s.handleProjectGitCheckout)

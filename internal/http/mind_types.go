@@ -111,6 +111,25 @@ type ProjectGitPRDescriptionRequest struct {
 	RepoPath string `json:"repo_path,omitempty"`
 }
 
+type ProjectGitReviewOverlayRequest struct {
+	RepoPath string `json:"repo_path,omitempty"`
+}
+
+type ProjectGitReviewOverlayAnnotation struct {
+	FilePath      string `json:"file_path"`
+	Side          string `json:"side"`
+	LineNumber    int    `json:"line_number"`
+	EndLineNumber int    `json:"end_line_number,omitempty"`
+	Title         string `json:"title"`
+	Body          string `json:"body"`
+}
+
+type ProjectGitReviewOverlayResponse struct {
+	CurrentBranch string                              `json:"current_branch"`
+	BaseBranch    string                              `json:"base_branch"`
+	Annotations   []ProjectGitReviewOverlayAnnotation `json:"annotations"`
+}
+
 type ProjectGitPRDescriptionSaveRequest struct {
 	RepoPath string `json:"repo_path,omitempty"`
 	Content  string `json:"content"`

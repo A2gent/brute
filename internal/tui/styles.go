@@ -1,14 +1,8 @@
 package tui
 
-import (
-	"github.com/charmbracelet/lipgloss"
-)
+import "github.com/charmbracelet/lipgloss"
 
 var (
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#7D56F4"))
-
 	taskStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("#FFFDF5")).
@@ -50,41 +44,32 @@ var (
 	toolResultStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#A0A0A0"))
 
-	// Tool-specific styles
 	toolBashStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#98C379")) // Green for shell commands
+			Foreground(lipgloss.Color("#98C379"))
 
 	toolReadStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#61AFEF")) // Blue for reading
+			Foreground(lipgloss.Color("#61AFEF"))
 
 	toolWriteStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#E5C07B")) // Yellow for writing
+			Foreground(lipgloss.Color("#E5C07B"))
 
 	toolEditStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#C678DD")) // Purple for editing
+			Foreground(lipgloss.Color("#C678DD"))
 
 	toolGlobStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#56B6C2")) // Cyan for file search
+			Foreground(lipgloss.Color("#56B6C2"))
 
 	toolGrepStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#E06C75")) // Red for content search
+			Foreground(lipgloss.Color("#E06C75"))
 
 	toolTaskStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#D19A66")) // Orange for sub-agents
+			Foreground(lipgloss.Color("#D19A66"))
 
-	// Diff styles
 	diffAddStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#98C379")) // Green for additions
+			Foreground(lipgloss.Color("#98C379"))
 
 	diffRemoveStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#E06C75")) // Red for deletions
-
-	diffContextStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#ABB2BF")) // Gray for context
-
-	diffHeaderStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#61AFEF")).
-			Bold(true) // Blue bold for file headers
+			Foreground(lipgloss.Color("#E06C75"))
 
 	errorStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#FF0000"))
@@ -105,10 +90,7 @@ var (
 				Foreground(lipgloss.Color("#FF0000"))
 
 	statusInputRequiredStyle = lipgloss.NewStyle().
-					Foreground(lipgloss.Color("#9C27B0")) // Purple
-
-	loadingStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFA500"))
+					Foreground(lipgloss.Color("#9C27B0"))
 
 	sentStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#00FF00")).
@@ -116,9 +98,6 @@ var (
 
 	receivedStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#00AAFF"))
-
-	separatorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#444444"))
 
 	queuedStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#888888")).
@@ -129,7 +108,6 @@ var (
 				Foreground(lipgloss.Color("#888888")).
 				Padding(0, 1)
 
-	// Command menu styles
 	commandMenuStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(lipgloss.Color("#7D56F4")).
@@ -146,19 +124,10 @@ var (
 	commandDescStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#888888"))
 
-	// Textarea border style
-	textareaBorderStyle = lipgloss.NewStyle().
-				BorderLeft(true).
-				BorderStyle(lipgloss.NormalBorder()).
-				BorderForeground(lipgloss.Color("#00AAFF")). // Light blue
-				PaddingLeft(1)
-
-	// Model indicator style
 	modelStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#7D56F4")).
 			Bold(true)
 
-	// Path style
 	pathStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#666666"))
 )

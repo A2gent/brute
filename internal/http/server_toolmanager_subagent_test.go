@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -196,7 +197,7 @@ func TestBuildSystemPromptForSession_UsesSubAgentInstructions(t *testing.T) {
 	if !strings.Contains(systemPrompt, "Operating system:") || !strings.Contains(systemPrompt, "Current time:") {
 		t.Fatalf("expected sub-agent prompt to include OS and current time, got: %q", systemPrompt)
 	}
-	if strings.Contains(systemPrompt, "Available Docker-backed configured agents for delegation:") {
+	if strings.Contains(systemPrompt, "Currently running Docker-backed configured agents for delegation:") {
 		t.Fatalf("expected sub-agent prompt to omit main-agent configured-agent listing")
 	}
 }
@@ -277,6 +278,52 @@ workspace:
 	}); err != nil {
 		t.Fatalf("failed to save agent definition: %v", err)
 	}
+	stoppedDefinitionYAML := strings.Replace(definitionYAML, "youtube-transcriber-gemini", "stopped-agent", 1)
+	stoppedDefinitionYAML = strings.Replace(stoppedDefinitionYAML, "YouTube Transcriber (Gemini)", "Stopped Agent", 1)
+	if err := store.SaveAgentDefinition(&storage.AgentDefinitionRecord{
+		ID:             "stopped-agent",
+		Name:           "Stopped Agent",
+		Runtime:        agentdef.RuntimeDocker,
+		DefinitionYAML: stoppedDefinitionYAML,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("failed to save stopped agent definition: %v", err)
+	}
+
+	oldRunCommand := runCommand
+	runCommand = func(ctx context.Context, command string, args ...string) (string, error) {
+		if command != "docker" || len(args) == 0 || args[0] != "ps" {
+			return "", nil
+		}
+		rows := []dockerPSRow{
+			{
+				ID:     "running-agent-id",
+				Image:  "a2gent-brute:latest",
+				State:  "running",
+				Status: "Up",
+				Names:  "agent-youtube-transcriber-gemini",
+				Ports:  "0.0.0.0:18080->8080/tcp",
+				Labels: localAgentManagerLabelKey + "=" + localAgentManagerLabelValue + "," + dockerRuntimeManagedLabelKey + "=true," + dockerRuntimeAgentDefLabelKey + "=youtube-transcriber-gemini",
+			},
+			{
+				ID:     "stopped-agent-id",
+				Image:  "a2gent-brute:latest",
+				State:  "exited",
+				Status: "Exited",
+				Names:  "agent-stopped-agent",
+				Ports:  "0.0.0.0:18081->8080/tcp",
+				Labels: localAgentManagerLabelKey + "=" + localAgentManagerLabelValue + "," + dockerRuntimeManagedLabelKey + "=true," + dockerRuntimeAgentDefLabelKey + "=stopped-agent",
+			},
+		}
+		encoded := make([]string, 0, len(rows))
+		for _, row := range rows {
+			raw, _ := json.Marshal(row)
+			encoded = append(encoded, string(raw))
+		}
+		return strings.Join(encoded, "\n"), nil
+	}
+	t.Cleanup(func() { runCommand = oldRunCommand })
 
 	sessionManager := session.NewManager(store)
 	server := NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
@@ -286,14 +333,178 @@ workspace:
 	}
 
 	systemPrompt := server.buildSystemPromptForSession(sess)
-	if !strings.Contains(systemPrompt, "Available Docker-backed configured agents for delegation:") {
+	if !strings.Contains(systemPrompt, "Currently running Docker-backed configured agents for delegation:") {
 		t.Fatalf("expected configured agent listing, got: %q", systemPrompt)
 	}
 	if !strings.Contains(systemPrompt, "youtube-transcriber-gemini") || !strings.Contains(systemPrompt, "YouTube Transcriber (Gemini)") {
 		t.Fatalf("expected stored YAML agent in prompt, got: %q", systemPrompt)
 	}
+	if strings.Contains(systemPrompt, "stopped-agent") || strings.Contains(systemPrompt, "Stopped Agent") {
+		t.Fatalf("stopped Docker agent should not be listed in prompt, got: %q", systemPrompt)
+	}
 	if !strings.Contains(systemPrompt, "Provider: google") || !strings.Contains(systemPrompt, "Model: models/gemini-3.1-pro-preview") || !strings.Contains(systemPrompt, "Tools: 1 tools") {
 		t.Fatalf("expected stored YAML agent metadata in prompt, got: %q", systemPrompt)
+	}
+}
+
+func TestBuildSystemPromptForSession_IncludesOnlyRunningSavedSubAgents(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now()
+	currentProjectID := "project-current"
+	otherProjectID := "project-other"
+	subAgents := []*storage.SubAgent{
+		{
+			ID:                "running-reviewer",
+			Name:              "Running Reviewer",
+			Provider:          "openai",
+			Model:             "gpt-5.5",
+			EnabledTools:      []string{"read", "grep"},
+			InstructionBlocks: "[]",
+			CreatedAt:         now,
+			UpdatedAt:         now,
+		},
+		{
+			ID:                "stopped-reviewer",
+			Name:              "Stopped Reviewer",
+			Provider:          "openai",
+			Model:             "gpt-5.5",
+			EnabledTools:      []string{"read"},
+			InstructionBlocks: "[]",
+			CreatedAt:         now,
+			UpdatedAt:         now,
+		},
+		{
+			ID:                "wrong-project-reviewer",
+			Name:              "Wrong Project Reviewer",
+			Provider:          "openai",
+			Model:             "gpt-5.5",
+			EnabledTools:      []string{"read"},
+			InstructionBlocks: "[]",
+			CreatedAt:         now,
+			UpdatedAt:         now,
+		},
+	}
+	for _, subAgent := range subAgents {
+		if err := store.SaveSubAgent(subAgent); err != nil {
+			t.Fatalf("failed to save sub-agent %s: %v", subAgent.ID, err)
+		}
+	}
+	currentProjectRoot := t.TempDir()
+	currentProject := &storage.Project{ID: currentProjectID, Name: "Current Project", Folder: &currentProjectRoot, CreatedAt: now, UpdatedAt: now}
+	if err := store.SaveProject(currentProject); err != nil {
+		t.Fatalf("failed to save current project: %v", err)
+	}
+	otherProjectRoot := t.TempDir()
+	otherProject := &storage.Project{ID: otherProjectID, Name: "Other Project", Folder: &otherProjectRoot, CreatedAt: now, UpdatedAt: now}
+	if err := store.SaveProject(otherProject); err != nil {
+		t.Fatalf("failed to save other project: %v", err)
+	}
+
+	oldRunCommand := runCommand
+	runCommand = func(ctx context.Context, command string, args ...string) (string, error) {
+		if command != "docker" || len(args) == 0 || args[0] != "ps" {
+			return "", nil
+		}
+		rows := []dockerPSRow{
+			{
+				ID:     "running-reviewer-id",
+				Image:  "a2gent-brute:latest",
+				State:  "running",
+				Status: "Up",
+				Names:  "agent-running-reviewer__project-project-current",
+				Ports:  "0.0.0.0:18080->8080/tcp",
+				Labels: localAgentManagerLabelKey + "=" + localAgentManagerLabelValue + "," + dockerRuntimeManagedLabelKey + "=true," + dockerRuntimeAgentDefLabelKey + "=running-reviewer,a2gent.project_id=project-current",
+			},
+			{
+				ID:     "stopped-reviewer-id",
+				Image:  "a2gent-brute:latest",
+				State:  "exited",
+				Status: "Exited",
+				Names:  "agent-stopped-reviewer__project-project-current",
+				Ports:  "0.0.0.0:18081->8080/tcp",
+				Labels: localAgentManagerLabelKey + "=" + localAgentManagerLabelValue + "," + dockerRuntimeManagedLabelKey + "=true," + dockerRuntimeAgentDefLabelKey + "=stopped-reviewer,a2gent.project_id=project-current",
+			},
+			{
+				ID:     "wrong-project-reviewer-id",
+				Image:  "a2gent-brute:latest",
+				State:  "running",
+				Status: "Up",
+				Names:  "agent-wrong-project-reviewer__project-project-other",
+				Ports:  "0.0.0.0:18082->8080/tcp",
+				Labels: localAgentManagerLabelKey + "=" + localAgentManagerLabelValue + "," + dockerRuntimeManagedLabelKey + "=true," + dockerRuntimeAgentDefLabelKey + "=wrong-project-reviewer,a2gent.project_id=project-other",
+			},
+		}
+		encoded := make([]string, 0, len(rows))
+		for _, row := range rows {
+			raw, _ := json.Marshal(row)
+			encoded = append(encoded, string(raw))
+		}
+		return strings.Join(encoded, "\n"), nil
+	}
+	t.Cleanup(func() { runCommand = oldRunCommand })
+
+	sessionManager := session.NewManager(store)
+	server := NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
+	sess, err := sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	sess.ProjectID = &currentProjectID
+
+	systemPrompt := server.buildSystemPromptForSession(sess)
+	if !strings.Contains(systemPrompt, "running-reviewer") || !strings.Contains(systemPrompt, "Running Reviewer") {
+		t.Fatalf("expected running saved sub-agent in prompt, got: %q", systemPrompt)
+	}
+	if strings.Contains(systemPrompt, "stopped-reviewer") || strings.Contains(systemPrompt, "Stopped Reviewer") {
+		t.Fatalf("stopped saved sub-agent should not be listed in prompt, got: %q", systemPrompt)
+	}
+	if strings.Contains(systemPrompt, "wrong-project-reviewer") || strings.Contains(systemPrompt, "Wrong Project Reviewer") {
+		t.Fatalf("wrong-project saved sub-agent should not be listed in prompt, got: %q", systemPrompt)
+	}
+}
+
+func TestBuildSystemPromptForSession_RebuildsLegacyConfiguredAgentSnapshot(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	oldRunCommand := runCommand
+	runCommand = func(ctx context.Context, command string, args ...string) (string, error) {
+		if command == "docker" && len(args) > 0 && args[0] == "ps" {
+			return "", nil
+		}
+		return "", nil
+	}
+	t.Cleanup(func() { runCommand = oldRunCommand })
+
+	sessionManager := session.NewManager(store)
+	server := NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
+	sess, err := sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	if sess.Metadata == nil {
+		sess.Metadata = map[string]interface{}{}
+	}
+	sess.Metadata[sessionSystemPromptSnapshotMetadataKey] = systemPromptSnapshot{
+		BasePrompt:     "base",
+		CombinedPrompt: "Environment context:\n- old\n\n" + legacyConfiguredAgentsPromptHeader + "\n- ID: stopped-reviewer",
+		Blocks: []systemPromptBlockSnapshot{
+			{Type: "environment_context", Enabled: true, ResolvedContent: "Environment context:\n- old"},
+			{Type: "sub_agents", Enabled: true, ResolvedContent: legacyConfiguredAgentsPromptHeader + "\n- ID: stopped-reviewer"},
+		},
+	}
+
+	systemPrompt := server.buildSystemPromptForSession(sess)
+	if strings.Contains(systemPrompt, legacyConfiguredAgentsPromptHeader) || strings.Contains(systemPrompt, "stopped-reviewer") {
+		t.Fatalf("legacy configured-agent snapshot should have been rebuilt, got: %q", systemPrompt)
 	}
 }
 

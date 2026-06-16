@@ -379,6 +379,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 
 	result := &llm.ChatResponse{}
 	toolByIndex := map[int]int{}
+	toolByID := map[string]int{}
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 
@@ -426,14 +427,10 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 			}
 
 			for _, tc := range choice.Delta.ToolCalls {
-				idx, ok := toolByIndex[tc.Index]
-				if !ok {
-					result.ToolCalls = append(result.ToolCalls, llm.ToolCall{})
-					idx = len(result.ToolCalls) - 1
-					toolByIndex[tc.Index] = idx
-				}
+				idx := geminiStreamToolCallIndex(result, toolByIndex, toolByID, tc.Index, tc.ID, tc.Function.Name)
 				if tc.ID != "" {
 					result.ToolCalls[idx].ID = tc.ID
+					toolByID[tc.ID] = idx
 				}
 				if tc.Function.Name != "" {
 					result.ToolCalls[idx].Name = tc.Function.Name
@@ -446,7 +443,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 					sigDelta = tc.ExtraContent.Google.ThoughtSignature
 				}
 				if sigDelta != "" {
-					result.ToolCalls[idx].ThoughtSignature += sigDelta
+					result.ToolCalls[idx].ThoughtSignature = mergeThoughtSignature(result.ToolCalls[idx].ThoughtSignature, sigDelta)
 				}
 				if onEvent != nil {
 					if err := onEvent(llm.StreamEvent{
@@ -632,6 +629,52 @@ func geminiAsString(v interface{}) string {
 	return s
 }
 
+func geminiStreamToolCallIndex(result *llm.ChatResponse, toolByIndex map[int]int, toolByID map[string]int, streamIndex int, id string, name string) int {
+	id = strings.TrimSpace(id)
+	name = strings.TrimSpace(name)
+	if id != "" {
+		if idx, ok := toolByID[id]; ok {
+			toolByIndex[streamIndex] = idx
+			return idx
+		}
+	}
+
+	if idx, ok := toolByIndex[streamIndex]; ok && idx >= 0 && idx < len(result.ToolCalls) {
+		current := result.ToolCalls[idx]
+		if geminiStreamStartsNewToolCall(current, id, name) {
+			return appendGeminiStreamToolCall(result, toolByIndex, toolByID, streamIndex, id)
+		}
+		if id != "" {
+			toolByID[id] = idx
+		}
+		return idx
+	}
+
+	return appendGeminiStreamToolCall(result, toolByIndex, toolByID, streamIndex, id)
+}
+
+func appendGeminiStreamToolCall(result *llm.ChatResponse, toolByIndex map[int]int, toolByID map[string]int, streamIndex int, id string) int {
+	result.ToolCalls = append(result.ToolCalls, llm.ToolCall{})
+	idx := len(result.ToolCalls) - 1
+	toolByIndex[streamIndex] = idx
+	if id != "" {
+		toolByID[id] = idx
+	}
+	return idx
+}
+
+func geminiStreamStartsNewToolCall(current llm.ToolCall, id string, name string) bool {
+	currentID := strings.TrimSpace(current.ID)
+	if id != "" && currentID != "" && id != currentID {
+		return true
+	}
+	currentName := strings.TrimSpace(current.Name)
+	if name != "" && currentName != "" && name != currentName && json.Valid([]byte(strings.TrimSpace(current.Input))) {
+		return true
+	}
+	return false
+}
+
 func (c *Client) convertMessages(messages []llm.Message) []geminiMessage {
 	if len(messages) == 0 {
 		return nil
@@ -692,6 +735,21 @@ func mergeToolArguments(existing, incoming string) string {
 		return trimmedIncoming
 	}
 	return existing + incoming
+}
+
+func mergeThoughtSignature(existing, incoming string) string {
+	incoming = strings.TrimSpace(incoming)
+	if incoming == "" {
+		return existing
+	}
+	existing = strings.TrimSpace(existing)
+	if existing == "" || strings.Contains(incoming, existing) {
+		return incoming
+	}
+	if strings.Contains(existing, incoming) {
+		return existing
+	}
+	return incoming
 }
 
 // Ensure Client implements llm.Client

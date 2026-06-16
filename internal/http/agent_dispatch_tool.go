@@ -19,6 +19,7 @@ import (
 
 	"github.com/A2gent/brute/internal/agentdef"
 	"github.com/A2gent/brute/internal/logging"
+	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/storage"
 	"github.com/A2gent/brute/internal/tools"
 )
@@ -518,9 +519,72 @@ func postLocalDockerAgentChatStream(ctx context.Context, client *nethttp.Client,
 	}
 
 	if sawEvent {
+		if recovered, recoverErr := recoverLocalDockerAgentChatResponse(ctx, client, url, &chatResp); recoverErr == nil {
+			if strings.TrimSpace(recovered.Content) != "" || isTerminalLocalAgentStatus(recovered.Status) {
+				if strings.TrimSpace(recovered.Status) == string(session.StatusFailed) {
+					message := strings.TrimSpace(recovered.Content)
+					if message == "" {
+						message = "docker agent failed before the stream sent a terminal event"
+					}
+					return recovered, errors.New(message)
+				}
+				return recovered, nil
+			}
+		}
 		return chatResp, fmt.Errorf("stream from %s ended before terminal event (last event=%s status=%s)", url, firstNonEmptyLocalAgentString(lastType, "unknown"), firstNonEmptyLocalAgentString(chatResp.Status, "unknown"))
 	}
 	return chatResp, fmt.Errorf("stream from %s ended without events", url)
+}
+
+func recoverLocalDockerAgentChatResponse(ctx context.Context, client *nethttp.Client, streamURL string, fallback *ChatResponse) (ChatResponse, error) {
+	sessionURL := strings.TrimSuffix(streamURL, "/chat/stream")
+	if sessionURL == streamURL {
+		return ChatResponse{}, fmt.Errorf("stream URL does not end with /chat/stream")
+	}
+	req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodGet, sessionURL, nil)
+	if err != nil {
+		return ChatResponse{}, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ChatResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, dockerDelegationStreamBodyLimit))
+		return ChatResponse{}, fmt.Errorf("GET %s failed: %s", sessionURL, firstNonEmptyLocalAgentString(strings.TrimSpace(string(body)), resp.Status))
+	}
+	var sess SessionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&sess); err != nil {
+		return ChatResponse{}, err
+	}
+	recovered := ChatResponse{
+		Status:   sess.Status,
+		Messages: sess.Messages,
+	}
+	if fallback != nil {
+		recovered.Usage = fallback.Usage
+	}
+	recovered.Content = lastLocalAgentAssistantContent(sess.Messages)
+	return recovered, nil
+}
+
+func lastLocalAgentAssistantContent(messages []MessageResponse) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "assistant" && strings.TrimSpace(messages[i].Content) != "" {
+			return strings.TrimSpace(messages[i].Content)
+		}
+	}
+	return ""
+}
+
+func isTerminalLocalAgentStatus(status string) bool {
+	switch strings.TrimSpace(status) {
+	case string(session.StatusCompleted), string(session.StatusFailed), string(session.StatusPaused), string(session.StatusInputRequired), string(session.StatusWaitingExternal):
+		return true
+	default:
+		return false
+	}
 }
 
 func applyDockerDelegationStreamEvent(resp *ChatResponse, event ChatStreamEvent) {

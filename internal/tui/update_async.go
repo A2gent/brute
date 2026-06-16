@@ -150,15 +150,6 @@ func (m Model) updateAgentResponse(msg agentResponseMsg) (Model, []tea.Cmd) {
 	return m, cmds
 }
 
-func (m Model) updateTitle(msg titleUpdateMsg) Model {
-	m.session.SetTitle(msg.title)
-	m.taskSummary = msg.title
-	m.saveSessionIfNotEmpty()
-	m.totalInputTokens += msg.inputTokens
-	m.totalOutputTokens += msg.outputTokens
-	return m
-}
-
 func (m Model) updateTokens(msg tokenUpdateMsg) Model {
 	m.totalInputTokens += msg.inputTokens
 	m.totalOutputTokens += msg.outputTokens

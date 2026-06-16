@@ -75,8 +75,12 @@ func (s *Server) ensureSessionSystemPromptSnapshot(sess *session.Session) *syste
 			if strings.Contains(snapshot.BasePrompt, subAgentIdentity) || strings.Contains(snapshot.CombinedPrompt, subAgentIdentity) {
 				return snapshot
 			}
-		} else if !isThinkingSessionWithSettings(sess, settings) || len(thinkingBlocks) == 0 || snapshotHasThinkingBlocks(snapshot) {
-			return snapshot
+		} else {
+			cachedPromptStillCurrent := !snapshotHasLegacyConfiguredAgentsBlock(snapshot) &&
+				(!isThinkingSessionWithSettings(sess, settings) || len(thinkingBlocks) == 0 || snapshotHasThinkingBlocks(snapshot))
+			if cachedPromptStillCurrent {
+				return snapshot
+			}
 		}
 	}
 
@@ -453,7 +457,7 @@ func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, 
 		}}, resolvedBlocks...)
 	}
 
-	subAgentsSection, subAgentsTokens := s.resolveSubAgentsSection()
+	subAgentsSection, subAgentsTokens := s.resolveSubAgentsSection(sess)
 	if subAgentsSection != "" {
 		appendSections = append(appendSections, subAgentsSection)
 		resolvedBlocks = append(resolvedBlocks, systemPromptBlockSnapshot{
@@ -515,6 +519,18 @@ func snapshotHasThinkingBlocks(snapshot *systemPromptSnapshot) bool {
 		}
 	}
 	return false
+}
+
+func snapshotHasLegacyConfiguredAgentsBlock(snapshot *systemPromptSnapshot) bool {
+	if snapshot == nil {
+		return false
+	}
+	for _, block := range snapshot.Blocks {
+		if strings.TrimSpace(block.Type) == "sub_agents" && strings.Contains(block.ResolvedContent, legacyConfiguredAgentsPromptHeader) {
+			return true
+		}
+	}
+	return strings.Contains(snapshot.CombinedPrompt, legacyConfiguredAgentsPromptHeader)
 }
 
 func snapshotHasEnvironmentContext(snapshot *systemPromptSnapshot) bool {

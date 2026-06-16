@@ -370,15 +370,6 @@ func deriveSkillNameFromHeading(content []byte, path string) string {
 	return defaultName
 }
 
-// deriveSkillName is the legacy function, kept for compatibility
-func deriveSkillName(path, defaultName string) string {
-	name, _ := parseSkillMetadata(path)
-	if name == "" {
-		return strings.TrimSpace(strings.TrimSuffix(defaultName, filepath.Ext(defaultName)))
-	}
-	return name
-}
-
 // RegistrySkill represents a skill from clawhub.ai (for API responses)
 type RegistrySkill struct {
 	ID          string            `json:"id"`
@@ -611,7 +602,7 @@ func (s *Server) handleDeleteSkill(w http.ResponseWriter, r *http.Request) {
 
 	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"success": true,
-		"message": fmt.Sprintf("Skill deleted successfully"),
+		"message": "Skill deleted successfully",
 		"path":    deletePath,
 	})
 }

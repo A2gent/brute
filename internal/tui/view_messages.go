@@ -22,11 +22,6 @@ func (m Model) renderMessages() string {
 	return sb.String()
 }
 
-// renderMessage renders a single message with optional previous message context
-func (m Model) renderMessage(msg message) string {
-	return m.renderMessageWithContext(msg, nil)
-}
-
 func isCompactionMetadata(metadata map[string]interface{}) bool {
 	if metadata == nil {
 		return false

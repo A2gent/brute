@@ -83,9 +83,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m, asyncCmds = m.updateAgentResponse(msg)
 		cmds = append(cmds, asyncCmds...)
 
-	case titleUpdateMsg:
-		m = m.updateTitle(msg)
-
 	case tokenUpdateMsg:
 		m = m.updateTokens(msg)
 	}

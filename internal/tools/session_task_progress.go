@@ -199,9 +199,7 @@ func parseTaskStats(content string) TaskStats {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		// Remove leading "- " if present to normalize format
-		if strings.HasPrefix(trimmed, "- ") {
-			trimmed = trimmed[2:]
-		}
+		trimmed = strings.TrimPrefix(trimmed, "- ")
 		if strings.HasPrefix(trimmed, "[ ]") {
 			total++
 		} else if strings.HasPrefix(trimmed, "[x]") || strings.HasPrefix(trimmed, "[X]") {

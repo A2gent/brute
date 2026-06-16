@@ -76,55 +76,6 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 	return request
 }
 
-func (a *Agent) buildCompactionRequest(sess *session.Session, prompt string) *llm.ChatRequest {
-	activeMessages := a.getActiveConversationMessages(sess)
-	messages := make([]llm.Message, 0, len(activeMessages))
-
-	for _, m := range activeMessages {
-		msg := llm.Message{
-			Role:    m.Role,
-			Content: m.Content,
-			Images:  sessionImagesToLLM(m.Images),
-		}
-
-		if len(m.ToolCalls) > 0 {
-			msg.ToolCalls = make([]llm.ToolCall, len(m.ToolCalls))
-			for i, tc := range m.ToolCalls {
-				msg.ToolCalls[i] = llm.ToolCall{
-					ID:               tc.ID,
-					Name:             tc.Name,
-					Input:            string(tc.Input),
-					ThoughtSignature: tc.ThoughtSignature,
-				}
-			}
-		}
-
-		if len(m.ToolResults) > 0 {
-			msg.ToolResults = make([]llm.ToolResult, len(m.ToolResults))
-			for i, tr := range m.ToolResults {
-				msg.ToolResults[i] = llm.ToolResult{
-					ToolCallID: tr.ToolCallID,
-					Content:    tr.Content,
-					IsError:    tr.IsError,
-					Metadata:   tr.Metadata,
-					Name:       tr.Name,
-					DurationMs: tr.DurationMs,
-				}
-			}
-		}
-
-		messages = append(messages, msg)
-	}
-
-	return &llm.ChatRequest{
-		Model:        a.config.Model,
-		Messages:     messages,
-		Temperature:  0.2,
-		MaxTokens:    4096,
-		SystemPrompt: prompt,
-	}
-}
-
 func sessionImagesToLLM(images []session.ImageAttachment) []llm.Image {
 	if len(images) == 0 {
 		return nil

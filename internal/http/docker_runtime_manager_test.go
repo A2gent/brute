@@ -219,6 +219,67 @@ func TestCreateAgentContainerMountsAllProjectsReadOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestDockerRuntimeIdleReaperDisabledByDefault(t *testing.T) {
+	t.Setenv(dockerAgentIdleTimeoutEnvVar, "")
+	manager := newDockerRuntimeManager(&Server{})
+
+	oldRunCommand := runCommand
+	var dockerPSCalled bool
+	runCommand = func(ctx context.Context, command string, args ...string) (string, error) {
+		if command == "docker" && len(args) > 0 && args[0] == "ps" {
+			dockerPSCalled = true
+		}
+		return "", nil
+	}
+	t.Cleanup(func() { runCommand = oldRunCommand })
+
+	manager.reapIdleContainers(context.Background())
+	if dockerPSCalled {
+		t.Fatal("idle reaper should not inspect Docker when no idle timeout is configured")
+	}
+}
+
+func TestDockerRuntimeIdleReaperStopsOnlyWhenConfigured(t *testing.T) {
+	t.Setenv(dockerAgentIdleTimeoutEnvVar, "1ms")
+	manager := newDockerRuntimeManager(&Server{})
+	manager.mu.Lock()
+	manager.lastUsed["agent-planner"] = time.Now().Add(-time.Hour)
+	manager.mu.Unlock()
+
+	oldRunCommand := runCommand
+	var stopped []string
+	runCommand = func(ctx context.Context, command string, args ...string) (string, error) {
+		if command != "docker" {
+			return "", nil
+		}
+		if len(args) > 0 && args[0] == "ps" {
+			row := dockerPSRow{
+				ID:     "planner-id",
+				Image:  "a2gent-brute:latest",
+				State:  "running",
+				Status: "Up",
+				Names:  "agent-planner",
+				Ports:  "0.0.0.0:18080->8080/tcp",
+				Labels: localAgentManagerLabelKey + "=" + localAgentManagerLabelValue + "," + dockerRuntimeManagedLabelKey + "=true," + dockerRuntimeAgentDefLabelKey + "=planner",
+			}
+			encoded, _ := json.Marshal(row)
+			return string(encoded), nil
+		}
+		if len(args) == 2 && args[0] == "stop" {
+			stopped = append(stopped, args[1])
+			return "", nil
+		}
+		return "", nil
+	}
+	t.Cleanup(func() { runCommand = oldRunCommand })
+
+	manager.reapIdleContainers(context.Background())
+	if len(stopped) != 1 || stopped[0] != "planner-id" {
+		t.Fatalf("expected configured reaper to stop stale managed container, got %#v", stopped)
+	}
+}
+
 func TestIsDockerPortAllocationError(t *testing.T) {
 	cases := []string{
 		"failed to start local agent container: exit status 125: docker: Error response from daemon: Bind for 0.0.0.0:18080 failed: port is already allocated",

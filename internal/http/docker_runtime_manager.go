@@ -1,7 +1,7 @@
 // docker_runtime_manager.go keeps stored docker-runtime agent definitions
 // running warm: containers are created once per agent/project binding, reused
-// across delegations, health-checked, and stopped again after an idle timeout
-// (docs/unified-agent-runtime-plan.md, Phase 3).
+// across delegations, and health-checked (docs/unified-agent-runtime-plan.md,
+// Phase 3).
 package http
 
 import (
@@ -21,7 +21,6 @@ import (
 const (
 	dockerRuntimeManagedLabelKey  = "a2gent.runtime_managed"
 	dockerRuntimeAgentDefLabelKey = "a2gent.agent_def_id"
-	defaultDockerAgentIdleTimeout = 30 * time.Minute
 	dockerAgentIdleTimeoutEnvVar  = "A2GENT_DOCKER_AGENT_IDLE_TIMEOUT"
 	dockerRuntimeReaperInterval   = 1 * time.Minute
 	dockerRuntimeCreateTimeout    = 60 * time.Second
@@ -57,12 +56,19 @@ func containerNameForAgent(defID string, projectID string) string {
 func dockerAgentIdleTimeout() time.Duration {
 	raw := strings.TrimSpace(os.Getenv(dockerAgentIdleTimeoutEnvVar))
 	if raw == "" {
-		return defaultDockerAgentIdleTimeout
+		return 0
+	}
+	switch strings.ToLower(raw) {
+	case "0", "off", "false", "disabled", "disable", "none", "never":
+		return 0
 	}
 	parsed, err := time.ParseDuration(raw)
-	if err != nil || parsed <= 0 {
-		logging.Warn("Invalid %s=%q, using default %s", dockerAgentIdleTimeoutEnvVar, raw, defaultDockerAgentIdleTimeout)
-		return defaultDockerAgentIdleTimeout
+	if err != nil {
+		logging.Warn("Invalid %s=%q, leaving Docker agent idle reaper disabled", dockerAgentIdleTimeoutEnvVar, raw)
+		return 0
+	}
+	if parsed <= 0 {
+		return 0
 	}
 	return parsed
 }
@@ -550,9 +556,10 @@ func appendDockerMultiProjectWorkspacePrompt(prompt string, mounts []dockerWorks
 	return prompt + "\n\n" + note
 }
 
-// runIdleReaper periodically stops managed containers that have not received a
-// delegation within the idle timeout. Containers the manager has never seen get
-// a full timeout window from first sighting (covers server restarts).
+// runIdleReaper periodically stops managed containers only when
+// A2GENT_DOCKER_AGENT_IDLE_TIMEOUT is set to a positive duration. Containers
+// the manager has never seen get a full timeout window from first sighting
+// (covers server restarts).
 func (m *dockerRuntimeManager) runIdleReaper(ctx context.Context) {
 	ticker := time.NewTicker(dockerRuntimeReaperInterval)
 	defer ticker.Stop()
@@ -567,11 +574,14 @@ func (m *dockerRuntimeManager) runIdleReaper(ctx context.Context) {
 }
 
 func (m *dockerRuntimeManager) reapIdleContainers(ctx context.Context) {
+	timeout := dockerAgentIdleTimeout()
+	if timeout <= 0 {
+		return
+	}
 	agents, err := listLocalBruteContainers(ctx)
 	if err != nil {
 		return
 	}
-	timeout := dockerAgentIdleTimeout()
 	now := time.Now()
 	for i := range agents {
 		agent := agents[i]

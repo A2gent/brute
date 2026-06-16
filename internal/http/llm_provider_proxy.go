@@ -877,8 +877,6 @@ func proxyAnyToString(raw any) string {
 		return value
 	case fmt.Stringer:
 		return value.String()
-	case json.Number:
-		return value.String()
 	default:
 		return fmt.Sprintf("%v", raw)
 	}

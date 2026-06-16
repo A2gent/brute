@@ -2,8 +2,10 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/agentdef"
@@ -11,6 +13,12 @@ import (
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/storage"
 	"strings"
+)
+
+const (
+	legacyConfiguredAgentsPromptHeader  = "Available Docker-backed configured agents for delegation:"
+	runningConfiguredAgentsPromptHeader = "Currently running Docker-backed configured agents for delegation:"
+	subAgentPromptDockerListTimeout     = 2 * time.Second
 )
 
 type configuredAgentPromptEntry struct {
@@ -21,9 +29,10 @@ type configuredAgentPromptEntry struct {
 	Tools    string
 }
 
-func (s *Server) resolveSubAgentsSection() (string, int) {
+func (s *Server) resolveSubAgentsSection(sess *session.Session) (string, int) {
 	entries := []configuredAgentPromptEntry{}
 	seen := map[string]struct{}{}
+	runningContainersByDefinitionID := s.runningDockerAgentDefinitionContainersForPrompt()
 
 	agents, err := s.store.ListSubAgents()
 	if err != nil {
@@ -31,6 +40,11 @@ func (s *Server) resolveSubAgentsSection() (string, int) {
 	} else {
 		for _, sa := range agents {
 			if sa == nil {
+				continue
+			}
+			def, defErr := agentdef.FromSubAgent(sa)
+			if defErr != nil {
+				logging.Warn("Failed to build sub-agent definition %s for system prompt: %v", sa.ID, defErr)
 				continue
 			}
 			entry := configuredAgentPromptEntry{
@@ -41,6 +55,9 @@ func (s *Server) resolveSubAgentsSection() (string, int) {
 				Tools:    "all tools",
 			}
 			if entry.ID == "" {
+				continue
+			}
+			if !s.definitionHasRunningPromptContainer(def, []string{entry.ID}, sess, runningContainersByDefinitionID) {
 				continue
 			}
 			if entry.Provider == "" {
@@ -76,20 +93,35 @@ func (s *Server) resolveSubAgentsSection() (string, int) {
 			if def.Runtime.Type != agentdef.RuntimeDocker {
 				continue
 			}
+			defAgentID := strings.TrimSpace(def.Agent.ID)
 			entry := configuredAgentPromptEntry{
-				ID:       strings.TrimSpace(def.Agent.ID),
+				ID:       strings.TrimSpace(record.ID),
 				Name:     strings.TrimSpace(def.Agent.Name),
 				Provider: strings.TrimSpace(def.LLM.Provider),
 				Model:    strings.TrimSpace(def.LLM.Model),
 				Tools:    "all tools",
 			}
 			if entry.ID == "" {
-				entry.ID = strings.TrimSpace(record.ID)
+				entry.ID = defAgentID
 			}
 			if entry.ID == "" {
 				continue
 			}
-			if _, exists := seen[entry.ID]; exists {
+			candidateIDs := []string{entry.ID}
+			if defAgentID != "" && defAgentID != entry.ID {
+				candidateIDs = append(candidateIDs, defAgentID)
+			}
+			alreadySeen := false
+			for _, candidateID := range candidateIDs {
+				if _, exists := seen[candidateID]; exists {
+					alreadySeen = true
+					break
+				}
+			}
+			if alreadySeen {
+				continue
+			}
+			if !s.definitionHasRunningPromptContainer(def, candidateIDs, sess, runningContainersByDefinitionID) {
 				continue
 			}
 			if entry.Name == "" {
@@ -108,7 +140,9 @@ func (s *Server) resolveSubAgentsSection() (string, int) {
 				entry.Tools = fmt.Sprintf("%d tools", len(def.Tools.Enabled))
 			}
 			entries = append(entries, entry)
-			seen[entry.ID] = struct{}{}
+			for _, candidateID := range candidateIDs {
+				seen[candidateID] = struct{}{}
+			}
 		}
 	}
 
@@ -117,8 +151,8 @@ func (s *Server) resolveSubAgentsSection() (string, int) {
 	}
 
 	lines := make([]string, 0, len(entries)+4)
-	lines = append(lines, "Available Docker-backed configured agents for delegation:")
-	lines = append(lines, "Use the delegate_to_agent tool to delegate tasks to these agents (delegate_to_subagent is a backwards-compatible alias). Local configured agents run in warm Docker containers with their own child session.")
+	lines = append(lines, runningConfiguredAgentsPromptHeader)
+	lines = append(lines, "Use the delegate_to_agent tool to delegate tasks to these already-running agents (delegate_to_subagent is a backwards-compatible alias). Local configured agents run in warm Docker containers with their own child session.")
 	lines = append(lines, "")
 	for _, entry := range entries {
 		lines = append(lines, fmt.Sprintf("- ID: %s | Name: %s | Provider: %s | Model: %s | Tools: %s",
@@ -127,6 +161,75 @@ func (s *Server) resolveSubAgentsSection() (string, int) {
 
 	section := strings.Join(lines, "\n")
 	return section, estimateTokensApprox(section)
+}
+
+func (s *Server) runningDockerAgentDefinitionContainersForPrompt() map[string][]LocalDockerAgent {
+	ctx, cancel := context.WithTimeout(context.Background(), subAgentPromptDockerListTimeout)
+	defer cancel()
+
+	containers, err := listLocalBruteContainers(ctx)
+	if err != nil {
+		logging.Warn("Failed to list Docker agents for system prompt: %v", err)
+		return map[string][]LocalDockerAgent{}
+	}
+
+	running := map[string][]LocalDockerAgent{}
+	for _, container := range containers {
+		if !container.Running || strings.TrimSpace(container.APIURL) == "" {
+			continue
+		}
+		defID := strings.TrimSpace(container.Labels[dockerRuntimeAgentDefLabelKey])
+		if defID == "" {
+			continue
+		}
+		running[defID] = append(running[defID], container)
+	}
+	return running
+}
+
+func (s *Server) definitionHasRunningPromptContainer(def *agentdef.Definition, candidateIDs []string, sess *session.Session, containersByDefinitionID map[string][]LocalDockerAgent) bool {
+	if def == nil {
+		return false
+	}
+	currentProjectID := ""
+	if sess != nil && sess.ProjectID != nil {
+		currentProjectID = strings.TrimSpace(*sess.ProjectID)
+	}
+	workspace, err := s.resolveDockerWorkspaceBinding(def, currentProjectID)
+	if err != nil {
+		logging.Warn("Failed to resolve Docker workspace binding for agent %s system prompt listing: %v", def.Agent.ID, err)
+		return false
+	}
+	for _, candidateID := range candidateIDs {
+		candidateID = strings.TrimSpace(candidateID)
+		if candidateID == "" {
+			continue
+		}
+		for _, container := range containersByDefinitionID[candidateID] {
+			if dockerPromptContainerMatchesWorkspace(def, workspace, container) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func dockerPromptContainerMatchesWorkspace(def *agentdef.Definition, workspace dockerWorkspaceBinding, container LocalDockerAgent) bool {
+	defID := ""
+	if def != nil {
+		defID = strings.TrimSpace(def.Agent.ID)
+	}
+	if defID != "" && container.Name == containerNameForAgent(defID, workspace.ContainerNameBinding) {
+		return true
+	}
+	if workspace.ProjectID != "" {
+		return strings.TrimSpace(container.Labels["a2gent.project_id"]) == workspace.ProjectID
+	}
+	if len(workspace.ProjectMounts) > 0 {
+		return strings.TrimSpace(container.Labels["a2gent.workspace_scope"]) == strings.TrimSpace(workspace.Scope)
+	}
+	return strings.TrimSpace(container.Labels["a2gent.project_id"]) == "" &&
+		strings.TrimSpace(container.Labels["a2gent.workspace_scope"]) == ""
 }
 
 // composeSubAgentSystemPromptSnapshot builds a system prompt snapshot for a

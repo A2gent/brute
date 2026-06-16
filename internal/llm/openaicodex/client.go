@@ -149,10 +149,7 @@ func NewClientWithOptions(accessToken, model, baseURL string, options Options) *
 	if normalizedBaseURL == "" {
 		normalizedBaseURL = defaultBaseURL
 	}
-	normalizedBaseURL = strings.TrimRight(normalizedBaseURL, "/")
-	if strings.HasSuffix(normalizedBaseURL, "/responses") {
-		normalizedBaseURL = strings.TrimSuffix(normalizedBaseURL, "/responses")
-	}
+	normalizedBaseURL = strings.TrimSuffix(strings.TrimRight(normalizedBaseURL, "/"), "/responses")
 	options = normalizeOptions(options)
 	return &Client{
 		accessToken: strings.TrimSpace(accessToken),

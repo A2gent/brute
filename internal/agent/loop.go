@@ -278,16 +278,6 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 	}
 }
 
-// getLastAssistantContent returns the content of the last assistant message
-func (a *Agent) getLastAssistantContent(sess *session.Session) string {
-	for i := len(sess.Messages) - 1; i >= 0; i-- {
-		if sess.Messages[i].Role == "assistant" && sess.Messages[i].Content != "" {
-			return sess.Messages[i].Content
-		}
-	}
-	return ""
-}
-
 // cleanupIncompleteToolCalls removes assistant messages with tool calls that don't have corresponding tool results
 // This can happen when the user interrupts a tool execution
 func (a *Agent) cleanupIncompleteToolCalls(sess *session.Session) {

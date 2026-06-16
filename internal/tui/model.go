@@ -42,10 +42,6 @@ type Model struct {
 	totalOutputTokens int
 	contextWindow     int // in tokens (default 128k for kimi-k2.5)
 
-	// Interaction tracking for auto-summarization
-	interactionCount int
-	titleGenerated   bool
-
 	// Message queue for when processing
 	queuedMessages []string
 
@@ -118,9 +114,6 @@ type Model struct {
 	showQuestionPrompt  bool
 	pendingQuestion     *session.QuestionData
 	questionOptionIndex int // Selected option index (-1 = custom answer)
-
-	// Error state
-	err error
 }
 
 func New(

@@ -417,12 +417,5 @@ func isHiddenPath(path string) bool {
 	return false
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // Ensure FindFilesTool implements Tool.
 var _ Tool = (*FindFilesTool)(nil)

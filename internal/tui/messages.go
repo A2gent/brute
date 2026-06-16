@@ -21,12 +21,6 @@ type (
 		outputTokens int
 	}
 
-	titleUpdateMsg struct {
-		title        string
-		inputTokens  int
-		outputTokens int
-	}
-
 	memoryUpdateMsg struct {
 		memoryMB float64
 	}

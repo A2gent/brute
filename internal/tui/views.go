@@ -267,27 +267,3 @@ func (m Model) renderEmptySessionView() string {
 		Height(m.viewport.Height).
 		Render(strings.Repeat("\n", topPad) + content)
 }
-
-// renderSeparator renders a horizontal line with optional processing indicator
-func (m Model) renderSeparator() string {
-	var leftPart string
-	if m.processing {
-		leftPart = loadingStyle.Render(m.loadingFrames[m.loadingIndex] + " Processing")
-		if len(m.queuedMessages) > 0 {
-			leftPart += queuedStyle.Render(fmt.Sprintf(" (%d queued)", len(m.queuedMessages)))
-		}
-	}
-
-	leftWidth := lipgloss.Width(leftPart)
-	lineWidth := m.width - leftWidth
-	if lineWidth < 0 {
-		lineWidth = 0
-	}
-
-	line := separatorStyle.Render(strings.Repeat("─", lineWidth))
-
-	if leftPart != "" {
-		return leftPart + " " + line
-	}
-	return line
-}

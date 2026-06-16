@@ -188,7 +188,7 @@ func (m Model) renderSessionsList() string {
 	}
 
 	// Add help text
-	help := fmt.Sprintf("↑/↓: navigate  pgup/pgdn: page  home/end: top/bottom  enter: switch  esc: cancel")
+	help := "↑/↓: navigate  pgup/pgdn: page  home/end: top/bottom  enter: switch  esc: cancel"
 	rendered = append(rendered, "")
 	rendered = append(rendered, lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render("  "+help))
 

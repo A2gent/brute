@@ -11,6 +11,10 @@ import (
 )
 
 func TestToolResultCompressionEnabled_DefaultsToTrueWithoutEnvOrSetting(t *testing.T) {
+	// WHY: toolResultCompressionEnabled intentionally lets the environment win,
+	// so this DB/default test must not inherit a developer shell override.
+	t.Setenv(toolResultCompressionSettingKey, "")
+
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create sqlite store: %v", err)
@@ -25,6 +29,9 @@ func TestToolResultCompressionEnabled_DefaultsToTrueWithoutEnvOrSetting(t *testi
 }
 
 func TestToolResultCompressionEnabled_SettingFalseDisablesFeature(t *testing.T) {
+	// WHY: this test verifies persisted settings, not env override behavior.
+	t.Setenv(toolResultCompressionSettingKey, "")
+
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create sqlite store: %v", err)

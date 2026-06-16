@@ -1,6 +1,9 @@
 package http
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseProjectGitReviewOverlayLineIndexReadsChangedLineNumbers(t *testing.T) {
 	diff := `diff --git a/src/app.ts b/src/app.ts
@@ -51,5 +54,30 @@ func TestSanitizeProjectGitReviewOverlayResponseFiltersInvalidModelOutput(t *tes
 	}
 	if annotation.Title != "New validation path" {
 		t.Fatalf("unexpected title %q", annotation.Title)
+	}
+}
+
+func TestFallbackProjectGitReviewOverlayAnnotationExplainsChangedCode(t *testing.T) {
+	diff := `diff --git a/app/controllers/spree/variants_controller.rb b/app/controllers/spree/variants_controller.rb
+@@ -7,1 +7,1 @@
+-before_action :load_variant, only: [:show, :subscribe]
++before_action :load_variant, only: [:show, :fitment, :subscribe]
+`
+	path := "app/controllers/spree/variants_controller.rb"
+	files := []ProjectGitCommitFile{{Path: path, Status: "M", Additions: 52, Deletions: 8}}
+	allowedLines := map[string]projectGitReviewOverlayLineIndex{
+		path: parseProjectGitReviewOverlayLineIndex(diff),
+	}
+
+	annotations := buildFallbackProjectGitReviewOverlayAnnotations(files, allowedLines)
+	if len(annotations) != 1 {
+		t.Fatalf("expected one fallback annotation, got %d: %#v", len(annotations), annotations)
+	}
+	body := annotations[0].Body
+	if strings.Contains(body, "non-trivial branch diff") || strings.Contains(body, "model fallback") {
+		t.Fatalf("fallback should explain the changed code instead of exposing a generic model fallback: %q", body)
+	}
+	if !strings.Contains(body, "replaces") || !strings.Contains(body, "[:show, :subscribe]") || !strings.Contains(body, "[:show, :fitment, :subscribe]") {
+		t.Fatalf("fallback should include the old and new code snippets, got %q", body)
 	}
 }

@@ -49,6 +49,9 @@ Diff snippets:
 type projectGitReviewOverlayLineIndex struct {
 	Additions map[int]bool
 	Deletions map[int]bool
+	// Store changed-line snippets so fallback notes can still explain the diff when the model fails.
+	AdditionText map[int]string
+	DeletionText map[int]string
 }
 
 type projectGitReviewOverlayModelResponse struct {
@@ -192,8 +195,10 @@ func buildProjectGitReviewOverlayDiffContext(repoRoot string, target projectGitB
 
 func parseProjectGitReviewOverlayLineIndex(diff string) projectGitReviewOverlayLineIndex {
 	index := projectGitReviewOverlayLineIndex{
-		Additions: map[int]bool{},
-		Deletions: map[int]bool{},
+		Additions:    map[int]bool{},
+		Deletions:    map[int]bool{},
+		AdditionText: map[int]string{},
+		DeletionText: map[int]string{},
 	}
 	oldLine := 0
 	newLine := 0
@@ -214,6 +219,7 @@ func parseProjectGitReviewOverlayLineIndex(diff string) projectGitReviewOverlayL
 		if strings.HasPrefix(line, "+") {
 			if newLine > 0 {
 				index.Additions[newLine] = true
+				index.AdditionText[newLine] = strings.TrimSpace(strings.TrimPrefix(line, "+"))
 			}
 			newLine++
 			continue
@@ -221,6 +227,7 @@ func parseProjectGitReviewOverlayLineIndex(diff string) projectGitReviewOverlayL
 		if strings.HasPrefix(line, "-") {
 			if oldLine > 0 {
 				index.Deletions[oldLine] = true
+				index.DeletionText[oldLine] = strings.TrimSpace(strings.TrimPrefix(line, "-"))
 			}
 			oldLine++
 			continue
@@ -405,7 +412,7 @@ func buildFallbackProjectGitReviewOverlayAnnotations(files []ProjectGitCommitFil
 			LineNumber:    lineNumber,
 			EndLineNumber: lineNumber,
 			Title:         projectGitReviewOverlayFallbackTitle(file),
-			Body:          projectGitReviewOverlayFallbackBody(file),
+			Body:          projectGitReviewOverlayFallbackBody(file, lineIndex, lineNumber),
 		})
 		if len(annotations) >= 12 {
 			break
@@ -435,16 +442,59 @@ func projectGitReviewOverlayFallbackTitle(file ProjectGitCommitFile) string {
 	}
 }
 
-func projectGitReviewOverlayFallbackBody(file ProjectGitCommitFile) string {
+func projectGitReviewOverlayFallbackBody(file ProjectGitCommitFile, lineIndex projectGitReviewOverlayLineIndex, lineNumber int) string {
 	stats := fmt.Sprintf("+%d/-%d", file.Additions, file.Deletions)
 	switch {
 	case strings.HasPrefix(file.Status, "A"):
+		if added := projectGitReviewOverlaySnippet(lineIndex.AdditionText, lineNumber); added != "" {
+			return fmt.Sprintf("This new file adds `%s` (%s). Review how this new behavior is reached and whether callers handle it.", added, stats)
+		}
 		return fmt.Sprintf("This file is introduced on the branch (%s). Review the new behavior and integration points before merging.", stats)
 	case strings.HasPrefix(file.Status, "D"):
+		if removed := projectGitReviewOverlaySnippet(lineIndex.DeletionText, lineNumber); removed != "" {
+			return fmt.Sprintf("This file removes `%s` (%s). Check that callers or references were updated accordingly.", removed, stats)
+		}
 		return fmt.Sprintf("This file is removed on the branch (%s). Check that callers or references were updated accordingly.", stats)
 	default:
-		return fmt.Sprintf("This region is part of a non-trivial branch diff in this file (%s). The model fallback marks it for focused review.", stats)
+		if added, removed := projectGitReviewOverlayNearbySnippets(lineIndex, lineNumber); added != "" && removed != "" {
+			return fmt.Sprintf("This change replaces `%s` with `%s` (%s). Review the behavior shift at this location and confirm related callers still follow the intended flow.", removed, added, stats)
+		}
+		if added := projectGitReviewOverlaySnippet(lineIndex.AdditionText, lineNumber); added != "" {
+			return fmt.Sprintf("This change adds `%s` in this region (%s). Review how the new behavior affects the surrounding flow.", added, stats)
+		}
+		if removed := projectGitReviewOverlaySnippet(lineIndex.DeletionText, lineNumber); removed != "" {
+			return fmt.Sprintf("This change removes `%s` from this region (%s). Check that the removed behavior is no longer needed.", removed, stats)
+		}
+		return fmt.Sprintf("This changed region is worth reviewing because this file has a branch diff of %s.", stats)
 	}
+}
+
+func projectGitReviewOverlayNearbySnippets(lineIndex projectGitReviewOverlayLineIndex, lineNumber int) (string, string) {
+	added := projectGitReviewOverlaySnippet(lineIndex.AdditionText, lineNumber)
+	removed := projectGitReviewOverlaySnippet(lineIndex.DeletionText, lineNumber)
+	if added != "" && removed != "" {
+		return added, removed
+	}
+	for distance := 1; distance <= 3; distance++ {
+		if added == "" {
+			added = projectGitReviewOverlaySnippet(lineIndex.AdditionText, lineNumber+distance)
+		}
+		if removed == "" {
+			removed = projectGitReviewOverlaySnippet(lineIndex.DeletionText, lineNumber-distance)
+		}
+		if added != "" && removed != "" {
+			return added, removed
+		}
+	}
+	return added, removed
+}
+
+func projectGitReviewOverlaySnippet(lines map[int]string, lineNumber int) string {
+	line := cleanProjectGitReviewOverlayText(lines[lineNumber])
+	if line == "" {
+		return ""
+	}
+	return truncateText(line, 180)
 }
 
 func buildGitReviewOverlayPrompt(template string, branch string, baseBranch string, files string, diffs string) string {

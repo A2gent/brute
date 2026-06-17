@@ -26,7 +26,7 @@ import (
 
 const (
 	dockerDelegationStartTimeout       = 30 * time.Second
-	defaultDockerDelegationTaskTimeout = 30 * time.Minute
+	defaultDockerDelegationTaskTimeout = 12 * time.Hour
 	dockerDelegationTaskTimeoutEnvVar  = "A2GENT_DOCKER_DELEGATION_TIMEOUT"
 	delegationResponseMaxChars         = 4000
 	dockerDelegationStreamBodyLimit    = 1024 * 1024

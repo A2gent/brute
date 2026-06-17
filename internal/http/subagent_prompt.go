@@ -169,7 +169,7 @@ func (s *Server) resolveSubAgentsSection(sess *session.Session) (string, int) {
 
 	lines := make([]string, 0, len(entries)+4)
 	lines = append(lines, availableConfiguredAgentsPromptHeader)
-	lines = append(lines, "Use the delegate_to_agent tool to delegate tasks to these configured agents (delegate_to_subagent is a backwards-compatible alias). Local configured agents run in warm Docker containers with their own child session; stopped or not-created agents are started on demand.")
+	lines = append(lines, "Use the delegate_to_agent tool to delegate tasks to these configured agents (delegate_to_subagent is a backwards-compatible alias). For independent tasks, delegate to multiple agents in one response or use the parallel tool for fan-out delegation. Local configured agents run in warm Docker containers with their own child session; stopped or not-created agents are started on demand.")
 	lines = append(lines, "")
 	for _, entry := range entries {
 		lines = append(lines, fmt.Sprintf("- ID: %s | Name: %s | Status: %s | Provider: %s | Model: %s | Tools: %s",

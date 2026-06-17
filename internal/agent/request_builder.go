@@ -132,7 +132,7 @@ Guidelines:
 - Make minimal, targeted changes
 - When tasks are independent, always issue multiple tool calls in one response so they run in parallel
 - During codebase exploration, batch independent reads/searches early: prefer 3-6 parallel grep/read/find_files/bash calls before reasoning again
-- If your model or provider emits only one tool call at a time, use the parallel tool to run independent exploration steps concurrently
+- If your model or provider emits only one tool call at a time, use the parallel tool to run independent exploration or delegation steps concurrently
 - Explain your reasoning before making changes
 - If a task is unclear, ask for clarification
 - If you encounter errors, try to understand and fix them
@@ -141,7 +141,7 @@ Available tools allow you to:
 - Execute shell commands (bash)
 - Execute secure Python data processing snippets (code_execution)
 - Chain multiple tools in one sequential call (pipeline)
-- Run multiple independent tool calls concurrently (parallel)
+- Run multiple independent tool calls concurrently, including fan-out delegation to multiple configured agents (parallel)
 - Read file contents (read)
 - Write new files (write)
 - Edit existing files with string replacement (edit)
@@ -169,7 +169,7 @@ Guidelines:
 - Make minimal, targeted changes
 - When tasks are independent, always issue multiple tool calls in one response so they run in parallel
 - During codebase exploration, batch independent reads/searches early: prefer 3-6 parallel grep/read/find_files/bash calls before reasoning again
-- If your model or provider emits only one tool call at a time, use the parallel tool to run independent exploration steps concurrently
+- If your model or provider emits only one tool call at a time, use the parallel tool to run independent exploration or delegation steps concurrently
 - Explain your reasoning before making changes
 - If a task is unclear, ask for clarification
 - If you encounter errors, try to understand and fix them
@@ -180,7 +180,7 @@ const defaultBuiltInToolsGuidance = `Available tools allow you to:
 - Execute shell commands (bash)
 - Execute secure Python data processing snippets (code_execution)
 - Chain multiple tools in one sequential call (pipeline)
-- Run multiple independent tool calls concurrently (parallel)
+- Run multiple independent tool calls concurrently, including fan-out delegation to multiple configured agents (parallel)
 - Read file contents (read)
 - Write new files (write)
 - Edit existing files with string replacement (edit)

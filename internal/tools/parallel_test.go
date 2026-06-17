@@ -33,6 +33,43 @@ func (t *sleepTool) Execute(_ context.Context, params json.RawMessage) (*Result,
 	return &Result{Success: true, Output: p.Text}, nil
 }
 
+type fakeDelegationTool struct {
+	name string
+}
+
+func (t *fakeDelegationTool) Name() string { return t.name }
+func (t *fakeDelegationTool) Description() string {
+	return "fake delegation tool for tests"
+}
+func (t *fakeDelegationTool) Schema() map[string]interface{} {
+	return map[string]interface{}{"type": "object"}
+}
+func (t *fakeDelegationTool) Execute(_ context.Context, params json.RawMessage) (*Result, error) {
+	var p struct {
+		AgentID    string `json:"agent_id"`
+		SubAgentID string `json:"sub_agent_id"`
+		Task       string `json:"task"`
+		Ms         int    `json:"ms"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+	if p.Ms > 0 {
+		time.Sleep(time.Duration(p.Ms) * time.Millisecond)
+	}
+	target := strings.TrimSpace(p.AgentID)
+	if target == "" {
+		target = strings.TrimSpace(p.SubAgentID)
+	}
+	return &Result{
+		Success: true,
+		Output:  "delegated " + target + ": " + p.Task,
+		Metadata: map[string]interface{}{
+			"child_session_id": "child-" + target,
+		},
+	}, nil
+}
+
 type outputOnlyFailTool struct{}
 
 func (t *outputOnlyFailTool) Name() string        { return "test_output_fail" }
@@ -67,6 +104,8 @@ func TestParallelTool_Execute(t *testing.T) {
 	manager.Register(&failTool{})
 	manager.Register(&sleepTool{})
 	manager.Register(&outputOnlyFailTool{})
+	manager.Register(&fakeDelegationTool{name: "delegate_to_agent"})
+	manager.Register(&fakeDelegationTool{name: "delegate_to_subagent"})
 
 	parallelRaw, ok := manager.Get("parallel")
 	if !ok {
@@ -243,22 +282,42 @@ func TestParallelTool_Execute(t *testing.T) {
 		}
 	})
 
-	t.Run("disallow sub-agent delegation", func(t *testing.T) {
+	t.Run("allows parallel agent delegation", func(t *testing.T) {
 		params := map[string]interface{}{
 			"steps": []map[string]interface{}{
-				{"tool": "delegate_to_subagent"},
+				{"tool": "delegate_to_agent", "args": map[string]interface{}{"agent_id": "researcher", "task": "inspect api", "ms": 140}},
+				{"tool": "delegate_to_subagent", "args": map[string]interface{}{"sub_agent_id": "tester", "task": "write test plan", "ms": 140}},
 			},
 		}
 		raw, _ := json.Marshal(params)
+		start := time.Now()
 		result, err := parallel.Execute(context.Background(), raw)
+		elapsed := time.Since(start)
 		if err != nil {
 			t.Fatalf("Execute returned error: %v", err)
 		}
-		if result.Success {
-			t.Fatalf("expected failure, got output: %s", result.Output)
+		if !result.Success {
+			t.Fatalf("expected success, got error: %s output: %s", result.Error, result.Output)
 		}
-		if !strings.Contains(result.Error, "sub-agent delegation must be called as a top-level tool call") {
-			t.Fatalf("unexpected error: %s", result.Error)
+		if elapsed >= 240*time.Millisecond {
+			t.Fatalf("expected delegation steps to run concurrently, took %v", elapsed)
+		}
+
+		var outputs []parallelStepOutput
+		if err := json.Unmarshal([]byte(result.Output), &outputs); err != nil {
+			t.Fatalf("failed to decode output: %v\n%s", err, result.Output)
+		}
+		if len(outputs) != 2 {
+			t.Fatalf("expected two outputs, got %d", len(outputs))
+		}
+		if outputs[0].Tool != "delegate_to_agent" || !strings.Contains(outputs[0].Output, "delegated researcher") {
+			t.Fatalf("unexpected delegate_to_agent output: %#v", outputs[0])
+		}
+		if outputs[1].Tool != "delegate_to_subagent" || !strings.Contains(outputs[1].Output, "delegated tester") {
+			t.Fatalf("unexpected delegate_to_subagent output: %#v", outputs[1])
+		}
+		if outputs[0].Metadata["child_session_id"] != "child-researcher" || outputs[1].Metadata["child_session_id"] != "child-tester" {
+			t.Fatalf("expected child session metadata to be preserved, got %#v", outputs)
 		}
 	})
 
@@ -373,5 +432,28 @@ func TestManagerExecuteParallel_PreservesFailureMetadata(t *testing.T) {
 	}
 	if results[0].Metadata["child_session_id"] != "child-1" {
 		t.Fatalf("expected failure metadata to be preserved, got %#v", results[0].Metadata)
+	}
+}
+
+func TestParallelTimeoutForTool(t *testing.T) {
+	t.Setenv(parallelDelegationTimeoutEnv, "")
+
+	if got := parallelTimeoutForTool("grep"); got != parallelStepTimeout {
+		t.Fatalf("expected grep to use default timeout %s, got %s", parallelStepTimeout, got)
+	}
+	for _, name := range []string{"delegate_to_agent", "delegate_to_subagent", "functions.delegate_to_external_agent"} {
+		if got := parallelTimeoutForTool(name); got != parallelDelegationStepTimeout {
+			t.Fatalf("expected %s to use delegation timeout %s, got %s", name, parallelDelegationStepTimeout, got)
+		}
+	}
+
+	t.Setenv(parallelDelegationTimeoutEnv, "24h")
+	if got := parallelTimeoutForTool("delegate_to_agent"); got != 24*time.Hour {
+		t.Fatalf("expected env override to control delegation timeout, got %s", got)
+	}
+
+	t.Setenv(parallelDelegationTimeoutEnv, "not-a-duration")
+	if got := parallelTimeoutForTool("delegate_to_agent"); got != parallelDelegationStepTimeout {
+		t.Fatalf("expected invalid env override to fall back to default %s, got %s", parallelDelegationStepTimeout, got)
 	}
 }

@@ -38,6 +38,23 @@ func TestEmptyDockerDelegationMessageIncludesToolLoopDiagnostics(t *testing.T) {
 	}
 }
 
+func TestDockerDelegationTaskTimeoutDefaultsToLongRunningWork(t *testing.T) {
+	t.Setenv(dockerDelegationTaskTimeoutEnvVar, "")
+	if got := dockerDelegationTaskTimeout(); got != 12*time.Hour {
+		t.Fatalf("expected default docker delegation timeout to be 12h, got %s", got)
+	}
+
+	t.Setenv(dockerDelegationTaskTimeoutEnvVar, "24h")
+	if got := dockerDelegationTaskTimeout(); got != 24*time.Hour {
+		t.Fatalf("expected env override to control docker delegation timeout, got %s", got)
+	}
+
+	t.Setenv(dockerDelegationTaskTimeoutEnvVar, "not-a-duration")
+	if got := dockerDelegationTaskTimeout(); got != 12*time.Hour {
+		t.Fatalf("expected invalid env override to fall back to 12h, got %s", got)
+	}
+}
+
 func TestRewriteDockerDelegationTaskMapsCurrentProjectHostPaths(t *testing.T) {
 	server, store := newUnifiedAgentsTestServer(t)
 	projectRoot := t.TempDir()

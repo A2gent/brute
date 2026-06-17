@@ -4,24 +4,26 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 )
 
 const (
-	parallelMaxSteps           = 12
-	parallelDefaultOutputChars = 12000
-	parallelMaxOutputChars     = 200000
-	parallelStepTimeout        = 90 * time.Second
+	parallelMaxSteps              = 12
+	parallelDefaultOutputChars    = 12000
+	parallelMaxOutputChars        = 200000
+	parallelStepTimeout           = 90 * time.Second
+	parallelDelegationStepTimeout = 12 * time.Hour
+	parallelDelegationTimeoutEnv  = "A2GENT_DOCKER_DELEGATION_TIMEOUT"
 )
 
 type parallelContextKey struct{}
 
 var parallelUnsupportedTools = map[string]string{
-	"parallel":             "recursive parallel calls are not allowed",
-	"delegate_to_subagent": "sub-agent delegation must be called as a top-level tool call",
-	"browser_chrome":       "browser automation is stateful and must be called sequentially as a top-level tool call",
-	"suggest_session":      "session suggestions should be created as top-level tool calls after the main work, not inside parallel results",
+	"parallel":        "recursive parallel calls are not allowed",
+	"browser_chrome":  "browser automation is stateful and must be called sequentially as a top-level tool call",
+	"suggest_session": "session suggestions should be created as top-level tool calls after the main work, not inside parallel results",
 }
 
 // ParallelTool executes independent tool calls concurrently and returns ordered results.
@@ -59,7 +61,7 @@ func (t *ParallelTool) Name() string {
 }
 
 func (t *ParallelTool) Description() string {
-	return "Run multiple independent tool calls concurrently in one call. Use this for parallel codebase exploration, such as several grep/read/find_files/bash searches that do not depend on each other. Do not use this for recursive parallel calls, delegate_to_subagent, browser_chrome, or suggest_session; call those as top-level tool calls instead."
+	return "Run multiple independent tool calls concurrently in one call. Use this for parallel codebase exploration, such as several grep/read/find_files/bash searches that do not depend on each other, and for fan-out delegation to multiple independent agents. Do not use this for recursive parallel calls, browser_chrome, or suggest_session; call those as top-level tool calls instead."
 }
 
 func (t *ParallelTool) Schema() map[string]interface{} {
@@ -74,7 +76,7 @@ func (t *ParallelTool) Schema() map[string]interface{} {
 					"properties": map[string]interface{}{
 						"tool": map[string]interface{}{
 							"type":        "string",
-							"description": "Tool name to execute for this parallel step. Cannot be parallel, delegate_to_subagent, browser_chrome, or suggest_session.",
+							"description": "Tool name to execute for this parallel step. Cannot be parallel, browser_chrome, or suggest_session.",
 						},
 						"args": map[string]interface{}{
 							"type":        "object",
@@ -130,6 +132,7 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 
 	results := make([]parallelStepOutput, len(p.Steps))
 	resultChans := make([]chan parallelStepOutput, 0, len(p.Steps))
+	stepTimeouts := make([]time.Duration, 0, len(p.Steps))
 
 	for i, step := range p.Steps {
 		toolName := normalizeToolName(step.Tool)
@@ -148,11 +151,13 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 			return nil, fmt.Errorf("step %d: failed to serialize step args: %w", i+1, err)
 		}
 
+		stepTimeout := parallelTimeoutForTool(toolName)
 		resultCh := make(chan parallelStepOutput, 1)
 		resultChans = append(resultChans, resultCh)
-		go func(idx int, name string, raw json.RawMessage) {
+		stepTimeouts = append(stepTimeouts, stepTimeout)
+		go func(idx int, name string, raw json.RawMessage, timeout time.Duration) {
 			start := time.Now()
-			stepCtx, cancel := context.WithTimeout(ctx, parallelStepTimeout)
+			stepCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
 
 			stepResult, err := t.manager.Execute(stepCtx, name, raw)
@@ -184,10 +189,11 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 			}
 
 			resultCh <- out
-		}(i, toolName, stepParams)
+		}(i, toolName, stepParams, stepTimeout)
 	}
 
 	for i, resultCh := range resultChans {
+		stepTimeout := stepTimeouts[i]
 		select {
 		case out := <-resultCh:
 			results[i] = out
@@ -198,13 +204,13 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 				Success: false,
 				Error:   ctx.Err().Error(),
 			}
-		case <-time.After(parallelStepTimeout):
+		case <-time.After(stepTimeout):
 			results[i] = parallelStepOutput{
 				Step:       i + 1,
 				Tool:       normalizeToolName(p.Steps[i].Tool),
 				Success:    false,
-				Error:      fmt.Sprintf("parallel step timed out after %s", parallelStepTimeout),
-				DurationMs: parallelStepTimeout.Milliseconds(),
+				Error:      fmt.Sprintf("parallel step timed out after %s", stepTimeout),
+				DurationMs: stepTimeout.Milliseconds(),
 			}
 		}
 	}
@@ -241,6 +247,27 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 			"output_truncated_by": "per_step",
 		},
 	}, nil
+}
+
+func parallelTimeoutForTool(toolName string) time.Duration {
+	switch normalizeToolName(toolName) {
+	case "delegate_to_agent", "delegate_to_subagent", "delegate_to_external_agent":
+		return parallelDelegationTimeout()
+	default:
+		return parallelStepTimeout
+	}
+}
+
+func parallelDelegationTimeout() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(parallelDelegationTimeoutEnv))
+	if raw == "" {
+		return parallelDelegationStepTimeout
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil || parsed <= 0 {
+		return parallelDelegationStepTimeout
+	}
+	return parsed
 }
 
 func (s *ParallelStep) UnmarshalJSON(data []byte) error {

@@ -52,12 +52,12 @@ func (m *memStore) GetProjectPRDescription(string, string, string, string) (*sto
 func (m *memStore) SaveProjectTestCache(*storage.ProjectTestCache) error { return nil }
 func (m *memStore) GetProjectTestCache(string, string, string, string, string) (*storage.ProjectTestCache, error) {
 	return nil, nil
+}
 func (m *memStore) SaveProjectGitReviewOverlayCache(*storage.ProjectGitReviewOverlayCache) error {
 	return nil
 }
 func (m *memStore) ListProjectGitReviewOverlayCache(string, string, string, string) ([]*storage.ProjectGitReviewOverlayCache, error) {
 	return nil, nil
-}
 }
 func (m *memStore) SaveJob(*storage.RecurringJob) error          { return nil }
 func (m *memStore) GetJob(string) (*storage.RecurringJob, error) { return nil, nil }
@@ -90,14 +90,14 @@ func (m *memStore) GetLeonardoGenerationByGenerationID(string) (*storage.Leonard
 func (m *memStore) ClaimLeonardoGenerationByGenerationID(string, string, string) (*storage.LeonardoGeneration, bool, error) {
 	return nil, false, nil
 }
-func (m *memStore) SaveMCPServer(*storage.MCPServer) error          { return nil }
-func (m *memStore) GetMCPServer(string) (*storage.MCPServer, error) { return nil, nil }
-func (m *memStore) ListMCPServers() ([]*storage.MCPServer, error)   { return nil, nil }
-func (m *memStore) DeleteMCPServer(string) error                    { return nil }
-func (m *memStore) SaveSubAgent(*storage.SubAgent) error            { return nil }
-func (m *memStore) GetSubAgent(string) (*storage.SubAgent, error)   { return nil, nil }
-func (m *memStore) ListSubAgents() ([]*storage.SubAgent, error)     { return nil, nil }
-func (m *memStore) DeleteSubAgent(string) error                     { return nil }
+func (m *memStore) SaveMCPServer(*storage.MCPServer) error                   { return nil }
+func (m *memStore) GetMCPServer(string) (*storage.MCPServer, error)          { return nil, nil }
+func (m *memStore) ListMCPServers() ([]*storage.MCPServer, error)            { return nil, nil }
+func (m *memStore) DeleteMCPServer(string) error                             { return nil }
+func (m *memStore) SaveSubAgent(*storage.SubAgent) error                     { return nil }
+func (m *memStore) GetSubAgent(string) (*storage.SubAgent, error)            { return nil, nil }
+func (m *memStore) ListSubAgents() ([]*storage.SubAgent, error)              { return nil, nil }
+func (m *memStore) DeleteSubAgent(string) error                              { return nil }
 func (m *memStore) SaveAgentDefinition(*storage.AgentDefinitionRecord) error { return nil }
 func (m *memStore) GetAgentDefinition(string) (*storage.AgentDefinitionRecord, error) {
 	return nil, nil

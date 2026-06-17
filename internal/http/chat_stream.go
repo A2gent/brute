@@ -91,26 +91,28 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return true
 	}
 
-	if !writeEvent(ChatStreamEvent{Type: "status", Status: string(sess.Status)}) {
-		return
-	}
-
-	heartbeatDone := make(chan struct{})
-	defer close(heartbeatDone)
-	go func() {
-		ticker := time.NewTicker(15 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				if !writeEvent(ChatStreamEvent{Type: "heartbeat"}) {
+	streamConnected := writeEvent(ChatStreamEvent{Type: "status", Status: string(sess.Status)})
+	var heartbeatDone chan struct{}
+	if streamConnected {
+		heartbeatDone = make(chan struct{})
+		defer close(heartbeatDone)
+		go func() {
+			ticker := time.NewTicker(15 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					if !writeEvent(ChatStreamEvent{Type: "heartbeat"}) {
+						return
+					}
+				case <-heartbeatDone:
 					return
 				}
-			case <-heartbeatDone:
-				return
 			}
-		}
-	}()
+		}()
+	} else {
+		logging.Warn("Chat stream disconnected before initial status event was delivered; continuing run without live streaming: session=%s", sess.ID)
+	}
 
 	if s.hasRunnableWorkflow(sess) {
 		content, usage, runErr := s.runWorkflowSession(runCtx, sess, req.Message, writeEvent)

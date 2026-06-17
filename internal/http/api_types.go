@@ -50,6 +50,7 @@ type SessionResponse struct {
 	RoutedModel          string                       `json:"routed_model,omitempty"`
 	Title                string                       `json:"title"`
 	Status               string                       `json:"status"`
+	ActiveRuns           int                          `json:"active_runs,omitempty"`
 	TotalTokens          int                          `json:"total_tokens"`
 	InputTokens          int                          `json:"input_tokens"`
 	OutputTokens         int                          `json:"output_tokens"`

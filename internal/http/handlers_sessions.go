@@ -720,6 +720,15 @@ func (s *Server) registerActiveSessionRun(sessionID string, cancel context.Cance
 	return runID
 }
 
+func (s *Server) activeSessionRunCount(sessionID string) int {
+	if s == nil || sessionID == "" {
+		return 0
+	}
+	s.activeRunsMu.Lock()
+	defer s.activeRunsMu.Unlock()
+	return len(s.activeRuns[sessionID])
+}
+
 func (s *Server) unregisterActiveSessionRun(sessionID, runID string) {
 	s.activeRunsMu.Lock()
 	defer s.activeRunsMu.Unlock()

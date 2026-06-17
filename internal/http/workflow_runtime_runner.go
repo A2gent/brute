@@ -18,7 +18,7 @@ import (
 )
 
 func (s *Server) hasRunnableWorkflow(sess *session.Session) bool {
-	def, ok := workflowDefinitionFromMetadata(sess)
+	def, ok := workflowDefinitionFromMetadataWithTemplates(sess, s.loadPromptTemplates())
 	if !ok {
 		return false
 	}
@@ -63,7 +63,8 @@ func (s *Server) runWorkflowSession(
 	userMessage string,
 	emit func(ChatStreamEvent) bool,
 ) (string, llm.TokenUsage, error) {
-	def, ok := workflowDefinitionFromMetadata(sess)
+	templates := s.loadPromptTemplates()
+	def, ok := workflowDefinitionFromMetadataWithTemplates(sess, templates)
 	if !ok {
 		return "", llm.TokenUsage{}, fmt.Errorf("workflow metadata is missing")
 	}
@@ -168,7 +169,7 @@ func (s *Server) runWorkflowSession(
 			if wasRetry {
 				previousNodeOutput = strings.TrimSpace(outputs[node.ID])
 				if previousNodeOutput == "" {
-					previousNodeOutput = workflowBareStatusRetryPrompt(node)
+					previousNodeOutput = workflowBareStatusRetryPromptWithTemplate(node, templates.WorkflowBareStatusRetryPromptTemplate)
 				}
 			}
 			child, childErr := s.workflowNodeChildSession(sess, def, node, st)
@@ -194,7 +195,7 @@ func (s *Server) runWorkflowSession(
 			go func(child *session.Session, upstream []string, previousNodeOutput string) {
 				defer wg.Done()
 				modificationActivityBefore := workflowSessionModificationActivityCount(child)
-				output, childSessionID, err := s.executeWorkflowNode(ctx, sess, def, node, userMessage, upstream, previousNodeOutput, child)
+				output, childSessionID, err := s.executeWorkflowNode(ctx, sess, def, node, userMessage, upstream, previousNodeOutput, child, templates)
 				modificationActivityAfter := workflowSessionModificationActivityCount(child)
 				cleanOutput := workflowCleanNodeOutputForHandoff(output)
 				emptyHandoff := strings.TrimSpace(cleanOutput) == ""
@@ -382,13 +383,14 @@ func (s *Server) executeWorkflowNode(
 	upstreamOutputs []string,
 	previousNodeOutput string,
 	child *session.Session,
+	templates serverPromptTemplates,
 ) (string, string, error) {
 	if child == nil {
 		return "", "", fmt.Errorf("workflow child session is nil")
 	}
 
 	fullContext := !workflowChildContextSeeded(child)
-	nodePrompt := composeWorkflowNodePromptForChild(parent, def, node, userMessage, upstreamOutputs, previousNodeOutput, child, fullContext)
+	nodePrompt := composeWorkflowNodePromptForChildWithTemplate(parent, def, node, userMessage, upstreamOutputs, previousNodeOutput, child, fullContext, templates.WorkflowNodePromptTemplate)
 	child.AddUserMessageWithImagesAndMetadata(nodePrompt, nil, workflowNodePromptMessageMetadata(parent, def, node))
 	if child.Metadata == nil {
 		child.Metadata = make(map[string]interface{})

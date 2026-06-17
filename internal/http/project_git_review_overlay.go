@@ -154,8 +154,9 @@ func (s *Server) generateProjectGitReviewOverlayAnnotations(ctx context.Context,
 		logging.Warn("Failed to load settings for review overlay generation: %v", settingsErr)
 		settings = map[string]string{}
 	}
+	templates := serverPromptTemplatesFromSettings(settings)
 	prompt := buildGitReviewOverlayPrompt(
-		defaultGitReviewOverlayPromptTemplate,
+		templates.GitReviewOverlayPromptTemplate,
 		target.CurrentBranch,
 		target.BaseBranch,
 		projectGitCommitFilesMarkdown(files),

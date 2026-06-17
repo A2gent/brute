@@ -72,6 +72,7 @@ func settingsResponse(settings map[string]string) SettingsResponse {
 		Settings:                               out,
 		DefaultSystemPrompt:                    agent.DefaultSystemPrompt(),
 		DefaultSystemPromptWithoutBuiltInTools: agent.DefaultSystemPromptWithoutBuiltInTools(),
+		DefaultPromptTemplates:                 defaultPromptTemplateSettings(),
 	}
 }
 

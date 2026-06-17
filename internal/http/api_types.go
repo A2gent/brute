@@ -348,6 +348,7 @@ type SettingsResponse struct {
 	Settings                               map[string]string `json:"settings"`
 	DefaultSystemPrompt                    string            `json:"defaultSystemPrompt"`
 	DefaultSystemPromptWithoutBuiltInTools string            `json:"defaultSystemPromptWithoutBuiltInTools"`
+	DefaultPromptTemplates                 map[string]string `json:"defaultPromptTemplates"`
 }
 
 type UpdateSettingsRequest struct {

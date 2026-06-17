@@ -8,6 +8,27 @@ import (
 	"github.com/A2gent/brute/internal/session"
 )
 
+const defaultWorkflowReviewLoopWorkerPrompt = "Produce the requested work for the review loop. Incorporate critic feedback from prior loop turns before handing off."
+
+const defaultWorkflowReviewLoopReviewerPrompt = "Review the worker output. If it is acceptable, end with VERDICT: APPROVED. Otherwise give concrete revision feedback and end with VERDICT: REVISE."
+
+const defaultWorkflowReviewLoopReviewerSuffixPrompt = "End with VERDICT: APPROVED when work is acceptable, otherwise VERDICT: REVISE."
+
+const defaultWorkflowBareStatusRetryPromptTemplate = "{{node_label}} previously returned only workflow status without a usable handoff. Continue the actual work now. Do not answer with only `NODE_STATUS`. If this node is responsible for implementation, your next response must first use an editing-capable tool (`edit`, `write`, `replace_lines`, or `insert_lines`) to make a meaningful change, or clearly explain a concrete external blocker unrelated to tool availability. Placeholder files, stubs, TODO-only edits, `bash`, `git diff`, and `git status` do not count as implementation progress."
+
+const defaultWorkflowNodePromptTemplate = `{{node_instructions_section}}{{workflow_context_intro}}
+{{workflow_name_line}}Node: {{node_label}}{{parent_context_section}}
+
+Current user request:
+{{user_request}}{{upstream_outputs_section}}{{previous_output_section}}{{judge_instruction_section}}
+
+Workflow handoff status:
+Do the node's actual work before handing off. A plan, intention, summary of what you will do, or request to start work is not complete.
+{{implementation_tool_evidence_instruction}}End your response with a final line exactly ` + "`NODE_STATUS: COMPLETE`" + ` only when this node's concrete deliverable is ready for downstream review or use.
+Use ` + "`NODE_STATUS: IN_PROGRESS`" + ` if more implementation work remains, or ` + "`NODE_STATUS: BLOCKED`" + ` if you cannot proceed without user input or an external dependency.
+
+Return only this node's output.`
+
 func workflowNodePromptMessageMetadata(parent *session.Session, def *workflowDefinitionRuntime, node workflowNodeRuntime) map[string]interface{} {
 	metadata := map[string]interface{}{
 		"internal_handoff":     true,
@@ -28,20 +49,32 @@ func workflowNodePromptMessageMetadata(parent *session.Session, def *workflowDef
 }
 
 func workflowReviewLoopWorkerInstruction(loop workflowNodeRuntime) string {
+	return workflowReviewLoopWorkerInstructionWithTemplates(loop, defaultServerPromptTemplates())
+}
+
+func workflowReviewLoopWorkerInstructionWithTemplates(loop workflowNodeRuntime, templates serverPromptTemplates) string {
 	if inst := strings.TrimSpace(loop.WorkerInstruction); inst != "" {
 		return inst
 	}
 	if inst := strings.TrimSpace(loop.Instruction); inst != "" {
 		return inst
 	}
-	return "Produce the requested work for the review loop. Incorporate critic feedback from prior loop turns before handing off."
+	return strings.TrimSpace(templates.WorkflowReviewLoopWorkerPrompt)
 }
 
 func workflowReviewLoopReviewerInstruction(loop workflowNodeRuntime) string {
+	return workflowReviewLoopReviewerInstructionWithTemplates(loop, defaultServerPromptTemplates())
+}
+
+func workflowReviewLoopReviewerInstructionWithTemplates(loop workflowNodeRuntime, templates serverPromptTemplates) string {
 	if inst := strings.TrimSpace(loop.ReviewerInstruction); inst != "" {
-		return inst + "\n\nEnd with VERDICT: APPROVED when work is acceptable, otherwise VERDICT: REVISE."
+		suffix := strings.TrimSpace(templates.WorkflowReviewLoopReviewerSuffix)
+		if suffix == "" {
+			return inst
+		}
+		return inst + "\n\n" + suffix
 	}
-	return "Review the worker output. If it is acceptable, end with VERDICT: APPROVED. Otherwise give concrete revision feedback and end with VERDICT: REVISE."
+	return strings.TrimSpace(templates.WorkflowReviewLoopReviewerPrompt)
 }
 
 func workflowFinalOutput(def *workflowDefinitionRuntime, outputs map[string]string, succ map[string][]string) string {
@@ -96,6 +129,10 @@ func workflowFinalOutput(def *workflowDefinitionRuntime, outputs map[string]stri
 }
 
 func workflowBareStatusRetryPrompt(node workflowNodeRuntime) string {
+	return workflowBareStatusRetryPromptWithTemplate(node, defaultWorkflowBareStatusRetryPromptTemplate)
+}
+
+func workflowBareStatusRetryPromptWithTemplate(node workflowNodeRuntime, template string) string {
 	label := strings.TrimSpace(node.Label)
 	if label == "" {
 		label = strings.TrimSpace(node.ID)
@@ -103,7 +140,11 @@ func workflowBareStatusRetryPrompt(node workflowNodeRuntime) string {
 	if label == "" {
 		label = "this node"
 	}
-	return fmt.Sprintf("%s previously returned only workflow status without a usable handoff. Continue the actual work now. Do not answer with only `NODE_STATUS`. If this node is responsible for implementation, your next response must first use an editing-capable tool (`edit`, `write`, `replace_lines`, or `insert_lines`) to make a meaningful change, or clearly explain a concrete external blocker unrelated to tool availability. Placeholder files, stubs, TODO-only edits, `bash`, `git diff`, and `git status` do not count as implementation progress.", label)
+	return renderPromptTemplate(template, map[string]string{
+		"node_label": label,
+		"node_id":    strings.TrimSpace(node.ID),
+		"node_kind":  strings.TrimSpace(node.Kind),
+	})
 }
 
 func workflowBlockedFinalOutput(def *workflowDefinitionRuntime, state *workflowRuntimeState) string {
@@ -155,17 +196,27 @@ func workflowBlockedFinalOutput(def *workflowDefinitionRuntime, state *workflowR
 func composeWorkflowNodePrompt(parent *session.Session, def *workflowDefinitionRuntime, node workflowNodeRuntime, userMessage string, upstreamOutputs []string, previousNodeOutput string) string {
 	contextText := workflowParentSessionContext(parent, userMessage, 12, 12000)
 	toolEvidenceText := strings.TrimSpace(userMessage + "\n" + contextText)
-	return composeWorkflowNodePromptWithContext(def, node, userMessage, upstreamOutputs, previousNodeOutput, contextText, true, workflowNodeRequiresToolEvidence(node, toolEvidenceText))
+	return composeWorkflowNodePromptWithContextAndTemplate(def, node, userMessage, upstreamOutputs, previousNodeOutput, contextText, true, workflowNodeRequiresToolEvidence(node, toolEvidenceText), defaultWorkflowNodePromptTemplate)
 }
 
 func composeWorkflowNodePromptForChild(parent *session.Session, def *workflowDefinitionRuntime, node workflowNodeRuntime, userMessage string, upstreamOutputs []string, previousNodeOutput string, child *session.Session, fullContext bool) string {
+	return composeWorkflowNodePromptForChildWithTemplate(parent, def, node, userMessage, upstreamOutputs, previousNodeOutput, child, fullContext, defaultWorkflowNodePromptTemplate)
+}
+
+func composeWorkflowNodePromptForChildWithTemplate(parent *session.Session, def *workflowDefinitionRuntime, node workflowNodeRuntime, userMessage string, upstreamOutputs []string, previousNodeOutput string, child *session.Session, fullContext bool, template string) string {
 	if fullContext {
-		return composeWorkflowNodePrompt(parent, def, node, userMessage, upstreamOutputs, previousNodeOutput)
+		contextText := workflowParentSessionContext(parent, userMessage, 12, 12000)
+		toolEvidenceText := strings.TrimSpace(userMessage + "\n" + contextText)
+		return composeWorkflowNodePromptWithContextAndTemplate(def, node, userMessage, upstreamOutputs, previousNodeOutput, contextText, true, workflowNodeRequiresToolEvidence(node, toolEvidenceText), template)
 	}
-	return composeWorkflowNodePromptWithContext(def, node, userMessage, upstreamOutputs, previousNodeOutput, "", false, workflowNodeRequiresToolEvidence(node, workflowToolEvidenceText(child, userMessage)))
+	return composeWorkflowNodePromptWithContextAndTemplate(def, node, userMessage, upstreamOutputs, previousNodeOutput, "", false, workflowNodeRequiresToolEvidence(node, workflowToolEvidenceText(child, userMessage)), template)
 }
 
 func composeWorkflowNodePromptWithContext(def *workflowDefinitionRuntime, node workflowNodeRuntime, userMessage string, upstreamOutputs []string, previousNodeOutput string, contextText string, fullContext bool, requiresToolEvidence bool) string {
+	return composeWorkflowNodePromptWithContextAndTemplate(def, node, userMessage, upstreamOutputs, previousNodeOutput, contextText, fullContext, requiresToolEvidence, defaultWorkflowNodePromptTemplate)
+}
+
+func composeWorkflowNodePromptWithContextAndTemplate(def *workflowDefinitionRuntime, node workflowNodeRuntime, userMessage string, upstreamOutputs []string, previousNodeOutput string, contextText string, fullContext bool, requiresToolEvidence bool, template string) string {
 	name := ""
 	if def != nil {
 		name = strings.TrimSpace(def.Name)
@@ -173,79 +224,99 @@ func composeWorkflowNodePromptWithContext(def *workflowDefinitionRuntime, node w
 	if name == "" && def != nil {
 		name = strings.TrimSpace(def.ID)
 	}
-	var b strings.Builder
-	inst := ""
+	nodeInstructionsSection := ""
 	if fullContext {
-		inst = strings.TrimSpace(node.Instruction)
+		inst := strings.TrimSpace(node.Instruction)
 		if inst != "" {
-			b.WriteString("Node instructions:\n")
-			b.WriteString(inst)
-			b.WriteString("\n")
+			var section strings.Builder
+			section.WriteString("Node instructions:\n")
+			section.WriteString(inst)
+			section.WriteString("\n")
 			if workflowNodeInstructionLooksLikeOrchestrator(inst) {
-				b.WriteString("For an orchestration node, create the handoff/plan needed by downstream workflow nodes. Do not implement downstream work yourself. Mark complete when the handoff is ready.\n")
+				section.WriteString("For an orchestration node, create the handoff/plan needed by downstream workflow nodes. Do not implement downstream work yourself. Mark complete when the handoff is ready.\n")
 			}
-			b.WriteString("\nWorkflow context:\n")
+			section.WriteString("\nWorkflow context:\n")
+			nodeInstructionsSection = section.String()
 		}
 	}
+	workflowContextIntro := ""
 	if fullContext {
-		b.WriteString("You are executing one node in a multi-agent workflow.\n")
+		workflowContextIntro = "You are executing one node in a multi-agent workflow."
 	} else {
-		b.WriteString("You are continuing the same workflow node. Stable workflow context and node instructions were already provided earlier in this child session.\n")
+		workflowContextIntro = "You are continuing the same workflow node. Stable workflow context and node instructions were already provided earlier in this child session."
 	}
+	workflowNameLine := ""
 	if name != "" {
-		b.WriteString("Workflow: " + name + "\n")
+		workflowNameLine = "Workflow: " + name + "\n"
 	}
-	b.WriteString("Node: " + strings.TrimSpace(node.Label) + "\n")
+	parentContextSection := ""
 	if contextText != "" {
-		b.WriteString("\nParent session context:\n")
-		b.WriteString(contextText)
-		b.WriteString("\n")
+		parentContextSection = "\n\nParent session context:\n" + strings.TrimSpace(contextText)
 	}
-	b.WriteString("\nCurrent user request:\n")
-	b.WriteString(strings.TrimSpace(userMessage))
-	b.WriteString("\n")
+	upstreamOutputsSection := ""
 	if len(upstreamOutputs) > 0 {
+		var section strings.Builder
 		if fullContext {
-			b.WriteString("\nInputs from previous nodes:\n")
+			section.WriteString("\n\nInputs from previous nodes:\n")
 		} else {
-			b.WriteString("\nNew inputs or review feedback since your last turn:\n")
+			section.WriteString("\n\nNew inputs or review feedback since your last turn:\n")
 		}
 		for idx, item := range upstreamOutputs {
 			item = workflowCleanNodeOutputForHandoff(item)
 			if strings.TrimSpace(item) == "" {
 				continue
 			}
-			b.WriteString(fmt.Sprintf("\n[%d]\n%s\n", idx+1, strings.TrimSpace(item)))
+			section.WriteString(fmt.Sprintf("\n[%d]\n%s\n", idx+1, strings.TrimSpace(item)))
 		}
+		upstreamOutputsSection = strings.TrimRight(section.String(), "\n")
 	}
 	previousNodeOutput = workflowCleanNodeOutputForHandoff(previousNodeOutput)
+	previousOutputSection := ""
 	if strings.TrimSpace(previousNodeOutput) != "" {
-		b.WriteString("\nPrevious output from this same node that was not accepted as a complete handoff:\n")
-		b.WriteString(strings.TrimSpace(previousNodeOutput))
-		b.WriteString("\n")
+		var section strings.Builder
+		section.WriteString("\n\nPrevious output from this same node that was not accepted as a complete handoff:\n")
+		section.WriteString(strings.TrimSpace(previousNodeOutput))
+		section.WriteString("\n")
 		if requiresToolEvidence {
-			b.WriteString("Continue from that state. Do not repeat the same progress update and do not explain again that edits are needed. Your next step must be to call an editing-capable file tool (`edit`, `write`, `replace_lines`, or `insert_lines`) before returning any final handoff text, unless there is a concrete external blocker unrelated to tool availability.\n")
-			b.WriteString("Tools are available in this workflow node. Do not report that you cannot edit merely because the previous response did not include tool calls.\n")
+			section.WriteString("Continue from that state. Do not repeat the same progress update and do not explain again that edits are needed. Your next step must be to call an editing-capable file tool (`edit`, `write`, `replace_lines`, or `insert_lines`) before returning any final handoff text, unless there is a concrete external blocker unrelated to tool availability.\n")
+			section.WriteString("Tools are available in this workflow node. Do not report that you cannot edit merely because the previous response did not include tool calls.")
 		} else {
-			b.WriteString("Continue from that state. Do not repeat the same progress update; perform the remaining work or explain the concrete blocker.\n")
+			section.WriteString("Continue from that state. Do not repeat the same progress update; perform the remaining work or explain the concrete blocker.")
 		}
+		previousOutputSection = section.String()
 	}
+	judgeInstructionSection := ""
 	if def != nil && strings.EqualFold(strings.TrimSpace(def.Policy.StopCondition), "judge") {
 		judgeID := strings.TrimSpace(def.Policy.JudgeNodeID)
 		if judgeID != "" && judgeID == strings.TrimSpace(node.ID) {
-			b.WriteString("\nJudge node instruction:\n")
-			b.WriteString("Add a final line exactly as `VERDICT: APPROVED` when work is acceptable, otherwise `VERDICT: REVISE`.\n")
+			judgeInstructionSection = "\n\nJudge node instruction:\nAdd a final line exactly as `VERDICT: APPROVED` when work is acceptable, otherwise `VERDICT: REVISE`."
 		}
 	}
-	b.WriteString("\nWorkflow handoff status:\n")
-	b.WriteString("Do the node's actual work before handing off. A plan, intention, summary of what you will do, or request to start work is not complete.\n")
+	implementationToolEvidenceInstruction := ""
 	if requiresToolEvidence {
-		b.WriteString("For implementation nodes, use the available tools to inspect relevant files and make needed edits before marking complete. A read-only pass is not enough for an implementation request. If code changes are requested and you did not use an editing-capable file tool (`edit`, `write`, `replace_lines`, or `insert_lines`), you must continue with tool calls instead of returning another textual progress update. `bash`, `git diff`, and `git status` can verify work, but they do not count as file edits for workflow completion. A response containing only `NODE_STATUS` is not useful progress.\n")
+		implementationToolEvidenceInstruction = "For implementation nodes, use the available tools to inspect relevant files and make needed edits before marking complete. A read-only pass is not enough for an implementation request. If code changes are requested and you did not use an editing-capable file tool (`edit`, `write`, `replace_lines`, or `insert_lines`), you must continue with tool calls instead of returning another textual progress update. `bash`, `git diff`, and `git status` can verify work, but they do not count as file edits for workflow completion. A response containing only `NODE_STATUS` is not useful progress.\n"
 	}
-	b.WriteString("End your response with a final line exactly `NODE_STATUS: COMPLETE` only when this node's concrete deliverable is ready for downstream review or use.\n")
-	b.WriteString("Use `NODE_STATUS: IN_PROGRESS` if more implementation work remains, or `NODE_STATUS: BLOCKED` if you cannot proceed without user input or an external dependency.\n")
-	b.WriteString("\nReturn only this node's output.")
-	return b.String()
+	nodeLabel := strings.TrimSpace(node.Label)
+	if nodeLabel == "" {
+		nodeLabel = strings.TrimSpace(node.ID)
+	}
+	return renderPromptTemplate(template, map[string]string{
+		"node_instructions_section":                nodeInstructionsSection,
+		"workflow_context_intro":                   workflowContextIntro,
+		"workflow_name":                            name,
+		"workflow_name_line":                       workflowNameLine,
+		"node_id":                                  strings.TrimSpace(node.ID),
+		"node_label":                               nodeLabel,
+		"node_kind":                                strings.TrimSpace(node.Kind),
+		"parent_context":                           strings.TrimSpace(contextText),
+		"parent_context_section":                   parentContextSection,
+		"user_request":                             strings.TrimSpace(userMessage),
+		"upstream_outputs_section":                 upstreamOutputsSection,
+		"previous_output":                          strings.TrimSpace(previousNodeOutput),
+		"previous_output_section":                  previousOutputSection,
+		"judge_instruction_section":                judgeInstructionSection,
+		"implementation_tool_evidence_instruction": implementationToolEvidenceInstruction,
+	})
 }
 
 func workflowCleanNodeOutputForHandoff(output string) string {

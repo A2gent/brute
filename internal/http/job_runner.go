@@ -20,14 +20,14 @@ const thinkingProjectID = "project-thinking"
 
 const thinkingProjectName = "Thinking"
 
-const thinkingRunTaskPrompt = "Run the Thinking routine.\n\nReview the current project state, execute the most valuable next step, and summarize outcomes."
+const defaultThinkingRunTaskPrompt = "Run the Thinking routine.\n\nReview the current project state, execute the most valuable next step, and summarize outcomes."
 
-// parseScheduleToCron uses the LLM to convert natural language schedule to cron expression
-func (s *Server) parseScheduleToCron(ctx context.Context, scheduleText string) (string, error) {
-	prompt := fmt.Sprintf(`Convert the following natural language schedule to a standard 5-field cron expression.
+const defaultScheduleToCronSystemPrompt = "You convert natural-language schedules into strict 5-field cron expressions."
+
+const defaultScheduleToCronPromptTemplate = `Convert the following natural language schedule to a standard 5-field cron expression.
 Only respond with the cron expression, nothing else. No explanation, no formatting, just the cron expression.
 
-Schedule: "%s"
+Schedule: "{{schedule}}"
 
 Examples:
 - "every day at 7pm" -> "0 19 * * *"
@@ -36,7 +36,14 @@ Examples:
 - "every weekday at 8:30am" -> "30 8 * * 1-5"
 - "every 15 minutes" -> "*/15 * * * *"
 
-Cron expression:`, scheduleText)
+Cron expression:`
+
+// parseScheduleToCron uses the LLM to convert natural language schedule to cron expression
+func (s *Server) parseScheduleToCron(ctx context.Context, scheduleText string) (string, error) {
+	templates := s.loadPromptTemplates()
+	prompt := renderPromptTemplate(templates.ScheduleToCronPromptTemplate, map[string]string{
+		"schedule": scheduleText,
+	})
 
 	sess, err := s.sessionManager.Create("scheduler")
 	if err != nil {
@@ -57,7 +64,7 @@ Cron expression:`, scheduleText)
 		Name:                "scheduler",
 		Provider:            string(target.ProviderType),
 		Model:               target.Model,
-		SystemPrompt:        "You convert natural-language schedules into strict 5-field cron expressions.",
+		SystemPrompt:        templates.ScheduleToCronSystemPrompt,
 		MaxSteps:            1,
 		Temperature:         0,
 		ContextWindow:       target.ContextWindow,
@@ -149,7 +156,7 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 		return exec, nil
 	}
 	if isThinkingJob {
-		effectiveTaskPrompt = thinkingRunTaskPrompt
+		effectiveTaskPrompt = s.loadPromptTemplates().ThinkingRunTaskPrompt
 	}
 	sess.AddUserMessage(effectiveTaskPrompt)
 	if err := s.sessionManager.Save(sess); err != nil {

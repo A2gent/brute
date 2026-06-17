@@ -252,8 +252,9 @@ func (s *Server) generateProjectGitPRDescription(ctx context.Context, repoRoot s
 		logging.Warn("Failed to load settings for PR description generation: %v", settingsErr)
 		settings = map[string]string{}
 	}
+	templates := serverPromptTemplatesFromSettings(settings)
 	prompt := buildGitPRDescriptionPrompt(
-		defaultGitPRDescriptionPromptTemplate,
+		templates.GitPRDescriptionPromptTemplate,
 		target.CurrentBranch,
 		target.BaseBranch,
 		projectGitCommitFilesMarkdown(files),

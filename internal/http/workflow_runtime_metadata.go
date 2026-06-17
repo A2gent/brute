@@ -27,6 +27,10 @@ func workflowTranscriptEntriesFromMetadata(raw interface{}) []workflowTranscript
 }
 
 func workflowDefinitionFromMetadata(sess *session.Session) (*workflowDefinitionRuntime, bool) {
+	return workflowDefinitionFromMetadataWithTemplates(sess, defaultServerPromptTemplates())
+}
+
+func workflowDefinitionFromMetadataWithTemplates(sess *session.Session, templates serverPromptTemplates) (*workflowDefinitionRuntime, bool) {
 	if sess == nil || sess.Metadata == nil {
 		return nil, false
 	}
@@ -118,7 +122,7 @@ func workflowDefinitionFromMetadata(sess *session.Session) (*workflowDefinitionR
 	if len(def.Nodes) == 0 {
 		return nil, false
 	}
-	expandReviewLoopNodes(def)
+	expandReviewLoopNodesWithTemplates(def, templates)
 	return def, true
 }
 
@@ -145,6 +149,10 @@ func workflowRuntimeStateFromMetadata(sess *session.Session) *workflowRuntimeSta
 }
 
 func expandReviewLoopNodes(def *workflowDefinitionRuntime) {
+	expandReviewLoopNodesWithTemplates(def, defaultServerPromptTemplates())
+}
+
+func expandReviewLoopNodesWithTemplates(def *workflowDefinitionRuntime, templates serverPromptTemplates) {
 	if def == nil {
 		return
 	}
@@ -178,14 +186,14 @@ func expandReviewLoopNodes(def *workflowDefinitionRuntime) {
 				Label:       workerLabel,
 				Kind:        "subagent",
 				SubAgentID:  strings.TrimSpace(loop.WorkerSubAgentID),
-				Instruction: workflowReviewLoopWorkerInstruction(loop),
+				Instruction: workflowReviewLoopWorkerInstructionWithTemplates(loop, templates),
 			},
 			workflowNodeRuntime{
 				ID:          reviewerID,
 				Label:       reviewerLabel,
 				Kind:        "subagent",
 				SubAgentID:  strings.TrimSpace(loop.ReviewerSubAgentID),
-				Instruction: workflowReviewLoopReviewerInstruction(loop),
+				Instruction: workflowReviewLoopReviewerInstructionWithTemplates(loop, templates),
 			},
 		)
 		nextEdges = append(nextEdges,

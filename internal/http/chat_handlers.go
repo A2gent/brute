@@ -4,6 +4,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/A2gent/brute/internal/a2atunnel"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/go-chi/chi/v5"
@@ -37,6 +38,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.queueTelegramSessionMessageSync(sess.ID)
+	if sess.Status == session.StatusQueued && sessionIsSerialQueuedAutoRun(sess) {
+		s.triggerSerialSessionQueueForSession(sess)
+		s.errorResponse(w, http.StatusConflict, "Session is queued for serial execution and will start automatically")
+		return
+	}
 
 	sess.AddUserMessageWithImages(req.Message, images)
 	sess.SetStatus(session.StatusRunning)

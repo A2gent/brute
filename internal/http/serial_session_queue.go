@@ -18,6 +18,13 @@ func (s *Server) triggerSerialSessionQueueForSession(sess *session.Session) {
 	s.triggerSerialSessionQueue(serialQueueScopeForSession(sess))
 }
 
+func (s *Server) triggerSerialSessionQueueIfTerminal(sess *session.Session) {
+	if !sessionIsSerialQueuedAutoRun(sess) || !serialQueueCanAdvanceAfterStatus(sess.Status) {
+		return
+	}
+	s.triggerSerialSessionQueueForSession(sess)
+}
+
 func (s *Server) triggerSerialSessionQueue(scope string) {
 	scope = strings.TrimSpace(scope)
 	if scope == "" {

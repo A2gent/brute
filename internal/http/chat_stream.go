@@ -41,6 +41,11 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.queueTelegramSessionMessageSync(sess.ID)
+	if sess.Status == session.StatusQueued && sessionIsSerialQueuedAutoRun(sess) {
+		s.triggerSerialSessionQueueForSession(sess)
+		s.errorResponse(w, http.StatusConflict, "Session is queued for serial execution and will start automatically")
+		return
+	}
 
 	lastUserMsg := ""
 	for i := len(sess.Messages) - 1; i >= 0; i-- {
@@ -131,6 +136,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			sess.AddAssistantMessage(fmt.Sprintf("Workflow failed: %s", runErr.Error()), nil)
 			sess.SetStatus(session.StatusFailed)
 			_ = s.sessionManager.Save(sess)
+			s.triggerSerialSessionQueueIfTerminal(sess)
 			_ = writeEvent(ChatStreamEvent{
 				Type:     "error",
 				Error:    "Workflow error: " + runErr.Error(),
@@ -150,6 +156,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		s.triggerSerialSessionQueueIfTerminal(sess)
 		_ = writeEvent(ChatStreamEvent{
 			Type:     "done",
 			Content:  content,
@@ -171,6 +178,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		sess.AddAssistantMessage(fmt.Sprintf("Unable to start request: %s", err.Error()), nil)
 		sess.SetStatus(session.StatusFailed)
 		s.sessionManager.Save(sess)
+		s.triggerSerialSessionQueueIfTerminal(sess)
 		_ = writeEvent(ChatStreamEvent{
 			Type:     "error",
 			Error:    "Provider configuration error: " + err.Error(),
@@ -292,6 +300,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		sess.AddAssistantMessage(fmt.Sprintf("Request failed: %s", adaptedErr.Error()), nil)
 		sess.SetStatus(session.StatusFailed)
 		s.sessionManager.Save(sess)
+		s.triggerSerialSessionQueueIfTerminal(sess)
 		_ = writeEvent(ChatStreamEvent{
 			Type:     "error",
 			Error:    "Agent error: " + adaptedErr.Error(),
@@ -305,6 +314,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		_ = writeEvent(*event)
 	}
 
+	s.triggerSerialSessionQueueIfTerminal(sess)
 	_ = writeEvent(ChatStreamEvent{
 		Type:     "done",
 		Content:  content,

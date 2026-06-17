@@ -94,18 +94,21 @@ func (s *Server) finalizeSessionRunWithoutStreaming(sess *session.Session, resul
 			sess.AddAssistantMessage(fmt.Sprintf("Unable to start request: %s", runErr.Error()), nil)
 			sess.SetStatus(session.StatusFailed)
 			_ = s.sessionManager.Save(sess)
+			s.triggerSerialSessionQueueIfTerminal(sess)
 			return runErr
 		}
 		if result.Workflow {
 			sess.AddAssistantMessage(fmt.Sprintf("Workflow failed: %s", runErr.Error()), nil)
 			sess.SetStatus(session.StatusFailed)
 			_ = s.sessionManager.Save(sess)
+			s.triggerSerialSessionQueueIfTerminal(sess)
 			return runErr
 		}
 		adaptedErr := s.adaptProviderErrorMessage(result.ProviderType, runErr)
 		sess.AddAssistantMessage(fmt.Sprintf("Request failed: %s", adaptedErr.Error()), nil)
 		sess.SetStatus(session.StatusFailed)
 		_ = s.sessionManager.Save(sess)
+		s.triggerSerialSessionQueueIfTerminal(sess)
 		return adaptedErr
 	}
 
@@ -117,6 +120,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(sess *session.Session, resul
 		}
 	}
 
+	s.triggerSerialSessionQueueIfTerminal(sess)
 	return nil
 }
 

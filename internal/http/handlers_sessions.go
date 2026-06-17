@@ -303,6 +303,12 @@ func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if sessionIsSerialQueuedAutoRun(sess) {
+		s.triggerSerialSessionQueueForSession(sess)
+		s.jsonResponse(w, http.StatusOK, s.sessionToResponse(sess))
+		return
+	}
+
 	sess.SetStatus(session.StatusRunning)
 	if err := s.sessionManager.Save(sess); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to start session: "+err.Error())

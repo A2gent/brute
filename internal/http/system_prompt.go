@@ -76,7 +76,7 @@ func (s *Server) ensureSessionSystemPromptSnapshot(sess *session.Session) *syste
 				return snapshot
 			}
 		} else {
-			cachedPromptStillCurrent := !snapshotHasLegacyConfiguredAgentsBlock(snapshot) &&
+			cachedPromptStillCurrent := !snapshotHasOutdatedConfiguredAgentsBlock(snapshot) &&
 				(!isThinkingSessionWithSettings(sess, settings) || len(thinkingBlocks) == 0 || snapshotHasThinkingBlocks(snapshot))
 			if cachedPromptStillCurrent {
 				return snapshot
@@ -521,16 +521,21 @@ func snapshotHasThinkingBlocks(snapshot *systemPromptSnapshot) bool {
 	return false
 }
 
-func snapshotHasLegacyConfiguredAgentsBlock(snapshot *systemPromptSnapshot) bool {
+func snapshotHasOutdatedConfiguredAgentsBlock(snapshot *systemPromptSnapshot) bool {
 	if snapshot == nil {
 		return false
 	}
 	for _, block := range snapshot.Blocks {
-		if strings.TrimSpace(block.Type) == "sub_agents" && strings.Contains(block.ResolvedContent, legacyConfiguredAgentsPromptHeader) {
+		if strings.TrimSpace(block.Type) == "sub_agents" && configuredAgentsPromptBlockNeedsRefresh(block.ResolvedContent) {
 			return true
 		}
 	}
-	return strings.Contains(snapshot.CombinedPrompt, legacyConfiguredAgentsPromptHeader)
+	return configuredAgentsPromptBlockNeedsRefresh(snapshot.CombinedPrompt)
+}
+
+func configuredAgentsPromptBlockNeedsRefresh(content string) bool {
+	return strings.Contains(content, legacyConfiguredAgentsPromptHeader) ||
+		strings.Contains(content, runningConfiguredAgentsPromptHeader)
 }
 
 func snapshotHasEnvironmentContext(snapshot *systemPromptSnapshot) bool {

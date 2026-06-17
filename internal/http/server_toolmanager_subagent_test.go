@@ -197,7 +197,7 @@ func TestBuildSystemPromptForSession_UsesSubAgentInstructions(t *testing.T) {
 	if !strings.Contains(systemPrompt, "Operating system:") || !strings.Contains(systemPrompt, "Current time:") {
 		t.Fatalf("expected sub-agent prompt to include OS and current time, got: %q", systemPrompt)
 	}
-	if strings.Contains(systemPrompt, "Currently running Docker-backed configured agents for delegation:") {
+	if strings.Contains(systemPrompt, availableConfiguredAgentsPromptHeader) {
 		t.Fatalf("expected sub-agent prompt to omit main-agent configured-agent listing")
 	}
 }
@@ -290,6 +290,18 @@ workspace:
 	}); err != nil {
 		t.Fatalf("failed to save stopped agent definition: %v", err)
 	}
+	uncreatedDefinitionYAML := strings.Replace(definitionYAML, "youtube-transcriber-gemini", "uncreated-agent", 1)
+	uncreatedDefinitionYAML = strings.Replace(uncreatedDefinitionYAML, "YouTube Transcriber (Gemini)", "Uncreated Agent", 1)
+	if err := store.SaveAgentDefinition(&storage.AgentDefinitionRecord{
+		ID:             "uncreated-agent",
+		Name:           "Uncreated Agent",
+		Runtime:        agentdef.RuntimeDocker,
+		DefinitionYAML: uncreatedDefinitionYAML,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("failed to save uncreated agent definition: %v", err)
+	}
 
 	oldRunCommand := runCommand
 	runCommand = func(ctx context.Context, command string, args ...string) (string, error) {
@@ -333,21 +345,27 @@ workspace:
 	}
 
 	systemPrompt := server.buildSystemPromptForSession(sess)
-	if !strings.Contains(systemPrompt, "Currently running Docker-backed configured agents for delegation:") {
+	if !strings.Contains(systemPrompt, availableConfiguredAgentsPromptHeader) {
 		t.Fatalf("expected configured agent listing, got: %q", systemPrompt)
 	}
 	if !strings.Contains(systemPrompt, "youtube-transcriber-gemini") || !strings.Contains(systemPrompt, "YouTube Transcriber (Gemini)") {
 		t.Fatalf("expected stored YAML agent in prompt, got: %q", systemPrompt)
 	}
-	if strings.Contains(systemPrompt, "stopped-agent") || strings.Contains(systemPrompt, "Stopped Agent") {
-		t.Fatalf("stopped Docker agent should not be listed in prompt, got: %q", systemPrompt)
+	if !strings.Contains(systemPrompt, "Status: running") {
+		t.Fatalf("expected running stored YAML agent status in prompt, got: %q", systemPrompt)
+	}
+	if !strings.Contains(systemPrompt, "stopped-agent") || !strings.Contains(systemPrompt, "Stopped Agent") || !strings.Contains(systemPrompt, "Status: stopped") {
+		t.Fatalf("expected stopped Docker agent to remain listed with status, got: %q", systemPrompt)
+	}
+	if !strings.Contains(systemPrompt, "uncreated-agent") || !strings.Contains(systemPrompt, "Uncreated Agent") || !strings.Contains(systemPrompt, "Status: not created") {
+		t.Fatalf("expected not-created Docker agent to remain listed with status, got: %q", systemPrompt)
 	}
 	if !strings.Contains(systemPrompt, "Provider: google") || !strings.Contains(systemPrompt, "Model: models/gemini-3.1-pro-preview") || !strings.Contains(systemPrompt, "Tools: 1 tools") {
 		t.Fatalf("expected stored YAML agent metadata in prompt, got: %q", systemPrompt)
 	}
 }
 
-func TestBuildSystemPromptForSession_IncludesOnlyRunningSavedSubAgents(t *testing.T) {
+func TestBuildSystemPromptForSession_IncludesAvailableSavedSubAgents(t *testing.T) {
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create sqlite store: %v", err)
@@ -460,15 +478,15 @@ func TestBuildSystemPromptForSession_IncludesOnlyRunningSavedSubAgents(t *testin
 	if !strings.Contains(systemPrompt, "running-reviewer") || !strings.Contains(systemPrompt, "Running Reviewer") {
 		t.Fatalf("expected running saved sub-agent in prompt, got: %q", systemPrompt)
 	}
-	if strings.Contains(systemPrompt, "stopped-reviewer") || strings.Contains(systemPrompt, "Stopped Reviewer") {
-		t.Fatalf("stopped saved sub-agent should not be listed in prompt, got: %q", systemPrompt)
+	if !strings.Contains(systemPrompt, "stopped-reviewer") || !strings.Contains(systemPrompt, "Stopped Reviewer") || !strings.Contains(systemPrompt, "Status: stopped") {
+		t.Fatalf("expected stopped saved sub-agent in prompt with status, got: %q", systemPrompt)
 	}
-	if strings.Contains(systemPrompt, "wrong-project-reviewer") || strings.Contains(systemPrompt, "Wrong Project Reviewer") {
-		t.Fatalf("wrong-project saved sub-agent should not be listed in prompt, got: %q", systemPrompt)
+	if !strings.Contains(systemPrompt, "wrong-project-reviewer") || !strings.Contains(systemPrompt, "Wrong Project Reviewer") {
+		t.Fatalf("saved sub-agent with another warm container should still be available in prompt, got: %q", systemPrompt)
 	}
 }
 
-func TestBuildSystemPromptForSession_RebuildsLegacyConfiguredAgentSnapshot(t *testing.T) {
+func TestBuildSystemPromptForSession_RebuildsOutdatedConfiguredAgentSnapshot(t *testing.T) {
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create sqlite store: %v", err)
@@ -495,16 +513,16 @@ func TestBuildSystemPromptForSession_RebuildsLegacyConfiguredAgentSnapshot(t *te
 	}
 	sess.Metadata[sessionSystemPromptSnapshotMetadataKey] = systemPromptSnapshot{
 		BasePrompt:     "base",
-		CombinedPrompt: "Environment context:\n- old\n\n" + legacyConfiguredAgentsPromptHeader + "\n- ID: stopped-reviewer",
+		CombinedPrompt: "Environment context:\n- old\n\n" + runningConfiguredAgentsPromptHeader + "\n- ID: stopped-reviewer",
 		Blocks: []systemPromptBlockSnapshot{
 			{Type: "environment_context", Enabled: true, ResolvedContent: "Environment context:\n- old"},
-			{Type: "sub_agents", Enabled: true, ResolvedContent: legacyConfiguredAgentsPromptHeader + "\n- ID: stopped-reviewer"},
+			{Type: "sub_agents", Enabled: true, ResolvedContent: runningConfiguredAgentsPromptHeader + "\n- ID: stopped-reviewer"},
 		},
 	}
 
 	systemPrompt := server.buildSystemPromptForSession(sess)
-	if strings.Contains(systemPrompt, legacyConfiguredAgentsPromptHeader) || strings.Contains(systemPrompt, "stopped-reviewer") {
-		t.Fatalf("legacy configured-agent snapshot should have been rebuilt, got: %q", systemPrompt)
+	if strings.Contains(systemPrompt, runningConfiguredAgentsPromptHeader) || strings.Contains(systemPrompt, "stopped-reviewer") {
+		t.Fatalf("outdated configured-agent snapshot should have been rebuilt, got: %q", systemPrompt)
 	}
 }
 

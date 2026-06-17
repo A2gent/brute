@@ -155,9 +155,21 @@ const disableToolsByDefaultSettingKey = "A2GENT_DISABLE_TOOLS_BY_DEFAULT"
 
 const disableToolsByDefaultAppliedSettingKey = "A2GENT_DISABLE_TOOLS_BY_DEFAULT_APPLIED"
 
+const syncDisabledToolsFromEnvSettingKey = "A2GENT_SYNC_DISABLED_TOOLS_FROM_ENV"
+
+func envBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Server) bootstrapDisabledToolsByDefault() {
+	syncExplicitPolicy := envBool(syncDisabledToolsFromEnvSettingKey)
 	raw := strings.TrimSpace(strings.ToLower(os.Getenv(disableToolsByDefaultSettingKey)))
-	if raw == "" || raw == "0" || raw == "false" || raw == "off" || raw == "no" {
+	if !syncExplicitPolicy && (raw == "" || raw == "0" || raw == "false" || raw == "off" || raw == "no") {
 		return
 	}
 
@@ -170,6 +182,24 @@ func (s *Server) bootstrapDisabledToolsByDefault() {
 		settings = map[string]string{}
 	}
 	envDisabledTools := strings.TrimSpace(os.Getenv(disabledToolsSettingKey))
+	if syncExplicitPolicy {
+		previous := make(map[string]string, len(settings))
+		for key, value := range settings {
+			previous[key] = value
+		}
+		if envDisabledTools == "" {
+			delete(settings, disabledToolsSettingKey)
+		} else {
+			settings[disabledToolsSettingKey] = envDisabledTools
+		}
+		settings[disableToolsByDefaultAppliedSettingKey] = time.Now().UTC().Format(time.RFC3339)
+		if err := s.store.SaveSettings(settings); err != nil {
+			logging.Warn("Failed to sync disabled-tools policy from environment: %v", err)
+			return
+		}
+		syncSettingsToEnv(previous, settings)
+		return
+	}
 	if strings.TrimSpace(settings[disableToolsByDefaultAppliedSettingKey]) != "" {
 		if envDisabledTools != "" && s.disabledToolsSettingDisablesAllTools(settings[disabledToolsSettingKey]) {
 			previous := make(map[string]string, len(settings))

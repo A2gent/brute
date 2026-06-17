@@ -748,6 +748,66 @@ func TestBootstrapDisabledToolsByDefault_RepairsStaleAllDisabledPolicyFromEnv(t 
 	}
 }
 
+func TestBootstrapDisabledToolsByDefault_SyncsExplicitEnvPolicyAfterMarker(t *testing.T) {
+	t.Setenv(syncDisabledToolsFromEnvSettingKey, "true")
+	t.Setenv(disableToolsByDefaultSettingKey, "true")
+	t.Setenv(disabledToolsSettingKey, `["delegate_to_agent","suggest_session"]`)
+
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SaveSettings(map[string]string{
+		disabledToolsSettingKey:                `["read","grep","find_files","bash"]`,
+		disableToolsByDefaultAppliedSettingKey: time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("failed to seed stale settings: %v", err)
+	}
+
+	sessionManager := session.NewManager(store)
+	_ = NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
+
+	after, err := store.GetSettings()
+	if err != nil {
+		t.Fatalf("failed to load synced settings: %v", err)
+	}
+	if got := strings.TrimSpace(after[disabledToolsSettingKey]); got != `["delegate_to_agent","suggest_session"]` {
+		t.Fatalf("expected explicit env disabled-tools policy to replace stale policy, got %q", got)
+	}
+}
+
+func TestBootstrapDisabledToolsByDefault_SyncsExplicitEmptyEnvPolicyAfterMarker(t *testing.T) {
+	t.Setenv(syncDisabledToolsFromEnvSettingKey, "true")
+	t.Setenv(disableToolsByDefaultSettingKey, "false")
+	t.Setenv(disabledToolsSettingKey, "")
+
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SaveSettings(map[string]string{
+		disabledToolsSettingKey:                `["read","grep","find_files","bash"]`,
+		disableToolsByDefaultAppliedSettingKey: time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("failed to seed stale settings: %v", err)
+	}
+
+	sessionManager := session.NewManager(store)
+	_ = NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
+
+	after, err := store.GetSettings()
+	if err != nil {
+		t.Fatalf("failed to load synced settings: %v", err)
+	}
+	if got := strings.TrimSpace(after[disabledToolsSettingKey]); got != "" {
+		t.Fatalf("expected explicit empty env policy to clear stale disabled tools, got %q", got)
+	}
+}
+
 func TestBootstrapDisabledToolsByDefault_DoesNotReapplyAfterMarker(t *testing.T) {
 	t.Setenv(disableToolsByDefaultSettingKey, "true")
 	t.Setenv(disabledToolsSettingKey, "")

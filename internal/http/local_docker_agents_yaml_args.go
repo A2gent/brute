@@ -230,6 +230,7 @@ func (s *Server) applyLocalDockerAgentToolsArgs(args []string, toolSpec localDoc
 	if err != nil {
 		return nil, err
 	}
+	args = append(args, "--env", syncDisabledToolsFromEnvSettingKey+"=true")
 	if apply {
 		args = append(args, "--env", disableToolsByDefaultSettingKey+"=true")
 		if strings.TrimSpace(disabledJSON) != "" {

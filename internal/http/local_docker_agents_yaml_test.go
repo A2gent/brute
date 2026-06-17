@@ -242,6 +242,7 @@ func TestLocalDockerAgentYAMLBuildsDockerArgsForToolsAndRuntimeOptions(t *testin
 	}
 	joined := strings.Join(args, "\n")
 	for _, want := range []string{
+		"A2GENT_SYNC_DISABLED_TOOLS_FROM_ENV=true",
 		"A2GENT_DISABLE_TOOLS_BY_DEFAULT=false",
 		"FOO=bar",
 		"TOKEN=secret",

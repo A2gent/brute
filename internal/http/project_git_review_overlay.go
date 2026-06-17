@@ -2,6 +2,8 @@ package http
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +16,7 @@ import (
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/logging"
+	"github.com/A2gent/brute/internal/storage"
 )
 
 const defaultGitReviewOverlayPromptTemplate = `You explain a branch diff for a visual review overlay.
@@ -26,16 +29,18 @@ Schema:
       "side": "additions" | "deletions",
       "line_number": 123,
       "end_line_number": 125,
-      "title": "short label, max 80 chars",
-      "body": "1-3 concise sentences explaining what changed and why it matters"
+      "title": "human outcome, max 80 chars",
+      "body": "1-3 concise sentences explaining WHAT the code now does and WHY that behavior matters"
     }
   ]
 }
 Rules:
-- Pick only important or non-obvious changed regions. Do not annotate trivial formatting, imports, or every line.
-- Prefer 1-3 annotations per changed file; use fewer if the change is simple.
+- Pick multiple important, non-obvious changed regions per file when they exist. Prefer 2-5 annotations per complex file; use fewer only for simple files.
 - line_number and end_line_number must refer to changed lines visible in the diff. Use additions for new lines and deletions for removed lines.
-- Explain code behavior and intent without suggesting adding code comments.
+- Explain behavior, intent, data flow, user-visible effects, risk, or integration impact in human-readable words.
+- Do NOT restate the diff, quote code, list symbols, mention +N/-N counts, or say only that code was added/removed/changed.
+- Do NOT use generic titles like "Important branch change", "New file added", "Change added", or "Code updated".
+- If you cannot explain WHAT the code does and WHY it matters, omit that annotation.
 
 Current branch: {{branch}}
 Base branch: {{base_branch}}
@@ -58,6 +63,42 @@ type projectGitReviewOverlayModelResponse struct {
 	Annotations []ProjectGitReviewOverlayAnnotation `json:"annotations"`
 }
 
+type projectGitReviewOverlayDiffContext struct {
+	Sections     []string
+	AllowedLines map[string]projectGitReviewOverlayLineIndex
+	DiffHashes   map[string]string
+}
+
+func (s *Server) handleGetProjectGitReviewOverlay(w http.ResponseWriter, r *http.Request) {
+	projectID, repoPath, targetRepoRoot, target, ok := s.resolveProjectGitPRDescriptionTarget(w, r, strings.TrimSpace(r.URL.Query().Get("repoPath")))
+	if !ok {
+		return
+	}
+	response := ProjectGitReviewOverlayResponse{
+		CurrentBranch: target.CurrentBranch,
+		BaseBranch:    target.BaseBranch,
+		Annotations:   []ProjectGitReviewOverlayAnnotation{},
+	}
+	if !target.Available {
+		s.jsonResponse(w, http.StatusOK, response)
+		return
+	}
+
+	files, err := loadProjectGitBranchChangedFiles(targetRepoRoot, target)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to read branch changes: "+err.Error())
+		return
+	}
+	diffContext := buildProjectGitReviewOverlayDiffContext(targetRepoRoot, target, files)
+	annotations, err := s.loadCachedProjectGitReviewOverlayAnnotations(projectID, repoPath, target, diffContext)
+	if err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to load review overlay: "+err.Error())
+		return
+	}
+	response.Annotations = annotations
+	s.jsonResponse(w, http.StatusOK, response)
+}
+
 func (s *Server) handleGenerateProjectGitReviewOverlay(w http.ResponseWriter, r *http.Request) {
 	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
 	if projectID == "" {
@@ -71,7 +112,7 @@ func (s *Server) handleGenerateProjectGitReviewOverlay(w http.ResponseWriter, r 
 		return
 	}
 
-	_, _, targetRepoRoot, target, ok := s.resolveProjectGitPRDescriptionTarget(w, r, strings.TrimSpace(req.RepoPath))
+	projectID, repoPath, targetRepoRoot, target, ok := s.resolveProjectGitPRDescriptionTarget(w, r, strings.TrimSpace(req.RepoPath))
 	if !ok {
 		return
 	}
@@ -94,7 +135,7 @@ func (s *Server) handleGenerateProjectGitReviewOverlay(w http.ResponseWriter, r 
 		return
 	}
 
-	annotations := s.generateProjectGitReviewOverlayAnnotations(r.Context(), targetRepoRoot, target, files)
+	annotations := s.generateProjectGitReviewOverlayAnnotations(r.Context(), projectID, repoPath, targetRepoRoot, target, files)
 	s.jsonResponse(w, http.StatusOK, ProjectGitReviewOverlayResponse{
 		CurrentBranch: target.CurrentBranch,
 		BaseBranch:    target.BaseBranch,
@@ -102,13 +143,12 @@ func (s *Server) handleGenerateProjectGitReviewOverlay(w http.ResponseWriter, r 
 	})
 }
 
-func (s *Server) generateProjectGitReviewOverlayAnnotations(ctx context.Context, repoRoot string, target projectGitBranchChangesTargetInfo, files []ProjectGitCommitFile) []ProjectGitReviewOverlayAnnotation {
-	diffSections, allowedLines := buildProjectGitReviewOverlayDiffContext(repoRoot, target, files)
-	if len(diffSections) == 0 {
+func (s *Server) generateProjectGitReviewOverlayAnnotations(ctx context.Context, projectID string, repoPath string, repoRoot string, target projectGitBranchChangesTargetInfo, files []ProjectGitCommitFile) []ProjectGitReviewOverlayAnnotation {
+	diffContext := buildProjectGitReviewOverlayDiffContext(repoRoot, target, files)
+	if len(diffContext.Sections) == 0 {
 		return []ProjectGitReviewOverlayAnnotation{}
 	}
 
-	fallback := buildFallbackProjectGitReviewOverlayAnnotations(files, allowedLines)
 	settings, settingsErr := s.store.GetSettings()
 	if settingsErr != nil {
 		logging.Warn("Failed to load settings for review overlay generation: %v", settingsErr)
@@ -119,7 +159,7 @@ func (s *Server) generateProjectGitReviewOverlayAnnotations(ctx context.Context,
 		target.CurrentBranch,
 		target.BaseBranch,
 		projectGitCommitFilesMarkdown(files),
-		strings.Join(diffSections, "\n\n"),
+		strings.Join(diffContext.Sections, "\n\n"),
 	)
 
 	providerRef := strings.TrimSpace(settings[gitCommitProviderSettingKey])
@@ -139,14 +179,100 @@ func (s *Server) generateProjectGitReviewOverlayAnnotations(ctx context.Context,
 	}
 	if err != nil {
 		logging.Warn("Review overlay generation failed: %v", err)
-		return fallback
+		return []ProjectGitReviewOverlayAnnotation{}
 	}
 
-	annotations := sanitizeProjectGitReviewOverlayResponse(response.Content, allowedLines)
+	annotations := sanitizeProjectGitReviewOverlayResponse(response.Content, diffContext.AllowedLines)
 	if len(annotations) == 0 {
-		return fallback
+		logging.Warn("Review overlay generation produced no useful annotations after sanitization")
+		return []ProjectGitReviewOverlayAnnotation{}
+	}
+	if err := s.saveProjectGitReviewOverlayAnnotations(projectID, repoPath, target, diffContext.DiffHashes, annotations); err != nil {
+		logging.Warn("Failed to cache review overlay annotations: %v", err)
 	}
 	return annotations
+}
+
+func (s *Server) loadCachedProjectGitReviewOverlayAnnotations(projectID string, repoPath string, target projectGitBranchChangesTargetInfo, diffContext projectGitReviewOverlayDiffContext) ([]ProjectGitReviewOverlayAnnotation, error) {
+	rows, err := s.store.ListProjectGitReviewOverlayCache(projectID, repoPath, target.CurrentBranch, target.BaseBranch)
+	if err != nil {
+		return nil, err
+	}
+	annotations := []ProjectGitReviewOverlayAnnotation{}
+	for _, row := range rows {
+		filePath := normalizeProjectGitReviewOverlayPath(row.FilePath)
+		if filePath == "" || diffContext.DiffHashes[filePath] == "" || diffContext.DiffHashes[filePath] != strings.TrimSpace(row.DiffHash) {
+			continue
+		}
+		lineIndex, ok := diffContext.AllowedLines[filePath]
+		if !ok {
+			continue
+		}
+		var cached []ProjectGitReviewOverlayAnnotation
+		if err := json.Unmarshal([]byte(row.AnnotationsJSON), &cached); err != nil {
+			logging.Warn("Skipping invalid review overlay cache for %s: %v", filePath, err)
+			continue
+		}
+		for _, annotation := range cached {
+			annotation.FilePath = normalizeProjectGitReviewOverlayPath(annotation.FilePath)
+			annotation.Side = normalizeProjectGitReviewOverlaySide(annotation.Side)
+			annotation.Title = truncateText(cleanProjectGitReviewOverlayText(annotation.Title), 90)
+			annotation.Body = truncateText(cleanProjectGitReviewOverlayText(annotation.Body), 520)
+			if annotation.FilePath != filePath || annotation.Side == "" || annotation.LineNumber <= 0 {
+				continue
+			}
+			if !projectGitReviewOverlayLineAllowed(lineIndex, annotation.Side, annotation.LineNumber) {
+				continue
+			}
+			if annotation.EndLineNumber <= 0 || annotation.EndLineNumber < annotation.LineNumber || !projectGitReviewOverlayLineAllowed(lineIndex, annotation.Side, annotation.EndLineNumber) {
+				annotation.EndLineNumber = annotation.LineNumber
+			}
+			if !isUsefulProjectGitReviewOverlayAnnotation(annotation.Title, annotation.Body) {
+				continue
+			}
+			annotations = append(annotations, annotation)
+		}
+	}
+	sortProjectGitReviewOverlayAnnotations(annotations)
+	return annotations, nil
+}
+
+func (s *Server) saveProjectGitReviewOverlayAnnotations(projectID string, repoPath string, target projectGitBranchChangesTargetInfo, diffHashes map[string]string, annotations []ProjectGitReviewOverlayAnnotation) error {
+	byFile := map[string][]ProjectGitReviewOverlayAnnotation{}
+	for _, annotation := range annotations {
+		filePath := normalizeProjectGitReviewOverlayPath(annotation.FilePath)
+		if filePath == "" || diffHashes[filePath] == "" {
+			continue
+		}
+		annotation.FilePath = filePath
+		byFile[filePath] = append(byFile[filePath], annotation)
+	}
+	now := time.Now()
+	for filePath, diffHash := range diffHashes {
+		fileAnnotations := byFile[filePath]
+		if fileAnnotations == nil {
+			fileAnnotations = []ProjectGitReviewOverlayAnnotation{}
+		}
+		payload, err := json.Marshal(fileAnnotations)
+		if err != nil {
+			return err
+		}
+		cache := &storage.ProjectGitReviewOverlayCache{
+			ProjectID:       projectID,
+			RepoPath:        repoPath,
+			Branch:          target.CurrentBranch,
+			BaseBranch:      target.BaseBranch,
+			FilePath:        filePath,
+			DiffHash:        diffHash,
+			AnnotationsJSON: string(payload),
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		}
+		if err := s.store.SaveProjectGitReviewOverlayCache(cache); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Server) generateGitReviewOverlayWithProvider(ctx context.Context, providerType config.ProviderType, prompt string) (*llm.ChatResponse, error) {
@@ -165,9 +291,12 @@ func (s *Server) generateGitReviewOverlayWithProvider(ctx context.Context, provi
 	})
 }
 
-func buildProjectGitReviewOverlayDiffContext(repoRoot string, target projectGitBranchChangesTargetInfo, files []ProjectGitCommitFile) ([]string, map[string]projectGitReviewOverlayLineIndex) {
-	sections := make([]string, 0, len(files))
-	allowedLines := make(map[string]projectGitReviewOverlayLineIndex, len(files))
+func buildProjectGitReviewOverlayDiffContext(repoRoot string, target projectGitBranchChangesTargetInfo, files []ProjectGitCommitFile) projectGitReviewOverlayDiffContext {
+	context := projectGitReviewOverlayDiffContext{
+		Sections:     make([]string, 0, len(files)),
+		AllowedLines: make(map[string]projectGitReviewOverlayLineIndex, len(files)),
+		DiffHashes:   make(map[string]string, len(files)),
+	}
 	for _, file := range files {
 		if file.Binary {
 			continue
@@ -184,15 +313,55 @@ func buildProjectGitReviewOverlayDiffContext(repoRoot string, target projectGitB
 		if len(lineIndex.Additions) == 0 && len(lineIndex.Deletions) == 0 {
 			continue
 		}
-		allowedLines[normalizedPath] = lineIndex
-		sections = append(sections, fmt.Sprintf("File: %s (%s, +%d/-%d)\n%s", normalizedPath, file.Status, file.Additions, file.Deletions, truncateText(preview, 5000)))
-		if len(sections) >= 24 {
+		context.AllowedLines[normalizedPath] = lineIndex
+		context.DiffHashes[normalizedPath] = hashProjectGitReviewOverlayDiff(preview)
+		context.Sections = append(context.Sections, fmt.Sprintf(
+			"File: %s (%s, +%d/-%d)\nAllowed changed lines: %s\n%s",
+			normalizedPath,
+			file.Status,
+			file.Additions,
+			file.Deletions,
+			formatProjectGitReviewOverlayAllowedLines(lineIndex),
+			truncateText(preview, 5000),
+		))
+		if len(context.Sections) >= 24 {
 			break
 		}
 	}
-	return sections, allowedLines
+	return context
 }
 
+func hashProjectGitReviewOverlayDiff(diff string) string {
+	sum := sha256.Sum256([]byte(strings.ReplaceAll(diff, "\r\n", "\n")))
+	return hex.EncodeToString(sum[:])
+}
+
+func formatProjectGitReviewOverlayAllowedLines(index projectGitReviewOverlayLineIndex) string {
+	parts := []string{}
+	if additions := formatProjectGitReviewOverlayLineNumbers(index.Additions); additions != "" {
+		parts = append(parts, "additions="+additions)
+	}
+	if deletions := formatProjectGitReviewOverlayLineNumbers(index.Deletions); deletions != "" {
+		parts = append(parts, "deletions="+deletions)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func formatProjectGitReviewOverlayLineNumbers(lines map[int]bool) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	values := make([]int, 0, len(lines))
+	for line := range lines {
+		values = append(values, line)
+	}
+	sort.Ints(values)
+	parts := make([]string, 0, len(values))
+	for _, line := range values {
+		parts = append(parts, fmt.Sprintf("%d", line))
+	}
+	return strings.Join(parts, ",")
+}
 func parseProjectGitReviewOverlayLineIndex(diff string) projectGitReviewOverlayLineIndex {
 	index := projectGitReviewOverlayLineIndex{
 		Additions:    map[int]bool{},
@@ -301,7 +470,7 @@ func sanitizeProjectGitReviewOverlayResponse(raw string, allowedLines map[string
 		}
 		title := truncateText(cleanProjectGitReviewOverlayText(annotation.Title), 90)
 		body := truncateText(cleanProjectGitReviewOverlayText(annotation.Body), 520)
-		if title == "" || body == "" {
+		if !isUsefulProjectGitReviewOverlayAnnotation(title, body) {
 			continue
 		}
 		key := fmt.Sprintf("%s:%s:%d", filePath, side, annotation.LineNumber)
@@ -321,6 +490,11 @@ func sanitizeProjectGitReviewOverlayResponse(raw string, allowedLines map[string
 			break
 		}
 	}
+	sortProjectGitReviewOverlayAnnotations(annotations)
+	return annotations
+}
+
+func sortProjectGitReviewOverlayAnnotations(annotations []ProjectGitReviewOverlayAnnotation) {
 	sort.SliceStable(annotations, func(i, j int) bool {
 		if annotations[i].FilePath != annotations[j].FilePath {
 			return annotations[i].FilePath < annotations[j].FilePath
@@ -330,7 +504,6 @@ func sanitizeProjectGitReviewOverlayResponse(raw string, allowedLines map[string
 		}
 		return annotations[i].Side < annotations[j].Side
 	})
-	return annotations
 }
 
 func extractProjectGitReviewOverlayJSON(raw string) string {
@@ -388,6 +561,57 @@ func cleanProjectGitReviewOverlayText(value string) string {
 	trimmed = strings.Trim(trimmed, "\"'`")
 	fields := strings.Fields(trimmed)
 	return strings.Join(fields, " ")
+}
+func isUsefulProjectGitReviewOverlayAnnotation(title string, body string) bool {
+	title = cleanProjectGitReviewOverlayText(title)
+	body = cleanProjectGitReviewOverlayText(body)
+	if title == "" || body == "" {
+		return false
+	}
+	lowerTitle := strings.ToLower(title)
+	genericTitles := []string{
+		"important branch change",
+		"new file added",
+		"file removed",
+		"change added",
+		"code updated",
+		"changed code",
+		"branch change",
+	}
+	for _, generic := range genericTitles {
+		if lowerTitle == generic {
+			return false
+		}
+	}
+	lowerBody := strings.ToLower(body)
+	obviousPhrases := []string{
+		"this change adds",
+		"this change removes",
+		"this change replaces",
+		"this changed region",
+		"this new file adds",
+		"this file is introduced",
+		"this file removes",
+		"branch diff of",
+		"+%d/-%d",
+	}
+	for _, phrase := range obviousPhrases {
+		if strings.Contains(lowerBody, phrase) {
+			return false
+		}
+	}
+	// WHY: overlay comments should explain behavior/intent, not paraphrase the patch.
+	// Requiring one explanatory cue filters out generic model output while keeping concise notes.
+	explanatoryCues := []string{
+		"because", "so that", "so ", "ensures", "prevents", "allows", "enables", "keeps",
+		"means", "instead", "when ", "before ", "after ", "user", "request", "state", "flow", "fallback", "error", "validation",
+	}
+	for _, cue := range explanatoryCues {
+		if strings.Contains(lowerBody, cue) {
+			return true
+		}
+	}
+	return false
 }
 
 func buildFallbackProjectGitReviewOverlayAnnotations(files []ProjectGitCommitFile, allowedLines map[string]projectGitReviewOverlayLineIndex) []ProjectGitReviewOverlayAnnotation {

@@ -272,6 +272,7 @@ func (s *Server) registerProjectRoutes(r chi.Router) {
 		r.Get("/git/commit-diff", s.handleProjectGitCommitDiff)
 		r.Get("/git/pr-description", s.handleGetProjectGitPRDescription)
 		r.Put("/git/pr-description", s.handleSaveProjectGitPRDescription)
+			r.Get("/git/review-overlay", s.handleGetProjectGitReviewOverlay)
 		r.Get("/tests", s.handleProjectTestsDiscovery)
 		r.Get("/tests/branch-cache", s.handleProjectTestsBranchCache)
 		r.Post("/tests/branch-cache/refresh", s.handleProjectTestsBranchCacheRefresh)

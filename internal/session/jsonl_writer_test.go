@@ -52,6 +52,12 @@ func (m *memStore) GetProjectPRDescription(string, string, string, string) (*sto
 func (m *memStore) SaveProjectTestCache(*storage.ProjectTestCache) error { return nil }
 func (m *memStore) GetProjectTestCache(string, string, string, string, string) (*storage.ProjectTestCache, error) {
 	return nil, nil
+func (m *memStore) SaveProjectGitReviewOverlayCache(*storage.ProjectGitReviewOverlayCache) error {
+	return nil
+}
+func (m *memStore) ListProjectGitReviewOverlayCache(string, string, string, string) ([]*storage.ProjectGitReviewOverlayCache, error) {
+	return nil, nil
+}
 }
 func (m *memStore) SaveJob(*storage.RecurringJob) error          { return nil }
 func (m *memStore) GetJob(string) (*storage.RecurringJob, error) { return nil, nil }

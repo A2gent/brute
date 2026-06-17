@@ -221,6 +221,20 @@ func (s *SQLiteStore) migrate() error {
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_project_test_cache_project_id ON project_test_cache(project_id)`,
+		`CREATE TABLE IF NOT EXISTS project_git_review_overlay_cache (
+				project_id TEXT NOT NULL,
+				repo_path TEXT NOT NULL DEFAULT '',
+				branch TEXT NOT NULL,
+				base_branch TEXT NOT NULL DEFAULT '',
+				file_path TEXT NOT NULL,
+				diff_hash TEXT NOT NULL,
+				annotations_json TEXT NOT NULL DEFAULT '[]',
+				created_at TIMESTAMP NOT NULL,
+				updated_at TIMESTAMP NOT NULL,
+				PRIMARY KEY(project_id, repo_path, branch, base_branch, file_path),
+				FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+			)`,
+		`CREATE INDEX IF NOT EXISTS idx_project_git_review_overlay_cache_project_id ON project_git_review_overlay_cache(project_id)`,
 		// Stored unified agent definitions (docker/remote runtime installations).
 		`CREATE TABLE IF NOT EXISTS agent_definitions (
 			id TEXT PRIMARY KEY,

@@ -15,7 +15,60 @@ import (
 const (
 	sessionLinkTypeReview       = "review"
 	sessionLinkTypeContinuation = "continuation"
+	sessionQueueModeSerial      = "serial"
+	sessionQueueModeMetadataKey = "queue_mode"
+	sessionQueueAutoStartKey    = "queue_auto_start"
 )
+
+func normalizeSessionQueueMode(raw string) (string, error) {
+	normalized := strings.TrimSpace(strings.ToLower(raw))
+	if normalized == "" {
+		return "", nil
+	}
+	switch normalized {
+	case sessionQueueModeSerial:
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("invalid queue_mode: %s", raw)
+	}
+}
+
+func sessionQueueMode(sess *session.Session) string {
+	if sess == nil || sess.Metadata == nil {
+		return ""
+	}
+	raw, ok := sess.Metadata[sessionQueueModeMetadataKey].(string)
+	if !ok {
+		return ""
+	}
+	mode, err := normalizeSessionQueueMode(raw)
+	if err != nil {
+		return ""
+	}
+	return mode
+}
+
+func sessionQueueAutoStart(sess *session.Session) bool {
+	if sess == nil || sess.Metadata == nil {
+		return false
+	}
+	raw, ok := sess.Metadata[sessionQueueAutoStartKey]
+	if !ok {
+		return false
+	}
+	switch v := raw.(type) {
+	case bool:
+		return v
+	case string:
+		return strings.EqualFold(strings.TrimSpace(v), "true")
+	default:
+		return false
+	}
+}
+
+func sessionIsSerialQueuedAutoRun(sess *session.Session) bool {
+	return sessionQueueMode(sess) == sessionQueueModeSerial && sessionQueueAutoStart(sess)
+}
 
 func (s *Server) applyProviderTraceToSession(sess *session.Session, targetProvider config.ProviderType, trace *agent.ProviderTraceEvent) {
 	if sess == nil || trace == nil {

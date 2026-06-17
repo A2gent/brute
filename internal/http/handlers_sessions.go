@@ -98,6 +98,15 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.LinkType = linkType
+	queueMode, err := normalizeSessionQueueMode(req.QueueMode)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.QueueMode = queueMode
+	if queueMode == sessionQueueModeSerial {
+		req.Queued = true
+	}
 
 	var parentSession *session.Session
 	if req.ParentID != "" {
@@ -163,6 +172,18 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.sessionManager.Save(sess); err != nil {
 			logging.Warn("Failed to persist session metadata: %v", err)
+		}
+	}
+	if req.QueueMode != "" {
+		if sess.Metadata == nil {
+			sess.Metadata = make(map[string]interface{})
+		}
+		sess.Metadata[sessionQueueModeMetadataKey] = req.QueueMode
+		if req.QueueMode == sessionQueueModeSerial {
+			sess.Metadata[sessionQueueAutoStartKey] = true
+		}
+		if err := s.sessionManager.Save(sess); err != nil {
+			logging.Warn("Failed to persist session queue metadata: %v", err)
 		}
 	}
 
@@ -239,6 +260,9 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	_ = s.ensureSessionSystemPromptSnapshot(sess)
+	if req.Queued && sessionIsSerialQueuedAutoRun(sess) {
+		s.triggerSerialSessionQueueForSession(sess)
+	}
 	go func(sessionID string, task string) {
 		syncCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
@@ -703,6 +727,9 @@ func (s *Server) resumeSessionAfterQuestionAnswer(sessionID string, userAnswer s
 			sess.SetStatus(session.StatusFailed)
 			_ = s.sessionManager.Save(sess)
 		}
+		if fresh, freshErr := s.sessionManager.Get(sessionID); freshErr == nil && sessionIsSerialQueuedAutoRun(fresh) && serialQueueCanAdvanceAfterStatus(fresh.Status) {
+			s.triggerSerialSessionQueueForSession(fresh)
+		}
 	}()
 }
 
@@ -711,6 +738,9 @@ func (s *Server) registerActiveSessionRun(sessionID string, cancel context.Cance
 	s.activeRunsMu.Lock()
 	defer s.activeRunsMu.Unlock()
 
+	if s.activeRuns == nil {
+		s.activeRuns = make(map[string]map[string]context.CancelFunc)
+	}
 	runs, ok := s.activeRuns[sessionID]
 	if !ok {
 		runs = make(map[string]context.CancelFunc)

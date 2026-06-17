@@ -41,6 +41,8 @@ type Server struct {
 	runParentCtx          context.Context
 	activeRunsMu          sync.Mutex
 	activeRuns            map[string]map[string]context.CancelFunc
+	serialQueueMu         sync.Mutex
+	serialQueueWorkers    map[string]struct{}
 	chromeExtensionBridge *chromeExtensionBridge
 	httpAccessLogMu       sync.RWMutex
 	httpAccessLogWriter   io.Writer
@@ -88,6 +90,7 @@ func NewServer(
 		portReady:             make(chan int, 1),
 		runParentCtx:          context.Background(),
 		activeRuns:            make(map[string]map[string]context.CancelFunc),
+		serialQueueWorkers:    make(map[string]struct{}),
 		chromeExtensionBridge: newChromeExtensionBridge(),
 		contextCompressor:     contextcompress.NewCompressorWithSessionStore(contextcompress.Config{Enabled: true}, sessionManager),
 	}
@@ -147,6 +150,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.runTelegramDuplexLoop(ctx)
 	go s.runA2ATunnelIfConfigured()
 	go s.dockerRuntime.runIdleReaper(ctx)
+	go s.resumeSerialSessionQueues()
 
 	server := &http.Server{
 		Addr:    addr,

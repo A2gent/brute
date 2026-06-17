@@ -71,3 +71,23 @@ func TestSanitizeProjectGitReviewOverlayResponseRejectsObviousRestatements(t *te
 		t.Fatalf("unexpected annotation kept: %#v", annotations[0])
 	}
 }
+
+func TestFilterProjectGitReviewOverlayFilesKeepsOnlyTargetFile(t *testing.T) {
+	files := []ProjectGitCommitFile{
+		{Path: "src/app.ts", Status: "M", Additions: 4, Deletions: 2},
+		{Path: "src/other.ts", Status: "M", Additions: 1, Deletions: 0},
+	}
+
+	filtered := filterProjectGitReviewOverlayFiles("/repo", files, "src/app.ts")
+	if len(filtered) != 1 {
+		t.Fatalf("expected one filtered file, got %d: %#v", len(filtered), filtered)
+	}
+	if filtered[0].Path != "src/app.ts" {
+		t.Fatalf("unexpected filtered path: %#v", filtered[0])
+	}
+
+	missing := filterProjectGitReviewOverlayFiles("/repo", files, "src/missing.ts")
+	if len(missing) != 0 {
+		t.Fatalf("expected missing file to filter to none, got %#v", missing)
+	}
+}

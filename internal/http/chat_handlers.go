@@ -4,10 +4,7 @@ package http
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"github.com/A2gent/brute/internal/a2atunnel"
-	"github.com/A2gent/brute/internal/agent"
-	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/go-chi/chi/v5"
 	"net/http"
@@ -55,98 +52,24 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		s.unregisterActiveSessionRun(sessionID, runID)
 	}()
 
-	if s.hasRunnableWorkflow(sess) {
-		content, usage, runErr := s.runWorkflowSession(runCtx, sess, req.Message, nil)
+	result, runErr := s.runSessionWithoutStreaming(runCtx, sess, req.Message)
+	if finalizeErr := s.finalizeSessionRunWithoutStreaming(sess, result, runErr); finalizeErr != nil {
 		if runErr != nil {
-			if isCancellationError(runErr) {
-				sess.SetStatus(session.StatusPaused)
-				_ = s.sessionManager.Save(sess)
-				s.errorResponse(w, http.StatusConflict, "Request was canceled before completion")
-				return
-			}
-			sess.AddAssistantMessage(fmt.Sprintf("Workflow failed: %s", runErr.Error()), nil)
-			sess.SetStatus(session.StatusFailed)
-			_ = s.sessionManager.Save(sess)
-			s.errorResponse(w, http.StatusInternalServerError, "Workflow error: "+runErr.Error())
+			status, message := s.sessionRunHTTPError(result, runErr)
+			s.errorResponse(w, status, message)
 			return
 		}
-		sess.AddAssistantMessage(content, nil)
-		sess.SetStatus(workflowSessionStatus(sess))
-		if saveErr := s.sessionManager.Save(sess); saveErr != nil {
-			s.errorResponse(w, http.StatusInternalServerError, "Failed to save workflow response: "+saveErr.Error())
-			return
-		}
-		resp := ChatResponse{
-			Content:  content,
-			Messages: s.messagesToResponse(sess.Messages),
-			Status:   string(sess.Status),
-			Usage: UsageResponse{
-				InputTokens:  usage.InputTokens,
-				OutputTokens: usage.OutputTokens,
-			},
-		}
-		s.jsonResponse(w, http.StatusOK, resp)
-		return
-	}
-
-	providerType := s.resolveSessionProviderType(sess)
-	model := s.resolveSessionModel(sess, providerType)
-	routingPrompt := messageForRouting(req.Message, len(images))
-	target, err := s.resolveExecutionTarget(runCtx, providerType, model, routingPrompt, sess)
-	if err != nil {
-		sess.AddAssistantMessage(fmt.Sprintf("Unable to start request: %s", err.Error()), nil)
-		sess.SetStatus(session.StatusFailed)
-		s.sessionManager.Save(sess)
-		s.errorResponse(w, http.StatusBadRequest, "Provider configuration error: "+err.Error())
-		return
-	}
-	if setSessionRoutedProviderAndModel(sess, providerType, target.ProviderType, target.Model) {
-		if err := s.sessionManager.Save(sess); err != nil {
-			logging.Warn("Failed to persist session routed target metadata: %v", err)
-		}
-	}
-
-	agentConfig := agent.Config{
-		Name:                sess.AgentID,
-		Provider:            string(target.ProviderType),
-		Model:               target.Model,
-		SystemPrompt:        s.buildSystemPromptForSession(sess),
-		MaxSteps:            s.config.MaxSteps,
-		Temperature:         s.config.Temperature,
-		ContextWindow:       target.ContextWindow,
-		UsePreviousResponse: target.StatefulResponses,
-	}
-
-	ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
-
-	content, usage, err := ag.RunWithEvents(runCtx, sess, req.Message, func(ev agent.Event) {
-		if ev.Type == agent.EventProviderTrace && ev.Provider != nil {
-			s.applyProviderTraceToSession(sess, target.ProviderType, ev.Provider)
-		}
-	})
-	if err != nil {
-		if isCancellationError(err) {
-			sess.SetStatus(session.StatusPaused)
-			_ = s.sessionManager.Save(sess)
-			s.errorResponse(w, http.StatusConflict, "Request was canceled before completion")
-			return
-		}
-		adaptedErr := s.adaptProviderErrorMessage(target.ProviderType, err)
-		sess.AddAssistantMessage(fmt.Sprintf("Request failed: %s", adaptedErr.Error()), nil)
-		sess.SetStatus(session.StatusFailed)
-
-		s.sessionManager.Save(sess)
-		s.errorResponse(w, http.StatusInternalServerError, "Agent error: "+adaptedErr.Error())
+		s.errorResponse(w, http.StatusInternalServerError, finalizeErr.Error())
 		return
 	}
 
 	resp := ChatResponse{
-		Content:  content,
+		Content:  result.Content,
 		Messages: s.messagesToResponse(sess.Messages),
 		Status:   string(sess.Status),
 		Usage: UsageResponse{
-			InputTokens:  usage.InputTokens,
-			OutputTokens: usage.OutputTokens,
+			InputTokens:  result.Usage.InputTokens,
+			OutputTokens: result.Usage.OutputTokens,
 		},
 	}
 

@@ -20,6 +20,7 @@ type CreateSessionRequest struct {
 	ProjectID  string                 `json:"project_id,omitempty"`
 	SubAgentID string                 `json:"sub_agent_id,omitempty"` // Optional sub-agent to use for this session
 	Queued     bool                   `json:"queued,omitempty"`       // If true, create session without starting it
+	QueueMode  string                 `json:"queue_mode,omitempty"`   // Optional queue behavior. "serial" runs queued project sessions one at a time.
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 

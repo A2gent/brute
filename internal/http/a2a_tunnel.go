@@ -620,5 +620,8 @@ func (s *Server) resumeSessionAfterExternalToolResult(sessionID string) {
 			sess.SetStatus(session.StatusFailed)
 			_ = s.sessionManager.Save(sess)
 		}
+		if fresh, freshErr := s.sessionManager.Get(sessionID); freshErr == nil && sessionIsSerialQueuedAutoRun(fresh) && serialQueueCanAdvanceAfterStatus(fresh.Status) {
+			s.triggerSerialSessionQueueForSession(fresh)
+		}
 	}()
 }

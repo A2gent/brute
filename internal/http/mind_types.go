@@ -113,6 +113,7 @@ type ProjectGitPRDescriptionRequest struct {
 
 type ProjectGitReviewOverlayRequest struct {
 	RepoPath string `json:"repo_path,omitempty"`
+	FilePath string `json:"file_path,omitempty"`
 }
 
 type ProjectGitReviewOverlayAnnotation struct {

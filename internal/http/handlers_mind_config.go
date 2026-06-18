@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -150,26 +151,40 @@ func (s *Server) loadMindRootFolder() (string, error) {
 }
 
 func resolveMindPath(rootFolder, relPath string) (string, string, error) {
+	return resolveRootRelativePath(rootFolder, relPath, "My Mind root", false)
+}
+
+func resolveProjectPath(rootFolder, relPath string) (string, string, error) {
+	return resolveRootRelativePath(rootFolder, relPath, "project root", false)
+}
+
+func resolveProjectPathAllowAbsolute(rootFolder, path string) (string, string, error) {
+	return resolveRootRelativePath(rootFolder, path, "project root", true)
+}
+
+func resolveRootRelativePath(rootFolder, relPath string, rootLabel string, allowAbsolute bool) (string, string, error) {
 	normalized := filepath.Clean(strings.TrimSpace(relPath))
 	if normalized == "." {
 		normalized = ""
 	}
-	if filepath.IsAbs(normalized) {
-		return "", "", errors.New("path must be relative to My Mind root")
-	}
 
-	resolvedPath := rootFolder
-	if normalized != "" {
+	var resolvedPath string
+	if filepath.IsAbs(normalized) {
+		if !allowAbsolute {
+			return "", "", fmt.Errorf("path must be relative to %s", rootLabel)
+		}
+		resolvedPath = filepath.Clean(normalized)
+	} else {
 		resolvedPath = filepath.Join(rootFolder, normalized)
+		resolvedPath = filepath.Clean(resolvedPath)
 	}
-	resolvedPath = filepath.Clean(resolvedPath)
 
 	relToRoot, err := filepath.Rel(rootFolder, resolvedPath)
 	if err != nil {
 		return "", "", errors.New("invalid path")
 	}
 	if relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(os.PathSeparator)) {
-		return "", "", errors.New("path escapes My Mind root folder")
+		return "", "", fmt.Errorf("path escapes %s", rootLabel)
 	}
 
 	if relToRoot == "." {

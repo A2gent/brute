@@ -65,6 +65,27 @@ func TestProjectFileEditorAllowsCodeFiles(t *testing.T) {
 	}
 }
 
+func TestProjectFileEditorRejectsAbsolutePathWithProjectRootMessage(t *testing.T) {
+	server, projectID, projectDir := newProjectFileTestServer(t)
+
+	filePath := filepath.Join(projectDir, "app.ts")
+	if err := os.WriteFile(filePath, []byte("export const answer = 42;\n"), 0o644); err != nil {
+		t.Fatalf("failed to write code file: %v", err)
+	}
+
+	rec := requestProjectFile(t, server, http.MethodGet, projectID, filePath, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "project root") {
+		t.Fatalf("expected project root validation message, got %s", body)
+	}
+	if strings.Contains(body, "My Mind") {
+		t.Fatalf("project file validation should not mention My Mind, got %s", body)
+	}
+}
+
 func TestProjectFileEditorRejectsUnsupportedFiles(t *testing.T) {
 	tests := []struct {
 		name        string

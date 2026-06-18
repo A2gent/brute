@@ -56,7 +56,7 @@ func (s *Server) handleListProjectTree(w http.ResponseWriter, r *http.Request) {
 	warmProjectSearchIndex(resolvedRoot)
 
 	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
-	resolvedPath, normalizedRelPath, err := resolveMindPath(resolvedRoot, relPath)
+	resolvedPath, normalizedRelPath, err := resolveProjectPath(resolvedRoot, relPath)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
@@ -138,7 +138,7 @@ func (s *Server) handleGetProjectFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
-	resolvedPath, normalizedRelPath, err := resolveMindPath(resolvedRoot, relPath)
+	resolvedPath, normalizedRelPath, err := resolveProjectPath(resolvedRoot, relPath)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
@@ -217,7 +217,7 @@ func (s *Server) handleGetProjectFileRaw(w http.ResponseWriter, r *http.Request)
 	}
 
 	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
-	resolvedPath, normalizedRelPath, err := resolveMindPath(resolvedRoot, relPath)
+	resolvedPath, normalizedRelPath, err := resolveProjectPath(resolvedRoot, relPath)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
@@ -281,7 +281,7 @@ func (s *Server) handleUpsertProjectFile(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	resolvedPath, normalizedRelPath, err := resolveMindPath(resolvedRoot, req.Path)
+	resolvedPath, normalizedRelPath, err := resolveProjectPath(resolvedRoot, req.Path)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
@@ -365,7 +365,7 @@ func (s *Server) handleDeleteProjectFile(w http.ResponseWriter, r *http.Request)
 	}
 
 	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
-	resolvedPath, normalizedRelPath, err := resolveMindPath(resolvedRoot, relPath)
+	resolvedPath, normalizedRelPath, err := resolveProjectPath(resolvedRoot, relPath)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
@@ -440,7 +440,7 @@ func (s *Server) handleMoveProjectFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fromResolved, fromNormalized, err := resolveMindPath(resolvedRoot, req.FromPath)
+	fromResolved, fromNormalized, err := resolveProjectPath(resolvedRoot, req.FromPath)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Invalid source path: "+err.Error())
 		return
@@ -466,7 +466,7 @@ func (s *Server) handleMoveProjectFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	toResolved, toNormalized, err := resolveMindPath(resolvedRoot, req.ToPath)
+	toResolved, toNormalized, err := resolveProjectPath(resolvedRoot, req.ToPath)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Invalid destination path: "+err.Error())
 		return
@@ -561,7 +561,7 @@ func (s *Server) handleCreateProjectFolder(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	resolvedPath, normalizedRelPath, err := resolveMindPath(resolvedRoot, req.Path)
+	resolvedPath, normalizedRelPath, err := resolveProjectPath(resolvedRoot, req.Path)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
@@ -625,7 +625,7 @@ func (s *Server) handleRenameProjectEntry(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	oldResolved, oldNormalized, err := resolveMindPath(resolvedRoot, req.OldPath)
+	oldResolved, oldNormalized, err := resolveProjectPath(resolvedRoot, req.OldPath)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Invalid path: "+err.Error())
 		return

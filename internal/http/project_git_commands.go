@@ -113,7 +113,7 @@ func resolveProjectGitTargetRoot(projectRoot string, repoPath string) (string, e
 		return projectRoot, nil
 	}
 
-	resolvedPath, _, err := resolveMindPath(projectRoot, trimmedPath)
+	resolvedPath, _, err := resolveProjectPathAllowAbsolute(projectRoot, trimmedPath)
 	if err != nil {
 		return "", err
 	}

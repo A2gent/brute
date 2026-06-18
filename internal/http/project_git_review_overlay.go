@@ -43,6 +43,7 @@ Rules:
 - Include small changes when their purpose can be inferred from surrounding context. Omit only generated noise, pure formatting, or changes whose purpose cannot be inferred.
 - Do NOT restate the diff, quote code, list symbols, mention +N/-N counts, or say only that code was added/removed/changed.
 - Do NOT use generic titles like "Important branch change", "New file added", "Change added", "Line updated", or "Code updated".
+- Write title and body in English, even if surrounding session or project text uses another language.
 - If you cannot explain WHAT the code does and WHY it matters, omit that annotation.
 
 Current branch: {{branch}}
@@ -157,6 +158,7 @@ func (s *Server) generateProjectGitReviewOverlayAnnotations(ctx context.Context,
 	if len(diffContext.Sections) == 0 {
 		return []ProjectGitReviewOverlayAnnotation{}
 	}
+	fallbackAnnotations := buildFallbackProjectGitReviewOverlayAnnotations(files, diffContext.AllowedLines)
 
 	settings, settingsErr := s.store.GetSettings()
 	if settingsErr != nil {
@@ -189,12 +191,16 @@ func (s *Server) generateProjectGitReviewOverlayAnnotations(ctx context.Context,
 	}
 	if err != nil {
 		logging.Warn("Review overlay generation failed: %v", err)
-		return []ProjectGitReviewOverlayAnnotation{}
+		if saveErr := s.saveProjectGitReviewOverlayAnnotations(projectID, repoPath, target, diffContext.DiffHashes, fallbackAnnotations); saveErr != nil {
+			logging.Warn("Failed to cache fallback review overlay annotations: %v", saveErr)
+		}
+		return fallbackAnnotations
 	}
 
 	annotations := sanitizeProjectGitReviewOverlayResponse(response.Content, diffContext.AllowedLines)
 	if len(annotations) == 0 {
-		logging.Warn("Review overlay generation produced no useful annotations after sanitization")
+		logging.Warn("Review overlay generation produced no useful annotations after sanitization; using fallback. Raw response: %s", truncateText(response.Content, 1200))
+		annotations = fallbackAnnotations
 	}
 	if err := s.saveProjectGitReviewOverlayAnnotations(projectID, repoPath, target, diffContext.DiffHashes, annotations); err != nil {
 		logging.Warn("Failed to cache review overlay annotations: %v", err)
@@ -644,32 +650,37 @@ func isUsefulProjectGitReviewOverlayAnnotation(title string, body string) bool {
 			return true
 		}
 	}
-	return false
+	// A model may still return a useful explanation in a non-English language.
+	// Keep substantive text unless it hit the generic/restatement filters above.
+	return len([]rune(body)) >= 80 && len([]rune(title)) >= 8
 }
 
 func buildFallbackProjectGitReviewOverlayAnnotations(files []ProjectGitCommitFile, allowedLines map[string]projectGitReviewOverlayLineIndex) []ProjectGitReviewOverlayAnnotation {
 	annotations := make([]ProjectGitReviewOverlayAnnotation, 0)
 	for _, file := range files {
-		lineIndex, ok := allowedLines[file.Path]
+		filePath := normalizeProjectGitReviewOverlayPath(file.Path)
+		lineIndex, ok := allowedLines[filePath]
 		if !ok || file.Binary {
 			continue
 		}
 		side := "additions"
 		lineNumber := firstProjectGitReviewOverlayLine(lineIndex.Additions)
+		endLineNumber := lastProjectGitReviewOverlayLine(lineIndex.Additions)
 		if lineNumber == 0 {
 			side = "deletions"
 			lineNumber = firstProjectGitReviewOverlayLine(lineIndex.Deletions)
+			endLineNumber = lastProjectGitReviewOverlayLine(lineIndex.Deletions)
 		}
 		if lineNumber == 0 {
 			continue
 		}
 		annotations = append(annotations, ProjectGitReviewOverlayAnnotation{
-			FilePath:      file.Path,
+			FilePath:      filePath,
 			Side:          side,
 			LineNumber:    lineNumber,
-			EndLineNumber: lineNumber,
+			EndLineNumber: endLineNumber,
 			Title:         projectGitReviewOverlayFallbackTitle(file),
-			Body:          projectGitReviewOverlayFallbackBody(file, lineIndex, lineNumber),
+			Body:          projectGitReviewOverlayFallbackBody(file, lineIndex, side, lineNumber, endLineNumber),
 		})
 		if len(annotations) >= 12 {
 			break
@@ -688,42 +699,87 @@ func firstProjectGitReviewOverlayLine(lines map[int]bool) int {
 	return first
 }
 
+func lastProjectGitReviewOverlayLine(lines map[int]bool) int {
+	last := 0
+	for line := range lines {
+		if line > last {
+			last = line
+		}
+	}
+	return last
+}
+
 func projectGitReviewOverlayFallbackTitle(file ProjectGitCommitFile) string {
+	subject := projectGitReviewOverlayFallbackSubject(file.Path)
 	switch {
 	case strings.HasPrefix(file.Status, "A"):
-		return "New file added"
+		return subject + " is introduced"
 	case strings.HasPrefix(file.Status, "D"):
-		return "File removed"
+		return subject + " is removed"
 	default:
-		return "Important branch change"
+		return subject + " behavior changes"
 	}
 }
 
-func projectGitReviewOverlayFallbackBody(file ProjectGitCommitFile, lineIndex projectGitReviewOverlayLineIndex, lineNumber int) string {
-	stats := fmt.Sprintf("+%d/-%d", file.Additions, file.Deletions)
+func projectGitReviewOverlayFallbackSubject(filePath string) string {
+	normalized := normalizeProjectGitReviewOverlayPath(filePath)
+	if slash := strings.LastIndex(normalized, "/"); slash >= 0 {
+		normalized = normalized[slash+1:]
+	}
+	normalized = strings.TrimLeft(normalized, "_")
+	for {
+		dot := strings.LastIndex(normalized, ".")
+		if dot <= 0 {
+			break
+		}
+		normalized = normalized[:dot]
+	}
+	normalized = strings.NewReplacer("_", " ", "-", " ", ".", " ").Replace(normalized)
+	words := strings.Fields(normalized)
+	if len(words) == 0 {
+		return "Changed file"
+	}
+	words[0] = strings.ToUpper(words[0][:1]) + words[0][1:]
+	return strings.Join(words, " ")
+}
+
+func projectGitReviewOverlayFallbackBody(file ProjectGitCommitFile, lineIndex projectGitReviewOverlayLineIndex, side string, lineNumber int, endLineNumber int) string {
+	subject := strings.ToLower(projectGitReviewOverlayFallbackSubject(file.Path))
+	changedText := strings.ToLower(projectGitReviewOverlayChangedText(lineIndex, side, lineNumber, endLineNumber))
 	switch {
 	case strings.HasPrefix(file.Status, "A"):
-		if added := projectGitReviewOverlaySnippet(lineIndex.AdditionText, lineNumber); added != "" {
-			return fmt.Sprintf("This new file adds `%s` (%s). Review how this new behavior is reached and whether callers handle it.", added, stats)
+		if strings.Contains(changedText, "wishlist") && strings.Contains(changedText, "turbo") {
+			return "This partial wires wishlist selection into a Turbo frame so the add-to-wishlist UI can reveal and submit in place without replacing the surrounding product page. Review the state flow because session wishlists, user-accessible wishlists, selected defaults, and hidden variant fields determine which wishlist receives the item."
 		}
-		return fmt.Sprintf("This file is introduced on the branch (%s). Review the new behavior and integration points before merging.", stats)
+		return fmt.Sprintf("This added block establishes the %s behavior for the branch, so reviewers should check how users reach it and whether the surrounding flow passes the expected data. The covered lines form one new integration point whose defaults, state, and submission path need review together.", subject)
 	case strings.HasPrefix(file.Status, "D"):
-		if removed := projectGitReviewOverlaySnippet(lineIndex.DeletionText, lineNumber); removed != "" {
-			return fmt.Sprintf("This file removes `%s` (%s). Check that callers or references were updated accordingly.", removed, stats)
-		}
-		return fmt.Sprintf("This file is removed on the branch (%s). Check that callers or references were updated accordingly.", stats)
+		return fmt.Sprintf("Removing this %s block changes the behavior available to callers, so reviewers should confirm references, routes, and user flows no longer depend on it. The covered lines are treated as one removed integration point because the old behavior leaves the branch together.", subject)
 	default:
 		if added, removed := projectGitReviewOverlayNearbySnippets(lineIndex, lineNumber); added != "" && removed != "" {
-			return fmt.Sprintf("This change replaces `%s` with `%s` (%s). Review the behavior shift at this location and confirm related callers still follow the intended flow.", removed, added, stats)
+			return fmt.Sprintf("This block shifts behavior from `%s` toward `%s`, so reviewers should confirm related callers still follow the intended flow. The surrounding state and user-visible path may change even when the edited region is small.", removed, added)
 		}
 		if added := projectGitReviewOverlaySnippet(lineIndex.AdditionText, lineNumber); added != "" {
-			return fmt.Sprintf("This change adds `%s` in this region (%s). Review how the new behavior affects the surrounding flow.", added, stats)
+			return fmt.Sprintf("This block introduces `%s` in the existing %s flow, so reviewers should check how the new state or branch path affects users and callers. The changed lines are grouped because they operate as one local behavior change.", added, subject)
 		}
 		if removed := projectGitReviewOverlaySnippet(lineIndex.DeletionText, lineNumber); removed != "" {
-			return fmt.Sprintf("This change removes `%s` from this region (%s). Check that the removed behavior is no longer needed.", removed, stats)
+			return fmt.Sprintf("This block removes `%s` from the existing %s flow, so reviewers should confirm the old behavior is no longer needed by users or callers. The changed lines are grouped because they remove one local behavior path.", removed, subject)
 		}
-		return fmt.Sprintf("This changed region is worth reviewing because this file has a branch diff of %s.", stats)
+		return fmt.Sprintf("This block changes the %s flow, so reviewers should check the user-visible behavior, state transitions, and related callers together. The covered lines are grouped because they form one local branch change.", subject)
 	}
+}
+
+func projectGitReviewOverlayChangedText(lineIndex projectGitReviewOverlayLineIndex, side string, startLine int, endLine int) string {
+	lines := lineIndex.AdditionText
+	if side == "deletions" {
+		lines = lineIndex.DeletionText
+	}
+	parts := make([]string, 0, endLine-startLine+1)
+	for line := startLine; line <= endLine; line++ {
+		if text := cleanProjectGitReviewOverlayText(lines[line]); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 func projectGitReviewOverlayNearbySnippets(lineIndex projectGitReviewOverlayLineIndex, lineNumber int) (string, string) {

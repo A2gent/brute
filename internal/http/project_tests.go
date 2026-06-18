@@ -193,6 +193,21 @@ type ProjectTestsBranchCacheResponse struct {
 	Notes         []string                      `json:"notes,omitempty"`
 }
 
+type ProjectTestsStreamEvent struct {
+	Type      string                           `json:"type"`
+	Stage     string                           `json:"stage,omitempty"`
+	Message   string                           `json:"message,omitempty"`
+	Framework string                           `json:"framework,omitempty"`
+	Stream    string                           `json:"stream,omitempty"`
+	Output    string                           `json:"output,omitempty"`
+	Command   *ProjectTestRunCommand           `json:"command,omitempty"`
+	Discovery *ProjectTestsDiscoveryResponse   `json:"discovery,omitempty"`
+	Run       *ProjectTestsRunResponse         `json:"run,omitempty"`
+	Coverage  *ProjectTestsCoverageResponse    `json:"coverage,omitempty"`
+	Cache     *ProjectTestsBranchCacheResponse `json:"cache,omitempty"`
+	Error     string                           `json:"error,omitempty"`
+}
+
 type projectTestNodeBuilder struct {
 	ID          string
 	Framework   string
@@ -215,6 +230,8 @@ type projectTestCommandExecution struct {
 	Command    ProjectTestRunCommand
 	OutputPath string
 }
+
+type projectTestRunObserver func(ProjectTestsStreamEvent)
 
 type projectTestPlanError struct {
 	message string

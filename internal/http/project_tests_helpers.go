@@ -93,15 +93,23 @@ func branchProjectTestPackages(discovery ProjectTestsDiscoveryResponse, framewor
 
 func branchGoCoverageTests(discovery ProjectTestsDiscoveryResponse) []projectTestSelection {
 	selections := make([]projectTestSelection, 0)
+	addedSelections := make([]projectTestSelection, 0)
 	for _, file := range discovery.BranchTestFiles {
 		if file.Framework != projectTestFrameworkGo || file.BranchStatus == "D" {
 			continue
 		}
 		for _, node := range flattenProjectTestNodes(file.Tests) {
 			if strings.HasPrefix(node.Name, "Test") {
-				selections = append(selections, projectTestSelection{File: file, Node: node})
+				selection := projectTestSelection{File: file, Node: node}
+				selections = append(selections, selection)
+				if node.BranchAdded {
+					addedSelections = append(addedSelections, selection)
+				}
 			}
 		}
+	}
+	if len(addedSelections) > 0 {
+		selections = addedSelections
 	}
 	sort.SliceStable(selections, func(i, j int) bool {
 		if selections[i].File.Path != selections[j].File.Path {
@@ -114,15 +122,23 @@ func branchGoCoverageTests(discovery ProjectTestsDiscoveryResponse) []projectTes
 
 func branchRSpecCoverageTests(discovery ProjectTestsDiscoveryResponse) []projectTestSelection {
 	selections := make([]projectTestSelection, 0)
+	addedSelections := make([]projectTestSelection, 0)
 	for _, file := range discovery.BranchTestFiles {
 		if file.Framework != projectTestFrameworkRSpec || file.BranchStatus == "D" {
 			continue
 		}
 		for _, node := range flattenProjectTestNodes(file.Tests) {
 			if node.Type == "test" && node.Line > 0 {
-				selections = append(selections, projectTestSelection{File: file, Node: node})
+				selection := projectTestSelection{File: file, Node: node}
+				selections = append(selections, selection)
+				if node.BranchAdded {
+					addedSelections = append(addedSelections, selection)
+				}
 			}
 		}
+	}
+	if len(addedSelections) > 0 {
+		selections = addedSelections
 	}
 	sort.SliceStable(selections, func(i, j int) bool {
 		if selections[i].File.Path != selections[j].File.Path {

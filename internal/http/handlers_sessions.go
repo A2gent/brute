@@ -91,6 +91,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if req.AgentID == "" {
 		req.AgentID = "build"
 	}
+	applyLeadingSessionQueueDirective(&req)
 	req.ParentID = strings.TrimSpace(req.ParentID)
 	linkType, err := normalizeSessionLinkType(req.LinkType)
 	if err != nil {

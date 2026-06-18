@@ -72,6 +72,59 @@ func TestSanitizeProjectGitReviewOverlayResponseRejectsObviousRestatements(t *te
 	}
 }
 
+func TestSanitizeProjectGitReviewOverlayResponseKeepsSubstantiveNonEnglishOutput(t *testing.T) {
+	allowedFiles := map[string]projectGitReviewOverlayLineIndex{
+		"src/app.ts": {Additions: map[int]bool{21: true}},
+	}
+	raw := `{"annotations":[
+		{"file_path":"src/app.ts","side":"additions","line_number":21,"end_line_number":21,"title":"Гостевой wishlist переносится после входа","body":"После входа сохранённые в сессии wishlist связываются с текущим пользователем, поэтому пользователь не теряет выбранные товары и последующие запросы работают с принадлежащими ему списками."}
+	]}`
+
+	annotations := sanitizeProjectGitReviewOverlayResponse(raw, allowedFiles)
+	if len(annotations) != 1 {
+		t.Fatalf("expected substantive non-English annotation to be kept, got %d: %#v", len(annotations), annotations)
+	}
+	if annotations[0].Title != "Гостевой wishlist переносится после входа" {
+		t.Fatalf("unexpected annotation kept: %#v", annotations[0])
+	}
+}
+
+func TestBuildFallbackProjectGitReviewOverlayAnnotationsExplainsAddedWishlistSelector(t *testing.T) {
+	files := []ProjectGitCommitFile{
+		{Path: "app/views/spree/shared/_wishlist_selector.html.haml", Status: "A", Additions: 30, Deletions: 0},
+	}
+	lineIndex := projectGitReviewOverlayLineIndex{
+		Additions: map[int]bool{},
+		Deletions: map[int]bool{},
+		AdditionText: map[int]string{
+			1:  "- variant = local_assigns.fetch(:variant)",
+			10: "= turbo_frame_tag frame_id do",
+			18: "= form_for :wishlist_item, url: wishlist_items_path do |f|",
+		},
+		DeletionText: map[int]string{},
+	}
+	for line := 1; line <= 30; line++ {
+		lineIndex.Additions[line] = true
+	}
+
+	annotations := buildFallbackProjectGitReviewOverlayAnnotations(files, map[string]projectGitReviewOverlayLineIndex{
+		"app/views/spree/shared/_wishlist_selector.html.haml": lineIndex,
+	})
+	if len(annotations) != 1 {
+		t.Fatalf("expected one fallback annotation, got %d: %#v", len(annotations), annotations)
+	}
+	annotation := annotations[0]
+	if annotation.FilePath != "app/views/spree/shared/_wishlist_selector.html.haml" || annotation.Side != "additions" || annotation.LineNumber != 1 || annotation.EndLineNumber != 30 {
+		t.Fatalf("unexpected fallback location: %#v", annotation)
+	}
+	if annotation.Title != "Wishlist selector is introduced" {
+		t.Fatalf("unexpected fallback title: %q", annotation.Title)
+	}
+	if !isUsefulProjectGitReviewOverlayAnnotation(annotation.Title, annotation.Body) {
+		t.Fatalf("fallback annotation should survive cache usefulness filtering: %#v", annotation)
+	}
+}
+
 func TestFilterProjectGitReviewOverlayFilesKeepsOnlyTargetFile(t *testing.T) {
 	files := []ProjectGitCommitFile{
 		{Path: "src/app.ts", Status: "M", Additions: 4, Deletions: 2},

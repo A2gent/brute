@@ -11,9 +11,20 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
+)
+
+const (
+	projectTestRSpecCoverageMappingLimit  = 12
+	projectTestRSpecCoverageMappingBudget = 2 * time.Minute
+	projectTestGoCoverageMappingLimit     = 50
 )
 
 func buildProjectTestsCoverage(ctx context.Context, repoRoot string, repoPath string, discovery ProjectTestsDiscoveryResponse, req ProjectTestsCoverageRequest) ProjectTestsCoverageResponse {
+	return buildProjectTestsCoverageWithObserver(ctx, repoRoot, repoPath, discovery, req, nil)
+}
+
+func buildProjectTestsCoverageWithObserver(ctx context.Context, repoRoot string, repoPath string, discovery ProjectTestsDiscoveryResponse, req ProjectTestsCoverageRequest, observer projectTestRunObserver) ProjectTestsCoverageResponse {
 	frameworks := projectTestTargetFrameworks(discovery, req.Framework)
 	response := ProjectTestsCoverageResponse{
 		RootFolder: repoRoot,
@@ -29,19 +40,19 @@ func buildProjectTestsCoverage(ctx context.Context, repoRoot string, repoPath st
 	for _, framework := range frameworks {
 		switch framework {
 		case projectTestFrameworkGo:
-			response.Reports = append(response.Reports, buildGoProjectTestCoverage(ctx, repoRoot, discovery, changedFiles))
+			response.Reports = append(response.Reports, buildGoProjectTestCoverage(ctx, repoRoot, discovery, changedFiles, observer))
 		case projectTestFrameworkJest:
-			response.Reports = append(response.Reports, buildJavaScriptProjectTestCoverage(ctx, repoRoot, projectTestFrameworkJest, changedFiles))
+			response.Reports = append(response.Reports, buildJavaScriptProjectTestCoverage(ctx, repoRoot, projectTestFrameworkJest, changedFiles, observer))
 		case projectTestFrameworkVitest:
-			response.Reports = append(response.Reports, buildJavaScriptProjectTestCoverage(ctx, repoRoot, projectTestFrameworkVitest, changedFiles))
+			response.Reports = append(response.Reports, buildJavaScriptProjectTestCoverage(ctx, repoRoot, projectTestFrameworkVitest, changedFiles, observer))
 		case projectTestFrameworkRSpec:
-			response.Reports = append(response.Reports, buildRSpecProjectTestCoverage(ctx, repoRoot, discovery, changedFiles))
+			response.Reports = append(response.Reports, buildRSpecProjectTestCoverage(ctx, repoRoot, discovery, changedFiles, observer))
 		}
 	}
 	return response
 }
 
-func buildRSpecProjectTestCoverage(ctx context.Context, repoRoot string, discovery ProjectTestsDiscoveryResponse, changedFiles map[string]bool) ProjectTestCoverageReport {
+func buildRSpecProjectTestCoverage(ctx context.Context, repoRoot string, discovery ProjectTestsDiscoveryResponse, changedFiles map[string]bool, observer projectTestRunObserver) ProjectTestCoverageReport {
 	report := ProjectTestCoverageReport{
 		Framework: projectTestFrameworkRSpec,
 		Supported: true,
@@ -49,7 +60,7 @@ func buildRSpecProjectTestCoverage(ctx context.Context, repoRoot string, discove
 		Files:     []ProjectTestCoverageFile{},
 		Mappings:  []ProjectTestCoverageMapping{},
 		Notes: []string{
-			"RSpec file coverage is aggregate from the last SimpleCov run. Test line mapping is generated from branch-scoped examples.",
+			"RSpec file coverage is aggregate from the last SimpleCov run. Test line mapping is best-effort and prefers branch-added examples.",
 		},
 	}
 	resultsetPath := findSimpleCovResultset(repoRoot)
@@ -65,12 +76,15 @@ func buildRSpecProjectTestCoverage(ctx context.Context, repoRoot string, discove
 	report.Files = files
 	report.TotalFiles = len(files)
 	report.Generated = len(files) > 0
-	report.Mappings = append(report.Mappings, buildRSpecProjectTestCoverageMappings(ctx, repoRoot, discovery, changedFiles, filepath.Dir(resultsetPath), &report)...)
+	report.Mappings = append(report.Mappings, buildRSpecProjectTestCoverageMappings(ctx, repoRoot, discovery, changedFiles, filepath.Dir(resultsetPath), &report, observer)...)
 	return report
 }
 
-func buildRSpecProjectTestCoverageMappings(ctx context.Context, repoRoot string, discovery ProjectTestsDiscoveryResponse, changedFiles map[string]bool, coverageDir string, report *ProjectTestCoverageReport) []ProjectTestCoverageMapping {
+func buildRSpecProjectTestCoverageMappings(ctx context.Context, repoRoot string, discovery ProjectTestsDiscoveryResponse, changedFiles map[string]bool, coverageDir string, report *ProjectTestCoverageReport, observer projectTestRunObserver) []ProjectTestCoverageMapping {
 	if len(changedFiles) == 0 {
+		return nil
+	}
+	if projectTestCoverageContextStopped(ctx, report, "Skipped RSpec test-to-line coverage mapping") {
 		return nil
 	}
 	branchTests := branchRSpecCoverageTests(discovery)
@@ -78,9 +92,9 @@ func buildRSpecProjectTestCoverageMappings(ctx context.Context, repoRoot string,
 		report.Notes = append(report.Notes, "No branch-scoped RSpec examples were found for test-to-line coverage mapping.")
 		return nil
 	}
-	if len(branchTests) > 30 {
-		report.Notes = append(report.Notes, "RSpec test-to-line coverage mapping was limited to the first 30 branch-scoped examples.")
-		branchTests = branchTests[:30]
+	if len(branchTests) > projectTestRSpecCoverageMappingLimit {
+		report.Notes = append(report.Notes, fmt.Sprintf("RSpec test-to-line coverage mapping was limited to the first %d branch-scoped examples.", projectTestRSpecCoverageMappingLimit))
+		branchTests = branchTests[:projectTestRSpecCoverageMappingLimit]
 	}
 
 	restoreCoverageDir, err := moveProjectCoverageDirAside(coverageDir)
@@ -94,12 +108,21 @@ func buildRSpecProjectTestCoverageMappings(ctx context.Context, repoRoot string,
 		}
 	}()
 
+	mappingCtx, cancelMapping := context.WithTimeout(ctx, projectTestRSpecCoverageMappingBudget)
+	defer cancelMapping()
+
 	mappings := make([]ProjectTestCoverageMapping, 0, len(branchTests))
 	for _, selection := range branchTests {
+		if projectTestCoverageContextStopped(mappingCtx, report, "Stopped RSpec test-to-line coverage mapping before all examples completed") {
+			break
+		}
 		_ = os.RemoveAll(coverageDir)
 		specTarget := fmt.Sprintf("%s:%d", selection.File.Path, selection.Node.Line)
-		execution := runProjectTestCommand(ctx, repoRoot, projectTestFrameworkRSpec, "bundle", []string{"exec", "rspec", "--format", "json", specTarget}, nil)
+		execution := runProjectTestCommandWithObserver(mappingCtx, repoRoot, projectTestFrameworkRSpec, "bundle", []string{"exec", "rspec", "--format", "json", specTarget}, nil, observer)
 		report.Commands = append(report.Commands, execution.Command)
+		if projectTestCoverageContextStopped(mappingCtx, report, "Stopped RSpec test-to-line coverage mapping before all examples completed") {
+			break
+		}
 		files, parseErr := parseSimpleCovResultset(filepath.Join(coverageDir, ".resultset.json"), repoRoot, changedFiles)
 		if parseErr != nil {
 			continue
@@ -120,7 +143,7 @@ func buildRSpecProjectTestCoverageMappings(ctx context.Context, repoRoot string,
 	return mappings
 }
 
-func buildGoProjectTestCoverage(ctx context.Context, repoRoot string, discovery ProjectTestsDiscoveryResponse, changedFiles map[string]bool) ProjectTestCoverageReport {
+func buildGoProjectTestCoverage(ctx context.Context, repoRoot string, discovery ProjectTestsDiscoveryResponse, changedFiles map[string]bool, observer projectTestRunObserver) ProjectTestCoverageReport {
 	report := ProjectTestCoverageReport{
 		Framework: projectTestFrameworkGo,
 		Supported: true,
@@ -140,7 +163,7 @@ func buildGoProjectTestCoverage(ctx context.Context, repoRoot string, discovery 
 	_ = aggregate.Close()
 	defer os.Remove(aggregatePath)
 
-	execution := runProjectTestCommand(ctx, repoRoot, projectTestFrameworkGo, "go", []string{"test", "-coverprofile", aggregatePath, "./..."}, nil)
+	execution := runProjectTestCommandWithObserver(ctx, repoRoot, projectTestFrameworkGo, "go", []string{"test", "-coverprofile", aggregatePath, "./..."}, nil, observer)
 	report.Commands = append(report.Commands, execution.Command)
 	if files, parseErr := parseGoCoverageProfile(repoRoot, aggregatePath, changedFiles); parseErr == nil {
 		report.Files = files
@@ -155,11 +178,14 @@ func buildGoProjectTestCoverage(ctx context.Context, repoRoot string, discovery 
 		report.Notes = append(report.Notes, "No branch-scoped Go tests were found for per-test coverage mapping.")
 		return report
 	}
-	if len(branchTests) > 50 {
-		report.Notes = append(report.Notes, "Per-test Go coverage mapping was limited to the first 50 branch-scoped tests.")
-		branchTests = branchTests[:50]
+	if len(branchTests) > projectTestGoCoverageMappingLimit {
+		report.Notes = append(report.Notes, fmt.Sprintf("Per-test Go coverage mapping was limited to the first %d branch-scoped tests.", projectTestGoCoverageMappingLimit))
+		branchTests = branchTests[:projectTestGoCoverageMappingLimit]
 	}
 	for _, selection := range branchTests {
+		if projectTestCoverageContextStopped(ctx, &report, "Stopped Go test-to-line coverage mapping before all tests completed") {
+			break
+		}
 		coverageFile, err := os.CreateTemp("", "a2gent-go-cover-test-*.out")
 		if err != nil {
 			report.Notes = append(report.Notes, err.Error())
@@ -168,8 +194,12 @@ func buildGoProjectTestCoverage(ctx context.Context, repoRoot string, discovery 
 		coveragePath := coverageFile.Name()
 		_ = coverageFile.Close()
 		args := []string{"test", "-run", goTestRunPattern(selection.Node), "-coverprofile", coveragePath, goPackageFromTestPath(selection.File.Path)}
-		testExecution := runProjectTestCommand(ctx, repoRoot, projectTestFrameworkGo, "go", args, nil)
+		testExecution := runProjectTestCommandWithObserver(ctx, repoRoot, projectTestFrameworkGo, "go", args, nil, observer)
 		report.Commands = append(report.Commands, testExecution.Command)
+		if projectTestCoverageContextStopped(ctx, &report, "Stopped Go test-to-line coverage mapping before all tests completed") {
+			_ = os.Remove(coveragePath)
+			break
+		}
 		files, parseErr := parseGoCoverageProfile(repoRoot, coveragePath, changedFiles)
 		_ = os.Remove(coveragePath)
 		if parseErr != nil {
@@ -186,7 +216,21 @@ func buildGoProjectTestCoverage(ctx context.Context, repoRoot string, discovery 
 	return report
 }
 
-func buildJavaScriptProjectTestCoverage(ctx context.Context, repoRoot string, framework string, changedFiles map[string]bool) ProjectTestCoverageReport {
+func projectTestCoverageContextStopped(ctx context.Context, report *ProjectTestCoverageReport, message string) bool {
+	if err := ctx.Err(); err != nil {
+		note := message + ": " + err.Error()
+		for _, existing := range report.Notes {
+			if existing == note {
+				return true
+			}
+		}
+		report.Notes = append(report.Notes, note)
+		return true
+	}
+	return false
+}
+
+func buildJavaScriptProjectTestCoverage(ctx context.Context, repoRoot string, framework string, changedFiles map[string]bool, observer projectTestRunObserver) ProjectTestCoverageReport {
 	note := "Jest coverage is aggregate. Jest does not expose a standard per-test-to-file mapping without custom instrumentation."
 	mode := "istanbul aggregate"
 	if framework == projectTestFrameworkVitest {
@@ -215,7 +259,7 @@ func buildJavaScriptProjectTestCoverage(ctx context.Context, repoRoot string, fr
 	default:
 		args = append(args, "--runInBand", "--coverage", "--coverageReporters=json", "--coverageDirectory", coverageDir)
 	}
-	execution := runProjectTestCommand(ctx, repoRoot, framework, command, args, nil)
+	execution := runProjectTestCommandWithObserver(ctx, repoRoot, framework, command, args, nil, observer)
 	report.Commands = append(report.Commands, execution.Command)
 
 	files, parseErr := parseIstanbulCoverage(filepath.Join(coverageDir, "coverage-final.json"), repoRoot, changedFiles)

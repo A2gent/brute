@@ -15,6 +15,10 @@ import (
 )
 
 func executeProjectTests(ctx context.Context, repoRoot string, repoPath string, discovery ProjectTestsDiscoveryResponse, req ProjectTestsRunRequest) ProjectTestsRunResponse {
+	return executeProjectTestsWithObserver(ctx, repoRoot, repoPath, discovery, req, nil)
+}
+
+func executeProjectTestsWithObserver(ctx context.Context, repoRoot string, repoPath string, discovery ProjectTestsDiscoveryResponse, req ProjectTestsRunRequest, observer projectTestRunObserver) ProjectTestsRunResponse {
 	mode := strings.TrimSpace(req.Mode)
 	if mode == "" {
 		if strings.TrimSpace(req.TestID) != "" || strings.TrimSpace(req.Path) != "" {
@@ -47,7 +51,7 @@ func executeProjectTests(ctx context.Context, repoRoot string, repoPath string, 
 	}
 
 	for _, framework := range frameworks {
-		results, commands := executeProjectFrameworkTests(ctx, repoRoot, discovery, framework, mode, req)
+		results, commands := executeProjectFrameworkTests(ctx, repoRoot, discovery, framework, mode, req, observer)
 		response.Results = append(response.Results, results...)
 		response.Commands = append(response.Commands, commands...)
 	}
@@ -58,7 +62,7 @@ func executeProjectTests(ctx context.Context, repoRoot string, repoPath string, 
 	return response
 }
 
-func executeProjectFrameworkTests(ctx context.Context, repoRoot string, discovery ProjectTestsDiscoveryResponse, framework string, mode string, req ProjectTestsRunRequest) ([]ProjectTestResult, []ProjectTestRunCommand) {
+func executeProjectFrameworkTests(ctx context.Context, repoRoot string, discovery ProjectTestsDiscoveryResponse, framework string, mode string, req ProjectTestsRunRequest, observer projectTestRunObserver) ([]ProjectTestResult, []ProjectTestRunCommand) {
 	var command string
 	var args []string
 	var outputPath string
@@ -94,10 +98,17 @@ func executeProjectFrameworkTests(ctx context.Context, repoRoot string, discover
 			Output:    outputText,
 			Error:     errorText,
 		}
+		if observer != nil {
+			observer(ProjectTestsStreamEvent{
+				Type:      "command_skipped",
+				Framework: framework,
+				Message:   planErr.Error(),
+			})
+		}
 		return []ProjectTestResult{result}, []ProjectTestRunCommand{}
 	}
 
-	execution := runProjectTestCommand(ctx, repoRoot, framework, command, args, nil)
+	execution := runProjectTestCommandWithObserver(ctx, repoRoot, framework, command, args, nil, observer)
 	execution.OutputPath = outputPath
 
 	results := parseProjectTestCommandResults(repoRoot, discovery, framework, execution)
@@ -237,6 +248,10 @@ func buildJavaScriptTestCommand(repoRoot string, discovery ProjectTestsDiscovery
 }
 
 func runProjectTestCommand(ctx context.Context, repoRoot string, framework string, command string, args []string, env []string) projectTestCommandExecution {
+	return runProjectTestCommandWithObserver(ctx, repoRoot, framework, command, args, env, nil)
+}
+
+func runProjectTestCommandWithObserver(ctx context.Context, repoRoot string, framework string, command string, args []string, env []string, observer projectTestRunObserver) projectTestCommandExecution {
 	start := time.Now()
 	runtimeCommand, runtimeArgs := projectTestRuntimeCommand(repoRoot, framework, command, args)
 	cmd := exec.CommandContext(ctx, runtimeCommand, runtimeArgs...)
@@ -244,9 +259,18 @@ func runProjectTestCommand(ctx context.Context, repoRoot string, framework strin
 	if len(env) > 0 {
 		cmd.Env = append(os.Environ(), env...)
 	}
-	output, err := cmd.CombinedOutput()
+
+	runCommand := ProjectTestRunCommand{
+		Framework: framework,
+		Command:   runtimeCommand,
+		Args:      runtimeArgs,
+		Display:   strings.Join(append([]string{runtimeCommand}, runtimeArgs...), " "),
+	}
+	emitProjectTestCommandEvent(observer, "command_started", runCommand, "", "")
+
+	outputText, err := runProjectTestCommandOutput(cmd, observer, runCommand)
 	duration := time.Since(start).Milliseconds()
-	trimmedOutput := truncateProjectTestOutput(strings.TrimRight(string(output), "\r\n"), 128*1024)
+	trimmedOutput := truncateProjectTestOutput(strings.TrimRight(outputText, "\r\n"), 128*1024)
 	exitCode := 0
 	errorText := ""
 	if err != nil {
@@ -261,18 +285,68 @@ func runProjectTestCommand(ctx context.Context, repoRoot string, framework strin
 			errorText = err.Error()
 		}
 	}
+	runCommand.ExitCode = exitCode
+	runCommand.DurationMs = duration
+	runCommand.Output = trimmedOutput
+	runCommand.Error = errorText
+	emitProjectTestCommandEvent(observer, "command_finished", runCommand, "", "")
 	return projectTestCommandExecution{
-		Command: ProjectTestRunCommand{
-			Framework:  framework,
-			Command:    runtimeCommand,
-			Args:       runtimeArgs,
-			Display:    strings.Join(append([]string{runtimeCommand}, runtimeArgs...), " "),
-			ExitCode:   exitCode,
-			DurationMs: duration,
-			Output:     trimmedOutput,
-			Error:      errorText,
-		},
+		Command: runCommand,
 	}
+}
+
+func runProjectTestCommandOutput(cmd *exec.Cmd, observer projectTestRunObserver, runCommand ProjectTestRunCommand) (string, error) {
+	reader, writer, pipeErr := os.Pipe()
+	if pipeErr != nil {
+		output, err := cmd.CombinedOutput()
+		return string(output), err
+	}
+
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	var output strings.Builder
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		buffer := make([]byte, 16*1024)
+		for {
+			n, err := reader.Read(buffer)
+			if n > 0 {
+				chunk := string(buffer[:n])
+				output.WriteString(chunk)
+				emitProjectTestCommandEvent(observer, "command_output", runCommand, "combined", chunk)
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	err := cmd.Start()
+	_ = writer.Close()
+	if err == nil {
+		err = cmd.Wait()
+	}
+	<-readDone
+	_ = reader.Close()
+	return output.String(), err
+}
+
+func emitProjectTestCommandEvent(observer projectTestRunObserver, eventType string, command ProjectTestRunCommand, stream string, output string) {
+	if observer == nil {
+		return
+	}
+	snapshot := command
+	if eventType != "command_output" {
+		snapshot.Output = ""
+	}
+	observer(ProjectTestsStreamEvent{
+		Type:      eventType,
+		Framework: command.Framework,
+		Stream:    stream,
+		Output:    output,
+		Command:   &snapshot,
+	})
 }
 
 func parseProjectTestCommandResults(repoRoot string, discovery ProjectTestsDiscoveryResponse, framework string, execution projectTestCommandExecution) []ProjectTestResult {

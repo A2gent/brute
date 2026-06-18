@@ -316,6 +316,101 @@ func TestExecuteProjectTestsSkipsEmptyBranchTestScope(t *testing.T) {
 	}
 }
 
+func TestBranchRSpecCoverageTestsPrefersBranchAddedExamples(t *testing.T) {
+	discovery := ProjectTestsDiscoveryResponse{
+		BranchTestFiles: []ProjectTestFile{
+			{
+				Framework:    projectTestFrameworkRSpec,
+				Path:         "spec/controllers/widgets_controller_spec.rb",
+				BranchStatus: "M",
+				Tests: []ProjectTestNode{
+					{Type: "test", Name: "existing behavior", FullName: "Widget existing behavior", Path: "spec/controllers/widgets_controller_spec.rb", Line: 12},
+					{Type: "test", Name: "new behavior", FullName: "Widget new behavior", Path: "spec/controllers/widgets_controller_spec.rb", Line: 28, BranchAdded: true},
+				},
+			},
+		},
+	}
+
+	selections := branchRSpecCoverageTests(discovery)
+	if len(selections) != 1 {
+		t.Fatalf("expected only branch-added examples, got %d selections: %#v", len(selections), selections)
+	}
+	if selections[0].Node.Line != 28 {
+		t.Fatalf("expected branch-added example at line 28, got line %d", selections[0].Node.Line)
+	}
+}
+
+func TestBuildRSpecCoverageMappingsSkipsWhenContextCanceled(t *testing.T) {
+	repoRoot := t.TempDir()
+	discovery := ProjectTestsDiscoveryResponse{
+		BranchTestFiles: []ProjectTestFile{
+			{
+				Framework:    projectTestFrameworkRSpec,
+				Path:         "spec/models/widget_spec.rb",
+				BranchStatus: "M",
+				Tests: []ProjectTestNode{
+					{Type: "test", Name: "works", FullName: "Widget works", Path: "spec/models/widget_spec.rb", Line: 7, BranchAdded: true},
+				},
+			},
+		},
+	}
+	report := ProjectTestCoverageReport{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	mappings := buildRSpecProjectTestCoverageMappings(ctx, repoRoot, discovery, map[string]bool{"app/models/widget.rb": true}, filepath.Join(repoRoot, "coverage"), &report, nil)
+	if len(mappings) != 0 {
+		t.Fatalf("expected no mappings for canceled context, got %#v", mappings)
+	}
+	if len(report.Commands) != 0 {
+		t.Fatalf("expected no commands to run after context cancellation, got %#v", report.Commands)
+	}
+	if len(report.Notes) != 1 || !strings.Contains(report.Notes[0], "context canceled") {
+		t.Fatalf("expected context cancellation note, got %#v", report.Notes)
+	}
+}
+
+func TestRunProjectTestCommandStreamsOutputEvents(t *testing.T) {
+	repoRoot := t.TempDir()
+	var events []ProjectTestsStreamEvent
+	execution := runProjectTestCommandWithObserver(context.Background(), repoRoot, projectTestFrameworkGo, "sh", []string{"-c", "printf 'hello\\n'; printf 'err\\n' >&2"}, nil, func(event ProjectTestsStreamEvent) {
+		events = append(events, event)
+	})
+	if execution.Command.ExitCode != 0 {
+		t.Fatalf("expected command to pass, got exit %d: %s", execution.Command.ExitCode, execution.Command.Error)
+	}
+	if !strings.Contains(execution.Command.Output, "hello") || !strings.Contains(execution.Command.Output, "err") {
+		t.Fatalf("expected captured output to include stdout and stderr, got %q", execution.Command.Output)
+	}
+
+	startedIndex := -1
+	outputIndex := -1
+	finishedIndex := -1
+	var streamedOutput strings.Builder
+	for index, event := range events {
+		switch event.Type {
+		case "command_started":
+			startedIndex = index
+		case "command_output":
+			if outputIndex == -1 {
+				outputIndex = index
+			}
+			streamedOutput.WriteString(event.Output)
+		case "command_finished":
+			finishedIndex = index
+		}
+	}
+	if startedIndex == -1 || outputIndex == -1 || finishedIndex == -1 {
+		t.Fatalf("expected start, output, and finish events, got %#v", events)
+	}
+	if !(startedIndex < outputIndex && outputIndex < finishedIndex) {
+		t.Fatalf("expected events in start/output/finish order, got start=%d output=%d finish=%d", startedIndex, outputIndex, finishedIndex)
+	}
+	if !strings.Contains(streamedOutput.String(), "hello") || !strings.Contains(streamedOutput.String(), "err") {
+		t.Fatalf("expected streamed output to include stdout and stderr, got %q", streamedOutput.String())
+	}
+}
+
 func TestParseRSpecTestResultsSkipsLogPreambleAndCoverageTrailer(t *testing.T) {
 	output := `2026-06-10 Sidekiq connecting with options {:size=>10}
 {"version":"3.12.2","examples":[{"id":"./spec/models/widget_spec.rb[1:1]","description":"works","full_description":"Widget works","status":"passed","file_path":"./spec/models/widget_spec.rb","line_number":7,"run_time":0.012,"pending_message":null}],"summary":{"duration":0.012,"example_count":1,"failure_count":0,"pending_count":0}}

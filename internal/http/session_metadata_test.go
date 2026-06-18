@@ -1,0 +1,51 @@
+package http
+
+import "testing"
+
+func TestApplyLeadingSessionQueueDirective(t *testing.T) {
+	req := CreateSessionRequest{
+		Task: "  -q fix focused state",
+	}
+
+	applyLeadingSessionQueueDirective(&req)
+
+	if req.Task != "fix focused state" {
+		t.Fatalf("task = %q, want %q", req.Task, "fix focused state")
+	}
+	if !req.Queued {
+		t.Fatalf("queued = false, want true")
+	}
+	if req.QueueMode != sessionQueueModeSerial {
+		t.Fatalf("queue mode = %q, want %q", req.QueueMode, sessionQueueModeSerial)
+	}
+}
+
+func TestStripLeadingSessionQueueDirective(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+		ok   bool
+	}{
+		{name: "dash flag", raw: "-q build wishlist flow", want: "build wishlist flow", ok: true},
+		{name: "long flag", raw: "--queue build wishlist flow", want: "build wishlist flow", ok: true},
+		{name: "slash directive", raw: "/queue build wishlist flow", want: "build wishlist flow", ok: true},
+		{name: "slash short directive", raw: "/q build wishlist flow", want: "build wishlist flow", ok: true},
+		{name: "colon separator", raw: "/queue: build wishlist flow", want: "build wishlist flow", ok: true},
+		{name: "mode selection", raw: "/queue serial", ok: false},
+		{name: "empty directive", raw: "-q", ok: false},
+		{name: "normal prompt", raw: "fix -q handling", ok: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := stripLeadingSessionQueueDirective(tt.raw)
+			if ok != tt.ok {
+				t.Fatalf("ok = %v, want %v", ok, tt.ok)
+			}
+			if got != tt.want {
+				t.Fatalf("prompt = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

@@ -98,12 +98,31 @@ func (t *metadataFailTool) Execute(_ context.Context, _ json.RawMessage) (*Resul
 	}, nil
 }
 
+type progressTool struct{}
+
+func (t *progressTool) Name() string        { return "test_progress" }
+func (t *progressTool) Description() string { return "emits progress before returning" }
+func (t *progressTool) Schema() map[string]interface{} {
+	return map[string]interface{}{"type": "object"}
+}
+func (t *progressTool) Execute(ctx context.Context, _ json.RawMessage) (*Result, error) {
+	ReportProgress(ctx, ProgressEvent{
+		Status:  "child_session_created",
+		Content: "child session ready",
+		Metadata: map[string]interface{}{
+			"child_session_id": "child-progress",
+		},
+	})
+	return &Result{Success: true, Output: "done"}, nil
+}
+
 func TestParallelTool_Execute(t *testing.T) {
 	manager := NewManager(t.TempDir())
 	manager.Register(&emitTool{})
 	manager.Register(&failTool{})
 	manager.Register(&sleepTool{})
 	manager.Register(&outputOnlyFailTool{})
+	manager.Register(&progressTool{})
 	manager.Register(&fakeDelegationTool{name: "delegate_to_agent"})
 	manager.Register(&fakeDelegationTool{name: "delegate_to_subagent"})
 
@@ -318,6 +337,47 @@ func TestParallelTool_Execute(t *testing.T) {
 		}
 		if outputs[0].Metadata["child_session_id"] != "child-researcher" || outputs[1].Metadata["child_session_id"] != "child-tester" {
 			t.Fatalf("expected child session metadata to be preserved, got %#v", outputs)
+		}
+	})
+
+	t.Run("annotates nested progress with parallel step metadata", func(t *testing.T) {
+		params := map[string]interface{}{
+			"steps": []map[string]interface{}{
+				{"tool": "test_progress", "args": map[string]interface{}{}},
+			},
+		}
+		raw, _ := json.Marshal(params)
+		var progressEvents []ProgressEvent
+		ctx := context.WithValue(context.Background(), "tool_call_id", "call-parallel")
+		ctx = WithProgressCallback(ctx, func(event ProgressEvent) {
+			progressEvents = append(progressEvents, event)
+		})
+
+		result, err := parallel.Execute(ctx, raw)
+		if err != nil {
+			t.Fatalf("Execute returned error: %v", err)
+		}
+		if !result.Success {
+			t.Fatalf("expected success, got error: %s", result.Error)
+		}
+		if len(progressEvents) != 1 {
+			t.Fatalf("expected one progress event, got %#v", progressEvents)
+		}
+		event := progressEvents[0]
+		if event.ToolCallID != "call-parallel" {
+			t.Fatalf("progress tool_call_id = %q, want parent parallel call id", event.ToolCallID)
+		}
+		if event.ToolName != "test_progress" {
+			t.Fatalf("progress tool_name = %q, want test_progress", event.ToolName)
+		}
+		if event.Metadata["parallel_step"] != 1 {
+			t.Fatalf("parallel_step = %#v, want 1", event.Metadata["parallel_step"])
+		}
+		if event.Metadata["parallel_tool"] != "test_progress" {
+			t.Fatalf("parallel_tool = %#v, want test_progress", event.Metadata["parallel_tool"])
+		}
+		if event.Metadata["child_session_id"] != "child-progress" {
+			t.Fatalf("child_session_id not preserved: %#v", event.Metadata)
 		}
 	})
 

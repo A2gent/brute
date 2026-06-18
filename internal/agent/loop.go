@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/A2gent/brute/internal/llm"
@@ -191,8 +192,19 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			onEvent(Event{Type: EventToolExecuting, Step: step, ToolCalls: toolCallEvents})
 		}
 		toolCtx := ctx
+		var progressSaveMu sync.Mutex
 		if onEvent != nil {
 			toolCtx = tools.WithProgressCallback(ctx, func(progress tools.ProgressEvent) {
+				progressSaveMu.Lock()
+				a.mergeFreshSessionState(sess)
+				if recordPendingToolProgress(sess, progress) {
+					sess.UpdatedAt = time.Now()
+					if err := a.sessionManager.Save(sess); err != nil {
+						logging.Warn("Failed to persist tool progress for session %s: %v", sess.ID, err)
+					}
+				}
+				progressSaveMu.Unlock()
+
 				onEvent(Event{
 					Type: EventToolProgress,
 					Step: step,
@@ -223,6 +235,9 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 
 		// Add tool results to session
 		sess.AddToolResult(sessionResults)
+		if clearPendingToolProgressMetadata(sess) {
+			sess.UpdatedAt = time.Now()
+		}
 
 		// Merge in any user notes that were injected while tools were running
 		// before saving this step, otherwise the agent's in-memory transcript

@@ -436,6 +436,65 @@ func TestLoopEmitsToolProgressEvents(t *testing.T) {
 	t.Fatalf("expected %s event, got %#v", EventToolProgress, events)
 }
 
+func TestRecordPendingToolProgressMetadata(t *testing.T) {
+	sess := session.New("test-agent")
+	sess.AddAssistantMessage("", []session.ToolCall{
+		{
+			ID:    "call-parallel",
+			Name:  "parallel",
+			Input: json.RawMessage(`{"steps":[{"tool":"delegate_to_agent","args":{"agent_id":"reviewer","task":"review"}}]}`),
+		},
+	})
+
+	ok := recordPendingToolProgress(sess, tools.ProgressEvent{
+		ToolCallID: "call-parallel",
+		ToolName:   "delegate_to_agent",
+		Status:     "child_session_created",
+		Content:    "Docker sub-agent session created. Waiting for output stream.",
+		Metadata: map[string]interface{}{
+			"child_session_id": "child-reviewer",
+			"agent_name":       "reviewer",
+			"parallel_step":    1,
+			"parallel_tool":    "delegate_to_agent",
+		},
+	})
+	if !ok {
+		t.Fatal("expected pending progress to be recorded")
+	}
+
+	raw := sess.Messages[len(sess.Messages)-1].Metadata[messageMetadataPendingToolResults]
+	results, ok := raw.([]session.ToolResult)
+	if !ok || len(results) != 1 {
+		t.Fatalf("pending results = %#v, want one session.ToolResult", raw)
+	}
+	result := results[0]
+	if result.ToolCallID != "call-parallel" || result.Name != "delegate_to_agent" {
+		t.Fatalf("unexpected pending result identity: %#v", result)
+	}
+	if result.Metadata["child_session_id"] != "child-reviewer" {
+		t.Fatalf("child session metadata not preserved: %#v", result.Metadata)
+	}
+	progressMap, ok := result.Metadata[toolMetadataParallelStepProgress].(map[string]interface{})
+	if !ok {
+		t.Fatalf("parallel step progress missing: %#v", result.Metadata)
+	}
+	step, ok := progressMap["1"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("step 1 progress missing: %#v", progressMap)
+	}
+	stepMetadata, ok := step["metadata"].(map[string]interface{})
+	if !ok || stepMetadata["child_session_id"] != "child-reviewer" {
+		t.Fatalf("step child session metadata not preserved: %#v", step)
+	}
+
+	if !clearPendingToolProgressMetadata(sess) {
+		t.Fatal("expected pending progress metadata to be cleared")
+	}
+	if _, exists := sess.Messages[len(sess.Messages)-1].Metadata[messageMetadataPendingToolResults]; exists {
+		t.Fatalf("pending metadata still present: %#v", sess.Messages[len(sess.Messages)-1].Metadata)
+	}
+}
+
 func TestLoopFailsWhenMaxStepsReachedWithoutFinalAssistantContent(t *testing.T) {
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	if err != nil {

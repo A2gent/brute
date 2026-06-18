@@ -160,6 +160,25 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 			start := time.Now()
 			stepCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
+			if upstreamProgress, ok := ctx.Value(progressCallbackContextKey{}).(ProgressCallback); ok && upstreamProgress != nil {
+				parentToolCallID, _ := ctx.Value("tool_call_id").(string)
+				stepCtx = WithProgressCallback(stepCtx, func(progress ProgressEvent) {
+					if parentToolCallID != "" {
+						progress.ToolCallID = parentToolCallID
+					}
+					if progress.ToolName == "" {
+						progress.ToolName = name
+					}
+					metadata := make(map[string]interface{}, len(progress.Metadata)+2)
+					for key, value := range progress.Metadata {
+						metadata[key] = value
+					}
+					metadata["parallel_step"] = idx + 1
+					metadata["parallel_tool"] = name
+					progress.Metadata = metadata
+					upstreamProgress(progress)
+				})
+			}
 
 			stepResult, err := t.manager.Execute(stepCtx, name, raw)
 			duration := time.Since(start)

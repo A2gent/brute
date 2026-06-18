@@ -120,6 +120,7 @@ func NewManager(workDir string) *Manager {
 	m.Register(NewFilterTool(workDir))
 	m.Register(NewRandomNumberTool())
 	m.Register(NewSuggestSessionTool())
+	m.Register(NewSuggestGitCommitTool())
 	m.Register(NewCurrentTimeTool())
 	m.Register(NewTakeScreenshotTool(workDir))
 	m.Register(NewTakeCameraPhotoTool(workDir))

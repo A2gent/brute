@@ -359,6 +359,25 @@ func TestParallelTool_Execute(t *testing.T) {
 		}
 	})
 
+	t.Run("disallow git commit suggestions inside parallel", func(t *testing.T) {
+		params := map[string]interface{}{
+			"steps": []map[string]interface{}{
+				{"tool": "suggest_git_commit", "message": "Update app", "files": []string{"src/app.ts"}},
+			},
+		}
+		raw, _ := json.Marshal(params)
+		result, err := parallel.Execute(context.Background(), raw)
+		if err != nil {
+			t.Fatalf("Execute returned error: %v", err)
+		}
+		if result.Success {
+			t.Fatalf("expected failure, got output: %s", result.Output)
+		}
+		if !strings.Contains(result.Error, "top-level tool calls") {
+			t.Fatalf("unexpected error: %s", result.Error)
+		}
+	})
+
 	t.Run("returns when context is cancelled while a step is still running", func(t *testing.T) {
 		params := map[string]interface{}{
 			"steps": []map[string]interface{}{

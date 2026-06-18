@@ -21,9 +21,10 @@ const (
 type parallelContextKey struct{}
 
 var parallelUnsupportedTools = map[string]string{
-	"parallel":        "recursive parallel calls are not allowed",
-	"browser_chrome":  "browser automation is stateful and must be called sequentially as a top-level tool call",
-	"suggest_session": "session suggestions should be created as top-level tool calls after the main work, not inside parallel results",
+	"parallel":           "recursive parallel calls are not allowed",
+	"browser_chrome":     "browser automation is stateful and must be called sequentially as a top-level tool call",
+	"suggest_session":    "session suggestions should be created as top-level tool calls after the main work, not inside parallel results",
+	"suggest_git_commit": "git commit suggestions should be created as top-level tool calls after the main work, not inside parallel results",
 }
 
 // ParallelTool executes independent tool calls concurrently and returns ordered results.
@@ -61,7 +62,7 @@ func (t *ParallelTool) Name() string {
 }
 
 func (t *ParallelTool) Description() string {
-	return "Run multiple independent tool calls concurrently in one call. Use this for parallel codebase exploration, such as several grep/read/find_files/bash searches that do not depend on each other, and for fan-out delegation to multiple independent agents. Do not use this for recursive parallel calls, browser_chrome, or suggest_session; call those as top-level tool calls instead."
+	return "Run multiple independent tool calls concurrently in one call. Use this for parallel codebase exploration, such as several grep/read/find_files/bash searches that do not depend on each other, and for fan-out delegation to multiple independent agents. Do not use this for recursive parallel calls, browser_chrome, suggest_session, or suggest_git_commit; call those as top-level tool calls instead."
 }
 
 func (t *ParallelTool) Schema() map[string]interface{} {
@@ -76,7 +77,7 @@ func (t *ParallelTool) Schema() map[string]interface{} {
 					"properties": map[string]interface{}{
 						"tool": map[string]interface{}{
 							"type":        "string",
-							"description": "Tool name to execute for this parallel step. Cannot be parallel, browser_chrome, or suggest_session.",
+							"description": "Tool name to execute for this parallel step. Cannot be parallel, browser_chrome, suggest_session, or suggest_git_commit.",
 						},
 						"args": map[string]interface{}{
 							"type":        "object",

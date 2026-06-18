@@ -47,6 +47,8 @@ func TestDefaultSystemPromptIncludesSessionWidgetConventions(t *testing.T) {
 			for _, expected := range []string{
 				"Output/widget conventions",
 				"plain text paths with optional line ranges",
+				"suggest_git_commit exactly once",
+				"a2gent-git-commit block",
 				"a2gent-map JSON block",
 				"terminal fallback is the address list",
 			} {

@@ -108,6 +108,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var parentSession *session.Session
+	var linkedContinuation *linkedContinuationContext
 	if req.ParentID != "" {
 		parentSession, err = s.sessionManager.Get(req.ParentID)
 		if err != nil {
@@ -119,6 +120,11 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.LinkType == "" {
 			req.LinkType = sessionLinkTypeContinuation
+		}
+		if req.LinkType == sessionLinkTypeContinuation {
+			context := buildLinkedContinuationContext(parentSession, req.Task)
+			req.Task = context.Prompt
+			linkedContinuation = &context
 		}
 	}
 	images, imagesErr := normalizeIncomingImages(req.Images)
@@ -173,6 +179,9 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			logging.Warn("Failed to persist session metadata: %v", err)
 		}
 	}
+	if linkedContinuation != nil {
+		applyLinkedContinuationSessionMetadata(sess, *linkedContinuation)
+	}
 	if req.QueueMode != "" {
 		if sess.Metadata == nil {
 			sess.Metadata = make(map[string]interface{})
@@ -187,9 +196,13 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Task != "" || len(images) > 0 {
-		sess.AddUserMessageWithImages(req.Task, images)
+		if linkedContinuation != nil {
+			sess.AddUserMessageWithImagesAndMetadata(req.Task, images, linkedContinuationMessageMetadata(*linkedContinuation))
+		} else {
+			sess.AddUserMessageWithImages(req.Task, images)
+		}
 
-		if req.Task != "" && len(images) == 0 && len(req.Task) < 600 {
+		if req.ParentID == "" && req.Task != "" && len(images) == 0 && len(req.Task) < 600 {
 			settings, err := s.store.GetSettings()
 			if err == nil {
 				repeatEnabled := strings.TrimSpace(settings[repeatInitialPromptSettingKey])

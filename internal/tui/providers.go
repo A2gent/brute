@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/A2gent/brute/internal/agent"
+	"github.com/A2gent/brute/internal/codexauth"
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/anthropic"
@@ -17,6 +18,7 @@ import (
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/llm/gemini"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
+	"github.com/A2gent/brute/internal/llm/openaicodex"
 	"github.com/A2gent/brute/internal/llm/retry"
 	"github.com/A2gent/brute/internal/logging"
 	tea "github.com/charmbracelet/bubbletea"
@@ -210,8 +212,8 @@ func (m Model) selectProvider(providerType config.ProviderType) (tea.Model, tea.
 		}
 	}
 
-	// For providers requiring API key
-	if providerDef.RequiresKey && existingProvider.APIKey == "" {
+	// For providers requiring credentials
+	if providerDef.RequiresKey && !providerHasCredentials(providerType, existingProvider) {
 		m.providerMenuStep = 1 // Go to API key input
 		return m, nil
 	}
@@ -272,6 +274,16 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 
 		provider := m.appConfig.Providers[string(targetType)]
 		apiKey := strings.TrimSpace(provider.APIKey)
+		if apiKey == "" && providerSupportsOAuth(targetType) && provider.OAuth != nil {
+			apiKey = strings.TrimSpace(provider.OAuth.AccessToken)
+		}
+		if apiKey == "" && providerSupportsOAuth(targetType) {
+			if oauth, _, err := codexauth.Load(""); err == nil && oauth != nil {
+				provider.OAuth = oauth
+				m.appConfig.Providers[string(targetType)] = provider
+				apiKey = strings.TrimSpace(oauth.AccessToken)
+			}
+		}
 		if apiKey == "" {
 			apiKey = providerAPIKeyFromEnv(targetType)
 		}
@@ -294,6 +306,12 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 		if envURL := strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL")); envURL != "" && targetType == config.ProviderKimi {
 			baseURL = envURL
 		}
+		if targetType == config.ProviderOpenAICodex {
+			lower := strings.ToLower(strings.TrimSpace(baseURL))
+			if lower == "" || strings.Contains(lower, "api.openai.com") {
+				baseURL = strings.TrimSpace(providerDef.DefaultURL)
+			}
+		}
 
 		model := strings.TrimSpace(modelOverride)
 		if model == "" {
@@ -313,6 +331,15 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenAI:
 			// Other OpenAI-compatible providers
 			return lmstudio.NewClient(apiKey, model, baseURL), model, nil
+		case config.ProviderOpenAICodex:
+			return openaicodex.NewClientWithOptions(apiKey, model, baseURL, openaicodex.Options{
+				PromptCacheKey:    provider.PromptCacheKey,
+				ReasoningEffort:   provider.ReasoningEffort,
+				TextVerbosity:     provider.TextVerbosity,
+				ServiceTier:       provider.ServiceTier,
+				MaxTokens:         provider.MaxTokens,
+				StatefulResponses: false,
+			}), model, nil
 		case config.ProviderCursor:
 			return cursorcli.NewClientWithOptions(model, cursorcli.Options{WorkDir: m.appConfig.WorkDir, APIKey: apiKey}), model, nil
 		case config.ProviderAnthropic:
@@ -468,6 +495,16 @@ func (m Model) validateActiveProviderConfig() error {
 	}
 
 	provider := m.appConfig.Providers[string(providerType)]
+	if providerSupportsOAuth(providerType) && provider.OAuth != nil && strings.TrimSpace(provider.OAuth.AccessToken) != "" {
+		return nil
+	}
+	if providerSupportsOAuth(providerType) {
+		if oauth, _, err := codexauth.Load(""); err == nil && oauth != nil && strings.TrimSpace(oauth.AccessToken) != "" {
+			provider.OAuth = oauth
+			m.appConfig.Providers[string(providerType)] = provider
+			return nil
+		}
+	}
 
 	apiKey := strings.TrimSpace(provider.APIKey)
 	if apiKey == "" {
@@ -510,9 +547,30 @@ func providerAPIKeyEnvName(providerType config.ProviderType) string {
 		return "GOOGLE_API_KEY"
 	case config.ProviderOpenAI:
 		return "OPENAI_API_KEY"
+	case config.ProviderOpenAICodex:
+		return "OPENAI_API_KEY"
 	default:
 		return ""
 	}
+}
+
+func providerSupportsOAuth(providerType config.ProviderType) bool {
+	return providerType == config.ProviderOpenAICodex
+}
+
+func providerHasCredentials(providerType config.ProviderType, provider config.Provider) bool {
+	if strings.TrimSpace(provider.APIKey) != "" {
+		return true
+	}
+	if providerSupportsOAuth(providerType) && provider.OAuth != nil && strings.TrimSpace(provider.OAuth.AccessToken) != "" {
+		return true
+	}
+	if providerSupportsOAuth(providerType) {
+		if oauth, _, err := codexauth.Load(""); err == nil && oauth != nil && strings.TrimSpace(oauth.AccessToken) != "" {
+			return true
+		}
+	}
+	return providerAPIKeyFromEnv(providerType) != ""
 }
 
 // saveProviderCredentials saves the API key or URL for a provider
@@ -545,7 +603,7 @@ func (m Model) saveProviderCredentials() (tea.Model, tea.Cmd) {
 		return m.activateProvider(providerType)
 	}
 
-	if providerDef.RequiresKey && provider.APIKey == "" {
+	if providerDef.RequiresKey && !providerHasCredentials(providerType, provider) {
 		m.providerMenuStep = 1
 		m.providerInput = ""
 		return m, nil

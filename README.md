@@ -287,6 +287,19 @@ Common optional variables:
 | `AAGENT_FALLBACK_PROVIDERS` | - | fallback chain list |
 | `A2GENT_TOOL_RESULT_COMPRESSION_ENABLED` | `true` | enable session-scoped compression of large LLM-bound tool results by default; compressed requests keep deterministic markers and allow `context_retrieve` lookup by hash while leaving exact `read`/`write`/`edit` outputs unchanged by default |
 
+Speech transcription variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `AAGENT_WHISPER_MODEL` | - | explicit local whisper.cpp model path; overrides model-name selection |
+| `AAGENT_WHISPER_MODEL_NAME` | `small` | default auto-downloaded model alias or filename for normal voice input |
+| `AAGENT_WHISPER_MEETING_MODEL_NAME` | `large-v3-turbo` | auto-downloaded model alias or filename for Caesar meeting transcription |
+| `AAGENT_WHISPER_LANGUAGE` | `auto` | default language when the client does not provide one |
+| `AAGENT_WHISPER_THREADS` | whisper.cpp default | thread count passed to `whisper-cli` |
+| `AAGENT_WHISPER_NO_GPU` | `false` | force CPU-only whisper.cpp execution |
+
+Supported model aliases include `tiny`, `base`, `small`, `medium`, `large-v3-turbo`, and `large-v3`, plus Superwhisper-style aliases `fast`, `nano`, `standard`, `pro`, `ultra-v3-turbo`, and `ultra`.
+
 ## 6. Common Commands
 
 | Command | Description |

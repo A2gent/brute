@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/A2gent/brute/internal/stt/whispercpp"
+	"github.com/go-chi/chi/v5"
 )
 
 const (
@@ -312,7 +312,12 @@ func (s *Server) handleTranscribeSpeech(w http.ResponseWriter, r *http.Request) 
 	}
 	defer cleanup()
 
-	transcript, err := whispercpp.TranscribeWithOptions(ctx, audioPath, r.FormValue("language"), parseOptionalBool(r.FormValue("translate_to_english")))
+	transcript, err := whispercpp.TranscribeWithConfig(ctx, audioPath, whispercpp.TranscribeOptions{
+		Language:           r.FormValue("language"),
+		TranslateToEnglish: parseOptionalBool(r.FormValue("translate_to_english")),
+		Prompt:             r.FormValue("prompt"),
+		Profile:            r.FormValue("profile"),
+	})
 	if err != nil {
 		status := http.StatusBadGateway
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {

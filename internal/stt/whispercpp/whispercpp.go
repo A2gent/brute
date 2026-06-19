@@ -21,18 +21,62 @@ import (
 )
 
 const (
-	defaultModelName       = "ggml-tiny.bin"
-	defaultModelDownload   = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin"
+	defaultModelAlias      = "small"
+	defaultMeetingAlias    = "large-v3-turbo"
+	modelDownloadBaseURL   = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
 	defaultSourceVersion   = "v1.8.3"
 	defaultSourceDownload  = "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.8.3.tar.gz"
-	maxModelDownloadBytes  = 1024 * 1024 * 1024
+	maxModelDownloadBytes  = 4 * 1024 * 1024 * 1024
 	maxSourceDownloadBytes = 1024 * 1024 * 1024
 	defaultDownloadTimeout = 30 * time.Minute
+	maxPromptRunes         = 1200
 )
+
+var whisperModelAliases = map[string]string{
+	"fast":                    "ggml-tiny.bin",
+	"fast-english":            "ggml-tiny.en.bin",
+	"tiny":                    "ggml-tiny.bin",
+	"tiny-en":                 "ggml-tiny.en.bin",
+	"tiny-english":            "ggml-tiny.en.bin",
+	"nano":                    "ggml-base.bin",
+	"nano-english":            "ggml-base.en.bin",
+	"base":                    "ggml-base.bin",
+	"base-en":                 "ggml-base.en.bin",
+	"base-english":            "ggml-base.en.bin",
+	"standard":                "ggml-small.bin",
+	"standard-english":        "ggml-small.en.bin",
+	"small":                   "ggml-small.bin",
+	"small-en":                "ggml-small.en.bin",
+	"small-english":           "ggml-small.en.bin",
+	"pro":                     "ggml-medium.bin",
+	"pro-english":             "ggml-medium.en.bin",
+	"medium":                  "ggml-medium.bin",
+	"medium-en":               "ggml-medium.en.bin",
+	"medium-english":          "ggml-medium.en.bin",
+	"turbo":                   "ggml-large-v3-turbo.bin",
+	"large-v3-turbo":          "ggml-large-v3-turbo.bin",
+	"ultra-v3-turbo":          "ggml-large-v3-turbo.bin",
+	"large":                   "ggml-large-v3.bin",
+	"large-v3":                "ggml-large-v3.bin",
+	"large-v2":                "ggml-large-v2.bin",
+	"ultra":                   "ggml-large-v3.bin",
+	"ggml-tiny.bin":           "ggml-tiny.bin",
+	"ggml-tiny.en.bin":        "ggml-tiny.en.bin",
+	"ggml-base.bin":           "ggml-base.bin",
+	"ggml-base.en.bin":        "ggml-base.en.bin",
+	"ggml-small.bin":          "ggml-small.bin",
+	"ggml-small.en.bin":       "ggml-small.en.bin",
+	"ggml-medium.bin":         "ggml-medium.bin",
+	"ggml-medium.en.bin":      "ggml-medium.en.bin",
+	"ggml-large-v2.bin":       "ggml-large-v2.bin",
+	"ggml-large-v3.bin":       "ggml-large-v3.bin",
+	"ggml-large-v3-turbo.bin": "ggml-large-v3-turbo.bin",
+}
 
 type Config struct {
 	BinaryPath      string
 	ModelPath       string
+	ModelName       string
 	DefaultLanguage string
 	Translate       bool
 	Threads         int
@@ -40,17 +84,32 @@ type Config struct {
 	AutoDownload    bool
 }
 
+type TranscribeOptions struct {
+	Language           string
+	TranslateToEnglish *bool
+	Prompt             string
+	Profile            string
+	ModelName          string
+}
+
 func Transcribe(ctx context.Context, audioPath string, language string) (string, error) {
 	return TranscribeWithOptions(ctx, audioPath, language, nil)
 }
 
 func TranscribeWithOptions(ctx context.Context, audioPath string, language string, translateToEnglish *bool) (string, error) {
-	cfg, err := loadConfig(ctx)
+	return TranscribeWithConfig(ctx, audioPath, TranscribeOptions{
+		Language:           language,
+		TranslateToEnglish: translateToEnglish,
+	})
+}
+
+func TranscribeWithConfig(ctx context.Context, audioPath string, opts TranscribeOptions) (string, error) {
+	cfg, err := loadConfig(ctx, opts)
 	if err != nil {
 		return "", err
 	}
 
-	lang := normalizeLanguage(language)
+	lang := normalizeLanguage(opts.Language)
 	if lang == "" {
 		lang = normalizeLanguage(cfg.DefaultLanguage)
 	}
@@ -58,8 +117,8 @@ func TranscribeWithOptions(ctx context.Context, audioPath string, language strin
 		lang = "auto"
 	}
 	translate := cfg.Translate
-	if translateToEnglish != nil {
-		translate = *translateToEnglish
+	if opts.TranslateToEnglish != nil {
+		translate = *opts.TranslateToEnglish
 	}
 
 	outputDir, err := os.MkdirTemp("", "aagent-whisper-out-*")
@@ -79,6 +138,9 @@ func TranscribeWithOptions(ctx context.Context, audioPath string, language strin
 	if lang != "" {
 		args = append(args, "-l", lang)
 	}
+	if prompt := normalizePrompt(opts.Prompt); prompt != "" {
+		args = append(args, "--prompt", prompt)
+	}
 	if cfg.Threads > 0 {
 		args = append(args, "-t", strconv.Itoa(cfg.Threads))
 	}
@@ -90,7 +152,7 @@ func TranscribeWithOptions(ctx context.Context, audioPath string, language strin
 		args = append(args, "-ng", "-nfa")
 	}
 
-	logging.Info("whisper.cpp run start: binary=%s no_gpu=%v lang=%s translate=%v", cfg.BinaryPath, resolveNoGPU(), lang, translate)
+	logging.Info("whisper.cpp run start: binary=%s model=%s no_gpu=%v lang=%s translate=%v", cfg.BinaryPath, cfg.ModelName, resolveNoGPU(), lang, translate)
 	text, err := runWhisperCLI(ctx, cfg.BinaryPath, args, outputPrefix)
 	if err == nil {
 		logging.Info("whisper.cpp run succeeded (primary)")
@@ -191,10 +253,22 @@ func truncateLogLine(text string, max int) string {
 	return string(runes[:max-3]) + "..."
 }
 
-func loadConfig(ctx context.Context) (Config, error) {
+func loadConfig(ctx context.Context, opts TranscribeOptions) (Config, error) {
+	modelName := ""
+	if explicitModelPath := strings.TrimSpace(os.Getenv("AAGENT_WHISPER_MODEL")); explicitModelPath != "" {
+		modelName = filepath.Base(filepath.Clean(explicitModelPath))
+	} else {
+		resolvedModelName, err := resolveModelName(opts.ModelName, opts.Profile)
+		if err != nil {
+			return Config{}, err
+		}
+		modelName = resolvedModelName
+	}
+
 	cfg := Config{
 		BinaryPath:      resolveBinaryPath(),
-		ModelPath:       resolveModelPath(),
+		ModelPath:       resolveModelPath(modelName),
+		ModelName:       modelName,
 		DefaultLanguage: strings.TrimSpace(os.Getenv("AAGENT_WHISPER_LANGUAGE")),
 		Translate:       resolveTranslate(),
 		Threads:         resolveThreads(),
@@ -203,14 +277,14 @@ func loadConfig(ctx context.Context) (Config, error) {
 	}
 
 	if strings.TrimSpace(cfg.ModelPath) == "" && cfg.AutoDownload {
-		path, err := ensureModelDownloaded()
+		path, err := ensureModelDownloaded(modelName)
 		if err != nil {
 			return Config{}, err
 		}
 		cfg.ModelPath = path
 	}
 	if strings.TrimSpace(cfg.ModelPath) == "" {
-		return Config{}, errors.New("whisper.cpp model not found; set AAGENT_WHISPER_MODEL (for example ggml-base.bin)")
+		return Config{}, errors.New("whisper.cpp model not found; set AAGENT_WHISPER_MODEL or AAGENT_WHISPER_MODEL_NAME (for example small or large-v3-turbo)")
 	}
 	if info, err := os.Stat(cfg.ModelPath); err != nil || info.IsDir() {
 		return Config{}, fmt.Errorf("invalid AAGENT_WHISPER_MODEL path: %s", cfg.ModelPath)
@@ -232,6 +306,72 @@ func loadConfig(ctx context.Context) (Config, error) {
 	return cfg, nil
 }
 
+func resolveModelName(requested string, profile string) (string, error) {
+	candidates := []string{requested}
+	if isMeetingProfile(profile) {
+		candidates = append(candidates, os.Getenv("AAGENT_WHISPER_MEETING_MODEL_NAME"))
+	}
+	candidates = append(candidates, os.Getenv("AAGENT_WHISPER_MODEL_NAME"))
+	if isMeetingProfile(profile) {
+		candidates = append(candidates, defaultMeetingAlias)
+	} else {
+		candidates = append(candidates, defaultModelAlias)
+	}
+
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate) == "" {
+			continue
+		}
+		modelName, ok := normalizeModelName(candidate)
+		if !ok {
+			return "", fmt.Errorf("unknown whisper.cpp model %q; use one of: %s", strings.TrimSpace(candidate), strings.Join(availableModelAliases(), ", "))
+		}
+		return modelName, nil
+	}
+
+	return whisperModelAliases[defaultModelAlias], nil
+}
+
+func isMeetingProfile(profile string) bool {
+	switch strings.TrimSpace(strings.ToLower(profile)) {
+	case "meeting", "meetings", "high", "quality":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeModelName(raw string) (string, bool) {
+	key := strings.TrimSpace(strings.ToLower(raw))
+	if key == "" {
+		return "", false
+	}
+	key = strings.ReplaceAll(key, "_", "-")
+	modelName, ok := whisperModelAliases[key]
+	return modelName, ok
+}
+
+func availableModelAliases() []string {
+	aliases := make([]string, 0, len(whisperModelAliases))
+	for alias := range whisperModelAliases {
+		aliases = append(aliases, alias)
+	}
+	sort.Strings(aliases)
+	return aliases
+}
+
+func normalizePrompt(raw string) string {
+	prompt := strings.Join(strings.Fields(raw), " ")
+	if prompt == "" {
+		return ""
+	}
+	runes := []rune(prompt)
+	if len(runes) <= maxPromptRunes {
+		return prompt
+	}
+	return string(runes[len(runes)-maxPromptRunes:])
+}
+
 func ensureBinaryAvailable(ctx context.Context) (string, error) {
 	dataDir := resolveDataDir()
 	buildDir := filepath.Join(dataDir, "speech", "whisper", "build")
@@ -250,6 +390,10 @@ func ensureBinaryAvailable(ctx context.Context) (string, error) {
 	if err := resetBuildDirIfSourceMismatch(buildDir, sourceDir); err != nil {
 		return "", err
 	}
+	cmakeBin, err := resolveCMakeBinary()
+	if err != nil {
+		return "", err
+	}
 
 	cmakeArgs := []string{
 		"-S", sourceDir,
@@ -257,10 +401,10 @@ func ensureBinaryAvailable(ctx context.Context) (string, error) {
 		"-DCMAKE_BUILD_TYPE=Release",
 		"-DWHISPER_BUILD_TESTS=OFF",
 	}
-	if err := runCommand(ctx, "cmake", cmakeArgs...); err != nil {
+	if err := runCommand(ctx, cmakeBin, cmakeArgs...); err != nil {
 		return "", fmt.Errorf("failed configuring whisper.cpp build: %w", err)
 	}
-	if err := runCommand(ctx, "cmake", "--build", buildDir, "--config", "Release", "--target", "whisper-cli", "-j"); err != nil {
+	if err := runCommand(ctx, cmakeBin, "--build", buildDir, "--config", "Release", "--target", "whisper-cli", "-j"); err != nil {
 		return "", fmt.Errorf("failed building whisper-cli: %w", err)
 	}
 
@@ -268,6 +412,28 @@ func ensureBinaryAvailable(ctx context.Context) (string, error) {
 		return "", errors.New("whisper-cli build completed but binary was not found")
 	}
 	return binaryPath, nil
+}
+
+func resolveCMakeBinary() (string, error) {
+	if raw := strings.TrimSpace(os.Getenv("AAGENT_CMAKE_BIN")); raw != "" {
+		path := filepath.Clean(raw)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path, nil
+		}
+		return "", fmt.Errorf("invalid AAGENT_CMAKE_BIN path: %s", path)
+	}
+	if path, err := exec.LookPath("cmake"); err == nil {
+		return path, nil
+	}
+	for _, path := range []string{
+		"/opt/homebrew/bin/cmake",
+		"/usr/local/bin/cmake",
+	} {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path, nil
+		}
+	}
+	return "", errors.New("cmake not found; install it with `brew install cmake` or set AAGENT_CMAKE_BIN")
 }
 
 func resetBuildDirIfSourceMismatch(buildDir string, sourceDir string) error {
@@ -574,14 +740,14 @@ func resolveBinaryPath() string {
 	return ""
 }
 
-func resolveModelPath() string {
+func resolveModelPath(modelName string) string {
 	if v := strings.TrimSpace(os.Getenv("AAGENT_WHISPER_MODEL")); v != "" {
 		return filepath.Clean(v)
 	}
 	dataDir := resolveDataDir()
 	candidates := []string{
-		filepath.Join(dataDir, "speech", "whisper", "models", defaultModelName),
-		filepath.Join(dataDir, "speech", "whisper", defaultModelName),
+		filepath.Join(dataDir, "speech", "whisper", "models", modelName),
+		filepath.Join(dataDir, "speech", "whisper", modelName),
 	}
 	for _, candidate := range candidates {
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
@@ -591,19 +757,19 @@ func resolveModelPath() string {
 	return ""
 }
 
-func ensureModelDownloaded() (string, error) {
+func ensureModelDownloaded(modelName string) (string, error) {
 	dataDir := resolveDataDir()
 	modelsDir := filepath.Join(dataDir, "speech", "whisper", "models")
 	if err := os.MkdirAll(modelsDir, 0o755); err != nil {
 		return "", fmt.Errorf("failed to create whisper model directory: %w", err)
 	}
-	path := filepath.Join(modelsDir, defaultModelName)
+	path := filepath.Join(modelsDir, modelName)
 	if info, err := os.Stat(path); err == nil && !info.IsDir() && info.Size() > 0 {
 		return path, nil
 	}
 
 	tmpPath := path + ".download"
-	if err := downloadFileLimited(defaultModelDownload, tmpPath, maxModelDownloadBytes); err != nil {
+	if err := downloadFileLimited(modelDownloadBaseURL+modelName, tmpPath, maxModelDownloadBytes); err != nil {
 		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("failed to auto-download whisper model: %w", err)
 	}

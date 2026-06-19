@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/A2gent/brute/internal/agent"
+	"github.com/A2gent/brute/internal/codexauth"
 	"github.com/A2gent/brute/internal/config"
 	httpserver "github.com/A2gent/brute/internal/http"
 	"github.com/A2gent/brute/internal/llm"
@@ -18,6 +19,7 @@ import (
 	"github.com/A2gent/brute/internal/llm/autorouter"
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
+	"github.com/A2gent/brute/internal/llm/openaicodex"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/scheduler"
 	"github.com/A2gent/brute/internal/session"
@@ -469,6 +471,8 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 			return []string{"GOOGLE_API_KEY", "GEMINI_API_KEY"}
 		case config.ProviderOpenAI:
 			return []string{"OPENAI_API_KEY"}
+		case config.ProviderOpenAICodex:
+			return []string{"OPENAI_API_KEY"}
 		default:
 			return nil
 		}
@@ -482,6 +486,16 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 
 		provider := cfg.Providers[string(providerType)]
 		apiKey := strings.TrimSpace(provider.APIKey)
+		if apiKey == "" && providerType == config.ProviderOpenAICodex && provider.OAuth != nil {
+			apiKey = strings.TrimSpace(provider.OAuth.AccessToken)
+		}
+		if apiKey == "" && providerType == config.ProviderOpenAICodex {
+			if oauth, _, err := codexauth.Load(""); err == nil && oauth != nil {
+				provider.OAuth = oauth
+				cfg.Providers[string(providerType)] = provider
+				apiKey = strings.TrimSpace(oauth.AccessToken)
+			}
+		}
 		if apiKey == "" {
 			for _, envKey := range resolveEnvKeys(providerType) {
 				apiKey = strings.TrimSpace(os.Getenv(envKey))
@@ -509,6 +523,12 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 		if envURL := strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL")); envURL != "" && (providerType == config.ProviderKimi || providerType == config.ProviderAnthropic) {
 			baseURL = envURL
 		}
+		if providerType == config.ProviderOpenAICodex {
+			lower := strings.ToLower(strings.TrimSpace(baseURL))
+			if lower == "" || strings.Contains(lower, "api.openai.com") {
+				baseURL = strings.TrimSpace(providerDef.DefaultURL)
+			}
+		}
 
 		model := strings.TrimSpace(modelOverride)
 		if model == "" {
@@ -533,6 +553,15 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 		switch providerType {
 		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle, config.ProviderOpenAI:
 			return lmstudio.NewClient(apiKey, model, baseURL), model, nil
+		case config.ProviderOpenAICodex:
+			return openaicodex.NewClientWithOptions(apiKey, model, baseURL, openaicodex.Options{
+				PromptCacheKey:    provider.PromptCacheKey,
+				ReasoningEffort:   provider.ReasoningEffort,
+				TextVerbosity:     provider.TextVerbosity,
+				ServiceTier:       provider.ServiceTier,
+				MaxTokens:         provider.MaxTokens,
+				StatefulResponses: false,
+			}), model, nil
 		default:
 			return anthropic.NewClientWithBaseURL(apiKey, model, baseURL), model, nil
 		}

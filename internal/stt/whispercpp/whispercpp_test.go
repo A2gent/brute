@@ -1,6 +1,7 @@
 package whispercpp
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -113,6 +114,120 @@ func TestResolveTranslate(t *testing.T) {
 	t.Setenv("AAGENT_WHISPER_TRANSLATE", "false")
 	if resolveTranslate() {
 		t.Fatalf("expected resolveTranslate=false for false")
+	}
+}
+
+func TestResolveModelNameDefaultsToSmall(t *testing.T) {
+	t.Setenv("AAGENT_WHISPER_MODEL_NAME", "")
+	t.Setenv("AAGENT_WHISPER_MEETING_MODEL_NAME", "")
+
+	got, err := resolveModelName("", "")
+	if err != nil {
+		t.Fatalf("resolveModelName failed: %v", err)
+	}
+	if got != "ggml-small.bin" {
+		t.Fatalf("resolveModelName default = %q, want ggml-small.bin", got)
+	}
+}
+
+func TestResolveModelNameUsesMeetingTurboDefault(t *testing.T) {
+	t.Setenv("AAGENT_WHISPER_MODEL_NAME", "")
+	t.Setenv("AAGENT_WHISPER_MEETING_MODEL_NAME", "")
+
+	got, err := resolveModelName("", "meeting")
+	if err != nil {
+		t.Fatalf("resolveModelName failed: %v", err)
+	}
+	if got != "ggml-large-v3-turbo.bin" {
+		t.Fatalf("resolveModelName meeting default = %q, want ggml-large-v3-turbo.bin", got)
+	}
+}
+
+func TestResolveModelNameAllowsEnvOverride(t *testing.T) {
+	t.Setenv("AAGENT_WHISPER_MODEL_NAME", "base")
+	t.Setenv("AAGENT_WHISPER_MEETING_MODEL_NAME", "")
+
+	got, err := resolveModelName("", "")
+	if err != nil {
+		t.Fatalf("resolveModelName failed: %v", err)
+	}
+	if got != "ggml-base.bin" {
+		t.Fatalf("resolveModelName env override = %q, want ggml-base.bin", got)
+	}
+}
+
+func TestResolveModelNameAllowsMeetingEnvOverride(t *testing.T) {
+	t.Setenv("AAGENT_WHISPER_MODEL_NAME", "base")
+	t.Setenv("AAGENT_WHISPER_MEETING_MODEL_NAME", "medium")
+
+	got, err := resolveModelName("", "meeting")
+	if err != nil {
+		t.Fatalf("resolveModelName failed: %v", err)
+	}
+	if got != "ggml-medium.bin" {
+		t.Fatalf("resolveModelName meeting env override = %q, want ggml-medium.bin", got)
+	}
+}
+
+func TestLoadConfigExplicitModelPathBypassesModelNameValidation(t *testing.T) {
+	tmpDir := t.TempDir()
+	modelPath := filepath.Join(tmpDir, "custom-model.bin")
+	if err := os.WriteFile(modelPath, []byte("model"), 0o644); err != nil {
+		t.Fatalf("write fake model: %v", err)
+	}
+	binaryPath := filepath.Join(tmpDir, "whisper-cli")
+	if err := os.WriteFile(binaryPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+
+	t.Setenv("AAGENT_WHISPER_MODEL", modelPath)
+	t.Setenv("AAGENT_WHISPER_MODEL_NAME", "not-a-real-model")
+	t.Setenv("AAGENT_WHISPER_BIN", binaryPath)
+	t.Setenv("AAGENT_WHISPER_AUTO_SETUP", "0")
+	t.Setenv("AAGENT_WHISPER_AUTO_DOWNLOAD", "0")
+
+	cfg, err := loadConfig(context.Background(), TranscribeOptions{})
+	if err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	if cfg.ModelPath != modelPath {
+		t.Fatalf("loadConfig ModelPath = %q, want %q", cfg.ModelPath, modelPath)
+	}
+	if cfg.ModelName != "custom-model.bin" {
+		t.Fatalf("loadConfig ModelName = %q, want custom-model.bin", cfg.ModelName)
+	}
+}
+
+func TestNormalizePromptKeepsRecentContext(t *testing.T) {
+	var builder strings.Builder
+	for i := 0; i < maxPromptRunes+20; i++ {
+		builder.WriteString("a")
+	}
+	builder.WriteString(" final words")
+
+	got := normalizePrompt(builder.String())
+	if len([]rune(got)) != maxPromptRunes {
+		t.Fatalf("normalizePrompt length = %d, want %d", len([]rune(got)), maxPromptRunes)
+	}
+	if !strings.HasSuffix(got, "final words") {
+		t.Fatalf("normalizePrompt should keep recent prompt context, got suffix %q", got[len(got)-20:])
+	}
+}
+
+func TestResolveCMakeBinaryUsesExplicitEnvPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	cmakePath := filepath.Join(tmpDir, "cmake")
+	if err := os.WriteFile(cmakePath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake cmake: %v", err)
+	}
+
+	t.Setenv("AAGENT_CMAKE_BIN", cmakePath)
+	got, err := resolveCMakeBinary()
+	if err != nil {
+		t.Fatalf("resolveCMakeBinary failed: %v", err)
+	}
+	if got != cmakePath {
+		t.Fatalf("resolveCMakeBinary = %q, want %q", got, cmakePath)
 	}
 }
 

@@ -162,11 +162,7 @@ func boundedRange(total, limit, offset int) (int, int) {
 	if offset > total {
 		return total, total
 	}
-	end := offset + limit
-	if end > total {
-		end = total
-	}
-	return offset, end
+	return offset, min(total, offset+limit)
 }
 
 func redisStreamRows(base func() map[string]interface{}, resp interface{}) []map[string]interface{} {
@@ -184,13 +180,13 @@ func redisStreamRows(base func() map[string]interface{}, resp interface{}) []map
 		row["index"] = index
 		row["id"], _ = entryParts[0].(string)
 		fields := map[string]string{}
-		for fieldIndex, fieldValue := range redisStringSlice(entryParts[1]) {
+		fieldValues := redisStringSlice(entryParts[1])
+		for fieldIndex, fieldValue := range fieldValues {
 			if fieldIndex%2 == 0 {
 				fields[fieldValue] = ""
 				continue
 			}
-			fieldName := redisStringSlice(entryParts[1])[fieldIndex-1]
-			fields[fieldName] = fieldValue
+			fields[fieldValues[fieldIndex-1]] = fieldValue
 		}
 		encoded, _ := json.Marshal(fields)
 		row["value"] = string(encoded)

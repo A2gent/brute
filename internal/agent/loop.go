@@ -47,17 +47,12 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 
 		// Check step limit
 		if step >= a.config.MaxSteps {
-			// WHY: returning the last non-empty assistant message hides tool loops as
-			// successful delegations. Surface the orchestration failure explicitly so
-			// callers can debug the child agent instead of receiving an empty response.
-			message := fmt.Sprintf("Agent stopped after reaching maximum step limit (%d) before producing a final answer.", a.config.MaxSteps)
-			sess.AddAssistantMessageWithMetadata(message, nil, map[string]interface{}{
-				"max_steps_exceeded": true,
-				"max_steps":          a.config.MaxSteps,
-			})
-			sess.SetStatus(session.StatusFailed)
-			a.sessionManager.Save(sess)
-			return "", totalUsage, errors.New(message)
+			content, usage, err := a.finalizeAfterStepLimit(ctx, sess, step, onEvent)
+			totalUsage.InputTokens += usage.InputTokens
+			totalUsage.OutputTokens += usage.OutputTokens
+			totalUsage.CachedInputTokens += usage.CachedInputTokens
+			totalUsage.ReasoningTokens += usage.ReasoningTokens
+			return content, totalUsage, err
 		}
 
 		step++
@@ -86,6 +81,7 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			})
 			transientUserPrompt = ""
 		}
+		appendStepLimitWarning(request, step, a.config.MaxSteps)
 
 		// Call LLM (streaming when supported)
 		llmStart := time.Now()
@@ -291,6 +287,86 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			onEvent(Event{Type: EventStepCompleted, Step: step})
 		}
 	}
+}
+
+func (a *Agent) finalizeAfterStepLimit(ctx context.Context, sess *session.Session, step int, onEvent func(Event)) (string, llm.TokenUsage, error) {
+	request := a.buildRequest(sess)
+	request.Tools = nil
+	request.Messages = append(request.Messages, llm.Message{
+		Role:    "user",
+		Content: stepLimitFinalizationPrompt,
+	})
+
+	llmStart := time.Now()
+	response, err := a.callLLM(ctx, request, step+1, onEvent)
+	llmCompleted := time.Now()
+	if err != nil {
+		message := fmt.Sprintf("Agent stopped after reaching maximum step limit (%d), and the finalization request failed: %v", a.config.MaxSteps, err)
+		sess.AddAssistantMessageWithMetadata(message, nil, stepLimitFailureMetadata(a.config.MaxSteps, llmStart, llmCompleted, a.config.Provider, a.config.Model, map[string]interface{}{
+			"finalization_error": err.Error(),
+		}))
+		sess.SetStatus(session.StatusFailed)
+		a.sessionManager.Save(sess)
+		return "", llm.TokenUsage{}, errors.New(message)
+	}
+
+	usage := response.Usage
+	a.addTokenUsageMetadata(sess, usage)
+	metadata := stepLimitFailureMetadata(a.config.MaxSteps, llmStart, llmCompleted, a.config.Provider, a.config.Model, map[string]interface{}{
+		"finalized_after_step_limit": true,
+	})
+	if a.config.UsePreviousResponse && strings.TrimSpace(response.ResponseID) != "" {
+		metadata[messageMetadataResponseID] = strings.TrimSpace(response.ResponseID)
+		metadataSetString(sess, metadataLastResponseID, strings.TrimSpace(response.ResponseID))
+	}
+
+	if len(response.ToolCalls) > 0 {
+		message := fmt.Sprintf("Agent stopped after reaching maximum step limit (%d), and the finalization request attempted to call tools instead of producing a final answer.", a.config.MaxSteps)
+		metadata["finalization_tool_call_count"] = len(response.ToolCalls)
+		sess.AddAssistantMessageWithMetadata(message, nil, metadata)
+		sess.SetStatus(session.StatusFailed)
+		a.sessionManager.Save(sess)
+		return "", usage, errors.New(message)
+	}
+
+	finalContent := strings.TrimSpace(response.Content)
+	if finalContent == "" {
+		message := fmt.Sprintf("Agent stopped after reaching maximum step limit (%d), and the finalization request returned an empty answer.", a.config.MaxSteps)
+		metadata["empty_final_response"] = true
+		sess.AddAssistantMessageWithMetadata(message, nil, metadata)
+		sess.SetStatus(session.StatusFailed)
+		a.sessionManager.Save(sess)
+		return "", usage, errors.New(message)
+	}
+
+	sess.AddAssistantMessageWithImagesAndMetadata(finalContent, llmImagesToSession(response.Images), nil, metadata)
+	sess.SetStatus(session.StatusCompleted)
+	a.sessionManager.Save(sess)
+	if onEvent != nil {
+		onEvent(Event{Type: EventStepCompleted, Step: step + 1})
+	}
+	return finalContent, usage, nil
+}
+
+func appendStepLimitWarning(request *llm.ChatRequest, currentStep, maxSteps int) {
+	if request == nil || maxSteps <= 0 {
+		return
+	}
+	remaining := maxSteps - currentStep + 1
+	if remaining < 1 || remaining > stepLimitWarningThreshold {
+		return
+	}
+	request.Messages = append(request.Messages, llm.Message{
+		Role:    "user",
+		Content: fmt.Sprintf(stepLimitWarningPrompt, remaining),
+	})
+}
+
+func stepLimitFailureMetadata(maxSteps int, startedAt, completedAt time.Time, provider, model string, extra map[string]interface{}) map[string]interface{} {
+	metadata := llmTimingMetadata(startedAt, completedAt, provider, model, extra)
+	metadata["max_steps_exceeded"] = true
+	metadata["max_steps"] = maxSteps
+	return metadata
 }
 
 // cleanupIncompleteToolCalls removes assistant messages with tool calls that don't have corresponding tool results

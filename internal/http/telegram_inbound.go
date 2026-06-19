@@ -380,7 +380,7 @@ func (s *Server) handleTelegramInboundMessage(
 
 	response, _, err := ag.Run(ctx, sess, llmUserMessage)
 	if err != nil {
-		sess.AddAssistantMessage(fmt.Sprintf("Request failed: %s", err.Error()), nil)
+		addRequestFailedAssistantMessage(sess, err)
 		sess.SetStatus(session.StatusFailed)
 		_ = s.sessionManager.Save(sess)
 		return nil, fmt.Errorf("agent run failed: %w", err)

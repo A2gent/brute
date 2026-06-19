@@ -433,7 +433,7 @@ func (s *Server) executeWorkflowNode(
 	})
 	if runErr != nil {
 		adaptedErr := s.adaptProviderErrorMessage(target.ProviderType, runErr)
-		child.AddAssistantMessage(fmt.Sprintf("Request failed: %s", adaptedErr.Error()), nil)
+		addRequestFailedAssistantMessage(child, adaptedErr)
 		child.SetStatus(session.StatusFailed)
 		_ = s.sessionManager.Save(child)
 		return "", child.ID, adaptedErr

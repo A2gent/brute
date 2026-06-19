@@ -531,3 +531,60 @@ func TestLoopFailsWhenMaxStepsReachedWithoutFinalAssistantContent(t *testing.T) 
 		t.Fatalf("expected explicit max-step failure assistant message, got role=%q content=%q", lastMsg.Role, lastMsg.Content)
 	}
 }
+
+func TestLoopFinalizesWhenMaxStepsReached(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	sm := session.NewManager(store)
+	sess, err := sm.Create("test-agent")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	sess.AddUserMessage("keep calling a tool")
+
+	mockLLM := &MockLLM{
+		Responses: []*llm.ChatResponse{
+			{ToolCalls: []llm.ToolCall{{ID: "call-noop-1", Name: "noop", Input: `{}`}}},
+			{ToolCalls: []llm.ToolCall{{ID: "call-noop-2", Name: "noop", Input: `{}`}}},
+			{Content: "Final summary", Usage: llm.TokenUsage{InputTokens: 120, OutputTokens: 12}},
+		},
+	}
+	manager := tools.NewManager(t.TempDir())
+	manager.Register(loopNoopTool{})
+	ag := New(Config{MaxSteps: 2}, mockLLM, manager, sm)
+
+	content, _, err := ag.RunWithEvents(context.Background(), sess, "keep calling a tool", nil)
+	if err != nil {
+		t.Fatalf("expected max-step finalization to succeed, got %v", err)
+	}
+	if content != "Final summary" {
+		t.Fatalf("content = %q, want Final summary", content)
+	}
+	if sess.Status != session.StatusCompleted {
+		t.Fatalf("expected completed session, got %s", sess.Status)
+	}
+	if len(mockLLM.CapturedRequests) != 3 {
+		t.Fatalf("captured request count = %d, want 3", len(mockLLM.CapturedRequests))
+	}
+	finalRequest := mockLLM.CapturedRequests[2]
+	if len(finalRequest.Tools) != 0 {
+		t.Fatalf("finalization request exposed %d tools, want none", len(finalRequest.Tools))
+	}
+	if len(finalRequest.Messages) == 0 || !strings.Contains(finalRequest.Messages[len(finalRequest.Messages)-1].Content, "Produce the final response now without calling tools") {
+		t.Fatalf("finalization prompt missing from final request: %#v", finalRequest.Messages)
+	}
+	lastMsg := sess.Messages[len(sess.Messages)-1]
+	if lastMsg.Role != "assistant" || lastMsg.Content != "Final summary" {
+		t.Fatalf("expected final assistant summary, got role=%q content=%q", lastMsg.Role, lastMsg.Content)
+	}
+	if got := lastMsg.Metadata["max_steps_exceeded"]; got != true {
+		t.Fatalf("expected max-step metadata on final summary, got %#v", lastMsg.Metadata)
+	}
+	if got := lastMsg.Metadata["finalized_after_step_limit"]; got != true {
+		t.Fatalf("expected finalization metadata on final summary, got %#v", lastMsg.Metadata)
+	}
+}

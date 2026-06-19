@@ -54,6 +54,13 @@ const (
 	emptyFinalResponseRetryPrompt = `The previous model response was empty after tool execution. Produce a concise final response for the user now.
 
 Summarize what was done, mention verification or blockers, and do not paste raw tool output. Call another tool only if it is truly required to complete the answer.`
+	stepLimitWarningThreshold = 3
+	stepLimitWarningPrompt    = `A2gent is close to its maximum tool-step budget: %d tool-call turn(s) remain including this one.
+
+Prefer finishing with a final answer as soon as you have enough evidence. Only call tools that are strictly necessary to complete the user's task.`
+	stepLimitFinalizationPrompt = `A2gent has reached its maximum tool-step budget. Produce the final response now without calling tools.
+
+Summarize what was changed or learned, mention verification results or blockers, and say plainly if anything remains incomplete. Do not call tools, inspect files, or ask to continue unless user input is required.`
 	defaultCompactionPrompt = `You are compacting a coding-agent conversation because context usage is high.
 
 Create a concise continuation summary that lets the agent continue work in a fresh context window.

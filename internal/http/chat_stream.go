@@ -297,7 +297,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		adaptedErr := s.adaptProviderErrorMessage(target.ProviderType, err)
-		sess.AddAssistantMessage(fmt.Sprintf("Request failed: %s", adaptedErr.Error()), nil)
+		addRequestFailedAssistantMessage(sess, adaptedErr)
 		sess.SetStatus(session.StatusFailed)
 		s.sessionManager.Save(sess)
 		s.triggerSerialSessionQueueIfTerminal(sess)

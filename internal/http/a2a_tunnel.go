@@ -616,7 +616,7 @@ func (s *Server) resumeSessionAfterExternalToolResult(sessionID string) {
 				return
 			}
 			adaptedErr := s.adaptProviderErrorMessage(target.ProviderType, err)
-			sess.AddAssistantMessage(fmt.Sprintf("Request failed: %s", adaptedErr.Error()), nil)
+			addRequestFailedAssistantMessage(sess, adaptedErr)
 			sess.SetStatus(session.StatusFailed)
 			_ = s.sessionManager.Save(sess)
 		}

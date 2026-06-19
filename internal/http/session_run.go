@@ -105,7 +105,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(sess *session.Session, resul
 			return runErr
 		}
 		adaptedErr := s.adaptProviderErrorMessage(result.ProviderType, runErr)
-		sess.AddAssistantMessage(fmt.Sprintf("Request failed: %s", adaptedErr.Error()), nil)
+		addRequestFailedAssistantMessage(sess, adaptedErr)
 		sess.SetStatus(session.StatusFailed)
 		_ = s.sessionManager.Save(sess)
 		s.triggerSerialSessionQueueIfTerminal(sess)

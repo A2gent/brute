@@ -95,6 +95,7 @@ func (s *Server) messagesToResponse(messages []session.Message) []MessageRespons
 
 func (s *Server) messageToResponse(m session.Message) MessageResponse {
 	msg := MessageResponse{
+		ID:        m.ID,
 		Role:      m.Role,
 		Content:   m.Content,
 		Images:    sessionImagesToPayload(m.Images),

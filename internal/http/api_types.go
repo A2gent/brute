@@ -106,6 +106,7 @@ type SystemPromptBlockSnapshotPayload struct {
 
 // MessageResponse represents a message in a session
 type MessageResponse struct {
+	ID           string                 `json:"id,omitempty"`
 	Role         string                 `json:"role"`
 	Content      string                 `json:"content"`
 	Images       []MessageImagePayload  `json:"images,omitempty"`

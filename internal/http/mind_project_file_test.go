@@ -65,6 +65,31 @@ func TestProjectFileEditorAllowsCodeFiles(t *testing.T) {
 	}
 }
 
+func TestProjectFileEditorCreatesMissingParentFolders(t *testing.T) {
+	server, projectID, projectDir := newProjectFileTestServer(t)
+
+	payload, err := json.Marshal(UpdateMindFileRequest{
+		Path:    "docs/password-restoration.md",
+		Content: "# Password restoration\n",
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal request: %v", err)
+	}
+
+	rec := requestProjectFile(t, server, http.MethodPut, projectID, "", bytes.NewReader(payload))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	written, err := os.ReadFile(filepath.Join(projectDir, "docs", "password-restoration.md"))
+	if err != nil {
+		t.Fatalf("failed to read created file: %v", err)
+	}
+	if string(written) != "# Password restoration\n" {
+		t.Fatalf("expected saved content, got %q", string(written))
+	}
+}
+
 func TestProjectFileEditorRejectsAbsolutePathWithProjectRootMessage(t *testing.T) {
 	server, projectID, projectDir := newProjectFileTestServer(t)
 

@@ -1,8 +1,10 @@
 package codexauth
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -37,7 +39,15 @@ func Load(path string) (*config.OAuthConfig, string, error) {
 	}
 
 	var payload interface{}
-	if err := json.Unmarshal(raw, &payload); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, authPath, fmt.Errorf("invalid Codex auth JSON: %w", err)
+	}
+	var extra interface{}
+	if err := decoder.Decode(&extra); err == nil {
+		return nil, authPath, fmt.Errorf("invalid Codex auth JSON: multiple JSON values")
+	} else if err != io.EOF {
 		return nil, authPath, fmt.Errorf("invalid Codex auth JSON: %w", err)
 	}
 

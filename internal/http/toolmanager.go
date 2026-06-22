@@ -146,6 +146,10 @@ func (s *Server) registerServerBackedTools(manager *tools.Manager) {
 	manager.RegisterQuestionTool(s.sessionManager)
 	manager.RegisterSessionTaskProgressTool(s.sessionManager)
 	manager.RegisterSQLQueryTool(s.store)
+	if s.config != nil {
+		openAIImageOutputDir := filepath.Join(strings.TrimSpace(s.config.DataPath), "generated", "openai")
+		manager.Register(integrationtools.NewOpenAIGenerateImageTool(s.config, openAIImageOutputDir))
+	}
 	logging.Debug("Server-backed tools registered. Total tools: %d", len(manager.GetDefinitions()))
 }
 

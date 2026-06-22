@@ -303,11 +303,19 @@ func (s *Server) handleUpsertProjectFile(w http.ResponseWriter, r *http.Request)
 	parentInfo, err := os.Stat(parentDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			s.errorResponse(w, http.StatusBadRequest, "Parent folder does not exist")
+			if err := os.MkdirAll(parentDir, 0o755); err != nil {
+				s.errorResponse(w, http.StatusInternalServerError, "Failed to create parent folder: "+err.Error())
+				return
+			}
+			parentInfo, err = os.Stat(parentDir)
+			if err != nil {
+				s.errorResponse(w, http.StatusInternalServerError, "Failed to access parent folder: "+err.Error())
+				return
+			}
+		} else {
+			s.errorResponse(w, http.StatusBadRequest, "Failed to access parent folder: "+err.Error())
 			return
 		}
-		s.errorResponse(w, http.StatusBadRequest, "Failed to access parent folder: "+err.Error())
-		return
 	}
 	if !parentInfo.IsDir() {
 		s.errorResponse(w, http.StatusBadRequest, "Parent path is not a folder")

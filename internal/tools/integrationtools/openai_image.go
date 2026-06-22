@@ -41,12 +41,11 @@ type openAIGenerateImageParams struct {
 }
 
 type openAIImagesRequest struct {
-	Model          string `json:"model"`
-	Prompt         string `json:"prompt"`
-	N              int    `json:"n"`
-	Size           string `json:"size,omitempty"`
-	Quality        string `json:"quality,omitempty"`
-	ResponseFormat string `json:"response_format"`
+	Model   string `json:"model"`
+	Prompt  string `json:"prompt"`
+	N       int    `json:"n"`
+	Size    string `json:"size,omitempty"`
+	Quality string `json:"quality,omitempty"`
 }
 
 type openAIImagesResponse struct {
@@ -142,17 +141,14 @@ func (t *OpenAIGenerateImageTool) Execute(ctx context.Context, params json.RawMe
 	}
 
 	reqBody := openAIImagesRequest{
-		Model:          model,
-		Prompt:         prompt,
-		N:              n,
-		ResponseFormat: "b64_json",
+		Model:  model,
+		Prompt: prompt,
+		N:      n,
 	}
-	// gpt-image-1 supports "auto" quality; only set when user provides it or for non-gpt-image-1 models
 	if quality := strings.TrimSpace(p.Quality); quality != "" {
 		reqBody.Quality = quality
 	}
-	// Only include size for non-gpt-image-1 models (gpt-image-1 ignores it gracefully, but avoid noise)
-	if !strings.EqualFold(model, "gpt-image-1") || size != openAIDefaultImageSize {
+	if !strings.EqualFold(model, openAIDefaultImageModel) || size != openAIDefaultImageSize {
 		reqBody.Size = size
 	}
 
@@ -201,15 +197,18 @@ func (t *OpenAIGenerateImageTool) Execute(ctx context.Context, params json.RawMe
 	}
 
 	generationID := uuid.NewString()
-	localPaths, err := t.saveImages(generationID, apiResp.Data)
+	localPaths, imageURLs, err := t.saveImages(ctx, generationID, apiResp.Data)
 	if err != nil {
 		return &tools.Result{Success: false, Error: fmt.Sprintf("failed to save generated images: %v", err)}, nil
+	}
+	if len(localPaths) == 0 && len(imageURLs) == 0 {
+		return &tools.Result{Success: false, Error: "OpenAI returned image entries, but none included supported image content"}, nil
 	}
 
 	return &tools.Result{
 		Success:  true,
-		Output:   buildOpenAIToolResultContent(generationID, localPaths, apiResp.Data),
-		Metadata: buildOpenAIToolResultMetadata(localPaths),
+		Output:   buildOpenAIToolResultContent(generationID, localPaths, imageURLs, apiResp.Data),
+		Metadata: buildOpenAIToolResultMetadata(localPaths, imageURLs),
 	}, nil
 }
 
@@ -229,37 +228,81 @@ func (t *OpenAIGenerateImageTool) resolveCredentials() (apiKey, baseURL string) 
 	return apiKey, baseURL
 }
 
-func (t *OpenAIGenerateImageTool) saveImages(generationID string, data []openAIImageDatum) ([]string, error) {
+func (t *OpenAIGenerateImageTool) saveImages(ctx context.Context, generationID string, data []openAIImageDatum) ([]string, []string, error) {
 	outDir := t.outputDir
 	if outDir == "" {
 		outDir = filepath.Join(os.TempDir(), "generated", "openai")
 	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return nil, fmt.Errorf("failed to create output directory: %w", err)
+		return nil, nil, fmt.Errorf("failed to create output directory: %w", err)
 	}
 
 	paths := make([]string, 0, len(data))
+	urls := make([]string, 0, len(data))
 	for i, datum := range data {
-		b64 := strings.TrimSpace(datum.B64JSON)
-		if b64 == "" {
-			// URL-only response: return URL instead of path (rare for gpt-image-1)
-			continue
-		}
-		decoded, err := base64.StdEncoding.DecodeString(b64)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode image %d: %w", i+1, err)
-		}
 		filename := fmt.Sprintf("%s-%d.png", generationID, i+1)
 		path := filepath.Join(outDir, filename)
-		if err := os.WriteFile(path, decoded, 0o644); err != nil {
-			return nil, fmt.Errorf("failed to write image %d: %w", i+1, err)
+
+		b64 := strings.TrimSpace(datum.B64JSON)
+		if b64 != "" {
+			decoded, err := base64.StdEncoding.DecodeString(b64)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to decode image %d: %w", i+1, err)
+			}
+			if err := os.WriteFile(path, decoded, 0o644); err != nil {
+				return nil, nil, fmt.Errorf("failed to write image %d: %w", i+1, err)
+			}
+			paths = append(paths, path)
+			continue
+		}
+
+		rawURL := strings.TrimSpace(datum.URL)
+		if rawURL == "" {
+			continue
+		}
+		if err := t.downloadImage(ctx, path, rawURL); err != nil {
+			return nil, nil, fmt.Errorf("failed to download image %d: %w", i+1, err)
 		}
 		paths = append(paths, path)
+		urls = append(urls, rawURL)
 	}
-	return paths, nil
+	return paths, urls, nil
 }
 
-func buildOpenAIToolResultContent(generationID string, localPaths []string, data []openAIImageDatum) string {
+func (t *OpenAIGenerateImageTool) downloadImage(ctx context.Context, localPath, rawURL string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to build image download request: %w", err)
+	}
+
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("image download request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		detail := strings.TrimSpace(string(body))
+		if detail == "" {
+			detail = resp.Status
+		}
+		return fmt.Errorf("image download failed (status %d): %s", resp.StatusCode, detail)
+	}
+
+	file, err := os.Create(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to create image file: %w", err)
+	}
+	defer file.Close()
+
+	if _, err := io.Copy(file, io.LimitReader(resp.Body, 50*1024*1024)); err != nil {
+		return fmt.Errorf("failed to write downloaded image: %w", err)
+	}
+	return nil
+}
+
+func buildOpenAIToolResultContent(generationID string, localPaths []string, imageURLs []string, data []openAIImageDatum) string {
 	lines := []string{fmt.Sprintf("OpenAI image generation %s completed.", generationID)}
 	if len(localPaths) > 0 {
 		lines = append(lines, "Saved images:")
@@ -267,7 +310,12 @@ func buildOpenAIToolResultContent(generationID string, localPaths []string, data
 			lines = append(lines, "- "+p)
 		}
 	}
-	// Include any revised prompts (dall-e-3/gpt-image-1 may return them)
+	if len(imageURLs) > 0 {
+		lines = append(lines, "Source image URLs:")
+		for _, rawURL := range imageURLs {
+			lines = append(lines, "- "+rawURL)
+		}
+	}
 	for _, d := range data {
 		if revised := strings.TrimSpace(d.RevisedPrompt); revised != "" {
 			lines = append(lines, "Revised prompt: "+revised)
@@ -277,15 +325,16 @@ func buildOpenAIToolResultContent(generationID string, localPaths []string, data
 	return strings.Join(lines, "\n")
 }
 
-func buildOpenAIToolResultMetadata(localPaths []string) map[string]interface{} {
+func buildOpenAIToolResultMetadata(localPaths []string, imageURLs []string) map[string]interface{} {
 	metadata := map[string]interface{}{
 		"openai_images": map[string]interface{}{
 			"paths": localPaths,
+			"urls":  imageURLs,
 		},
 	}
 	if len(localPaths) > 0 {
-		// image_file follows the same convention as leonardo_generate_image
-		// so Caesar can preview it via the /api/assets/image endpoint.
+		// Keep image_file aligned with Leonardo so Caesar can preview generated
+		// images through the existing local asset pipeline.
 		metadata["image_file"] = map[string]interface{}{
 			"path":        localPaths[0],
 			"source_tool": "openai_generate_image",

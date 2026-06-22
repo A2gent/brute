@@ -33,6 +33,70 @@ cd brute
 ./install.sh
 ```
 
+### Dockerized quick start
+
+Use Docker when you want to run the agent without installing the native CLI on your host. API/server mode is the default container workflow and is the best fit for Caesar/web-app integration.
+
+```bash
+git clone https://github.com/A2gent/brute.git
+cd brute
+
+# Start the API server on http://localhost:8080
+docker compose up --build brute
+```
+
+For an interactive TUI inside Docker, run it from a real terminal:
+
+```bash
+docker compose down --remove-orphans
+docker compose run --rm --build --service-ports -it brute-tui
+```
+
+If you use `just`, the same workflows are available as:
+
+```bash
+just docker-api      # API/server mode
+just docker-tui      # interactive TUI mode
+just docker-stop     # stop containers
+```
+
+Dockerized data is persisted on the host at `$HOME/.a2gent-data` and mounted into the container as `/data`. The current repository is mounted as `/workspace`, which is the project tree visible to the agent.
+
+### Windows
+
+The GitHub installer is a Bash installer. On Windows, use WSL2 (Ubuntu) or run the Docker image from a Docker Desktop setup with WSL integration enabled. Native PowerShell/CMD installation is not currently supported.
+
+From PowerShell, install WSL once:
+
+```powershell
+wsl --install -d Ubuntu
+```
+
+Then open the Ubuntu terminal and run:
+
+```bash
+sudo apt update
+sudo apt install -y curl tar git build-essential
+
+# Install Go 1.24+ from https://go.dev/doc/install, then verify:
+go version
+
+curl -fsSL https://raw.githubusercontent.com/A2gent/brute/main/install-from-github.sh | bash
+
+# If the installer says ~/.local/bin is not on PATH:
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+
+brute
+```
+
+Windows notes:
+
+- Brute data lives inside WSL by default at `~/.local/share/aagent` unless `AAGENT_DATA_PATH` is set.
+- Keep projects inside the WSL home directory for best filesystem performance; Windows files are available under `/mnt/c/...` when needed.
+- Browser, camera, and local audio integrations may need extra Windows/WSL setup and are less tested than macOS/Linux paths.
+- For Docker on Windows, enable Docker Desktop WSL integration and run the Docker commands below from the Ubuntu shell.
+
 ## 2. Prerequisites
 
 - Go 1.24+

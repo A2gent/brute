@@ -658,7 +658,13 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 			{Role: "user", Content: "hello"},
 		},
 		Temperature: 0.7,
-		MaxTokens:   100,
+		// Reasoning models (e.g. z-ai/glm-5.2) spend tokens on hidden reasoning
+		// before producing any visible content. A small budget gets fully
+		// consumed by reasoning, yielding empty content with finish_reason
+		// "length". max_tokens is a ceiling, not a target — the model stops
+		// early on a "hello", so a generous cap costs nothing but protects
+		// reasoning-heavy models from truncating. Matches defaultMaxTokens.
+		MaxTokens: 4096,
 	}
 
 	resp, err := client.Chat(ctx, req)
@@ -668,8 +674,14 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if resp.Content == "" {
-		s.jsonResponse(w, http.StatusBadGateway, ProviderTestResponse{Success: false, Message: "Empty response from provider"})
+	if resp.Content == "" && len(resp.ToolCalls) == 0 {
+		message := "Empty response from provider"
+		if resp.StopReason != "" {
+			message = fmt.Sprintf("Empty response from provider (finish_reason: %s). Check if model name is correct.", resp.StopReason)
+		} else {
+			message = "Empty response from provider. Check if the model name is correct or if the model requires a specific prompt."
+		}
+		s.jsonResponse(w, http.StatusBadGateway, ProviderTestResponse{Success: false, Message: message})
 		return
 	}
 

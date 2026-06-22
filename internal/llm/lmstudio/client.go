@@ -78,6 +78,7 @@ type openAIRequest struct {
 type openAIMessage struct {
 	Role       string           `json:"role"`
 	Content    any              `json:"content,omitempty"`
+	Refusal    string           `json:"refusal,omitempty"`
 	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
@@ -117,7 +118,16 @@ type openAIResponse struct {
 		Index        int           `json:"index"`
 		Message      openAIMessage `json:"message"`
 		FinishReason string        `json:"finish_reason"`
+		Error        *struct {
+			Message string `json:"message"`
+			Code    any    `json:"code"`
+		} `json:"error,omitempty"`
 	} `json:"choices"`
+	Error *struct {
+		Message string `json:"message"`
+		Type    string `json:"type"`
+		Code    any    `json:"code"`
+	} `json:"error,omitempty"`
 	Usage struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
@@ -130,6 +140,7 @@ type openAIStreamResponse struct {
 		Index int `json:"index"`
 		Delta struct {
 			Content   string `json:"content"`
+			Refusal   string `json:"refusal,omitempty"`
 			ToolCalls []struct {
 				Index    int    `json:"index"`
 				ID       string `json:"id"`
@@ -143,7 +154,16 @@ type openAIStreamResponse struct {
 			} `json:"tool_calls"`
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
+		Error        *struct {
+			Message string `json:"message"`
+			Code    any    `json:"code"`
+		} `json:"error,omitempty"`
 	} `json:"choices"`
+	Error *struct {
+		Message string `json:"message"`
+		Type    string `json:"type"`
+		Code    any    `json:"code"`
+	} `json:"error,omitempty"`
 	Usage struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
@@ -289,12 +309,33 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
+	if oaiResp.Error != nil && oaiResp.Error.Message != "" {
+		err := fmt.Errorf("%s returned error: %s", c.providerName(), oaiResp.Error.Message)
+		logging.LogResponse(0, 0, 0, err)
+		return nil, err
+	}
+
 	if len(oaiResp.Choices) == 0 {
 		return nil, fmt.Errorf("no response from %s", c.providerName())
 	}
 
 	choice := oaiResp.Choices[0]
+	if choice.Error != nil && choice.Error.Message != "" {
+		err := fmt.Errorf("%s model error: %s", c.providerName(), choice.Error.Message)
+		logging.LogResponse(0, 0, 0, err)
+		return nil, err
+	}
+
 	responseText, responseImages := parseOpenAIContent(choice.Message.Content)
+	if responseText == "" && choice.Message.Refusal != "" {
+		responseText = choice.Message.Refusal
+	}
+
+	// If response is completely empty but finish reason indicates length or error
+	if responseText == "" && len(choice.Message.ToolCalls) == 0 && choice.FinishReason != "" && choice.FinishReason != "stop" {
+		return nil, fmt.Errorf("%s model failed (finish_reason: %s)", c.providerName(), choice.FinishReason)
+	}
+
 	response := &llm.ChatResponse{
 		Content:    responseText,
 		Images:     responseImages,
@@ -424,10 +465,13 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		if payload == "[DONE]" {
 			break
 		}
-
 		var chunk openAIStreamResponse
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
 			return nil, fmt.Errorf("failed to parse stream chunk: %w", err)
+		}
+
+		if chunk.Error != nil && chunk.Error.Message != "" {
+			return nil, fmt.Errorf("%s stream error: %s", c.providerName(), chunk.Error.Message)
 		}
 
 		if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
@@ -443,12 +487,28 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		}
 
 		for _, choice := range chunk.Choices {
+			if choice.Error != nil && choice.Error.Message != "" {
+				return nil, fmt.Errorf("%s model stream error: %s", c.providerName(), choice.Error.Message)
+			}
+
 			if choice.Delta.Content != "" {
 				result.Content += choice.Delta.Content
 				if onEvent != nil {
 					if err := onEvent(llm.StreamEvent{
 						Type:         llm.StreamEventContentDelta,
 						ContentDelta: choice.Delta.Content,
+					}); err != nil {
+						return nil, err
+					}
+				}
+			}
+
+			if choice.Delta.Refusal != "" {
+				result.Content += choice.Delta.Refusal
+				if onEvent != nil {
+					if err := onEvent(llm.StreamEvent{
+						Type:         llm.StreamEventContentDelta,
+						ContentDelta: choice.Delta.Refusal,
 					}); err != nil {
 						return nil, err
 					}
@@ -502,6 +562,11 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("stream read error: %w", err)
+	}
+
+	// If response is completely empty but finish reason indicates length or error
+	if result.Content == "" && len(result.ToolCalls) == 0 && result.StopReason != "" && result.StopReason != "stop" {
+		return nil, fmt.Errorf("%s model failed (finish_reason: %s)", c.providerName(), result.StopReason)
 	}
 
 	toolNames := make([]string, len(result.ToolCalls))

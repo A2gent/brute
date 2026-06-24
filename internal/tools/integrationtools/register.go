@@ -23,6 +23,8 @@ func Register(manager *tools.Manager, store storage.Store, clipStore *speechcach
 	manager.Register(NewTelegramSendMessageTool(store))
 	manager.Register(NewDiscordSendMessageTool(store))
 	manager.Register(NewExaSearchQueryTool(store))
+	manager.Register(NewTavilySearchTool(store))
+	manager.Register(NewPerplexitySearchTool(store))
 	manager.Register(NewFetchURLTool())
 	manager.Register(NewYoutubeTranscriptTool())
 	manager.Register(NewBrowserChromeTool(manager.WorkDir()))

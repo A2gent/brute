@@ -573,6 +573,34 @@ func providerHasCredentials(providerType config.ProviderType, provider config.Pr
 	return providerAPIKeyFromEnv(providerType) != ""
 }
 
+func (m Model) providerUsageHint(providerType config.ProviderType) string {
+	if m.appConfig == nil {
+		return ""
+	}
+
+	switch providerType {
+	case config.ProviderOpenAI:
+		provider := m.appConfig.Providers[string(providerType)]
+		if !providerHasCredentials(providerType, provider) {
+			return "usage left: configure API key first"
+		}
+		return "usage left: unavailable (check OpenAI dashboard)"
+	case config.ProviderOpenAICodex:
+		provider := m.appConfig.Providers[string(providerType)]
+		if !providerHasCredentials(providerType, provider) {
+			return "usage left: connect Codex OAuth/API key first"
+		}
+		return "usage left: unavailable (check ChatGPT/OpenAI limits)"
+	case config.ProviderAnthropic:
+		if !claudecli.IsAvailable() {
+			return "usage left: Claude CLI unavailable"
+		}
+		return "usage left: unavailable (Claude CLI reports per-run usage only)"
+	default:
+		return ""
+	}
+}
+
 // saveProviderCredentials saves the API key or URL for a provider
 func (m Model) saveProviderCredentials() (tea.Model, tea.Cmd) {
 	providerType := config.ProviderType(m.selectedProviderType)

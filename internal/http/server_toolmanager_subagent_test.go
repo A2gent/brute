@@ -81,6 +81,24 @@ func TestToolManagerForSession_SubAgentIgnoresGlobalDisabledTools(t *testing.T) 
 	}
 }
 
+func TestServerToolManager_RegistersTavilyAndPerplexitySearchTools(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	sessionManager := session.NewManager(store)
+	server := NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
+
+	if _, ok := server.toolManager.Get("tavily_search"); !ok {
+		t.Fatalf("expected tavily_search to be registered in the server tool manager")
+	}
+	if _, ok := server.toolManager.Get("perplexity_search"); !ok {
+		t.Fatalf("expected perplexity_search to be registered in the server tool manager")
+	}
+}
+
 func TestBuildSubAgentToolManager_IncludesIntegrationToolsForProjectWorkDir(t *testing.T) {
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	if err != nil {
@@ -109,9 +127,15 @@ func TestBuildSubAgentToolManager_IncludesIntegrationToolsForProjectWorkDir(t *t
 	}
 	subSess.ProjectID = &project.ID
 
-	mgr := server.buildSubAgentToolManager(subSess, []string{"youtube_transcript"})
+	mgr := server.buildSubAgentToolManager(subSess, []string{"youtube_transcript", "tavily_search", "perplexity_search"})
 	if _, ok := mgr.Get("youtube_transcript"); !ok {
 		t.Fatalf("expected youtube_transcript to be available for project-scoped sub-agent")
+	}
+	if _, ok := mgr.Get("tavily_search"); !ok {
+		t.Fatalf("expected tavily_search to be available when explicitly enabled")
+	}
+	if _, ok := mgr.Get("perplexity_search"); !ok {
+		t.Fatalf("expected perplexity_search to be available when explicitly enabled")
 	}
 	if _, ok := mgr.Get("exa_search"); ok {
 		t.Fatalf("did not expect unrelated integration tools to bypass sub-agent allow list")

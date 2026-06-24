@@ -344,7 +344,7 @@ func excludedTool(name string) bool {
 
 func compressibleTool(name string) bool {
 	switch name {
-	case "bash", "code_execution", "grep", "content_search", "find_files", "filter", "fetch_url", "youtube_transcript", "exa_search", "brave_search_query", "sql_query", "delegate_to_agent", "delegate_to_subagent", "delegate_to_external_agent":
+	case "bash", "code_execution", "grep", "content_search", "find_files", "filter", "fetch_url", "youtube_transcript", "exa_search", "brave_search_query", "tavily_search", "perplexity_search", "sql_query", "delegate_to_agent", "delegate_to_subagent", "delegate_to_external_agent":
 		return true
 	default:
 		return false

@@ -516,12 +516,12 @@ func sessionA2AOutboundMeta(sess *session.Session) (isOutbound bool, targetAgent
 	return
 }
 
-func (s *Server) handleA2AInternalEvent(ctx context.Context, payload json.RawMessage) (string, error) {
+func (s *Server) handleA2AInternalEvent(ctx context.Context, payload json.RawMessage) (*a2atunnel.InternalEventResult, error) {
 	var envelope struct {
 		Metadata map[string]interface{} `json:"metadata"`
 	}
 	if err := json.Unmarshal(payload, &envelope); err != nil {
-		return "", fmt.Errorf("failed to decode internal event envelope: %w", err)
+		return nil, fmt.Errorf("failed to decode internal event envelope: %w", err)
 	}
 
 	eventType := ""
@@ -532,28 +532,34 @@ func (s *Server) handleA2AInternalEvent(ctx context.Context, payload json.RawMes
 	}
 
 	switch eventType {
+	case bruteHTTPInternalEvent:
+		payload, conversationID, err := s.handleBruteHTTPInternalEvent(ctx, payload)
+		if err != nil {
+			return nil, err
+		}
+		return &a2atunnel.InternalEventResult{Payload: payload, ConversationID: conversationID}, nil
 	case "leonardo_webhook":
 		processor := integrationtools.NewLeonardoWebhookProcessor(s.store, s.sessionManager, s.config.DataPath)
 		sessionID, err := processor.HandleWebhook(ctx, payload)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		if strings.TrimSpace(sessionID) != "" {
 			s.resumeSessionAfterExternalToolResult(sessionID)
 		}
-		return sessionID, nil
+		return &a2atunnel.InternalEventResult{ConversationID: sessionID}, nil
 	case "webhook_inbound":
 		processor := integrationtools.NewLeonardoWebhookProcessor(s.store, s.sessionManager, s.config.DataPath)
 		sessionID, err := processor.HandleWebhook(ctx, payload)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		if strings.TrimSpace(sessionID) != "" {
 			s.resumeSessionAfterExternalToolResult(sessionID)
 		}
-		return sessionID, nil
+		return &a2atunnel.InternalEventResult{ConversationID: sessionID}, nil
 	default:
-		return "", fmt.Errorf("unsupported internal event: %s", eventType)
+		return nil, fmt.Errorf("unsupported internal event: %s", eventType)
 	}
 }
 

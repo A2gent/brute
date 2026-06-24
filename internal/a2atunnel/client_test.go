@@ -241,3 +241,65 @@ func (s *grpcTestService) Connect(stream grpcTunnelConnectServer) error {
 		}
 	}
 }
+
+func TestTunnelClientInboundTaskCompatibilityStillUsesTaskResponse(t *testing.T) {
+	t.Parallel()
+
+	apiKey := "sq_test_key_compat"
+	captured := make(chan AgentResponse, 1)
+
+	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+apiKey {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "bye")
+
+		if err := wsjson.Write(r.Context(), conn, AgentRequest{
+			Kind:      KindTask,
+			RequestID: "req-compat-1",
+			Payload:   []byte(`{"task":"ping"}`),
+		}); err != nil {
+			t.Errorf("write inbound task: %v", err)
+			return
+		}
+
+		var msg AgentResponse
+		if err := wsjson.Read(r.Context(), conn, &msg); err != nil {
+			t.Errorf("read agent response: %v", err)
+			return
+		}
+		captured <- msg
+	}))
+	defer wsServer.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(wsServer.URL, "http")
+	client := NewWithTransport(wsURL, apiKey, noopHandler{}, TransportWebSocket)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go client.Run(ctx)
+	waitConnected(t, client)
+
+	select {
+	case msg := <-captured:
+		if msg.Kind != KindTaskResponse {
+			t.Fatalf("expected task_response kind, got %q", msg.Kind)
+		}
+		if msg.RequestID != "req-compat-1" {
+			t.Fatalf("expected request id req-compat-1, got %q", msg.RequestID)
+		}
+		var out map[string]any
+		if err := json.Unmarshal(msg.Payload, &out); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		if out["result"] != "ok" {
+			t.Fatalf("expected compat result, got %#v", out)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for task_response")
+	}
+}

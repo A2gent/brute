@@ -23,6 +23,7 @@ import (
 	"github.com/A2gent/brute/internal/speechcache"
 	"github.com/A2gent/brute/internal/storage"
 	"github.com/A2gent/brute/internal/tools"
+	"github.com/A2gent/brute/internal/tools/integrationtools"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -95,6 +96,8 @@ func NewServer(
 		contextCompressor:     contextcompress.NewCompressorWithSessionStore(contextcompress.Config{Enabled: true}, sessionManager),
 	}
 	s.dockerRuntime = newDockerRuntimeManager(s)
+
+	integrationtools.Register(s.toolManager, store, speechClips, sessionManager)
 
 	if settings, err := store.GetSettings(); err == nil {
 		folder := strings.TrimSpace(settings[sessionsFolderSettingKey])

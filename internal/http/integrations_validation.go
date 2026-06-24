@@ -119,6 +119,10 @@ func trimConfig(config map[string]string) map[string]string {
 func integrationToResponse(integration *storage.Integration) IntegrationResponse {
 	configCopy := make(map[string]string, len(integration.Config))
 	for key, value := range integration.Config {
+		if isSensitiveIntegrationConfigKey(key) && strings.TrimSpace(value) != "" {
+			configCopy[key] = "***"
+			continue
+		}
 		configCopy[key] = value
 	}
 
@@ -131,6 +135,15 @@ func integrationToResponse(integration *storage.Integration) IntegrationResponse
 		Config:    configCopy,
 		CreatedAt: integration.CreatedAt,
 		UpdatedAt: integration.UpdatedAt,
+	}
+}
+
+func isSensitiveIntegrationConfigKey(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "api_key", "api_secret", "access_token", "access_token_secret", "bot_token", "client_secret", "refresh_token":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -158,6 +171,10 @@ func defaultIntegrationName(provider string) string {
 		return "YouTube"
 	case "brave_search":
 		return "Brave Search"
+	case "exa":
+		return "Exa"
+	case "tavily":
+		return "Tavily"
 	default:
 		return provider
 	}

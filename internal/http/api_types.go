@@ -383,6 +383,16 @@ type ProviderConfigResponse struct {
 	RouterRules       []config.RouterRule        `json:"router_rules,omitempty"`
 }
 
+type ProviderUsageResponse struct {
+	Provider      string `json:"provider"`
+	Status        string `json:"status"`
+	UsageLeftText string `json:"usage_left_text"`
+	Source        string `json:"source,omitempty"`
+	CheckedAt     string `json:"checked_at,omitempty"`
+	Refreshable   bool   `json:"refreshable"`
+	Error         string `json:"error,omitempty"`
+}
+
 type UpdateProviderRequest struct {
 	Name              *string                     `json:"name,omitempty"`
 	APIKey            *string                     `json:"api_key,omitempty"`

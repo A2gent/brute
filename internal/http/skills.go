@@ -27,6 +27,8 @@ var integrationToolsByProvider = map[string][]string{
 	"telegram":        {"telegram_send_message"},
 	"discord":         {"discord_send_message"},
 	"exa":             {"exa_search"},
+	"tavily":          {"tavily_search"},
+	"perplexity":      {"perplexity_search"},
 	"youtube":         {"youtube_transcript"},
 	"a2_registry":     {"delegate_to_external_agent", "discover_external_agents"},
 }

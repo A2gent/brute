@@ -326,6 +326,9 @@ func (m Model) renderProviderMenu() string {
 			}
 
 			item := fmt.Sprintf("%s%s", p.DisplayName, current)
+			if usageHint := m.providerUsageHint(p.Type); usageHint != "" {
+				item = fmt.Sprintf("%s  %s", item, statsStyle.Render(usageHint))
+			}
 
 			if i == m.providerMenuIndex {
 				item = commandSelectedStyle.Render(item)

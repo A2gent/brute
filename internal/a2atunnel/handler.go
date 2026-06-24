@@ -29,9 +29,18 @@ type AgentRunnerBuilder func(ctx context.Context, sess *session.Session, toolMan
 // ToolManagerFactory creates a tool manager scoped to a session's project.
 type ToolManagerFactory func(sess *session.Session) *tools.Manager
 
+// InternalEventResult allows selected internal events to return a raw tunnel
+// payload instead of the default OutboundPayload envelope.
+type InternalEventResult struct {
+	Payload       []byte
+	ConversationID string
+}
+
 // InternalEventHandler processes non-agent inbound events bridged through Square,
-// such as provider webhooks, and returns the affected session ID.
-type InternalEventHandler func(ctx context.Context, payload json.RawMessage) (string, error)
+// such as provider webhooks. It may return either a session ID for the default
+// OutboundPayload wrapper or a raw payload for typed tunnel-side protocols like
+// HTTP-over-tunnel.
+type InternalEventHandler func(ctx context.Context, payload json.RawMessage) (*InternalEventResult, error)
 
 // InboundHandler implements Handler. It creates a new session per inbound
 // A2A request, runs the agent loop synchronously, and returns the result.
@@ -229,14 +238,20 @@ func (h *InboundHandler) handleInternalEvent(ctx context.Context, eventType stri
 	if h.internalEventHandler == nil {
 		return nil, fmt.Errorf("internal event %q is not configured", eventType)
 	}
-	sessionID, err := h.internalEventHandler(ctx, payload)
+	result, err := h.internalEventHandler(ctx, payload)
 	if err != nil {
 		return nil, err
+	}
+	if result == nil {
+		return nil, fmt.Errorf("internal event %q returned no result", eventType)
+	}
+	if len(result.Payload) > 0 {
+		return result.Payload, nil
 	}
 	out, err := json.Marshal(OutboundPayload{
 		A2AVersion:     A2ABridgeVersion,
 		MessageID:      uuid.NewString(),
-		ConversationID: strings.TrimSpace(sessionID),
+		ConversationID: strings.TrimSpace(result.ConversationID),
 		Result:         fmt.Sprintf("internal event %s processed", eventType),
 		Content:        BuildA2AContent(fmt.Sprintf("internal event %s processed", eventType), nil),
 	})

@@ -24,6 +24,8 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 
 	filterA2A := r.URL.Query().Get("a2a_inbound") == "true"
 	includeMetadata := r.URL.Query().Get("include_metadata") == "true"
+	filterProjectID := strings.TrimSpace(r.URL.Query().Get("project_id"))
+	metadataKeys := parseSessionListMetadataKeys(r.URL.Query().Get("metadata_keys"))
 
 	items := make([]SessionListItem, 0, len(sessions))
 	for _, sess := range sessions {
@@ -39,7 +41,10 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		routedProvider, routedModel := sessionRoutedProviderAndModel(sess)
 		projectID := ""
 		if sess.ProjectID != nil {
-			projectID = *sess.ProjectID
+			projectID = strings.TrimSpace(*sess.ProjectID)
+		}
+		if filterProjectID != "" && projectID != filterProjectID {
+			continue
 		}
 		jobID := ""
 		if sess.JobID != nil {
@@ -71,12 +76,49 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			A2ASourceAgentName: sourceAgentName,
 		}
 		if includeMetadata {
-			item.Metadata = sess.Metadata
+			item.Metadata = filterSessionListMetadata(sess.Metadata, metadataKeys)
 		}
 		items = append(items, item)
 	}
 
 	s.jsonResponse(w, http.StatusOK, items)
+}
+
+func parseSessionListMetadataKeys(raw string) map[string]struct{} {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	keys := make(map[string]struct{})
+	for _, part := range strings.Split(raw, ",") {
+		key := strings.TrimSpace(part)
+		if key == "" {
+			continue
+		}
+		keys[key] = struct{}{}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	return keys
+}
+
+func filterSessionListMetadata(metadata map[string]interface{}, keys map[string]struct{}) map[string]interface{} {
+	if len(metadata) == 0 {
+		return nil
+	}
+	if len(keys) == 0 {
+		return metadata
+	}
+	filtered := make(map[string]interface{}, len(keys))
+	for key := range keys {
+		if value, ok := metadata[key]; ok {
+			filtered[key] = value
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -423,6 +465,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionID")
 	includeMessages := r.URL.Query().Get("include_messages") != "false"
 	includeMetadata := r.URL.Query().Get("include_metadata") != "false"
+	metadataKeys := parseSessionListMetadataKeys(r.URL.Query().Get("metadata_keys"))
 
 	var sess *session.Session
 	var err error
@@ -452,6 +495,8 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if !includeMetadata {
 		resp.Metadata = nil
+	} else {
+		resp.Metadata = filterSessionListMetadata(resp.Metadata, metadataKeys)
 	}
 	s.jsonResponse(w, http.StatusOK, resp)
 }

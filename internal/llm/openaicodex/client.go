@@ -600,7 +600,7 @@ func normalizeOptions(options Options) Options {
 	options.PromptCacheKey = strings.TrimSpace(options.PromptCacheKey)
 	options.ReasoningEffort = strings.TrimSpace(options.ReasoningEffort)
 	options.TextVerbosity = strings.TrimSpace(options.TextVerbosity)
-	options.ServiceTier = strings.TrimSpace(options.ServiceTier)
+	options.ServiceTier = normalizeCodexServiceTier(options.ServiceTier)
 	// The ChatGPT Codex backend rejects stored responses.
 	options.StatefulResponses = false
 	if options.MaxTokens < 0 {
@@ -613,6 +613,16 @@ func normalizeOptions(options Options) Options {
 		)
 	}
 	return options
+}
+
+func normalizeCodexServiceTier(serviceTier string) string {
+	serviceTier = strings.TrimSpace(serviceTier)
+	// The ChatGPT Codex backend currently rejects `service_tier: "auto"`.
+	// Treat it like the default/unspecified tier and omit the field from requests.
+	if strings.EqualFold(serviceTier, "auto") {
+		return ""
+	}
+	return serviceTier
 }
 
 func (c *Client) requestOptions(request *llm.ChatRequest) Options {

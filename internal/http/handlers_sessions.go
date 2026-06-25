@@ -65,6 +65,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			RoutedProvider:     routedProvider,
 			RoutedModel:        routedModel,
 			Title:              sess.Title,
+			Summary:            sess.Summary,
 			Status:             string(sess.Status),
 			TotalTokens:        inputTokens + outputTokens,
 			InputTokens:        inputTokens,

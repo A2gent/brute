@@ -19,18 +19,19 @@ func (s *SQLiteStore) SaveSession(sess *Session) error {
 
 		// Upsert session
 		_, err = tx.Exec(`
-			INSERT INTO sessions (id, agent_id, parent_id, job_id, project_id, title, status, metadata, task_progress, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(id) DO UPDATE SET
-				parent_id = excluded.parent_id,
-				job_id = excluded.job_id,
-				project_id = excluded.project_id,
-				title = excluded.title,
-				status = excluded.status,
-				metadata = excluded.metadata,
-				task_progress = excluded.task_progress,
-				updated_at = excluded.updated_at
-		`, sess.ID, sess.AgentID, sess.ParentID, sess.JobID, sess.ProjectID, sess.Title, sess.Status, metadata, sess.TaskProgress, sess.CreatedAt, sess.UpdatedAt)
+				INSERT INTO sessions (id, agent_id, parent_id, job_id, project_id, title, summary, status, metadata, task_progress, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT(id) DO UPDATE SET
+					parent_id = excluded.parent_id,
+					job_id = excluded.job_id,
+					project_id = excluded.project_id,
+					title = excluded.title,
+					summary = excluded.summary,
+					status = excluded.status,
+					metadata = excluded.metadata,
+					task_progress = excluded.task_progress,
+					updated_at = excluded.updated_at
+			`, sess.ID, sess.AgentID, sess.ParentID, sess.JobID, sess.ProjectID, sess.Title, sess.Summary, sess.Status, metadata, sess.TaskProgress, sess.CreatedAt, sess.UpdatedAt)
 		if err != nil {
 			return fmt.Errorf("failed to save session: %w", err)
 		}
@@ -121,12 +122,13 @@ func (s *SQLiteStore) GetSession(id string) (*Session, error) {
 	var jobID sql.NullString
 	var projectID sql.NullString
 	var title sql.NullString
+	var summary sql.NullString
 	var taskProgress sql.NullString
 
 	err := s.db.QueryRow(`
-		SELECT id, agent_id, parent_id, job_id, project_id, title, status, metadata, task_progress, created_at, updated_at
+		SELECT id, agent_id, parent_id, job_id, project_id, title, summary, status, metadata, task_progress, created_at, updated_at
 		FROM sessions WHERE id = ?
-	`, id).Scan(&sess.ID, &sess.AgentID, &parentID, &jobID, &projectID, &title, &sess.Status, &metadata, &taskProgress, &sess.CreatedAt, &sess.UpdatedAt)
+	`, id).Scan(&sess.ID, &sess.AgentID, &parentID, &jobID, &projectID, &title, &summary, &sess.Status, &metadata, &taskProgress, &sess.CreatedAt, &sess.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("session not found: %s", id)
 	}
@@ -145,6 +147,9 @@ func (s *SQLiteStore) GetSession(id string) (*Session, error) {
 	}
 	if title.Valid {
 		sess.Title = title.String
+	}
+	if summary.Valid {
+		sess.Summary = summary.String
 	}
 	if metadata.Valid {
 		json.Unmarshal([]byte(metadata.String), &sess.Metadata)
@@ -195,12 +200,13 @@ func (s *SQLiteStore) GetSessionSummary(id string) (*Session, error) {
 	var jobID sql.NullString
 	var projectID sql.NullString
 	var title sql.NullString
+	var summary sql.NullString
 	var taskProgress sql.NullString
 
 	err := s.db.QueryRow(`
-		SELECT id, agent_id, parent_id, job_id, project_id, title, status, task_progress, created_at, updated_at
+		SELECT id, agent_id, parent_id, job_id, project_id, title, summary, status, task_progress, created_at, updated_at
 		FROM sessions WHERE id = ?
-	`, id).Scan(&sess.ID, &sess.AgentID, &parentID, &jobID, &projectID, &title, &sess.Status, &taskProgress, &sess.CreatedAt, &sess.UpdatedAt)
+	`, id).Scan(&sess.ID, &sess.AgentID, &parentID, &jobID, &projectID, &title, &summary, &sess.Status, &taskProgress, &sess.CreatedAt, &sess.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("session not found: %s", id)
 	}
@@ -220,6 +226,9 @@ func (s *SQLiteStore) GetSessionSummary(id string) (*Session, error) {
 	if title.Valid {
 		sess.Title = title.String
 	}
+	if summary.Valid {
+		sess.Summary = summary.String
+	}
 	if taskProgress.Valid {
 		sess.TaskProgress = taskProgress.String
 	}
@@ -230,7 +239,7 @@ func (s *SQLiteStore) GetSessionSummary(id string) (*Session, error) {
 // ListSessions lists all sessions, including sessions created by recurring jobs.
 func (s *SQLiteStore) ListSessions() ([]*Session, error) {
 	rows, err := s.db.Query(`
-		SELECT id, agent_id, parent_id, job_id, project_id, title, status, metadata, task_progress, created_at, updated_at
+		SELECT id, agent_id, parent_id, job_id, project_id, title, summary, status, metadata, task_progress, created_at, updated_at
 		FROM sessions
 		ORDER BY created_at DESC
 	`)
@@ -244,10 +253,11 @@ func (s *SQLiteStore) ListSessions() ([]*Session, error) {
 		var sess Session
 		var parentID, jobID, projectID sql.NullString
 		var title sql.NullString
+		var summary sql.NullString
 		var metadata sql.NullString
 		var taskProgress sql.NullString
 
-		err := rows.Scan(&sess.ID, &sess.AgentID, &parentID, &jobID, &projectID, &title, &sess.Status, &metadata, &taskProgress, &sess.CreatedAt, &sess.UpdatedAt)
+		err := rows.Scan(&sess.ID, &sess.AgentID, &parentID, &jobID, &projectID, &title, &summary, &sess.Status, &metadata, &taskProgress, &sess.CreatedAt, &sess.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -263,6 +273,9 @@ func (s *SQLiteStore) ListSessions() ([]*Session, error) {
 		}
 		if title.Valid {
 			sess.Title = title.String
+		}
+		if summary.Valid {
+			sess.Summary = summary.String
 		}
 		if metadata.Valid && metadata.String != "" {
 			_ = json.Unmarshal([]byte(metadata.String), &sess.Metadata)
@@ -280,7 +293,7 @@ func (s *SQLiteStore) ListSessions() ([]*Session, error) {
 // ListSessionsByJob returns all sessions associated with a specific job
 func (s *SQLiteStore) ListSessionsByJob(jobID string) ([]*Session, error) {
 	rows, err := s.db.Query(`
-		SELECT id, agent_id, parent_id, job_id, project_id, title, status, metadata, task_progress, created_at, updated_at
+		SELECT id, agent_id, parent_id, job_id, project_id, title, summary, status, metadata, task_progress, created_at, updated_at
 		FROM sessions 
 		WHERE job_id = ?
 		ORDER BY created_at DESC
@@ -295,10 +308,11 @@ func (s *SQLiteStore) ListSessionsByJob(jobID string) ([]*Session, error) {
 		var sess Session
 		var parentID, jobID, projectID sql.NullString
 		var title sql.NullString
+		var summary sql.NullString
 		var metadata sql.NullString
 		var taskProgress sql.NullString
 
-		err := rows.Scan(&sess.ID, &sess.AgentID, &parentID, &jobID, &projectID, &title, &sess.Status, &metadata, &taskProgress, &sess.CreatedAt, &sess.UpdatedAt)
+		err := rows.Scan(&sess.ID, &sess.AgentID, &parentID, &jobID, &projectID, &title, &summary, &sess.Status, &metadata, &taskProgress, &sess.CreatedAt, &sess.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -314,6 +328,9 @@ func (s *SQLiteStore) ListSessionsByJob(jobID string) ([]*Session, error) {
 		}
 		if title.Valid {
 			sess.Title = title.String
+		}
+		if summary.Valid {
+			sess.Summary = summary.String
 		}
 		if metadata.Valid && metadata.String != "" {
 			_ = json.Unmarshal([]byte(metadata.String), &sess.Metadata)

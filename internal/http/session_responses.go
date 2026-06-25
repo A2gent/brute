@@ -63,6 +63,7 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		RoutedProvider:       routedProvider,
 		RoutedModel:          routedModel,
 		Title:                sess.Title,
+		Summary:              sess.Summary,
 		Status:               string(sess.Status),
 		ActiveRuns:           s.activeSessionRunCount(sess.ID),
 		TotalTokens:          totalTokens,

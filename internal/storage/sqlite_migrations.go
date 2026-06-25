@@ -13,6 +13,7 @@ func (s *SQLiteStore) migrate() error {
 			parent_id TEXT,
 			project_id TEXT,
 			title TEXT DEFAULT '',
+			summary TEXT DEFAULT '',
 			status TEXT NOT NULL,
 			metadata TEXT,
 			created_at TIMESTAMP NOT NULL,
@@ -33,6 +34,8 @@ func (s *SQLiteStore) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_sessions_parent_id ON sessions(parent_id)`,
 		// Migration to add title column if it doesn't exist
 		`ALTER TABLE sessions ADD COLUMN title TEXT DEFAULT ''`,
+		// Migration: concise one-sentence session label for dense lists.
+		`ALTER TABLE sessions ADD COLUMN summary TEXT DEFAULT ''`,
 		// Migration to add project_id column to sessions
 		`ALTER TABLE sessions ADD COLUMN project_id TEXT`,
 		// Migration to add metadata column to messages

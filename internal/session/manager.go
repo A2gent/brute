@@ -144,6 +144,9 @@ func (m *Manager) GetSummary(id string) (*Session, error) {
 
 // Save saves a session and appends new messages to the JSONL log (if configured).
 func (m *Manager) Save(sess *Session) error {
+	if sess != nil {
+		sess.RefreshSummary()
+	}
 	if err := m.store.SaveSession(sess.ToStorage()); err != nil {
 		return err
 	}

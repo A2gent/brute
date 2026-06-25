@@ -13,6 +13,7 @@ type Session struct {
 	JobID        *string // Associated recurring job (nil for regular sessions)
 	ProjectID    *string // Associated project (nil for ungrouped sessions)
 	Title        string
+	Summary      string // Concise one-sentence label for dense session lists.
 	Status       string
 	Messages     []Message
 	Metadata     map[string]interface{}

@@ -30,6 +30,7 @@ type Session struct {
 	JobID        *string                `json:"job_id,omitempty"` // Associated recurring job
 	ProjectID    *string                `json:"project_id,omitempty"`
 	Title        string                 `json:"title"`
+	Summary      string                 `json:"summary,omitempty"`
 	Status       Status                 `json:"status"`
 	Messages     []Message              `json:"messages"`
 	Metadata     map[string]interface{} `json:"metadata,omitempty"`
@@ -147,6 +148,13 @@ func (s *Session) AddUserMessageWithImagesAndMetadata(content string, images []I
 		}
 		s.SetTitle(title)
 	}
+	if s.Summary == "" {
+		summary := SummaryFromContent(content)
+		if summary == "" && len(images) > 0 {
+			summary = "Image request"
+		}
+		s.SetSummary(summary)
+	}
 
 	s.AddMessage(Message{
 		Role:     "user",
@@ -220,6 +228,12 @@ func (s *Session) SetTitle(title string) {
 	s.UpdatedAt = time.Now()
 }
 
+// SetSummary sets the concise one-sentence session summary shown in dense lists.
+func (s *Session) SetSummary(summary string) {
+	s.Summary = summary
+	s.UpdatedAt = time.Now()
+}
+
 // ToStorage converts to storage format
 func (s *Session) ToStorage() *storage.Session {
 	messages := make([]storage.Message, len(s.Messages))
@@ -244,6 +258,7 @@ func (s *Session) ToStorage() *storage.Session {
 		JobID:        s.JobID,
 		ProjectID:    s.ProjectID,
 		Title:        s.Title,
+		Summary:      s.Summary,
 		Status:       string(s.Status),
 		Messages:     messages,
 		Metadata:     s.Metadata,
@@ -283,6 +298,7 @@ func FromStorage(ss *storage.Session) *Session {
 		JobID:        ss.JobID,
 		ProjectID:    ss.ProjectID,
 		Title:        ss.Title,
+		Summary:      ss.Summary,
 		Status:       Status(ss.Status),
 		Messages:     messages,
 		Metadata:     ss.Metadata,

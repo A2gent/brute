@@ -66,6 +66,38 @@ func TestHandleListSessionsFiltersProjectAndMetadataKeys(t *testing.T) {
 	}
 }
 
+func TestHandleListSessionsIncludesSummary(t *testing.T) {
+	t.Parallel()
+
+	server, _ := newBruteHTTPProxyTestServer(t)
+	sess, err := server.sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	sess.AddUserMessage("Investigate session summaries. Keep labels concise.")
+	if err := server.sessionManager.Save(sess); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	req := httptest.NewRequest(stdhttp.MethodGet, "/sessions/", nil)
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+
+	if rec.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var items []SessionListItem
+	if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
+		t.Fatalf("decode sessions response: %v", err)
+	}
+	if len(items) == 0 {
+		t.Fatal("expected at least one session")
+	}
+	if got, want := items[0].Summary, "Investigate session summaries."; got != want {
+		t.Fatalf("summary = %q, want %q", got, want)
+	}
+}
+
 func TestHandleGetSessionFiltersMetadataKeys(t *testing.T) {
 	t.Parallel()
 

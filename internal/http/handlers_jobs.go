@@ -353,6 +353,7 @@ func (s *Server) handleListJobSessions(w http.ResponseWriter, r *http.Request) {
 			RoutedProvider:     routedProvider,
 			RoutedModel:        routedModel,
 			Title:              sess.Title,
+			Summary:            sess.Summary,
 			Status:             sess.Status,
 			TotalTokens:        storageSessionTotalTokens(sess),
 			RunDurationSeconds: sessionRunDurationSeconds(sess.CreatedAt, sess.UpdatedAt, sess.Status),

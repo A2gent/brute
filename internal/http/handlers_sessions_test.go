@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	stdhttp "net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -100,5 +101,68 @@ func TestHandleGetSessionFiltersMetadataKeys(t *testing.T) {
 	}
 	if len(item.Messages) != 0 {
 		t.Fatalf("expected messages to be omitted, got %#v", item.Messages)
+	}
+}
+
+func TestHandleDownloadSessionLogServesJSONLAttachment(t *testing.T) {
+	t.Parallel()
+
+	server, _ := newBruteHTTPProxyTestServer(t)
+	logDir := t.TempDir()
+	server.sessionManager.SetJSONLFolder(logDir)
+
+	sess, err := server.sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	sess.AddUserMessage("download me")
+	if err := server.sessionManager.Save(sess); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	req := httptest.NewRequest(stdhttp.MethodGet, "/sessions/"+sess.ID+"/log", nil)
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+
+	if rec.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/x-ndjson" {
+		t.Fatalf("expected ndjson content type, got %q", got)
+	}
+	wantDisposition := `attachment; filename="session-` + sess.ID + `.jsonl"`
+	if got := rec.Header().Get("Content-Disposition"); got != wantDisposition {
+		t.Fatalf("expected disposition %q, got %q", wantDisposition, got)
+	}
+	if !strings.Contains(rec.Body.String(), `"event_type":"message"`) || !strings.Contains(rec.Body.String(), `"download me"`) {
+		t.Fatalf("expected session log body, got %s", rec.Body.String())
+	}
+}
+
+func TestHandleDownloadSessionLogRejectsMissingLog(t *testing.T) {
+	t.Parallel()
+
+	server, _ := newBruteHTTPProxyTestServer(t)
+	req := httptest.NewRequest(stdhttp.MethodGet, "/sessions/missing/log", nil)
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+
+	if rec.Code != stdhttp.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleDownloadSessionLogRejectsTraversalSessionID(t *testing.T) {
+	t.Parallel()
+
+	server, _ := newBruteHTTPProxyTestServer(t)
+	server.sessionManager.SetJSONLFolder(t.TempDir())
+
+	req := httptest.NewRequest(stdhttp.MethodGet, "/sessions/..%2Fsettings/log", nil)
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+
+	if rec.Code != stdhttp.StatusNotFound {
+		t.Fatalf("expected 404 for unsafe session log path, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

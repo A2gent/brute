@@ -51,6 +51,16 @@ func (w *JSONLWriter) SetFolder(folder string) {
 	w.folder = folder
 }
 
+// Folder returns the currently configured JSONL destination folder.
+func (w *JSONLWriter) Folder() string {
+	if w == nil {
+		return ""
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.folder
+}
+
 // Flush writes any messages that have not yet been written to disk for this session.
 // It is safe to call concurrently. It is a no-op when the writer is disabled (folder == "").
 // If the write fails the cursor is rolled back so that the next Flush retries the same records.

@@ -44,6 +44,35 @@ func (m *Manager) SetJSONLFolder(folder string) {
 	}
 }
 
+// JSONLPath returns the per-session JSONL log path when JSONL persistence is enabled.
+func (m *Manager) JSONLPath(sessionID string) string {
+	if m == nil || m.jsonlWriter == nil || !safeJSONLSessionID(sessionID) {
+		return ""
+	}
+	folder := m.jsonlWriter.Folder()
+	if folder == "" {
+		return ""
+	}
+	return filepath.Join(folder, sessionID+".jsonl")
+}
+
+func safeJSONLSessionID(sessionID string) bool {
+	trimmed := strings.TrimSpace(sessionID)
+	if trimmed == "" || trimmed != sessionID {
+		return false
+	}
+	// WHY: session IDs are file names for JSONL logs; allow only file-name-safe
+	// identifier characters so callers cannot escape the sessions folder or inject
+	// surprising characters into the download filename header.
+	for _, r := range sessionID {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // expandTilde replaces ~ with the user's home directory.
 func expandTilde(path string) string {
 	if !strings.HasPrefix(path, "~") {

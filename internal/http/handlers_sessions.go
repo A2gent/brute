@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -499,6 +501,32 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		resp.Metadata = filterSessionListMetadata(resp.Metadata, metadataKeys)
 	}
 	s.jsonResponse(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleDownloadSessionLog(w http.ResponseWriter, r *http.Request) {
+	sessionID := strings.TrimSpace(chi.URLParam(r, "sessionID"))
+	if sessionID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Session ID is required")
+		return
+	}
+
+	logPath := s.sessionManager.JSONLPath(sessionID)
+	if logPath == "" {
+		s.errorResponse(w, http.StatusNotFound, "Session log is not configured")
+		return
+	}
+	if _, err := os.Stat(logPath); err != nil {
+		if os.IsNotExist(err) {
+			s.errorResponse(w, http.StatusNotFound, "Session log not found")
+			return
+		}
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to access session log: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="session-%s.jsonl"`, filepath.Base(sessionID)))
+	http.ServeFile(w, r, logPath)
 }
 
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {

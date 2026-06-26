@@ -59,7 +59,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	result, runErr := s.runSessionWithoutStreaming(runCtx, sess, req.Message)
-	if finalizeErr := s.finalizeSessionRunWithoutStreaming(sess, result, runErr); finalizeErr != nil {
+	if finalizeErr := s.finalizeSessionRunWithoutStreaming(runCtx, sess, result, runErr); finalizeErr != nil {
 		if runErr != nil {
 			status, message := s.sessionRunHTTPError(result, runErr)
 			s.errorResponse(w, status, message)

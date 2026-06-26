@@ -35,11 +35,12 @@ type Message struct {
 
 // SessionTemplate stores reusable text for pre-filling new session prompts.
 type SessionTemplate struct {
-	ID        string
-	Name      string
-	Content   string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           string
+	Name         string
+	Content      string
+	SlashCommand string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // RecurringJob represents a scheduled recurring job

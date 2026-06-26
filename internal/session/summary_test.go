@@ -44,3 +44,28 @@ func TestSummaryFromContentCondensesLongMarkdown(t *testing.T) {
 		t.Fatalf("summary length = %d, want <= %d", len([]rune(got)), maxSessionSummaryLength)
 	}
 }
+
+func TestSummaryFromContentSkipsBareStatusSentence(t *testing.T) {
+	t.Parallel()
+
+	got := SummaryFromContent("Done. Implemented configurable session summaries and added tests.")
+	want := "Implemented configurable session summaries and added tests."
+	if got != want {
+		t.Fatalf("summary = %q, want %q", got, want)
+	}
+}
+
+func TestRefreshSummaryDoesNotOverwriteWithBareStatus(t *testing.T) {
+	t.Parallel()
+
+	sess := New("build")
+	sess.AddUserMessage("Improve session list summaries")
+	sess.AddAssistantMessage("Done.", nil)
+	sess.SetStatus(StatusCompleted)
+	sess.RefreshSummary()
+
+	want := "Improve session list summaries"
+	if sess.Summary != want {
+		t.Fatalf("summary = %q, want %q", sess.Summary, want)
+	}
+}

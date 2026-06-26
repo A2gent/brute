@@ -162,12 +162,15 @@ func (s *SQLiteStore) migrate() error {
 		`ALTER TABLE sessions ADD COLUMN task_progress TEXT`,
 		// Session templates are reusable prompt snippets for pre-filling new sessions.
 		`CREATE TABLE IF NOT EXISTS session_templates (
-				id TEXT PRIMARY KEY,
-				name TEXT NOT NULL,
-				content TEXT NOT NULL,
-				created_at TIMESTAMP NOT NULL,
-				updated_at TIMESTAMP NOT NULL
-			)`,
+					id TEXT PRIMARY KEY,
+					name TEXT NOT NULL,
+					slash_command TEXT NOT NULL DEFAULT '',
+					content TEXT NOT NULL,
+					created_at TIMESTAMP NOT NULL,
+					updated_at TIMESTAMP NOT NULL
+				)`,
+		`ALTER TABLE session_templates ADD COLUMN slash_command TEXT NOT NULL DEFAULT ''`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_session_templates_slash_command ON session_templates(slash_command COLLATE NOCASE) WHERE slash_command <> ''`,
 		`CREATE INDEX IF NOT EXISTS idx_session_templates_name ON session_templates(name COLLATE NOCASE)`,
 		// Sub-agents table
 		`CREATE TABLE IF NOT EXISTS sub_agents (

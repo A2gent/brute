@@ -16,6 +16,7 @@ const workflowBareStatusRetryPromptSettingKey = "AAGENT_WORKFLOW_BARE_STATUS_RET
 const thinkingRunTaskPromptSettingKey = "AAGENT_THINKING_RUN_TASK_PROMPT"
 const scheduleToCronPromptTemplateSettingKey = "AAGENT_SCHEDULE_TO_CRON_PROMPT_TEMPLATE"
 const scheduleToCronSystemPromptSettingKey = "AAGENT_SCHEDULE_TO_CRON_SYSTEM_PROMPT"
+const sessionSummaryPromptTemplateSettingKey = "AAGENT_SESSION_SUMMARY_PROMPT_TEMPLATE"
 
 type serverPromptTemplates struct {
 	GitCommitPromptTemplate               string
@@ -29,6 +30,7 @@ type serverPromptTemplates struct {
 	ThinkingRunTaskPrompt                 string
 	ScheduleToCronPromptTemplate          string
 	ScheduleToCronSystemPrompt            string
+	SessionSummaryPromptTemplate          string
 }
 
 func defaultServerPromptTemplates() serverPromptTemplates {
@@ -44,6 +46,7 @@ func defaultServerPromptTemplates() serverPromptTemplates {
 		ThinkingRunTaskPrompt:                 defaultThinkingRunTaskPrompt,
 		ScheduleToCronPromptTemplate:          defaultScheduleToCronPromptTemplate,
 		ScheduleToCronSystemPrompt:            defaultScheduleToCronSystemPrompt,
+		SessionSummaryPromptTemplate:          defaultSessionSummaryPromptTemplate,
 	}
 }
 
@@ -61,6 +64,7 @@ func serverPromptTemplatesFromSettings(settings map[string]string) serverPromptT
 		ThinkingRunTaskPrompt:                 promptTemplateValue(settings, thinkingRunTaskPromptSettingKey, defaults.ThinkingRunTaskPrompt),
 		ScheduleToCronPromptTemplate:          promptTemplateValue(settings, scheduleToCronPromptTemplateSettingKey, defaults.ScheduleToCronPromptTemplate),
 		ScheduleToCronSystemPrompt:            promptTemplateValue(settings, scheduleToCronSystemPromptSettingKey, defaults.ScheduleToCronSystemPrompt),
+		SessionSummaryPromptTemplate:          promptTemplateValue(settings, sessionSummaryPromptTemplateSettingKey, defaults.SessionSummaryPromptTemplate),
 	}
 }
 
@@ -99,6 +103,7 @@ func defaultPromptTemplateSettings() map[string]string {
 		thinkingRunTaskPromptSettingKey:                  defaults.ThinkingRunTaskPrompt,
 		scheduleToCronPromptTemplateSettingKey:           defaults.ScheduleToCronPromptTemplate,
 		scheduleToCronSystemPromptSettingKey:             defaults.ScheduleToCronSystemPrompt,
+		sessionSummaryPromptTemplateSettingKey:           defaults.SessionSummaryPromptTemplate,
 	}
 }
 

@@ -98,3 +98,18 @@ func TestWorkflowDefinitionFromMetadataUsesCustomReviewLoopPrompts(t *testing.T)
 		t.Fatalf("unexpected reviewer instruction: %q", instructions["loop__critic"])
 	}
 }
+
+func TestDefaultPromptTemplateSettingsIncludesSessionSummary(t *testing.T) {
+	t.Parallel()
+
+	defaults := defaultPromptTemplateSettings()
+	if defaults[sessionSummaryPromptTemplateSettingKey] == "" {
+		t.Fatal("expected default session summary prompt template")
+	}
+	custom := serverPromptTemplatesFromSettings(map[string]string{
+		sessionSummaryPromptTemplateSettingKey: "custom summary {{initial_user_message}}",
+	})
+	if custom.SessionSummaryPromptTemplate != "custom summary {{initial_user_message}}" {
+		t.Fatalf("unexpected session summary template: %q", custom.SessionSummaryPromptTemplate)
+	}
+}

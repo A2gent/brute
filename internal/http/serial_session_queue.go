@@ -167,7 +167,7 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 
 	logging.LogSession("serial_queue_started", sess.ID, "queued serial session")
 	result, runErr := s.runSessionWithoutStreaming(runCtx, sess, prompt)
-	if finalizeErr := s.finalizeSessionRunWithoutStreaming(sess, result, runErr); finalizeErr != nil {
+	if finalizeErr := s.finalizeSessionRunWithoutStreaming(runCtx, sess, result, runErr); finalizeErr != nil {
 		if runErr != nil {
 			_, message := s.sessionRunHTTPError(result, runErr)
 			logging.Warn("Serial session queue run failed for session %s: %s", sess.ID, message)

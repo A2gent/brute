@@ -83,7 +83,7 @@ func (s *Server) runSessionWithoutStreaming(ctx context.Context, sess *session.S
 	return result, err
 }
 
-func (s *Server) finalizeSessionRunWithoutStreaming(sess *session.Session, result sessionRunResult, runErr error) error {
+func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *session.Session, result sessionRunResult, runErr error) error {
 	if runErr != nil {
 		if isCancellationError(runErr) {
 			sess.SetStatus(session.StatusPaused)
@@ -94,6 +94,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(sess *session.Session, resul
 			sess.AddAssistantMessage(fmt.Sprintf("Unable to start request: %s", runErr.Error()), nil)
 			sess.SetStatus(session.StatusFailed)
 			_ = s.sessionManager.Save(sess)
+			s.refreshSessionSummaryWithPrompt(ctx, sess)
 			s.triggerSerialSessionQueueIfTerminal(sess)
 			return runErr
 		}
@@ -108,6 +109,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(sess *session.Session, resul
 		addRequestFailedAssistantMessage(sess, adaptedErr)
 		sess.SetStatus(session.StatusFailed)
 		_ = s.sessionManager.Save(sess)
+		s.refreshSessionSummaryWithPrompt(ctx, sess)
 		s.triggerSerialSessionQueueIfTerminal(sess)
 		return adaptedErr
 	}
@@ -120,6 +122,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(sess *session.Session, resul
 		}
 	}
 
+	s.refreshSessionSummaryWithPrompt(ctx, sess)
 	s.triggerSerialSessionQueueIfTerminal(sess)
 	return nil
 }

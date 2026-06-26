@@ -10,6 +10,18 @@ const maxSessionSummaryLength = 120
 
 var markdownSummaryPrefixRE = regexp.MustCompile(`^\s*(#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s+)`)
 
+var bareStatusSummaryWords = map[string]struct{}{
+	"done":       {},
+	"ok":         {},
+	"okay":       {},
+	"complete":   {},
+	"completed":  {},
+	"fixed":      {},
+	"finished":   {},
+	"success":    {},
+	"successful": {},
+}
+
 // SummaryFromContent converts a prompt or final answer into one compact sentence
 // for dense session lists. It intentionally avoids another LLM call: this runs on
 // every session create/finish path and must remain fast and deterministic.
@@ -61,6 +73,18 @@ func normalizeSummaryText(content string) string {
 }
 
 func firstSummarySentence(text string) string {
+	remaining := strings.TrimSpace(text)
+	for remaining != "" {
+		sentence, rest := splitFirstSummarySentence(remaining)
+		if !isBareStatusSummary(sentence) {
+			return sentence
+		}
+		remaining = rest
+	}
+	return ""
+}
+
+func splitFirstSummarySentence(text string) (string, string) {
 	runes := []rune(text)
 	for i, r := range runes {
 		if r != '.' && r != '!' && r != '?' {
@@ -69,9 +93,17 @@ func firstSummarySentence(text string) string {
 		if i+1 < len(runes) && !unicode.IsSpace(runes[i+1]) {
 			continue
 		}
-		return strings.TrimSpace(string(runes[:i+1]))
+		return strings.TrimSpace(string(runes[:i+1])), strings.TrimSpace(string(runes[i+1:]))
 	}
-	return text
+	return strings.TrimSpace(text), ""
+}
+
+func isBareStatusSummary(text string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	normalized = strings.Trim(normalized, ".!?:;-—– ")
+	normalized = strings.Join(strings.Fields(normalized), " ")
+	_, ok := bareStatusSummaryWords[normalized]
+	return ok
 }
 
 func truncateSummary(text string, maxRunes int) string {

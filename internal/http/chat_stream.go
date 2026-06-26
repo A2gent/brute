@@ -136,6 +136,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			sess.AddAssistantMessage(fmt.Sprintf("Workflow failed: %s", runErr.Error()), nil)
 			sess.SetStatus(session.StatusFailed)
 			_ = s.sessionManager.Save(sess)
+			s.refreshSessionSummaryWithPrompt(runCtx, sess)
 			s.triggerSerialSessionQueueIfTerminal(sess)
 			_ = writeEvent(ChatStreamEvent{
 				Type:     "error",
@@ -314,6 +315,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		_ = writeEvent(*event)
 	}
 
+	s.refreshSessionSummaryWithPrompt(runCtx, sess)
 	s.triggerSerialSessionQueueIfTerminal(sess)
 	_ = writeEvent(ChatStreamEvent{
 		Type:     "done",

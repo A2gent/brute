@@ -344,6 +344,8 @@ Common optional variables:
 | `AAGENT_CLAUDE_CLI_PATH` | `claude` | Claude Code CLI executable used by the Anthropic provider |
 | `AAGENT_CLAUDE_CLI_PERMISSION_MODE` | `acceptEdits` | Claude CLI permission mode for non-interactive runs; set to `default`, `auto`, or `bypassPermissions` if needed |
 | `AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE` | `true` | disable Claude CLI session persistence for isolated A2gent turns |
+| `AAGENT_CLAUDE_RATE_LIMITS_PATH` | `~/.a2gent/claude-rate-limits.json` | optional Claude Code statusLine cache file used to display last known Anthropic rate-limit usage |
+| `AAGENT_CLAUDE_RATE_LIMITS_MAX_AGE` | `12h` | maximum allowed age for the Claude Code rate-limit cache before Brute shows it as stale |
 | `KIMI_BASE_URL` | `https://api.kimi.com/coding/v1` | Kimi endpoint |
 | `GEMINI_BASE_URL` | `https://generativelanguage.googleapis.com` | Gemini endpoint |
 | `LM_STUDIO_BASE_URL` | `http://localhost:1234/v1` | LM Studio endpoint |
@@ -504,6 +506,51 @@ export AAGENT_CLAUDE_CLI_PATH=/path/to/claude
 ```
 
 A2gent runs Claude CLI in non-interactive mode with native Claude tools enabled and defaults to `AAGENT_CLAUDE_CLI_PERMISSION_MODE=acceptEdits` so Sonnet can inspect and edit files without a hidden permission prompt. If your environment requires a different Claude permission policy, override that variable.
+
+To display Anthropic usage in Caesar, Brute can read the last known Claude Code `statusLine` rate limits from a local JSON cache file. Brute does **not** launch an interactive Claude session or parse TUI output. Instead, configure a small Claude Code status line script that writes only the `rate_limits` object to disk whenever Claude updates the status line.
+
+Example `~/.claude/statusline-rate-limits.py`:
+
+```python
+#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+import tempfile
+
+cache_path = pathlib.Path(os.environ.get("AAGENT_CLAUDE_RATE_LIMITS_PATH", "~/.a2gent/claude-rate-limits.json")).expanduser()
+cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+payload = json.load(sys.stdin)
+rate_limits = payload.get("rate_limits") or {}
+cache_payload = {"rate_limits": rate_limits}
+
+with tempfile.NamedTemporaryFile("w", dir=cache_path.parent, delete=False) as tmp:
+    json.dump(cache_payload, tmp)
+    tmp.write("\n")
+    temp_name = tmp.name
+
+os.replace(temp_name, cache_path)
+print("cc")
+```
+
+Make it executable and point Claude Code `statusLine.command` at it, for example:
+
+```json
+{
+  "statusLine": {
+    "command": "~/.claude/statusline-rate-limits.py"
+  }
+}
+```
+
+Notes:
+
+- Claude Code provides `rate_limits.five_hour` and `rate_limits.seven_day` only for Claude.ai subscriber sessions after the first API response.
+- Brute reads `AAGENT_CLAUDE_RATE_LIMITS_PATH` or defaults to `~/.a2gent/claude-rate-limits.json`.
+- Brute treats the cache as stale after `AAGENT_CLAUDE_RATE_LIMITS_MAX_AGE` (default `12h`) and falls back to an unavailable message until a newer snapshot is written.
+- You can test the script with mock input from the Claude Code status line docs before enabling it in your real config.
 
 ### 11.4 TUI in container fails with `/dev/tty`
 

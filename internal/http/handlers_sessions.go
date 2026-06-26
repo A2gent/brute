@@ -262,6 +262,24 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	directUnifiedAgentID := strings.TrimSpace(req.UnifiedAgentID)
+	directDockerAgentID := strings.TrimSpace(req.DockerAgentID)
+	if directUnifiedAgentID != "" || directDockerAgentID != "" {
+		if directUnifiedAgentID != "" {
+			if _, saErr := s.store.GetSubAgent(directUnifiedAgentID); saErr != nil {
+				if record, defErr := s.store.GetAgentDefinition(directUnifiedAgentID); defErr != nil || record == nil {
+					s.errorResponse(w, http.StatusBadRequest, "Unified agent not found: "+directUnifiedAgentID)
+					return
+				}
+			}
+			sess.Metadata["unified_agent_id"] = directUnifiedAgentID
+		}
+		if directDockerAgentID != "" {
+			sess.Metadata["docker_agent_id"] = directDockerAgentID
+		}
+		sess.Metadata["launch_target"] = "agent"
+	}
+
 	subAgentID := strings.TrimSpace(req.SubAgentID)
 	if subAgentID != "" {
 		sa, saErr := s.store.GetSubAgent(subAgentID)

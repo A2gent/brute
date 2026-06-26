@@ -119,6 +119,36 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		logging.Warn("Chat stream disconnected before initial status event was delivered; continuing run without live streaming: session=%s", sess.ID)
 	}
 
+	if s.hasDirectAgentTarget(sess) {
+		chatResp, runErr := s.runDirectAgentSession(runCtx, sess, req.Message, func(event ChatStreamEvent) {
+			if event.Type != "done" && event.Type != "error" {
+				_ = writeEvent(event)
+			}
+		})
+		if runErr != nil {
+			sess.AddAssistantMessage(fmt.Sprintf("Agent failed: %s", runErr.Error()), nil)
+			sess.SetStatus(session.StatusFailed)
+			_ = s.sessionManager.Save(sess)
+			s.refreshSessionSummaryWithPrompt(runCtx, sess)
+			s.triggerSerialSessionQueueIfTerminal(sess)
+			_ = writeEvent(ChatStreamEvent{Type: "error", Error: "Agent error: " + runErr.Error(), Status: string(sess.Status), Messages: s.messagesToResponse(sess.Messages)})
+			return
+		}
+		sess.AddAssistantMessage(chatResp.Content, nil)
+		sess.SetStatus(session.StatusCompleted)
+		if chatResp.Status == string(session.StatusInputRequired) || chatResp.Status == string(session.StatusPaused) || chatResp.Status == string(session.StatusWaitingExternal) {
+			sess.SetStatus(session.Status(chatResp.Status))
+		}
+		if saveErr := s.sessionManager.Save(sess); saveErr != nil {
+			_ = writeEvent(ChatStreamEvent{Type: "error", Error: "Failed to save agent response: " + saveErr.Error(), Status: string(sess.Status), Messages: s.messagesToResponse(sess.Messages)})
+			return
+		}
+		s.refreshSessionSummaryWithPrompt(runCtx, sess)
+		s.triggerSerialSessionQueueIfTerminal(sess)
+		_ = writeEvent(ChatStreamEvent{Type: "done", Content: chatResp.Content, Messages: s.messagesToResponse(sess.Messages), Status: string(sess.Status), Usage: &chatResp.Usage})
+		return
+	}
+
 	if s.hasRunnableWorkflow(sess) {
 		content, usage, runErr := s.runWorkflowSession(runCtx, sess, req.Message, writeEvent)
 		if runErr != nil {

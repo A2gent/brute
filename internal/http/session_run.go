@@ -18,6 +18,8 @@ type sessionRunResult struct {
 	Content      string
 	Usage        llm.TokenUsage
 	Workflow     bool
+	DirectAgent  bool
+	Status       string
 	ProviderType config.ProviderType
 }
 
@@ -38,6 +40,15 @@ func (e *sessionProviderConfigError) Unwrap() error {
 
 func (s *Server) runSessionWithoutStreaming(ctx context.Context, sess *session.Session, userMessage string) (sessionRunResult, error) {
 	result := sessionRunResult{}
+	if s.hasDirectAgentTarget(sess) {
+		result.DirectAgent = true
+		chatResp, err := s.runDirectAgentSession(ctx, sess, userMessage, nil)
+		result.Content = chatResp.Content
+		result.Usage = llm.TokenUsage{InputTokens: chatResp.Usage.InputTokens, OutputTokens: chatResp.Usage.OutputTokens}
+		result.Status = chatResp.Status
+		return result, err
+	}
+
 	if s.hasRunnableWorkflow(sess) {
 		result.Workflow = true
 		content, usage, err := s.runWorkflowSession(ctx, sess, userMessage, nil)
@@ -98,6 +109,14 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 			s.triggerSerialSessionQueueIfTerminal(sess)
 			return runErr
 		}
+		if result.DirectAgent {
+			sess.AddAssistantMessage(fmt.Sprintf("Agent failed: %s", runErr.Error()), nil)
+			sess.SetStatus(session.StatusFailed)
+			_ = s.sessionManager.Save(sess)
+			s.refreshSessionSummaryWithPrompt(ctx, sess)
+			s.triggerSerialSessionQueueIfTerminal(sess)
+			return runErr
+		}
 		if result.Workflow {
 			sess.AddAssistantMessage(fmt.Sprintf("Workflow failed: %s", runErr.Error()), nil)
 			sess.SetStatus(session.StatusFailed)
@@ -112,6 +131,17 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 		s.refreshSessionSummaryWithPrompt(ctx, sess)
 		s.triggerSerialSessionQueueIfTerminal(sess)
 		return adaptedErr
+	}
+
+	if result.DirectAgent {
+		sess.AddAssistantMessage(result.Content, nil)
+		sess.SetStatus(session.StatusCompleted)
+		if result.Status == string(session.StatusInputRequired) || result.Status == string(session.StatusPaused) || result.Status == string(session.StatusWaitingExternal) {
+			sess.SetStatus(session.Status(result.Status))
+		}
+		if err := s.sessionManager.Save(sess); err != nil {
+			return fmt.Errorf("failed to save agent response: %w", err)
+		}
 	}
 
 	if result.Workflow {
@@ -133,6 +163,9 @@ func (s *Server) sessionRunHTTPError(result sessionRunResult, runErr error) (int
 	}
 	if errors.Is(runErr, errSessionProviderConfiguration) {
 		return 400, "Provider configuration error: " + runErr.Error()
+	}
+	if result.DirectAgent {
+		return 500, "Agent error: " + runErr.Error()
 	}
 	if result.Workflow {
 		return 500, "Workflow error: " + runErr.Error()

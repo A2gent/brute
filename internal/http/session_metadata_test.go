@@ -1,6 +1,9 @@
 package http
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestApplyLeadingSessionQueueDirective(t *testing.T) {
 	req := CreateSessionRequest{
@@ -47,5 +50,14 @@ func TestStripLeadingSessionQueueDirective(t *testing.T) {
 				t.Fatalf("prompt = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSessionRunDurationSecondsUsesUpdatedAtForCompletedSessions(t *testing.T) {
+	createdAt := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
+	updatedAt := createdAt.Add(90 * time.Second)
+
+	if got, want := sessionRunDurationSeconds(createdAt, updatedAt, "completed"), int64(90); got != want {
+		t.Fatalf("duration = %d, want %d", got, want)
 	}
 }

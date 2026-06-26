@@ -60,6 +60,7 @@ type SessionResponse struct {
 	ReasoningTokens      int                          `json:"reasoning_tokens,omitempty"`
 	CurrentContextTokens int                          `json:"current_context_tokens"`
 	ModelContextWindow   int                          `json:"model_context_window"`
+	RunDurationSeconds   int64                        `json:"run_duration_seconds"`
 	TaskProgress         string                       `json:"task_progress,omitempty"`
 	ProviderFailures     []ProviderFailurePayload     `json:"provider_failures,omitempty"`
 	CreatedAt            time.Time                    `json:"created_at"`

@@ -73,6 +73,7 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		ReasoningTokens:      reasoningTokens,
 		CurrentContextTokens: currentContextTokens,
 		ModelContextWindow:   modelContextWindow,
+		RunDurationSeconds:   sessionRunDurationSeconds(sess.CreatedAt, sess.UpdatedAt, string(sess.Status)),
 		TaskProgress:         sess.TaskProgress,
 		ProviderFailures:     sessionProviderFailures(sess.Metadata),
 		CreatedAt:            sess.CreatedAt,

@@ -388,13 +388,22 @@ type ProviderConfigResponse struct {
 }
 
 type ProviderUsageResponse struct {
-	Provider      string `json:"provider"`
-	Status        string `json:"status"`
-	UsageLeftText string `json:"usage_left_text"`
-	Source        string `json:"source,omitempty"`
-	CheckedAt     string `json:"checked_at,omitempty"`
-	Refreshable   bool   `json:"refreshable"`
-	Error         string `json:"error,omitempty"`
+	Provider      string             `json:"provider"`
+	Status        string             `json:"status"`
+	UsageLeftText string             `json:"usage_left_text"`
+	UsageBars     []ProviderUsageBar `json:"usage_bars,omitempty"`
+	Source        string             `json:"source,omitempty"`
+	CheckedAt     string             `json:"checked_at,omitempty"`
+	Refreshable   bool               `json:"refreshable"`
+	Error         string             `json:"error,omitempty"`
+}
+
+type ProviderUsageBar struct {
+	Label       string `json:"label"`
+	UsedPercent int    `json:"used_percent"`
+	LeftPercent int    `json:"left_percent"`
+	ResetText   string `json:"reset_text,omitempty"`
+	Status      string `json:"status,omitempty"`
 }
 
 type UpdateProviderRequest struct {

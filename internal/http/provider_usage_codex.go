@@ -92,6 +92,7 @@ func (s *Server) openAICodexUsageStatus(ctx context.Context) (ProviderUsageRespo
 	}
 	response.Status = providerUsageStatusAvailable
 	response.UsageLeftText = formatOpenAICodexUsage(payload)
+	response.UsageBars = openAICodexUsageBars(payload)
 	return response, nil
 }
 
@@ -178,6 +179,69 @@ func openAICodexUsageURL(codexBaseURL string) (string, error) {
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/wham/usage"
 	return parsed.String(), nil
+}
+
+func openAICodexUsageBars(payload codexUsageRateLimitResponse) []ProviderUsageBar {
+	bars := make([]ProviderUsageBar, 0, 4)
+	appendLimitBars := func(label string, details *codexUsageRateLimitDetails) {
+		if details == nil {
+			return
+		}
+		status := "ok"
+		if details.LimitReached || !details.Allowed {
+			status = "limit_reached"
+		}
+		if details.PrimaryWindow != nil {
+			bars = append(bars, codexWindowUsageBar(label+" 5h", details.PrimaryWindow, status))
+		}
+		if details.SecondaryWindow != nil {
+			bars = append(bars, codexWindowUsageBar(label+" weekly", details.SecondaryWindow, status))
+		}
+	}
+
+	appendLimitBars("Codex", payload.RateLimit)
+	additional := make([]codexUsageAdditionalLimit, 0, len(payload.AdditionalRateLimits))
+	for _, item := range payload.AdditionalRateLimits {
+		if item.RateLimit != nil {
+			additional = append(additional, item)
+		}
+	}
+	sort.SliceStable(additional, func(i, j int) bool {
+		return codexAdditionalLimitLabel(additional[i]) < codexAdditionalLimitLabel(additional[j])
+	})
+	for _, item := range additional {
+		appendLimitBars(codexAdditionalLimitLabel(item), item.RateLimit)
+	}
+	return bars
+}
+
+func codexWindowUsageBar(label string, window *codexUsageWindow, status string) ProviderUsageBar {
+	used := int(math.Round(clampPercent(window.UsedPercent)))
+	left := 100 - used
+	if left < 0 {
+		left = 0
+	}
+	bar := ProviderUsageBar{
+		Label:       label,
+		UsedPercent: used,
+		LeftPercent: left,
+		ResetText:   codexUsageWindowResetText(window),
+		Status:      status,
+	}
+	return bar
+}
+
+func codexUsageWindowResetText(window *codexUsageWindow) string {
+	if window == nil {
+		return ""
+	}
+	if window.ResetAt > 0 {
+		return "resets " + time.Unix(window.ResetAt, 0).UTC().Format(time.RFC3339)
+	}
+	if window.ResetAfterSeconds > 0 {
+		return fmt.Sprintf("resets in %s", formatDurationApprox(time.Duration(window.ResetAfterSeconds)*time.Second))
+	}
+	return ""
 }
 
 func formatOpenAICodexUsage(payload codexUsageRateLimitResponse) string {

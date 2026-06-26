@@ -60,6 +60,16 @@ func TestFetchOpenAICodexUsageSendsOAuthHeadersAndParsesPayload(t *testing.T) {
 	if payload.PlanType != "plus" || payload.RateLimit == nil || payload.RateLimit.PrimaryWindow == nil {
 		t.Fatalf("unexpected payload: %+v", payload)
 	}
+	bars := openAICodexUsageBars(payload)
+	if len(bars) != 2 {
+		t.Fatalf("usage bars length = %d, want 2: %+v", len(bars), bars)
+	}
+	if bars[0].Label != "Codex 5h" || bars[0].UsedPercent != 25 || bars[0].LeftPercent != 75 {
+		t.Fatalf("unexpected primary usage bar: %+v", bars[0])
+	}
+	if bars[1].Label != "Codex weekly" || bars[1].UsedPercent != 50 || bars[1].LeftPercent != 50 {
+		t.Fatalf("unexpected secondary usage bar: %+v", bars[1])
+	}
 
 	text := formatOpenAICodexUsage(payload)
 	for _, want := range []string{"Plan: plus", "Codex: allowed", "75% left", "50% left", "Credits balance: 0", "Reset credits: 2 available"} {

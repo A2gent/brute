@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 )
 
 const (
+	providerUsageStatusAvailable     = "available"
 	providerUsageStatusUnavailable   = "unavailable"
 	providerUsageStatusUnsupported   = "unsupported"
 	providerUsageStatusNotConfigured = "not_configured"
@@ -22,11 +24,11 @@ func (s *Server) handleProviderUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	usage := s.providerUsageStatus(providerType)
+	usage := s.providerUsageStatus(r.Context(), providerType)
 	s.jsonResponse(w, http.StatusOK, usage)
 }
 
-func (s *Server) providerUsageStatus(providerType config.ProviderType) ProviderUsageResponse {
+func (s *Server) providerUsageStatus(ctx context.Context, providerType config.ProviderType) ProviderUsageResponse {
 	response := ProviderUsageResponse{
 		Provider:    string(providerType),
 		CheckedAt:   time.Now().UTC().Format(time.RFC3339),
@@ -45,15 +47,15 @@ func (s *Server) providerUsageStatus(providerType config.ProviderType) ProviderU
 		response.UsageLeftText = "Usage left unavailable — OpenAI does not expose remaining quota for this API key. Check the OpenAI dashboard; Brute will surface quota or billing errors when requests fail."
 		return response
 	case config.ProviderOpenAICodex:
-		response.Source = "OpenAI Codex OAuth"
-		if !s.providerConfiguredForUse(providerType) {
-			response.Status = providerUsageStatusNotConfigured
-			response.UsageLeftText = "Usage left unavailable — connect OpenAI Codex OAuth or add an API key first."
+		usage, err := s.openAICodexUsageStatus(ctx)
+		if err != nil {
+			response.Source = "OpenAI Codex OAuth (ChatGPT usage)"
+			response.Status = providerUsageStatusUnavailable
+			response.UsageLeftText = "Usage left unavailable — failed to fetch ChatGPT Codex usage from /backend-api/wham/usage. Brute will still surface quota or plan errors when requests fail."
+			response.Error = err.Error()
 			return response
 		}
-		response.Status = providerUsageStatusUnavailable
-		response.UsageLeftText = "Usage left unavailable — the ChatGPT Codex backend does not expose remaining plan or quota via Brute. Check ChatGPT/OpenAI account limits; Brute will surface quota or plan errors when requests fail."
-		return response
+		return usage
 	case config.ProviderAnthropic:
 		response.Source = "Claude Code CLI"
 		if !s.providerConfiguredForUse(providerType) {
@@ -62,7 +64,7 @@ func (s *Server) providerUsageStatus(providerType config.ProviderType) ProviderU
 			return response
 		}
 		response.Status = providerUsageStatusUnavailable
-		response.UsageLeftText = "Usage left unavailable — Claude Code CLI does not expose remaining Anthropic plan or quota. It reports per-run usage/cost only; Brute will surface rate-limit, credits, billing, or budget errors when requests fail."
+		response.UsageLeftText = "Usage left unavailable — Claude Code CLI does not expose remaining Anthropic plan or quota. Brute captures per-run Claude CLI token usage and total_cost_usd in session results, and will surface rate-limit, credits, billing, or budget errors when requests fail."
 		return response
 	default:
 		response.Status = providerUsageStatusUnsupported

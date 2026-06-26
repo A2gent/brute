@@ -261,8 +261,8 @@ func (s *SQLiteStore) migrate() error {
 		}
 	}
 	// Move legacy global project prompt options into project rows once the
-	// settings column exists. The source app settings are left intact so older
-	// builds can still read them if users roll back.
+	// settings column exists. Branch task documentation settings are project
+	// scoped, so their old global env-style keys are removed after migration.
 	if err := s.migrateProjectPromptSettingsFromAppSettings(); err != nil {
 		return fmt.Errorf("failed to migrate project prompt settings: %w", err)
 	}

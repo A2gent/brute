@@ -20,23 +20,19 @@ func (s *Server) resolveBuiltInToolsGuidance(settings map[string]string) (string
 		return "", true
 	}
 
-	lines := make([]string, 0, len(definitions)+1)
-	lines = append(lines, "Available tools allow you to:")
+	lines := make([]string, 0, len(definitions)+3)
+	lines = append(lines, "Available built-in tools:")
 	for _, definition := range definitions {
 		name := strings.TrimSpace(definition.Name)
-		description := strings.TrimSpace(definition.Description)
 		if name == "" {
 			continue
 		}
-		if description == "" {
-			lines = append(lines, fmt.Sprintf("- %s", name))
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("- %s: %s", name, description))
+		lines = append(lines, fmt.Sprintf("- %s", name))
 	}
 	if len(lines) <= 1 {
 		return "", true
 	}
+	lines = append(lines, "", "Use `man` with a tool name to read detailed usage and input schema only when needed.")
 	return strings.Join(lines, "\n"), true
 }
 

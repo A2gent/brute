@@ -113,6 +113,7 @@ func (s *Server) toolManagerForSession(sess *session.Session) *tools.Manager {
 
 		allowed["question"] = struct{}{}
 		allowed["session_task_progress"] = struct{}{}
+		allowed["man"] = struct{}{}
 
 		for _, def := range manager.GetDefinitions() {
 			if _, ok := allowed[def.Name]; !ok {

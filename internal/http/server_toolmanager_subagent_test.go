@@ -369,23 +369,19 @@ workspace:
 	}
 
 	systemPrompt := server.buildSystemPromptForSession(sess)
-	if !strings.Contains(systemPrompt, availableConfiguredAgentsPromptHeader) {
+	subAgentsSectionStart := strings.Index(systemPrompt, availableConfiguredAgentsPromptHeader)
+	if subAgentsSectionStart == -1 {
 		t.Fatalf("expected configured agent listing, got: %q", systemPrompt)
 	}
-	if !strings.Contains(systemPrompt, "youtube-transcriber-gemini") || !strings.Contains(systemPrompt, "YouTube Transcriber (Gemini)") {
-		t.Fatalf("expected stored YAML agent in prompt, got: %q", systemPrompt)
+	subAgentsSection := systemPrompt[subAgentsSectionStart:]
+	if !strings.Contains(subAgentsSection, "- youtube-transcriber-gemini — YouTube Transcriber (Gemini)") {
+		t.Fatalf("expected running stored YAML agent in compact prompt, got: %q", systemPrompt)
 	}
-	if !strings.Contains(systemPrompt, "Status: running") {
-		t.Fatalf("expected running stored YAML agent status in prompt, got: %q", systemPrompt)
+	if strings.Contains(subAgentsSection, "stopped-agent") || strings.Contains(subAgentsSection, "Uncreated Agent") {
+		t.Fatalf("expected only running agents in prompt, got: %q", systemPrompt)
 	}
-	if !strings.Contains(systemPrompt, "stopped-agent") || !strings.Contains(systemPrompt, "Stopped Agent") || !strings.Contains(systemPrompt, "Status: stopped") {
-		t.Fatalf("expected stopped Docker agent to remain listed with status, got: %q", systemPrompt)
-	}
-	if !strings.Contains(systemPrompt, "uncreated-agent") || !strings.Contains(systemPrompt, "Uncreated Agent") || !strings.Contains(systemPrompt, "Status: not created") {
-		t.Fatalf("expected not-created Docker agent to remain listed with status, got: %q", systemPrompt)
-	}
-	if !strings.Contains(systemPrompt, "Provider: google") || !strings.Contains(systemPrompt, "Model: models/gemini-3.1-pro-preview") || !strings.Contains(systemPrompt, "Tools: 1 tools") {
-		t.Fatalf("expected stored YAML agent metadata in prompt, got: %q", systemPrompt)
+	if strings.Contains(subAgentsSection, "Status:") || strings.Contains(subAgentsSection, "Provider:") || strings.Contains(subAgentsSection, "Model:") || strings.Contains(subAgentsSection, "Tools:") {
+		t.Fatalf("expected compact ID/name-only agent metadata in prompt, got: %q", systemPrompt)
 	}
 }
 
@@ -497,16 +493,23 @@ func TestBuildSystemPromptForSession_IncludesAvailableSavedSubAgents(t *testing.
 		t.Fatalf("failed to create session: %v", err)
 	}
 	sess.ProjectID = &currentProjectID
-
 	systemPrompt := server.buildSystemPromptForSession(sess)
-	if !strings.Contains(systemPrompt, "running-reviewer") || !strings.Contains(systemPrompt, "Running Reviewer") {
-		t.Fatalf("expected running saved sub-agent in prompt, got: %q", systemPrompt)
+	subAgentsSectionStart := strings.Index(systemPrompt, availableConfiguredAgentsPromptHeader)
+	if subAgentsSectionStart == -1 {
+		t.Fatalf("expected configured agent listing, got: %q", systemPrompt)
 	}
-	if !strings.Contains(systemPrompt, "stopped-reviewer") || !strings.Contains(systemPrompt, "Stopped Reviewer") || !strings.Contains(systemPrompt, "Status: stopped") {
-		t.Fatalf("expected stopped saved sub-agent in prompt with status, got: %q", systemPrompt)
+	subAgentsSection := systemPrompt[subAgentsSectionStart:]
+	if !strings.Contains(subAgentsSection, "- running-reviewer — Running Reviewer") {
+		t.Fatalf("expected running saved sub-agent in compact prompt, got: %q", systemPrompt)
 	}
-	if !strings.Contains(systemPrompt, "wrong-project-reviewer") || !strings.Contains(systemPrompt, "Wrong Project Reviewer") {
-		t.Fatalf("saved sub-agent with another warm container should still be available in prompt, got: %q", systemPrompt)
+	if strings.Contains(subAgentsSection, "stopped-reviewer") || strings.Contains(subAgentsSection, "Stopped Reviewer") {
+		t.Fatalf("expected stopped saved sub-agent to be omitted from prompt, got: %q", systemPrompt)
+	}
+	if strings.Contains(subAgentsSection, "wrong-project-reviewer") || strings.Contains(subAgentsSection, "Wrong Project Reviewer") {
+		t.Fatalf("expected other-project saved sub-agent to be omitted from prompt, got: %q", systemPrompt)
+	}
+	if strings.Contains(subAgentsSection, "Status:") || strings.Contains(subAgentsSection, "Provider:") || strings.Contains(subAgentsSection, "Model:") || strings.Contains(subAgentsSection, "Tools:") {
+		t.Fatalf("expected compact ID/name-only agent metadata in prompt, got: %q", systemPrompt)
 	}
 }
 
@@ -537,15 +540,15 @@ func TestBuildSystemPromptForSession_RebuildsOutdatedConfiguredAgentSnapshot(t *
 	}
 	sess.Metadata[sessionSystemPromptSnapshotMetadataKey] = systemPromptSnapshot{
 		BasePrompt:     "base",
-		CombinedPrompt: "Environment context:\n- old\n\n" + runningConfiguredAgentsPromptHeader + "\n- ID: stopped-reviewer",
+		CombinedPrompt: "Environment context:\n- old\n\n" + legacySavedConfiguredAgentsPromptHeader + "\n- ID: stopped-reviewer | Name: Stopped Reviewer | Status: stopped | Provider: openai | Model: gpt-5.5 | Tools: 1 tools",
 		Blocks: []systemPromptBlockSnapshot{
 			{Type: "environment_context", Enabled: true, ResolvedContent: "Environment context:\n- old"},
-			{Type: "sub_agents", Enabled: true, ResolvedContent: runningConfiguredAgentsPromptHeader + "\n- ID: stopped-reviewer"},
+			{Type: "sub_agents", Enabled: true, ResolvedContent: legacySavedConfiguredAgentsPromptHeader + "\n- ID: stopped-reviewer | Name: Stopped Reviewer | Status: stopped | Provider: openai | Model: gpt-5.5 | Tools: 1 tools"},
 		},
 	}
 
 	systemPrompt := server.buildSystemPromptForSession(sess)
-	if strings.Contains(systemPrompt, runningConfiguredAgentsPromptHeader) || strings.Contains(systemPrompt, "stopped-reviewer") {
+	if strings.Contains(systemPrompt, legacySavedConfiguredAgentsPromptHeader) || strings.Contains(systemPrompt, "stopped-reviewer") || strings.Contains(systemPrompt, "Provider:") {
 		t.Fatalf("outdated configured-agent snapshot should have been rebuilt, got: %q", systemPrompt)
 	}
 }

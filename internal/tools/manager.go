@@ -84,6 +84,10 @@ func (m *Manager) Clone() *Manager {
 		workDir: m.workDir,
 	}
 	for name, tool := range m.tools {
+		if name == "man" {
+			cloned.tools[name] = NewManTool(cloned)
+			continue
+		}
 		cloned.tools[name] = tool
 	}
 	return cloned
@@ -105,6 +109,7 @@ func NewManager(workDir string) *Manager {
 	}
 
 	// Register built-in tools
+	m.Register(NewManTool(m))
 	m.Register(NewBashTool(workDir))
 	m.Register(NewCodeExecutionTool(workDir))
 	m.Register(NewReadTool(workDir))

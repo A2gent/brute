@@ -535,6 +535,7 @@ func snapshotHasOutdatedConfiguredAgentsBlock(snapshot *systemPromptSnapshot) bo
 
 func configuredAgentsPromptBlockNeedsRefresh(content string) bool {
 	return strings.Contains(content, legacyConfiguredAgentsPromptHeader) ||
+		strings.Contains(content, legacySavedConfiguredAgentsPromptHeader) ||
 		strings.Contains(content, runningConfiguredAgentsPromptHeader)
 }
 

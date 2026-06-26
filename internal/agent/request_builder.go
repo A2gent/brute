@@ -137,24 +137,27 @@ Guidelines:
 - If a task is unclear, ask for clarification
 - If you encounter errors, try to understand and fix them
 
-Available tools allow you to:
-- Execute shell commands (bash)
-- Execute secure Python data processing snippets (code_execution)
-- Chain multiple tools in one sequential call (pipeline)
-- Run multiple independent tool calls concurrently, including fan-out delegation to multiple configured agents (parallel)
-- Read file contents (read)
-- Write new files (write)
-- Edit existing files with string replacement (edit)
-- Replace exact line ranges (replace_lines)
-- Insert lines at specific positions (insert_lines)
-- Fast indexed fuzzy file path/name search (file_search)
-- Fast indexed literal content search (content_search); use grep when regex is needed
-- Find files by pattern (glob)
-- Find files with include/exclude filters (find_files)
-- Search file contents with regular expressions (grep)
-- Filter text/file content to reduce context (filter)
-- Suggest quick UI branch-offs into new sessions for actionable follow-ups; use one suggestion per distinct follow-up when multiple independent issues deserve separate sessions (suggest_session)
-- Suggest a Git commit for completed code changes with a context-aware commit message and only the files changed by this session (suggest_git_commit)
+Available built-in tools:
+- man
+- bash
+- code_execution
+- pipeline
+- parallel
+- read
+- write
+- edit
+- replace_lines
+- insert_lines
+- file_search
+- content_search
+- glob
+- find_files
+- grep
+- filter
+- suggest_session
+- suggest_git_commit
+
+Use man with a tool name to read detailed usage and input schema only when needed.
 
 Output/widget conventions:
 - Reference project files as plain text paths with optional line ranges, e.g. src/app.ts:42 or src/app.ts:42-48. Avoid wrapping file references in code when they should be clickable in UI.
@@ -178,24 +181,27 @@ Guidelines:
 
 Be concise but thorough. Complete the user's task step by step.`
 
-const defaultBuiltInToolsGuidance = `Available tools allow you to:
-- Execute shell commands (bash)
-- Execute secure Python data processing snippets (code_execution)
-- Chain multiple tools in one sequential call (pipeline)
-- Run multiple independent tool calls concurrently, including fan-out delegation to multiple configured agents (parallel)
-- Read file contents (read)
-- Write new files (write)
-- Edit existing files with string replacement (edit)
-- Replace exact line ranges (replace_lines)
-- Insert lines at specific positions (insert_lines)
-- Fast indexed fuzzy file path/name search (file_search)
-- Fast indexed literal content search (content_search); use grep when regex is needed
-- Find files by pattern (glob)
-- Find files with include/exclude filters (find_files)
-- Search file contents with regular expressions (grep)
-- Filter text/file content to reduce context (filter)
-- Suggest quick UI branch-offs into new sessions for actionable follow-ups; use one suggestion per distinct follow-up when multiple independent issues deserve separate sessions (suggest_session)
-- Suggest a Git commit for completed code changes with a context-aware commit message and only the files changed by this session (suggest_git_commit)
+const defaultBuiltInToolsGuidance = `Available built-in tools:
+- man
+- bash
+- code_execution
+- pipeline
+- parallel
+- read
+- write
+- edit
+- replace_lines
+- insert_lines
+- file_search
+- content_search
+- glob
+- find_files
+- grep
+- filter
+- suggest_session
+- suggest_git_commit
+
+Use man with a tool name to read detailed usage and input schema only when needed.
 
 Output/widget conventions:
 - Reference project files as plain text paths with optional line ranges, e.g. src/app.ts:42 or src/app.ts:42-48. Avoid wrapping file references in code when they should be clickable in UI.

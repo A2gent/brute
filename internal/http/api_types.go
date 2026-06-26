@@ -10,18 +10,22 @@ import (
 
 // CreateSessionRequest represents a request to create a new session
 type CreateSessionRequest struct {
-	AgentID    string                 `json:"agent_id"`
-	Task       string                 `json:"task,omitempty"`
-	Images     []MessageImagePayload  `json:"images,omitempty"`
-	ParentID   string                 `json:"parent_id,omitempty"`
-	LinkType   string                 `json:"link_type,omitempty"`
-	Provider   string                 `json:"provider,omitempty"`
-	Model      string                 `json:"model,omitempty"`
-	ProjectID  string                 `json:"project_id,omitempty"`
-	SubAgentID string                 `json:"sub_agent_id,omitempty"` // Optional sub-agent to use for this session
-	Queued     bool                   `json:"queued,omitempty"`       // If true, create session without starting it
-	QueueMode  string                 `json:"queue_mode,omitempty"`   // Optional queue behavior. "serial" runs queued project sessions one at a time.
-	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+	AgentID    string                `json:"agent_id"`
+	Task       string                `json:"task,omitempty"`
+	Images     []MessageImagePayload `json:"images,omitempty"`
+	ParentID   string                `json:"parent_id,omitempty"`
+	LinkType   string                `json:"link_type,omitempty"`
+	Provider   string                `json:"provider,omitempty"`
+	Model      string                `json:"model,omitempty"`
+	ProjectID  string                `json:"project_id,omitempty"`
+	SubAgentID string                `json:"sub_agent_id,omitempty"` // Optional sub-agent to use for this session
+	// Optional direct agent targets. Unified agents are saved sub-agents or YAML-backed agent definitions;
+	// Docker agents reference an already running local Brute container.
+	UnifiedAgentID string                 `json:"unified_agent_id,omitempty"`
+	DockerAgentID  string                 `json:"docker_agent_id,omitempty"`
+	Queued         bool                   `json:"queued,omitempty"`     // If true, create session without starting it
+	QueueMode      string                 `json:"queue_mode,omitempty"` // Optional queue behavior. "serial" runs queued project sessions one at a time.
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // CreateSessionResponse represents a response after creating a session

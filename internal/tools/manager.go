@@ -137,8 +137,11 @@ func NewManager(workDir string) *Manager {
 
 // NewManagerWithStore creates a tool manager and registers store-backed tools.
 func NewManagerWithStore(workDir string, store storage.Store) *Manager {
-	_ = store
-	return NewManager(workDir)
+	m := NewManager(workDir)
+	if store != nil {
+		m.Register(NewProjectSessionHistoryTool(store))
+	}
+	return m
 }
 
 // RegisterQuestionTool registers the question tool with a session metadata store

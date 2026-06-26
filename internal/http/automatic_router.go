@@ -124,7 +124,7 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, providerType config
 		return &executionTarget{
 			ProviderType:      providerType,
 			Model:             requestedModel,
-			ContextWindow:     s.resolveContextWindowForProvider(providerType),
+			ContextWindow:     s.resolveContextWindowForProvider(providerType, requestedModel),
 			StatefulResponses: s.providerStatefulResponses(providerType),
 			Client:            client,
 		}, nil
@@ -153,7 +153,7 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, providerType config
 	return &executionTarget{
 		ProviderType:      targetProvider,
 		Model:             targetModel,
-		ContextWindow:     s.resolveContextWindowForProvider(targetProvider),
+		ContextWindow:     s.resolveContextWindowForProvider(targetProvider, targetModel),
 		StatefulResponses: s.providerStatefulResponses(targetProvider),
 		Client:            client,
 	}, nil

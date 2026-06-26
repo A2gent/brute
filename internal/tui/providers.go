@@ -231,9 +231,10 @@ func (m Model) activateProvider(providerType config.ProviderType) (tea.Model, te
 
 	m.appConfig.ActiveProvider = string(providerType)
 	m.appConfig.DefaultModel = providerDef.DefaultModel
-	m.contextWindow = providerDef.ContextWindow
+	provider := m.appConfig.Providers[string(providerType)]
+	m.contextWindow = config.ResolveContextWindow(providerType, provider, providerDef.DefaultModel)
 	m.agentConfig.Model = providerDef.DefaultModel
-	m.agentConfig.ContextWindow = providerDef.ContextWindow
+	m.agentConfig.ContextWindow = m.contextWindow
 
 	// Save config
 	if err := m.appConfig.Save(config.GetConfigPath()); err != nil {
@@ -650,17 +651,8 @@ func (m Model) selectModel(modelName string) (tea.Model, tea.Cmd) {
 	provider.Model = modelName
 	m.appConfig.SetProvider(config.ProviderType(m.appConfig.ActiveProvider), provider)
 
-	// Update context window based on model (rough estimates)
-	switch {
-	case strings.Contains(modelName, "kimi"):
-		m.contextWindow = 131072
-	case strings.Contains(modelName, "claude"):
-		m.contextWindow = 200000
-	case strings.Contains(modelName, "gemini"):
-		m.contextWindow = 1048576
-	default:
-		m.contextWindow = 32768
-	}
+	// Keep TUI context accounting aligned with the HTTP backend resolver.
+	m.contextWindow = config.ResolveContextWindow(config.ProviderType(m.appConfig.ActiveProvider), provider, modelName)
 	m.agentConfig.Model = modelName
 	m.agentConfig.ContextWindow = m.contextWindow
 

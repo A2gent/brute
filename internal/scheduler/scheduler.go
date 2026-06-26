@@ -220,7 +220,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 		logging.Warn("Failed to persist job session provider metadata: %v", err)
 	}
 
-	contextWindow := s.resolveContextWindowForProvider(providerType)
+	contextWindow := s.resolveContextWindowForProvider(providerType, model)
 	jobWorkDir := s.resolveJobWorkDir(job)
 	effectiveTaskPrompt, resolveErr := jobs.ResolveTaskPrompt(job, jobWorkDir)
 	if resolveErr != nil {

@@ -206,10 +206,9 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create agent config
-	contextWindow := 0
-	if def := config.GetProviderDefinition(config.ProviderType(cfg.ActiveProvider)); def != nil {
-		contextWindow = def.ContextWindow
-	}
+	providerType := config.ProviderType(config.NormalizeProviderRef(cfg.ActiveProvider))
+	provider := cfg.Providers[string(providerType)]
+	contextWindow := config.ResolveContextWindow(providerType, provider, cfg.DefaultModel)
 	agentConfig := agent.Config{
 		Name:          agentFlag,
 		Model:         cfg.DefaultModel,

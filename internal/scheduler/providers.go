@@ -55,7 +55,8 @@ func (s *Scheduler) resolveModelForProvider(providerType config.ProviderType) st
 	return strings.TrimSpace(s.config.DefaultModel)
 }
 
-func (s *Scheduler) resolveContextWindowForProvider(providerType config.ProviderType) int {
+func (s *Scheduler) resolveContextWindowForProvider(providerType config.ProviderType, model string) int {
+	provider := s.config.Providers[string(providerType)]
 	if config.IsFallbackAggregateRef(string(providerType)) || providerType == config.ProviderFallback {
 		chain, err := s.fallbackNodesForProvider(providerType)
 		if err != nil {
@@ -63,20 +64,21 @@ func (s *Scheduler) resolveContextWindowForProvider(providerType config.Provider
 		}
 		minContext := 0
 		for _, node := range chain {
-			def := config.GetProviderDefinition(config.ProviderType(node.Provider))
-			if def == nil || def.ContextWindow <= 0 {
+			nodeType := config.ProviderType(node.Provider)
+			if config.GetProviderDefinition(nodeType) == nil {
 				continue
 			}
-			if minContext == 0 || def.ContextWindow < minContext {
-				minContext = def.ContextWindow
+			window := config.ResolveContextWindow(nodeType, s.config.Providers[string(nodeType)], node.Model)
+			if window <= 0 {
+				continue
+			}
+			if minContext == 0 || window < minContext {
+				minContext = window
 			}
 		}
 		return minContext
 	}
-	if def := config.GetProviderDefinition(providerType); def != nil && def.ContextWindow > 0 {
-		return def.ContextWindow
-	}
-	return 0
+	return config.ResolveContextWindow(providerType, provider, model)
 }
 
 func (s *Scheduler) createLLMClient(providerType config.ProviderType, model string, workDir string) (llm.Client, error) {

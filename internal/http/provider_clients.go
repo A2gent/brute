@@ -83,10 +83,11 @@ func (s *Server) resolveSessionModel(sess *session.Session, providerType config.
 	return s.resolveModelForProvider(providerType)
 }
 
-func (s *Server) resolveContextWindowForProvider(providerType config.ProviderType) int {
+func (s *Server) resolveContextWindowForProvider(providerType config.ProviderType, model string) int {
 	if providerType == config.ProviderAutoRouter {
 		return 0
 	}
+	provider := s.config.Providers[string(providerType)]
 	if config.IsFallbackAggregateRef(string(providerType)) || providerType == config.ProviderFallback {
 		chain, err := s.fallbackNodesForProvider(providerType)
 		if err != nil {
@@ -94,20 +95,21 @@ func (s *Server) resolveContextWindowForProvider(providerType config.ProviderTyp
 		}
 		minContext := 0
 		for _, node := range chain {
-			def := config.GetProviderDefinition(config.ProviderType(node.Provider))
-			if def == nil || def.ContextWindow <= 0 {
+			nodeType := config.ProviderType(node.Provider)
+			if config.GetProviderDefinition(nodeType) == nil {
 				continue
 			}
-			if minContext == 0 || def.ContextWindow < minContext {
-				minContext = def.ContextWindow
+			window := config.ResolveContextWindow(nodeType, s.config.Providers[string(nodeType)], node.Model)
+			if window <= 0 {
+				continue
+			}
+			if minContext == 0 || window < minContext {
+				minContext = window
 			}
 		}
 		return minContext
 	}
-	if def := config.GetProviderDefinition(providerType); def != nil && def.ContextWindow > 0 {
-		return def.ContextWindow
-	}
-	return 0
+	return config.ResolveContextWindow(providerType, provider, model)
 }
 
 func (s *Server) providerStatefulResponses(providerType config.ProviderType) bool {

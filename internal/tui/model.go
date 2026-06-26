@@ -40,7 +40,7 @@ type Model struct {
 	// Token tracking
 	totalInputTokens  int
 	totalOutputTokens int
-	contextWindow     int // in tokens (default 128k for kimi-k2.5)
+	contextWindow     int // in tokens
 
 	// Message queue for when processing
 	queuedMessages []string
@@ -174,12 +174,20 @@ func New(
 		selectedWorkflow = builtinUserMainWorkflow()
 	}
 
-	// Determine context window from config
-	contextWindow := 128000 // default
+	// Determine context window from the configured provider/model so token
+	// accounting stays consistent with HTTP session execution.
+	contextWindow := 0
 	if appConfig != nil {
-		if def := config.GetProviderDefinition(config.ProviderType(appConfig.ActiveProvider)); def != nil {
-			contextWindow = def.ContextWindow
+		providerType := config.ProviderType(config.NormalizeProviderRef(appConfig.ActiveProvider))
+		provider := appConfig.Providers[string(providerType)]
+		model := agentConfig.Model
+		if model == "" {
+			model = provider.Model
 		}
+		if model == "" {
+			model = appConfig.DefaultModel
+		}
+		contextWindow = config.ResolveContextWindow(providerType, provider, model)
 	}
 	if agentConfig.ContextWindow <= 0 {
 		agentConfig.ContextWindow = contextWindow

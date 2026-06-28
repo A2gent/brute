@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/A2gent/brute/internal/config"
+	"github.com/A2gent/brute/internal/filesearch"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/speechcache"
 	"github.com/A2gent/brute/internal/storage"
@@ -337,7 +338,11 @@ func newProjectFileTestServer(t *testing.T) (*Server, string, string) {
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
+	if err := store.SaveSettings(map[string]string{filesearch.IndexingEnabledSettingKey: "true"}); err != nil {
+		t.Fatalf("failed to enable file indexing: %v", err)
+	}
 	t.Cleanup(func() {
+		filesearch.SetIndexingEnabled(false)
 		if err := store.Close(); err != nil {
 			t.Fatalf("failed to close store: %v", err)
 		}

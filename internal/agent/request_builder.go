@@ -147,8 +147,8 @@ Available tools allow you to:
 - Edit existing files with string replacement (edit)
 - Replace exact line ranges (replace_lines)
 - Insert lines at specific positions (insert_lines)
-- Fast indexed fuzzy file path/name search (file_search)
-- Fast indexed literal content search (content_search); use grep when regex is needed
+- Fast indexed fuzzy file path/name search (file_search) when file indexing is enabled
+- Fast indexed literal content search (content_search) when file indexing is enabled; use grep when regex is needed or indexing is disabled
 - Find files by pattern (glob)
 - Find files with include/exclude filters (find_files)
 - Search file contents with regular expressions (grep)
@@ -188,8 +188,8 @@ const defaultBuiltInToolsGuidance = `Available tools allow you to:
 - Edit existing files with string replacement (edit)
 - Replace exact line ranges (replace_lines)
 - Insert lines at specific positions (insert_lines)
-- Fast indexed fuzzy file path/name search (file_search)
-- Fast indexed literal content search (content_search); use grep when regex is needed
+- Fast indexed fuzzy file path/name search (file_search) when file indexing is enabled
+- Fast indexed literal content search (content_search) when file indexing is enabled; use grep when regex is needed or indexing is disabled
 - Find files by pattern (glob)
 - Find files with include/exclude filters (find_files)
 - Search file contents with regular expressions (grep)

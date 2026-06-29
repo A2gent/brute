@@ -42,6 +42,8 @@ type Server struct {
 	runParentCtx          context.Context
 	activeRunsMu          sync.Mutex
 	activeRuns            map[string]map[string]context.CancelFunc
+	sessionEventsMu       sync.Mutex
+	sessionEventSubs      map[string]map[chan ChatStreamEvent]struct{}
 	serialQueueMu         sync.Mutex
 	serialQueueWorkers    map[string]struct{}
 	chromeExtensionBridge *chromeExtensionBridge
@@ -91,6 +93,7 @@ func NewServer(
 		portReady:             make(chan int, 1),
 		runParentCtx:          context.Background(),
 		activeRuns:            make(map[string]map[string]context.CancelFunc),
+		sessionEventSubs:      make(map[string]map[chan ChatStreamEvent]struct{}),
 		serialQueueWorkers:    make(map[string]struct{}),
 		chromeExtensionBridge: newChromeExtensionBridge(),
 		contextCompressor:     contextcompress.NewCompressorWithSessionStore(contextcompress.Config{Enabled: true}, sessionManager),

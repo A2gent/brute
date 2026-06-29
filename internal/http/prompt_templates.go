@@ -13,7 +13,6 @@ const workflowReviewLoopWorkerPromptSettingKey = "AAGENT_WORKFLOW_REVIEW_LOOP_WO
 const workflowReviewLoopReviewerPromptSettingKey = "AAGENT_WORKFLOW_REVIEW_LOOP_REVIEWER_PROMPT"
 const workflowReviewLoopReviewerSuffixPromptSettingKey = "AAGENT_WORKFLOW_REVIEW_LOOP_REVIEWER_SUFFIX_PROMPT"
 const workflowBareStatusRetryPromptSettingKey = "AAGENT_WORKFLOW_BARE_STATUS_RETRY_PROMPT"
-const thinkingRunTaskPromptSettingKey = "AAGENT_THINKING_RUN_TASK_PROMPT"
 const scheduleToCronPromptTemplateSettingKey = "AAGENT_SCHEDULE_TO_CRON_PROMPT_TEMPLATE"
 const scheduleToCronSystemPromptSettingKey = "AAGENT_SCHEDULE_TO_CRON_SYSTEM_PROMPT"
 const sessionSummaryPromptTemplateSettingKey = "AAGENT_SESSION_SUMMARY_PROMPT_TEMPLATE"
@@ -27,7 +26,6 @@ type serverPromptTemplates struct {
 	WorkflowReviewLoopReviewerPrompt      string
 	WorkflowReviewLoopReviewerSuffix      string
 	WorkflowBareStatusRetryPromptTemplate string
-	ThinkingRunTaskPrompt                 string
 	ScheduleToCronPromptTemplate          string
 	ScheduleToCronSystemPrompt            string
 	SessionSummaryPromptTemplate          string
@@ -43,7 +41,6 @@ func defaultServerPromptTemplates() serverPromptTemplates {
 		WorkflowReviewLoopReviewerPrompt:      defaultWorkflowReviewLoopReviewerPrompt,
 		WorkflowReviewLoopReviewerSuffix:      defaultWorkflowReviewLoopReviewerSuffixPrompt,
 		WorkflowBareStatusRetryPromptTemplate: defaultWorkflowBareStatusRetryPromptTemplate,
-		ThinkingRunTaskPrompt:                 defaultThinkingRunTaskPrompt,
 		ScheduleToCronPromptTemplate:          defaultScheduleToCronPromptTemplate,
 		ScheduleToCronSystemPrompt:            defaultScheduleToCronSystemPrompt,
 		SessionSummaryPromptTemplate:          defaultSessionSummaryPromptTemplate,
@@ -61,7 +58,6 @@ func serverPromptTemplatesFromSettings(settings map[string]string) serverPromptT
 		WorkflowReviewLoopReviewerPrompt:      promptTemplateValue(settings, workflowReviewLoopReviewerPromptSettingKey, defaults.WorkflowReviewLoopReviewerPrompt),
 		WorkflowReviewLoopReviewerSuffix:      promptTemplateValue(settings, workflowReviewLoopReviewerSuffixPromptSettingKey, defaults.WorkflowReviewLoopReviewerSuffix),
 		WorkflowBareStatusRetryPromptTemplate: promptTemplateValue(settings, workflowBareStatusRetryPromptSettingKey, defaults.WorkflowBareStatusRetryPromptTemplate),
-		ThinkingRunTaskPrompt:                 promptTemplateValue(settings, thinkingRunTaskPromptSettingKey, defaults.ThinkingRunTaskPrompt),
 		ScheduleToCronPromptTemplate:          promptTemplateValue(settings, scheduleToCronPromptTemplateSettingKey, defaults.ScheduleToCronPromptTemplate),
 		ScheduleToCronSystemPrompt:            promptTemplateValue(settings, scheduleToCronSystemPromptSettingKey, defaults.ScheduleToCronSystemPrompt),
 		SessionSummaryPromptTemplate:          promptTemplateValue(settings, sessionSummaryPromptTemplateSettingKey, defaults.SessionSummaryPromptTemplate),
@@ -100,7 +96,6 @@ func defaultPromptTemplateSettings() map[string]string {
 		workflowReviewLoopReviewerPromptSettingKey:       defaults.WorkflowReviewLoopReviewerPrompt,
 		workflowReviewLoopReviewerSuffixPromptSettingKey: defaults.WorkflowReviewLoopReviewerSuffix,
 		workflowBareStatusRetryPromptSettingKey:          defaults.WorkflowBareStatusRetryPromptTemplate,
-		thinkingRunTaskPromptSettingKey:                  defaults.ThinkingRunTaskPrompt,
 		scheduleToCronPromptTemplateSettingKey:           defaults.ScheduleToCronPromptTemplate,
 		scheduleToCronSystemPromptSettingKey:             defaults.ScheduleToCronSystemPrompt,
 		sessionSummaryPromptTemplateSettingKey:           defaults.SessionSummaryPromptTemplate,

@@ -124,6 +124,9 @@ func (s *SQLiteStore) DeleteProject(id string) error {
 	if _, err := tx.Exec(`DELETE FROM recurring_jobs WHERE project_id = ?`, id); err != nil {
 		return fmt.Errorf("failed to delete project recurring jobs: %w", err)
 	}
+	if _, err := tx.Exec(`DELETE FROM mcp_servers WHERE project_id = ?`, id); err != nil {
+		return fmt.Errorf("failed to delete project MCP servers: %w", err)
+	}
 	// WHY: project deletion must not leave sub-agents pointing at a missing project.
 	// WHAT: make those sub-agents global while preserving their configuration.
 	if _, err := tx.Exec(`UPDATE sub_agents SET project_id = NULL WHERE project_id = ?`, id); err != nil {

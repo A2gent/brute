@@ -83,6 +83,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	var streamWriteMu sync.Mutex
 	streamWritable := true
 	writeEvent := func(event ChatStreamEvent) bool {
+		s.publishSessionEvent(sessionID, event)
 		streamWriteMu.Lock()
 		defer streamWriteMu.Unlock()
 		if !streamWritable {

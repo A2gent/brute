@@ -14,16 +14,6 @@ import (
 	"github.com/A2gent/brute/internal/session"
 )
 
-const thinkingJobIDSettingKey = "A2GENT_THINKING_JOB_ID"
-
-const thinkingSourceSettingKey = "A2GENT_THINKING_SOURCE"
-
-const thinkingTextSettingKey = "A2GENT_THINKING_TEXT"
-
-const thinkingFilePathSettingKey = "A2GENT_THINKING_FILE_PATH"
-
-const thinkingInstructionBlocksSettingKey = "A2GENT_THINKING_INSTRUCTION_BLOCKS"
-
 const agentInstructionBlocksSettingKey = "A2GENT_AGENT_INSTRUCTION_BLOCKS"
 
 const agentBaseSystemPromptSettingKey = "A2GENT_AGENT_BASE_SYSTEM_PROMPT"
@@ -178,82 +168,6 @@ func (s *Server) resolveProjectInstructionBlockSection(sess *session.Session, bl
 		section := fmt.Sprintf("Instruction block %d (project text):\n%s", blockNumber, value)
 		return section, "", estimateTokensApprox(section), ""
 	}
-}
-
-func resolveThinkingInstructionBlocksFromSettings(settings map[string]string) []configuredInstructionBlock {
-	if settings == nil {
-		return []configuredInstructionBlock{}
-	}
-
-	rawBlocks := strings.TrimSpace(settings[thinkingInstructionBlocksSettingKey])
-	if rawBlocks != "" {
-		parsed := []configuredInstructionBlock{}
-		if err := json.Unmarshal([]byte(rawBlocks), &parsed); err != nil {
-			logging.Warn("Failed to parse %s: %v", thinkingInstructionBlocksSettingKey, err)
-			return []configuredInstructionBlock{}
-		}
-		normalized := make([]configuredInstructionBlock, 0, len(parsed))
-		for _, block := range parsed {
-			blockType := strings.TrimSpace(block.Type)
-			value := strings.TrimSpace(block.Value)
-			enabled := block.Enabled == nil || *block.Enabled
-			if !enabled {
-				continue
-			}
-			if blockType == "project_agents_md" || value != "" {
-				enabledCopy := true
-				normalized = append(normalized, configuredInstructionBlock{
-					Type:    blockType,
-					Value:   value,
-					Enabled: &enabledCopy,
-				})
-			}
-		}
-		return normalized
-	}
-
-	source := strings.TrimSpace(strings.ToLower(settings[thinkingSourceSettingKey]))
-	textValue := strings.TrimSpace(settings[thinkingTextSettingKey])
-	fileValue := strings.TrimSpace(settings[thinkingFilePathSettingKey])
-	switch source {
-	case "file":
-		if fileValue != "" {
-			enabled := true
-			return []configuredInstructionBlock{{Type: "file", Value: fileValue, Enabled: &enabled}}
-		}
-	case "text":
-		if textValue != "" {
-			enabled := true
-			return []configuredInstructionBlock{{Type: "text", Value: textValue, Enabled: &enabled}}
-		}
-	}
-
-	if fileValue != "" {
-		enabled := true
-		return []configuredInstructionBlock{{Type: "file", Value: fileValue, Enabled: &enabled}}
-	}
-	if textValue != "" {
-		enabled := true
-		return []configuredInstructionBlock{{Type: "text", Value: textValue, Enabled: &enabled}}
-	}
-	return []configuredInstructionBlock{}
-}
-
-func isThinkingSessionWithSettings(sess *session.Session, settings map[string]string) bool {
-	if sess == nil {
-		return false
-	}
-	if sess.ProjectID != nil && strings.TrimSpace(*sess.ProjectID) == thinkingProjectID {
-		return true
-	}
-	if sess.JobID == nil {
-		return false
-	}
-	thinkingJobID := strings.TrimSpace(settings[thinkingJobIDSettingKey])
-	if thinkingJobID == "" {
-		return false
-	}
-	return strings.TrimSpace(*sess.JobID) == thinkingJobID
 }
 
 func estimateTokensApprox(text string) int {

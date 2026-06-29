@@ -122,6 +122,7 @@ func (s *SQLiteStore) migrate() error {
 		// MCP server registry
 		`CREATE TABLE IF NOT EXISTS mcp_servers (
 			id TEXT PRIMARY KEY,
+			project_id TEXT,
 			name TEXT NOT NULL,
 			transport TEXT NOT NULL,
 			enabled INTEGER NOT NULL DEFAULT 1,
@@ -134,11 +135,13 @@ func (s *SQLiteStore) migrate() error {
 			created_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL
 		)`,
+		`ALTER TABLE mcp_servers ADD COLUMN project_id TEXT`,
 		`ALTER TABLE mcp_servers ADD COLUMN last_test_at TIMESTAMP`,
 		`ALTER TABLE mcp_servers ADD COLUMN last_test_success INTEGER`,
 		`ALTER TABLE mcp_servers ADD COLUMN last_test_message TEXT`,
 		`ALTER TABLE mcp_servers ADD COLUMN last_estimated_tokens INTEGER`,
 		`ALTER TABLE mcp_servers ADD COLUMN last_tool_count INTEGER`,
+		`CREATE INDEX IF NOT EXISTS idx_mcp_servers_project_id ON mcp_servers(project_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_mcp_servers_transport ON mcp_servers(transport)`,
 		// Projects for optional session grouping
 		`CREATE TABLE IF NOT EXISTS projects (

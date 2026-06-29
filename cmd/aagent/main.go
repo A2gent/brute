@@ -217,6 +217,9 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 		ContextWindow: contextWindow,
 	}
 
+	sessionEvents, unsubscribeSessionEvents := server.SubscribeSessionEvents(sess.ID)
+	defer unsubscribeSessionEvents()
+
 	// Create TUI model
 	tuiModel := tui.New(
 		sess,
@@ -228,6 +231,7 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 		cfg,
 		server.Port(),
 		server.PortReady(),
+		sessionEvents,
 	)
 
 	// Run the TUI

@@ -216,8 +216,8 @@ func configuredAgentPromptContainerMatchesBinding(container LocalDockerAgent, bi
 // composeSubAgentSystemPromptSnapshot builds a system prompt snapshot for a
 // sub-agent using its own instruction blocks configuration. It follows the same
 // block-resolution logic as the main agent but uses a sub-agent-specific base
-// prompt and omits thinking blocks, project_agents_md, and the sub-agents
-// listing (to prevent recursion).
+// prompt and omits project_agents_md and the sub-agents listing (to prevent
+// recursion).
 func (s *Server) composeSubAgentSystemPromptSnapshot(sa *storage.SubAgent, sess *session.Session) *systemPromptSnapshot {
 	rawBlocks := strings.TrimSpace(sa.InstructionBlocks)
 	blocks := []configuredInstructionBlock{}
@@ -364,7 +364,7 @@ Guidelines:
 			blockSnapshot.EstimatedTokens = estimatedTokens
 			appendSections = append(appendSections, section)
 		case mcpServersInstructionBlockType:
-			section, estimatedTokens, resolveErr := s.resolveMCPServersSection(sectionNumber)
+			section, estimatedTokens, resolveErr := s.resolveMCPServersSection(sectionNumber, sessionProjectIDForPrompt(sess))
 			blockSnapshot.ResolvedContent = section
 			blockSnapshot.Error = resolveErr
 			if section == "" {

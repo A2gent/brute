@@ -243,16 +243,6 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteJob(w http.ResponseWriter, r *http.Request) {
 	jobID := chi.URLParam(r, "jobID")
 
-	protected, err := s.isProtectedThinkingJob(jobID)
-	if err != nil {
-		s.errorResponse(w, http.StatusInternalServerError, "Failed to check protected jobs: "+err.Error())
-		return
-	}
-	if protected {
-		s.errorResponse(w, http.StatusForbidden, "This job is managed by Thinking settings and cannot be deleted directly.")
-		return
-	}
-
 	if err := s.store.DeleteJob(jobID); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete job: "+err.Error())
 		return
@@ -260,18 +250,6 @@ func (s *Server) handleDeleteJob(w http.ResponseWriter, r *http.Request) {
 
 	logging.Info("Deleted recurring job: %s", jobID)
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *Server) isProtectedThinkingJob(jobID string) (bool, error) {
-	settings, err := s.store.GetSettings()
-	if err != nil {
-		return false, err
-	}
-	thinkingJobID := strings.TrimSpace(settings[thinkingJobIDSettingKey])
-	if thinkingJobID == "" {
-		return false, nil
-	}
-	return thinkingJobID == strings.TrimSpace(jobID), nil
 }
 
 func (s *Server) handleRunJobNow(w http.ResponseWriter, r *http.Request) {

@@ -12,6 +12,7 @@ import (
 	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/llm"
 	skillsLoader "github.com/A2gent/brute/internal/skills"
+	"github.com/A2gent/brute/internal/storage"
 )
 
 func (s *Server) resolveBuiltInToolsGuidance(settings map[string]string) (string, bool) {
@@ -125,15 +126,17 @@ func (s *Server) resolveIntegrationSkillsSection(blockNumber int) (string, strin
 	return strings.Join(lines, "\n"), ""
 }
 
-func (s *Server) resolveMCPServersSection(blockNumber int) (string, int, string) {
+func (s *Server) resolveMCPServersSection(blockNumber int, projectID string) (string, int, string) {
 	servers, err := s.store.ListMCPServers()
 	if err != nil {
 		return "", 0, "Failed to list MCP servers: " + err.Error()
 	}
+	servers = filterMCPServersForProject(servers, projectID, true)
 
 	type mcpEntry struct {
 		name      string
 		transport string
+		scope     string
 		tools     int
 		tokens    int
 	}
@@ -156,6 +159,7 @@ func (s *Server) resolveMCPServersSection(blockNumber int) (string, int, string)
 		entries = append(entries, mcpEntry{
 			name:      strings.TrimSpace(server.Name),
 			transport: strings.TrimSpace(server.Transport),
+			scope:     mcpServerScopeLabel(server, projectID),
 			tools:     toolCount,
 			tokens:    tokenEstimate,
 		})
@@ -183,11 +187,26 @@ func (s *Server) resolveMCPServersSection(blockNumber int) (string, int, string)
 		if transport == "" {
 			transport = "unknown"
 		}
-		lines = append(lines, fmt.Sprintf("- %s (%s, %d tools, %d tokens)", label, transport, entry.tools, entry.tokens))
+		scope := entry.scope
+		if scope == "" {
+			scope = "global"
+		}
+		lines = append(lines, fmt.Sprintf("- %s (%s, %s, %d tools, %d tokens)", label, transport, scope, entry.tools, entry.tokens))
 	}
 	lines = append(lines, fmt.Sprintf("Total MCP servers estimated tokens: %d", totalTokens))
 
 	return strings.Join(lines, "\n"), totalTokens, ""
+}
+
+func mcpServerScopeLabel(server *storage.MCPServer, currentProjectID string) string {
+	projectID := mcpServerProjectID(server)
+	if projectID == "" {
+		return "global"
+	}
+	if projectID == strings.TrimSpace(currentProjectID) {
+		return "project"
+	}
+	return "project:" + projectID
 }
 
 func (s *Server) resolveExternalMarkdownSkillsSection(settings map[string]string, blockNumber int) (string, int, string) {

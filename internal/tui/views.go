@@ -151,12 +151,47 @@ func (m Model) View() string {
 	bottomBar := lipgloss.JoinHorizontal(lipgloss.Left, bottomLeft, strings.Repeat(" ", bottomSpace), helpText)
 
 	sections := []string{topBar, messagesView}
+	if m.hasActiveRunIndicator() {
+		sections = append(sections, m.renderRunStatus(m.width))
+	}
 	if m.hasDiscussion() || m.showQuestionPrompt {
 		sections = append(sections, questionPrompt+commandMenu+inputView+"\n"+agentLine)
 	}
 	sections = append(sections, bottomBar)
 
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+}
+
+func (m Model) renderRunStatus(width int) string {
+	if width < 1 {
+		width = 1
+	}
+	frame := ""
+	if len(m.loadingFrames) > 0 {
+		frame = m.loadingFrames[m.loadingIndex%len(m.loadingFrames)]
+	}
+	status := strings.TrimSpace(m.activeRunStatus)
+	if status == "" {
+		if m.processing {
+			status = "Working"
+		} else {
+			status = "Session running"
+		}
+	}
+	detail := strings.TrimSpace(m.activeRunDetail)
+	text := strings.TrimSpace(frame + " " + status)
+	if detail != "" {
+		text += " - " + detail
+	}
+	if queued := len(m.queuedMessages); queued > 0 {
+		text += fmt.Sprintf(" (%d queued)", queued)
+	}
+	text = truncateLine(text, width)
+	return lipgloss.NewStyle().
+		Background(lipgloss.Color("#111111")).
+		Foreground(lipgloss.Color("#A0A0A0")).
+		Width(width).
+		Render(text)
 }
 
 func (m Model) renderInputView(width int) string {

@@ -16,12 +16,6 @@ import (
 	"time"
 )
 
-const thinkingProjectID = "project-thinking"
-
-const thinkingProjectName = "Thinking"
-
-const defaultThinkingRunTaskPrompt = "Run the Thinking routine.\n\nReview the current project state, execute the most valuable next step, and summarize outcomes."
-
 const defaultScheduleToCronSystemPrompt = "You convert natural-language schedules into strict 5-field cron expressions."
 
 const defaultScheduleToCronPromptTemplate = `Convert the following natural language schedule to a standard 5-field cron expression.
@@ -121,19 +115,8 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 		s.store.SaveJobExecution(exec)
 		return exec, nil
 	}
-	isThinkingJob := false
-	if thinking, thinkErr := s.isProtectedThinkingJob(job.ID); thinkErr != nil {
-		logging.Warn("Failed to check thinking job for project assignment: %v", thinkErr)
-	} else if thinking {
-		isThinkingJob = true
-		if assignErr := s.assignSessionToThinkingProject(sess); assignErr != nil {
-			logging.Warn("Failed to assign Thinking project for session %s: %v", sess.ID, assignErr)
-		}
-	}
-	if !isThinkingJob {
-		if assignErr := s.assignSessionToJobProject(sess, job); assignErr != nil {
-			logging.Warn("Failed to assign recurring job project for session %s: %v", sess.ID, assignErr)
-		}
+	if assignErr := s.assignSessionToJobProject(sess, job); assignErr != nil {
+		logging.Warn("Failed to assign recurring job project for session %s: %v", sess.ID, assignErr)
 	}
 
 	exec.SessionID = sess.ID
@@ -154,9 +137,6 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 	if resolveErr != nil {
 		s.failJobExecution(exec, sess, "Failed to resolve task instructions: "+resolveErr.Error())
 		return exec, nil
-	}
-	if isThinkingJob {
-		effectiveTaskPrompt = s.loadPromptTemplates().ThinkingRunTaskPrompt
 	}
 	sess.AddUserMessage(effectiveTaskPrompt)
 	if err := s.sessionManager.Save(sess); err != nil {
@@ -258,21 +238,5 @@ func (s *Server) assignSessionToJobProject(sess *session.Session, job *storage.R
 		return fmt.Errorf("job project not found: %w", err)
 	}
 	sess.ProjectID = &projectID
-	return s.sessionManager.Save(sess)
-}
-
-func (s *Server) assignSessionToThinkingProject(sess *session.Session) error {
-	now := time.Now()
-	project := &storage.Project{
-		ID:        thinkingProjectID,
-		Name:      thinkingProjectName,
-		IsSystem:  true,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if err := s.store.SaveProject(project); err != nil {
-		return err
-	}
-	sess.ProjectID = &project.ID
 	return s.sessionManager.Save(sess)
 }

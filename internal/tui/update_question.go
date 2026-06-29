@@ -75,6 +75,8 @@ func (m Model) updateQuestionKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 					m.session = sess
 					if sess.Status == session.StatusRunning {
 						m.processing = true
+						m.activeRunStatus = "Sending request"
+						m.activeRunDetail = ""
 						m.lastUserInputTime = time.Now()
 						cmd, cancel := m.runAgentResume()
 						m.cancelFunc = cancel

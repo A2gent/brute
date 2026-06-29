@@ -67,7 +67,6 @@ func (s *Server) ensureSessionSystemPromptSnapshot(sess *session.Session) *syste
 		logging.Warn("Failed to load settings for system prompt composition: %v", err)
 		settings = map[string]string{}
 	}
-	thinkingBlocks := resolveThinkingInstructionBlocksFromSettings(settings)
 
 	if snapshot := sessionSystemPromptSnapshot(sess); snapshot != nil && snapshotHasEnvironmentContext(snapshot) {
 		if resolvedSubAgent != nil {
@@ -76,8 +75,7 @@ func (s *Server) ensureSessionSystemPromptSnapshot(sess *session.Session) *syste
 				return snapshot
 			}
 		} else {
-			cachedPromptStillCurrent := !snapshotHasOutdatedConfiguredAgentsBlock(snapshot) &&
-				(!isThinkingSessionWithSettings(sess, settings) || len(thinkingBlocks) == 0 || snapshotHasThinkingBlocks(snapshot))
+			cachedPromptStillCurrent := !snapshotHasOutdatedConfiguredAgentsBlock(snapshot)
 			if cachedPromptStillCurrent {
 				return snapshot
 			}
@@ -312,7 +310,7 @@ func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, 
 			blockSnapshot.EstimatedTokens = estimatedTokens
 			appendSections = append(appendSections, section)
 		case mcpServersInstructionBlockType:
-			section, estimatedTokens, resolveErr := s.resolveMCPServersSection(sectionNumber)
+			section, estimatedTokens, resolveErr := s.resolveMCPServersSection(sectionNumber, sessionProjectIDForPrompt(sess))
 			blockSnapshot.ResolvedContent = section
 			blockSnapshot.Error = resolveErr
 			if section == "" {
@@ -384,67 +382,6 @@ func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, 
 		resolvedBlocks = append(resolvedBlocks, blockSnapshot)
 	}
 
-	if isThinkingSessionWithSettings(sess, settings) {
-		thinkingBlocks := resolveThinkingInstructionBlocksFromSettings(settings)
-		for _, block := range thinkingBlocks {
-			blockType := strings.TrimSpace(block.Type)
-			enabled := block.Enabled == nil || *block.Enabled
-			blockSnapshot := systemPromptBlockSnapshot{
-				Type:    "thinking_" + blockType,
-				Value:   strings.TrimSpace(block.Value),
-				Enabled: enabled,
-			}
-			sectionNumber++
-			if !enabled {
-				resolvedBlocks = append(resolvedBlocks, blockSnapshot)
-				continue
-			}
-			value := blockSnapshot.Value
-			switch blockType {
-			case "text":
-				blockSnapshot.ResolvedContent = value
-				rendered := fmt.Sprintf("Thinking instruction block %d (text):\n%s", sectionNumber, value)
-				blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
-				appendSections = append(appendSections, rendered)
-			case "file":
-				blockSnapshot.SourcePath = value
-				content, readErr := s.readInstructionFileBlock(value)
-				if readErr != nil {
-					blockSnapshot.Error = readErr.Error()
-					rendered := fmt.Sprintf("Thinking instruction block %d (file):\nUnable to load file %s: %s", sectionNumber, value, readErr.Error())
-					blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
-					appendSections = append(appendSections, rendered)
-				} else {
-					blockSnapshot.ResolvedContent = content
-					rendered := fmt.Sprintf("Thinking instruction block %d (file):\n%s", sectionNumber, content)
-					blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
-					appendSections = append(appendSections, rendered)
-				}
-			case "project_agents_md":
-				section := s.resolveProjectAgentsMDSection(sess, settings, value, sectionNumber)
-				blockSnapshot.ResolvedContent = section
-				if section == "" {
-					blockSnapshot.Error = "No project/My Mind instruction file content found."
-					resolvedBlocks = append(resolvedBlocks, blockSnapshot)
-					continue
-				}
-				blockSnapshot.EstimatedTokens = estimateTokensApprox(section)
-				appendSections = append(appendSections, section)
-			default:
-				if value == "" {
-					resolvedBlocks = append(resolvedBlocks, blockSnapshot)
-					continue
-				}
-				blockSnapshot.Type = "thinking_text"
-				blockSnapshot.ResolvedContent = value
-				rendered := fmt.Sprintf("Thinking instruction block %d (text):\n%s", sectionNumber, value)
-				blockSnapshot.EstimatedTokens = estimateTokensApprox(rendered)
-				appendSections = append(appendSections, rendered)
-			}
-			resolvedBlocks = append(resolvedBlocks, blockSnapshot)
-		}
-	}
-
 	environmentContext, environmentContextTokens := s.resolveEnvironmentContextSection(sess)
 	if environmentContext != "" {
 		appendSections = append([]string{environmentContext}, appendSections...)
@@ -507,18 +444,6 @@ func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, 
 		CombinedEstimated: estimateTokensApprox(combinedPrompt),
 		Blocks:            resolvedBlocks,
 	}
-}
-
-func snapshotHasThinkingBlocks(snapshot *systemPromptSnapshot) bool {
-	if snapshot == nil {
-		return false
-	}
-	for _, block := range snapshot.Blocks {
-		if strings.HasPrefix(strings.TrimSpace(block.Type), "thinking_") {
-			return true
-		}
-	}
-	return false
 }
 
 func snapshotHasOutdatedConfiguredAgentsBlock(snapshot *systemPromptSnapshot) bool {

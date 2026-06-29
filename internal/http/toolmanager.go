@@ -133,6 +133,8 @@ func (s *Server) registerServerBackedTools(manager *tools.Manager) {
 	logging.Debug("Registering server-backed tools...")
 	manager.Register(newRecurringJobsTool(s))
 	manager.Register(newMCPManageTool(s))
+	manager.Register(newMCPListToolsTool(s))
+	manager.Register(newMCPCallTool(s))
 	manager.Register(newDelegateToSubAgentTool(s))
 	manager.Register(newDelegateToAgentTool(s))
 	manager.Register(newDelegateToExternalAgentTool(s))

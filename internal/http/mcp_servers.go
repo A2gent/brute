@@ -228,7 +228,7 @@ func (s *Server) handleTestMCPServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, err := decodeMCPServerConfig(server)
+	cfg, err := s.resolveMCPServerRuntimeConfig(server)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Invalid MCP server config: "+err.Error())
 		return
@@ -501,6 +501,23 @@ func decodeMCPServerConfig(server *storage.MCPServer) (*mcpServerConfig, error) 
 	cfg.Args = compactStrings(cfg.Args)
 	cfg.Env = compactStringMap(cfg.Env)
 	cfg.Headers = compactStringMap(cfg.Headers)
+	return cfg, nil
+}
+
+func (s *Server) resolveMCPServerRuntimeConfig(server *storage.MCPServer) (*mcpServerConfig, error) {
+	cfg, err := decodeMCPServerConfig(server)
+	if err != nil {
+		return nil, err
+	}
+	projectID := mcpServerProjectID(server)
+	if projectID == "" || cfg.Transport != mcpTransportStdio {
+		return cfg, nil
+	}
+	projectRoot, err := s.resolveProjectRootFolder(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("project MCP working directory: %w", err)
+	}
+	cfg.Cwd = projectRoot
 	return cfg, nil
 }
 

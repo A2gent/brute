@@ -177,7 +177,7 @@ func (s *Server) resolveMCPServersSection(blockNumber int, projectID string) (st
 
 	lines := make([]string, 0, len(entries)+4)
 	lines = append(lines, fmt.Sprintf("Instruction block %d (MCP servers):", blockNumber))
-	lines = append(lines, "Enabled MCP servers available to the agent. Manage these in MCP section: /mcp")
+	lines = append(lines, "Enabled MCP servers available to the agent. Use `mcp_list_tools` to inspect callable MCP tools, then `mcp_call` to invoke the selected MCP tool. Manage server configuration in MCP section: /mcp")
 	for _, entry := range entries {
 		label := entry.name
 		if label == "" {

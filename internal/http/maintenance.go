@@ -20,6 +20,17 @@ const (
 type rebuildBruteRequest struct {
 	TimeoutSeconds int `json:"timeout_seconds"`
 }
+type rebuildBruteAndDockerImageRequest struct {
+	TimeoutSeconds int    `json:"timeout_seconds"`
+	Image          string `json:"image"`
+	NoCache        bool   `json:"no_cache"`
+}
+
+type rebuildBruteAndDockerImageResponse struct {
+	Status      string                           `json:"status"`
+	Brute       systemCommandResponse            `json:"brute"`
+	DockerImage localDockerAgentImageBuildResult `json:"docker_image"`
+}
 
 type systemCommandResponse struct {
 	Status           string   `json:"status"`
@@ -72,6 +83,46 @@ func (s *Server) handleRebuildBrute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	result, err := rebuildBrute(r.Context(), req.TimeoutSeconds)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to rebuild Brute:\n"+err.Error())
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, result)
+}
+
+func (s *Server) handleRebuildBruteAndDockerImage(w http.ResponseWriter, r *http.Request) {
+	var req rebuildBruteAndDockerImageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	bruteResult, err := rebuildBrute(r.Context(), req.TimeoutSeconds)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to rebuild Brute:\n"+err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer cancel()
+	dockerResult, err := buildLocalDockerAgentImage(ctx, buildLocalDockerAgentImageRequest{
+		Image:   req.Image,
+		NoCache: req.NoCache,
+	})
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to rebuild Docker image:\n"+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, rebuildBruteAndDockerImageResponse{
+		Status:      "rebuilt",
+		Brute:       bruteResult,
+		DockerImage: dockerResult,
+	})
+}
+
+func rebuildBrute(ctx context.Context, timeoutSeconds int) (systemCommandResponse, error) {
 	commandLine := strings.TrimSpace(os.Getenv("A2GENT_BRUTE_REBUILD_COMMAND"))
 	if commandLine == "" {
 		commandLine = defaultBruteRebuildCommandLine()
@@ -79,27 +130,25 @@ func (s *Server) handleRebuildBrute(w http.ResponseWriter, r *http.Request) {
 
 	command, args, err := splitCommandLine(commandLine)
 	if err != nil {
-		s.errorResponse(w, http.StatusBadRequest, "Invalid rebuild command: "+err.Error())
-		return
+		return systemCommandResponse{}, fmt.Errorf("invalid rebuild command: %w", err)
 	}
 
-	timeout := boundedTimeoutSeconds(req.TimeoutSeconds, defaultRebuildBruteTimeout, maxRebuildBruteTimeout)
-	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	timeout := boundedTimeoutSeconds(timeoutSeconds, defaultRebuildBruteTimeout, maxRebuildBruteTimeout)
+	buildCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	output, err := runCommand(ctx, command, args...)
+	output, err := runCommand(buildCtx, command, args...)
 	if err != nil {
-		s.errorResponse(w, http.StatusBadRequest, "Failed to rebuild Brute: "+err.Error())
-		return
+		return systemCommandResponse{}, err
 	}
 	cwd, _ := os.Getwd()
-	s.jsonResponse(w, http.StatusOK, systemCommandResponse{
+	return systemCommandResponse{
 		Status:           "rebuilt",
 		Command:          command,
 		Args:             args,
 		Output:           output,
 		TimeoutSeconds:   int(timeout.Seconds()),
 		WorkingDirectory: cwd,
-	})
+	}, nil
 }
 
 func (s *Server) handleRestartRunningSubAgentContainers(w http.ResponseWriter, r *http.Request) {

@@ -84,6 +84,14 @@ type buildLocalDockerAgentImageRequest struct {
 	NoCache bool   `json:"no_cache"`
 }
 
+type localDockerAgentImageBuildResult struct {
+	Status     string `json:"status"`
+	Image      string `json:"image"`
+	Dockerfile string `json:"dockerfile"`
+	ContextDir string `json:"context_dir"`
+	Output     string `json:"output"`
+}
+
 type removeLocalDockerAgentRequest struct {
 	Force bool `json:"force"`
 }
@@ -358,6 +366,18 @@ func (s *Server) handleBuildLocalDockerAgentImage(w http.ResponseWriter, r *http
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer cancel()
+	result, err := buildLocalDockerAgentImage(ctx, req)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to build local agent image:\n"+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, result)
+}
+
+func buildLocalDockerAgentImage(ctx context.Context, req buildLocalDockerAgentImageRequest) (localDockerAgentImageBuildResult, error) {
 	image := strings.TrimSpace(req.Image)
 	if image == "" {
 		image = strings.TrimSpace(os.Getenv("A2GENT_LOCAL_AGENT_IMAGE"))
@@ -368,8 +388,7 @@ func (s *Server) handleBuildLocalDockerAgentImage(w http.ResponseWriter, r *http
 
 	dockerfilePath, contextDir, err := resolveLocalAgentDockerBuildPaths()
 	if err != nil {
-		s.errorResponse(w, http.StatusBadRequest, "Failed to resolve Docker build configuration: "+err.Error())
-		return
+		return localDockerAgentImageBuildResult{}, fmt.Errorf("failed to resolve Docker build configuration: %w", err)
 	}
 
 	args := []string{"build", "--tag", image, "--file", dockerfilePath}
@@ -378,21 +397,18 @@ func (s *Server) handleBuildLocalDockerAgentImage(w http.ResponseWriter, r *http
 	}
 	args = append(args, contextDir)
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
-	defer cancel()
 	buildOutput, err := runCommand(ctx, "docker", args...)
 	if err != nil {
-		s.errorResponse(w, http.StatusBadRequest, "Failed to build local agent image: "+err.Error())
-		return
+		return localDockerAgentImageBuildResult{}, err
 	}
 
-	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"status":      "built",
-		"image":       image,
-		"dockerfile":  dockerfilePath,
-		"context_dir": contextDir,
-		"output":      buildOutput,
-	})
+	return localDockerAgentImageBuildResult{
+		Status:     "built",
+		Image:      image,
+		Dockerfile: dockerfilePath,
+		ContextDir: contextDir,
+		Output:     buildOutput,
+	}, nil
 }
 
 func (s *Server) handleStartLocalDockerAgent(w http.ResponseWriter, r *http.Request) {

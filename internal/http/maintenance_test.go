@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -116,5 +118,52 @@ func TestHandleRestartRunningSubAgentContainersOnlyRestartsWarmManagedContainers
 	}
 	if body.Restarted[0].ContainerID != "running-managed-id" || body.Restarted[0].AgentDefinitionID != "code-reviewer" {
 		t.Fatalf("unexpected restarted item: %#v", body.Restarted[0])
+	}
+}
+func TestHandleRebuildBruteAndDockerImageRunsBothBuilds(t *testing.T) {
+	oldRunCommand := runCommand
+	var calls []string
+	runCommand = func(ctx context.Context, command string, args ...string) (string, error) {
+		calls = append(calls, command+" "+strings.Join(args, " "))
+		switch command {
+		case "go":
+			return "brute build ok", nil
+		case "docker":
+			return "docker build ok", nil
+		default:
+			return "", nil
+		}
+	}
+	t.Cleanup(func() { runCommand = oldRunCommand })
+	t.Setenv("A2GENT_BRUTE_REBUILD_COMMAND", "go build -o /tmp/brute-test ./cmd/aagent")
+	dockerfilePath := filepath.Join(t.TempDir(), "Dockerfile")
+	if err := os.WriteFile(dockerfilePath, []byte("FROM scratch\n"), 0o644); err != nil {
+		t.Fatalf("failed to write test Dockerfile: %v", err)
+	}
+	t.Setenv("A2GENT_LOCAL_AGENT_DOCKERFILE", dockerfilePath)
+	t.Setenv("A2GENT_LOCAL_AGENT_DOCKER_CONTEXT", filepath.Dir(dockerfilePath))
+
+	req := httptest.NewRequest(http.MethodPost, "/system/rebuild-with-docker-image", strings.NewReader(`{"timeout_seconds":1,"image":"a2gent-test:latest","no_cache":true}`))
+	rec := httptest.NewRecorder()
+
+	server := &Server{}
+	server.handleRebuildBruteAndDockerImage(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	expectedCalls := []string{
+		"go build -o /tmp/brute-test ./cmd/aagent",
+		"docker build --tag a2gent-test:latest --file " + dockerfilePath + " --no-cache " + filepath.Dir(dockerfilePath),
+	}
+	if !reflect.DeepEqual(calls, expectedCalls) {
+		t.Fatalf("unexpected build calls: %#v", calls)
+	}
+	var body rebuildBruteAndDockerImageResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if body.Status != "rebuilt" || body.Brute.Output != "brute build ok" || body.DockerImage.Output != "docker build ok" {
+		t.Fatalf("unexpected response: %#v", body)
 	}
 }

@@ -280,6 +280,13 @@ func (s *SQLiteStore) seedBuiltInSubAgents() error {
 		CreatedAt:         now,
 		UpdatedAt:         now,
 	}
+	existing, err := s.GetSubAgent(BuiltInSpecificationSubAgentID)
+	if err == nil && subAgentMatchesSeed(existing, sa) {
+		return nil
+	}
+	if err != nil && !strings.Contains(err.Error(), "sub-agent not found") {
+		return err
+	}
 	return s.SaveSubAgent(sa)
 }
 
@@ -304,21 +311,33 @@ func (s *SQLiteStore) seedSystemProjects() error {
 
 	now := time.Now()
 	for _, p := range systemProjects {
-		_, err := s.db.Exec(`
-			INSERT OR IGNORE INTO projects (id, name, folder, is_system, created_at, updated_at)
-			VALUES (?, ?, NULL, 1, ?, ?)
-		`, p.id, p.name, now, now)
+		project, err := s.GetProject(p.id)
 		if err != nil {
-			return fmt.Errorf("failed to seed system project %s: %w", p.id, err)
+			if !strings.Contains(err.Error(), "project not found") {
+				return fmt.Errorf("failed to inspect system project %s: %w", p.id, err)
+			}
+			_, err := s.db.Exec(`
+				INSERT INTO projects (id, name, folder, is_system, created_at, updated_at)
+				VALUES (?, ?, ?, 1, ?, ?)
+			`, p.id, p.name, p.folder, now, now)
+			if err != nil {
+				return fmt.Errorf("failed to seed system project %s: %w", p.id, err)
+			}
+			project, err = s.GetProject(p.id)
+			if err != nil {
+				return fmt.Errorf("failed to reload system project %s: %w", p.id, err)
+			}
 		}
 		// Keep canonical names in sync for existing installations and pin Soul folder.
 		if p.id == SystemProjectSoulID {
-			if _, err := s.db.Exec(`
-				UPDATE projects
-				SET name = ?, is_system = 1, folder = ?, updated_at = ?
-				WHERE id = ?
-			`, p.name, p.folder, now, p.id); err != nil {
-				return fmt.Errorf("failed to update system project %s metadata: %w", p.id, err)
+			if projectSystemMetadataNeedsUpdate(project, p.name, p.folder, true) {
+				if _, err := s.db.Exec(`
+					UPDATE projects
+					SET name = ?, is_system = 1, folder = ?, updated_at = ?
+					WHERE id = ?
+				`, p.name, p.folder, now, p.id); err != nil {
+					return fmt.Errorf("failed to update system project %s metadata: %w", p.id, err)
+				}
 			}
 			if err := s.ensureSoulProjectDefaults(); err != nil {
 				return fmt.Errorf("failed to apply soul project defaults: %w", err)
@@ -326,27 +345,76 @@ func (s *SQLiteStore) seedSystemProjects() error {
 			continue
 		}
 		if p.id == SystemProjectAgentID && p.folder != nil {
-			if _, err := s.db.Exec(`
-				UPDATE projects
-				SET name = ?, is_system = 1, folder = COALESCE(NULLIF(TRIM(folder), ''), ?), updated_at = ?
-				WHERE id = ?
-			`, p.name, *p.folder, now, p.id); err != nil {
-				return fmt.Errorf("failed to update system project %s metadata: %w", p.id, err)
+			if projectSystemMetadataNeedsUpdate(project, p.name, p.folder, false) {
+				if _, err := s.db.Exec(`
+					UPDATE projects
+					SET name = ?, is_system = 1, folder = COALESCE(NULLIF(TRIM(folder), ''), ?), updated_at = ?
+					WHERE id = ?
+				`, p.name, *p.folder, now, p.id); err != nil {
+					return fmt.Errorf("failed to update system project %s metadata: %w", p.id, err)
+				}
 			}
 			if err := s.ensureBodyProjectDefaults(); err != nil {
 				return fmt.Errorf("failed to apply body project defaults: %w", err)
 			}
 			continue
 		}
-		if _, err := s.db.Exec(`
-			UPDATE projects
-			SET name = ?, is_system = 1, updated_at = ?
-			WHERE id = ?
-		`, p.name, now, p.id); err != nil {
-			return fmt.Errorf("failed to update system project %s metadata: %w", p.id, err)
+		if project.Name != p.name || !project.IsSystem {
+			if _, err := s.db.Exec(`
+				UPDATE projects
+				SET name = ?, is_system = 1, updated_at = ?
+				WHERE id = ?
+			`, p.name, now, p.id); err != nil {
+				return fmt.Errorf("failed to update system project %s metadata: %w", p.id, err)
+			}
 		}
 	}
 	return nil
+}
+
+func subAgentMatchesSeed(existing, seed *SubAgent) bool {
+	if existing == nil || seed == nil {
+		return false
+	}
+	if existing.ID != seed.ID ||
+		existing.Name != seed.Name ||
+		existing.Provider != seed.Provider ||
+		existing.Model != seed.Model ||
+		existing.InstructionBlocks != seed.InstructionBlocks {
+		return false
+	}
+	if (existing.ProjectID == nil) != (seed.ProjectID == nil) {
+		return false
+	}
+	if existing.ProjectID != nil && seed.ProjectID != nil && *existing.ProjectID != *seed.ProjectID {
+		return false
+	}
+	if len(existing.EnabledTools) != len(seed.EnabledTools) {
+		return false
+	}
+	for i := range existing.EnabledTools {
+		if existing.EnabledTools[i] != seed.EnabledTools[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func projectSystemMetadataNeedsUpdate(project *Project, name string, folder *string, pinFolder bool) bool {
+	if project == nil || project.Name != name || !project.IsSystem {
+		return true
+	}
+	if pinFolder {
+		return !nullableStringsEqual(project.Folder, folder)
+	}
+	return project.Folder == nil || strings.TrimSpace(*project.Folder) == ""
+}
+
+func nullableStringsEqual(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
 }
 
 func (s *SQLiteStore) ensureBodyProjectDefaults() error {

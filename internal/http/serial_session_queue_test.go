@@ -143,3 +143,32 @@ func TestSerialQueuedProjectSessionsRunOneAtATime(t *testing.T) {
 		t.Fatalf("max concurrent provider requests = %d, want 1", maxActiveRequests)
 	}
 }
+
+func TestSerialQueueCanAdvanceAfterInactiveStatuses(t *testing.T) {
+	advanceStatuses := []session.Status{
+		session.StatusCompleted,
+		session.StatusFailed,
+		session.StatusPaused,
+		session.StatusInputRequired,
+		session.StatusWaitingExternal,
+	}
+	for _, status := range advanceStatuses {
+		t.Run(string(status), func(t *testing.T) {
+			if !serialQueueCanAdvanceAfterStatus(status) {
+				t.Fatalf("serial queue should advance after %s", status)
+			}
+		})
+	}
+
+	blockingStatuses := []session.Status{
+		session.StatusQueued,
+		session.StatusRunning,
+	}
+	for _, status := range blockingStatuses {
+		t.Run(string(status), func(t *testing.T) {
+			if serialQueueCanAdvanceAfterStatus(status) {
+				t.Fatalf("serial queue should not advance after %s", status)
+			}
+		})
+	}
+}

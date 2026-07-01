@@ -121,6 +121,13 @@ func TestHandleGetSessionFiltersMetadataKeys(t *testing.T) {
 	if rec.Code != stdhttp.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode raw session response: %v", err)
+	}
+	if _, ok := raw["active_runs"]; !ok {
+		t.Fatalf("expected active_runs to be present even when zero, got %s", rec.Body.String())
+	}
 	var item SessionResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &item); err != nil {
 		t.Fatalf("decode session response: %v", err)

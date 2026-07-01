@@ -56,7 +56,7 @@ type SessionResponse struct {
 	Title                string                       `json:"title"`
 	Summary              string                       `json:"summary,omitempty"`
 	Status               string                       `json:"status"`
-	ActiveRuns           int                          `json:"active_runs,omitempty"`
+	ActiveRuns           int                          `json:"active_runs"`
 	TotalTokens          int                          `json:"total_tokens"`
 	InputTokens          int                          `json:"input_tokens"`
 	OutputTokens         int                          `json:"output_tokens"`

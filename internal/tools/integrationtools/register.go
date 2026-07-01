@@ -13,6 +13,7 @@ func Register(manager *tools.Manager, store storage.Store, clipStore *speechcach
 		return
 	}
 	manager.Register(NewGoogleCalendarQueryTool(store))
+	manager.Register(NewJiraQueryTool(store))
 	manager.Register(NewBraveSearchQueryTool(store))
 	manager.Register(NewEdgeTTSTool(manager.WorkDir(), clipStore))
 	manager.Register(NewElevenLabsTTSTool(store, clipStore))

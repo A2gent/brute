@@ -18,7 +18,7 @@ func (s *Server) triggerSerialSessionQueueForSession(sess *session.Session) {
 	s.triggerSerialSessionQueue(serialQueueScopeForSession(sess))
 }
 
-func (s *Server) triggerSerialSessionQueueIfTerminal(sess *session.Session) {
+func (s *Server) triggerSerialSessionQueueIfAdvanceable(sess *session.Session) {
 	if !sessionIsSerialQueuedAutoRun(sess) || !serialQueueCanAdvanceAfterStatus(sess.Status) {
 		return
 	}
@@ -202,9 +202,11 @@ func firstQueuedUserMessage(sess *session.Session) (string, []session.ImageAttac
 
 func serialQueueCanAdvanceAfterStatus(status session.Status) bool {
 	switch status {
-	case session.StatusCompleted, session.StatusFailed:
-		return true
-	default:
+	case session.StatusQueued, session.StatusRunning:
 		return false
+	default:
+		// Serial queues should only wait for sessions that are still runnable or running.
+		// Paused/input-required/external-waiting sessions are inactive and must not block later queued work.
+		return true
 	}
 }

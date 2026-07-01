@@ -140,7 +140,7 @@ func integrationToResponse(integration *storage.Integration) IntegrationResponse
 
 func isSensitiveIntegrationConfigKey(key string) bool {
 	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "api_key", "api_secret", "access_token", "access_token_secret", "bot_token", "client_secret", "refresh_token":
+	case "api_key", "api_secret", "api_token", "access_token", "access_token_secret", "bot_token", "client_secret", "refresh_token":
 		return true
 	default:
 		return false
@@ -163,6 +163,8 @@ func defaultIntegrationName(provider string) string {
 		return "X"
 	case "google_calendar":
 		return "Google Calendar"
+	case "jira":
+		return "Jira"
 	case "elevenlabs":
 		return "ElevenLabs"
 	case "perplexity":

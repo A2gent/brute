@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -616,5 +617,73 @@ func TestRegisterLocalDockerAgentDefaultsMetadataFromContainerLabels(t *testing.
 	}
 	if got.Category != "engineering" || got.AvatarURL != "https://example.com/avatar.png" {
 		t.Fatalf("container label publish metadata not used: %#v", got)
+	}
+}
+
+func TestRegisterLocalDockerAgentUploadsLocalAvatarAsset(t *testing.T) {
+	avatarPath := filepath.Join(t.TempDir(), "avatar.png")
+	if err := os.WriteFile(avatarPath, []byte("fake-png"), 0o644); err != nil {
+		t.Fatalf("write avatar: %v", err)
+	}
+
+	var got squareRegisterAgentRequest
+	uploaded := false
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/agents/register":
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatalf("decode registry request: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"agent":{"id":"agent-1","name":"Avatar Bot","agent_handle":"avatar-bot","public_id":"avatar-bot"},"api_key":"sq_key"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/owner/agents/agent-1/avatar":
+			if r.Header.Get("Authorization") != "Bearer sq_key" {
+				t.Fatalf("avatar upload did not use registered agent API key: %q", r.Header.Get("Authorization"))
+			}
+			if err := r.ParseMultipartForm(9 << 20); err != nil {
+				t.Fatalf("parse avatar multipart: %v", err)
+			}
+			file, _, err := r.FormFile("avatar")
+			if err != nil {
+				t.Fatalf("missing avatar form file: %v", err)
+			}
+			defer file.Close()
+			body, _ := io.ReadAll(file)
+			if string(body) != "fake-png" {
+				t.Fatalf("unexpected uploaded avatar body: %q", string(body))
+			}
+			uploaded = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"message":"avatar uploaded"}`)
+		default:
+			t.Fatalf("unexpected registry request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer registry.Close()
+
+	server := &Server{}
+	_, status, err := server.registerLocalDockerAgent(context.Background(), &LocalDockerAgent{
+		ID:       "container-1",
+		Name:     "avatar-bot",
+		HostPort: 18080,
+		APIURL:   "http://127.0.0.1:18080",
+		Labels: map[string]string{
+			"a2gent.agent_name":       "Avatar Bot",
+			"a2gent.agent_avatar_url": "http://localhost:5445/assets/images?path=" + avatarPath,
+		},
+	}, registerLocalDockerAgentRequest{
+		RegistryURL:        registry.URL,
+		OwnerEmail:         "owner@example.com",
+		AgentHandle:        "avatar-bot",
+		ConfigureContainer: boolPtr(false),
+	})
+	if err != nil {
+		t.Fatalf("registerLocalDockerAgent returned error: status=%d err=%v", status, err)
+	}
+	if got.AvatarURL != "" {
+		t.Fatalf("local avatar asset URL must not be sent as public avatar_url: %#v", got)
+	}
+	if !uploaded {
+		t.Fatalf("expected local avatar asset to be uploaded after registration")
 	}
 }

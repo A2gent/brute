@@ -6,10 +6,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/A2gent/brute/internal/logging"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -280,6 +285,13 @@ func (s *Server) registerLocalDockerAgent(ctx context.Context, agent *LocalDocke
 		category = "other"
 	}
 	avatarURL := firstNonEmptyLocalAgentString(req.AvatarURL, agent.Labels["a2gent.agent_avatar_url"], agent.Labels["a2gent.agent_icon_url"])
+	localAvatarPath := localDockerAgentAvatarFilePath(avatarURL)
+	registrationAvatarURL := strings.TrimSpace(avatarURL)
+	if localAvatarPath != "" {
+		// WHY: Square registry stores public URLs only. Local Soul asset URLs are
+		// uploaded as registry-hosted avatars after registration instead.
+		registrationAvatarURL = ""
+	}
 
 	discoverable := true
 	if req.Discoverable != nil {
@@ -324,7 +336,7 @@ func (s *Server) registerLocalDockerAgent(ctx context.Context, agent *LocalDocke
 		Currency:           currency,
 		Discoverable:       &discoverable,
 		OfficialWebsite:    strings.TrimSpace(req.OfficialWebsite),
-		AvatarURL:          strings.TrimSpace(avatarURL),
+		AvatarURL:          registrationAvatarURL,
 		SupportsImages:     &supportsImages,
 		SupportsAudio:      &supportsAudio,
 		SupportsVideo:      &supportsVideo,
@@ -335,6 +347,13 @@ func (s *Server) registerLocalDockerAgent(ctx context.Context, agent *LocalDocke
 		return nil, statusCode, err
 	}
 
+	if localAvatarPath != "" && strings.TrimSpace(registerResp.Agent.ID) != "" && strings.TrimSpace(registerResp.APIKey) != "" {
+		if uploadErr := uploadLocalDockerAgentAvatar(ctx, registryURL, registerResp.Agent.ID, registerResp.APIKey, localAvatarPath); uploadErr != nil {
+			// Non-fatal: metadata sync should still configure the agent tunnel even if
+			// a local avatar file disappeared or Square avatar storage is unavailable.
+			logging.Warn("Failed to upload local Docker agent avatar for %s: %v", agentName, uploadErr)
+		}
+	}
 	httpClient := &http.Client{Timeout: 15 * time.Second}
 	configureContainer := true
 	if req.ConfigureContainer != nil {
@@ -413,6 +432,75 @@ func (s *Server) registerLocalDockerAgent(ctx context.Context, agent *LocalDocke
 		ContainerTunnelState:  containerTunnelState,
 		ContainerTunnelNote:   containerTunnelNote,
 	}, http.StatusOK, nil
+}
+
+func localDockerAgentAvatarFilePath(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ""
+	}
+	if strings.HasPrefix(ref, "/") {
+		return ref
+	}
+	u, err := url.Parse(ref)
+	if err != nil || u == nil {
+		return ""
+	}
+	host := strings.ToLower(strings.TrimSpace(u.Hostname()))
+	if (host == "localhost" || host == "127.0.0.1" || host == "::1") && strings.HasPrefix(u.Path, "/assets/images") {
+		if p := strings.TrimSpace(u.Query().Get("path")); p != "" && strings.HasPrefix(p, "/") {
+			return p
+		}
+	}
+	return ""
+}
+
+func uploadLocalDockerAgentAvatar(ctx context.Context, registryURL string, agentID string, apiKey string, avatarPath string) error {
+	avatarPath = strings.TrimSpace(avatarPath)
+	if avatarPath == "" {
+		return nil
+	}
+	file, err := os.Open(avatarPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("avatar", filepath.Base(avatarPath))
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(part, file); err != nil {
+		return err
+	}
+	if err := writer.Close(); err != nil {
+		return err
+	}
+
+	uploadCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(uploadCtx, http.MethodPost, strings.TrimRight(registryURL, "/")+"/owner/agents/"+agentID+"/avatar", &body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		msg := strings.TrimSpace(string(respBody))
+		if msg == "" {
+			msg = resp.Status
+		}
+		return fmt.Errorf("registry avatar upload failed: %s", msg)
+	}
+	return nil
 }
 
 func firstNonEmptyLocalAgentString(values ...string) string {

@@ -64,6 +64,7 @@ type createLocalDockerAgentRequest struct {
 	Resources        localDockerAgentYAMLResources         `json:"resources,omitempty"`
 	Labels           map[string]string                     `json:"labels,omitempty"`
 	ConfigBaseDir    string                                `json:"-"`
+	DefinitionDir    string                                `json:"-"`
 }
 
 type localDockerAgentCreateResult struct {
@@ -261,6 +262,10 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 			return nil, err
 		}
 		args, err = appendLocalDockerAgentExtraArgs(args, req, req.ConfigBaseDir)
+		if err != nil {
+			return nil, err
+		}
+		args, err = appendLocalDockerAgentDefinitionDirArgs(args, req.DefinitionDir, req.Name)
 		if err != nil {
 			return nil, err
 		}

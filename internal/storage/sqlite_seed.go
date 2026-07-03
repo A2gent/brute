@@ -209,6 +209,9 @@ properties:
               type: string
             file:
               type: string
+      definition_dir:
+        type: string
+        description: Optional local folder that contains this definition's YAML, skills, and adjacent settings. Folder imports set this automatically and Docker agents mount it read-only at /soul/agents/<agent-id>.
 examples:
   - version: "1"
     agent:

@@ -1,6 +1,6 @@
 # Local Docker Agent YAML
 
-Reusable local Brute agents can be described in YAML and started through either Caesar's **Create Local Agent** view or the `create_local_docker_agents_from_yaml` tool. Store reusable configs in Soul under `agents/*.yaml`; with the default Brute data path that is `~/.local/share/aagent/agents/*.yaml`.
+Reusable local Brute agents can be described in YAML and started through either Caesar's **Create Local Agent** view or the `create_local_docker_agents_from_yaml` tool. Store reusable configs in Soul under `agents/<agent-id>/agent.yaml`; with the default Brute data path that is `~/.local/share/aagent/agents/<agent-id>/agent.yaml`. A definition folder may also contain `skills/*.md` and adjacent settings that are mounted read-only into Docker agents at `/soul/agents/<agent-id>`. For compatibility, flat `agents/*.yaml` files still import.
 
 The launcher is intentionally a Brute container launcher, not a replacement for Docker Agent. It maps the useful Docker agentic concepts to Brute runtime knobs:
 
@@ -53,6 +53,10 @@ agents:
   - agent_kind: reviewer
     system_prompt: Review the final diff for regressions.
 ```
+
+## Folder-based Definitions
+
+`config_path` may point either to a YAML file or to a definition folder. When a folder is used, Brute looks for `agent.yaml`, `agent.yml`, `definition.yaml`, `definition.yml`, `config.yaml`, `config.yml`, `local-agent.yaml`, `local-agent.yml`, or `<folder-name>.yaml`. Unified imports remember the folder in `local.definition_dir`; Docker agents mount that folder read-only at `/soul/agents/<agent-id>`. If `skills/` exists inside the folder, those markdown skills are loaded into the agent prompt and the child container receives `AAGENT_SKILLS_FOLDER=/soul/agents/<agent-id>/skills`.
 
 ## Parent LLM proxy
 

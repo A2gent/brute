@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -199,6 +201,51 @@ func TestLocalDockerAgentSpecToCreateRequestPreservesLegacyFields(t *testing.T) 
 	}
 	if len(req.Tools.Enabled) != 2 || req.Tools.Enabled[1] != "bash" {
 		t.Fatalf("tools not preserved: %#v", req.Tools)
+	}
+}
+func TestReadLocalDockerAgentYAMLConfigFileAcceptsDefinitionFolder(t *testing.T) {
+	dir := t.TempDir()
+	definitionDir := filepath.Join(dir, "reviewer")
+	if err := os.MkdirAll(definitionDir, 0o755); err != nil {
+		t.Fatalf("failed to create definition dir: %v", err)
+	}
+	configPath := filepath.Join(definitionDir, "agent.yaml")
+	if err := os.WriteFile(configPath, []byte("version: 1\nagent:\n  name: folder-reviewer\n"), 0o644); err != nil {
+		t.Fatalf("failed to write agent.yaml: %v", err)
+	}
+
+	raw, resolved, err := readLocalDockerAgentYAMLConfigFile(definitionDir, "")
+	if err != nil {
+		t.Fatalf("readLocalDockerAgentYAMLConfigFile returned error: %v", err)
+	}
+	if resolved != configPath {
+		t.Fatalf("expected folder config %s, got %s", configPath, resolved)
+	}
+	if !strings.Contains(string(raw), "folder-reviewer") {
+		t.Fatalf("unexpected config content: %s", raw)
+	}
+}
+
+func TestAppendLocalDockerAgentDefinitionDirArgsMountsSoulDefinitionAndSkills(t *testing.T) {
+	definitionDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(definitionDir, "skills"), 0o755); err != nil {
+		t.Fatalf("failed to create skills dir: %v", err)
+	}
+
+	args, err := appendLocalDockerAgentDefinitionDirArgs([]string{"run"}, definitionDir, "Dev Reviewer")
+	if err != nil {
+		t.Fatalf("appendLocalDockerAgentDefinitionDirArgs returned error: %v", err)
+	}
+	joined := strings.Join(args, "\n")
+	for _, want := range []string{
+		definitionDir + ":/soul/agents/dev-reviewer:ro",
+		"A2GENT_AGENT_DEFINITION_DIR=/soul/agents/dev-reviewer",
+		"AAGENT_AGENT_DEFINITION_DIR=/soul/agents/dev-reviewer",
+		"AAGENT_SKILLS_FOLDER=/soul/agents/dev-reviewer/skills",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected docker args to contain %q, got:\n%s", want, joined)
+		}
 	}
 }
 

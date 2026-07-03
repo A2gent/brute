@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -29,6 +30,42 @@ func appendLocalAgentVolumeArg(args []string, mount localDockerAgentYAMLVolumeMo
 		volume += ":ro"
 	}
 	return append(args, "--volume", volume), nil
+}
+
+func appendLocalDockerAgentDefinitionDirArgs(args []string, definitionDir string, agentID string) ([]string, error) {
+	definitionDir = resolveLocalAgentHostPath(definitionDir, "")
+	if definitionDir == "" {
+		return args, nil
+	}
+	info, err := os.Stat(definitionDir)
+	if err != nil {
+		return nil, fmt.Errorf("agent definition directory is not accessible: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("agent definition directory must be a folder")
+	}
+	agentSlug := slugifyForDockerName(agentID)
+	if agentSlug == "" {
+		agentSlug = "agent"
+	}
+	containerDir := "/soul/agents/" + agentSlug
+	args = append(args,
+		"--volume", definitionDir+":"+containerDir+":ro",
+		"--env", "A2GENT_AGENT_DEFINITION_DIR="+containerDir,
+		"--env", "AAGENT_AGENT_DEFINITION_DIR="+containerDir,
+	)
+	if skillsDir := filepath.Join(definitionDir, "skills"); directoryExists(skillsDir) {
+		// WHY: folder-based definitions keep per-agent skills beside YAML in Soul.
+		// Point the child Brute at the mounted skills directory so prompt composition
+		// can load the agent-specific markdown without rebuilding the Docker image.
+		args = append(args, "--env", skillsFolderSettingKey+"="+containerDir+"/skills")
+	}
+	return args, nil
+}
+
+func directoryExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func localDockerAgentCredentialValue(name string, credential localDockerAgentCredential, baseDir string) (string, error) {

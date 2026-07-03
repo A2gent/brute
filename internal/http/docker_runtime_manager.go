@@ -9,6 +9,7 @@ import (
 	"fmt"
 	nethttp "net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -504,7 +505,31 @@ func (s *Server) composeDockerAgentSystemPrompt(def *agentdef.Definition, projec
 	if snapshot == nil {
 		return strings.TrimSpace(def.Instructions.System)
 	}
-	return strings.TrimSpace(s.rewriteDockerWorkspacePrompt(snapshot.CombinedPrompt, projectID))
+	combined := strings.TrimSpace(snapshot.CombinedPrompt)
+	combined = s.appendAgentDefinitionSkillsSection(combined, def)
+	return strings.TrimSpace(s.rewriteDockerWorkspacePrompt(combined, projectID))
+}
+
+func (s *Server) appendAgentDefinitionSkillsSection(prompt string, def *agentdef.Definition) string {
+	if def == nil {
+		return prompt
+	}
+	skillsDir := filepath.Join(strings.TrimSpace(def.Local.DefinitionDir), "skills")
+	if !directoryExists(skillsDir) {
+		return prompt
+	}
+	settings := map[string]string{skillsFolderSettingKey: skillsDir}
+	section, _, resolveErr := s.resolveExternalMarkdownSkillsSection(settings, 0)
+	if section == "" {
+		if resolveErr != "" {
+			logging.Warn("Docker runtime: failed to load definition skills for %s: %s", def.Agent.ID, resolveErr)
+		}
+		return prompt
+	}
+	if strings.Contains(prompt, skillsDir) {
+		return prompt
+	}
+	return strings.TrimSpace(prompt) + "\n\n" + strings.TrimSpace(section)
 }
 
 func (s *Server) rewriteDockerWorkspacePrompt(prompt string, projectID string) string {

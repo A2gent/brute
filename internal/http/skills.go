@@ -47,6 +47,9 @@ var integrationToolNameSet = func() map[string]struct{} {
 func (s *Server) getSkillsFolder(settings map[string]string) string {
 	folder := strings.TrimSpace(settings[skillsFolderSettingKey])
 	if folder == "" {
+		folder = strings.TrimSpace(os.Getenv(skillsFolderSettingKey))
+	}
+	if folder == "" {
 		p, err := s.store.GetProject(storage.SystemProjectSoulID)
 		if err == nil && p != nil && p.Folder != nil {
 			return *p.Folder

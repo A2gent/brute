@@ -167,6 +167,29 @@ func serializeStoredInstructionBlocks(blocks []storedInstructionBlock) string {
 	return string(data)
 }
 
+func isProjectBranchTaskDocAppSettingKey(key string) bool {
+	trimmedKey := strings.TrimSpace(key)
+	return trimmedKey == projectBranchTaskDocDirectorySettingKey ||
+		trimmedKey == projectBranchTaskDocModeSettingKey ||
+		strings.HasPrefix(trimmedKey, legacyBranchTaskDocDirectorySettingPrefix) ||
+		strings.HasPrefix(trimmedKey, legacyBranchTaskDocModeSettingPrefix)
+}
+
+func (s *SQLiteStore) deleteLegacyBranchTaskDocAppSettings() error {
+	if _, err := s.db.Exec(`
+		DELETE FROM app_settings
+		WHERE key = ? OR key = ? OR key GLOB ? OR key GLOB ?
+	`,
+		projectBranchTaskDocDirectorySettingKey,
+		projectBranchTaskDocModeSettingKey,
+		legacyBranchTaskDocDirectorySettingPrefix+"*",
+		legacyBranchTaskDocModeSettingPrefix+"*",
+	); err != nil {
+		return fmt.Errorf("failed to delete legacy branch task documentation app settings: %w", err)
+	}
+	return nil
+}
+
 func (s *SQLiteStore) migrateProjectPromptSettingsFromAppSettings() error {
 	settings, err := s.GetSettings()
 	if err != nil {
@@ -247,6 +270,14 @@ func (s *SQLiteStore) migrateProjectPromptSettingsFromAppSettings() error {
 		}
 		if _, err := s.db.Exec(`UPDATE projects SET settings = ?, updated_at = ? WHERE id = ?`, encoded, time.Now(), row.projectID); err != nil {
 			return fmt.Errorf("failed to migrate project %s prompt settings: %w", row.projectID, err)
+		}
+	}
+
+	if hasLegacyBranchSettings {
+		// WHY: branch task documentation settings are project scoped now. Keeping
+		// the legacy suffixed keys in app_settings makes them appear as global env vars.
+		if err := s.deleteLegacyBranchTaskDocAppSettings(); err != nil {
+			return err
 		}
 	}
 	return nil

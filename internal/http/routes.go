@@ -82,6 +82,7 @@ func (s *Server) registerSystemRoutes(r chi.Router) {
 	// System maintenance endpoints used by Caesar's Agents maintenance panel.
 	r.Route("/system", func(r chi.Router) {
 		r.Post("/rebuild", s.handleRebuildBrute)
+		r.Post("/rebuild-with-docker-image", s.handleRebuildBruteAndDockerImage)
 		r.Post("/sub-agent-containers/restart", s.handleRestartRunningSubAgentContainers)
 	})
 }

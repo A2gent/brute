@@ -245,14 +245,6 @@ func (t *recurringJobsTool) handleDelete(p recurringJobsParams) (*tools.Result, 
 		return &tools.Result{Success: false, Error: "job_id is required for action=delete"}, nil
 	}
 
-	protected, err := t.server.isProtectedThinkingJob(jobID)
-	if err != nil {
-		return &tools.Result{Success: false, Error: "failed to check protected jobs: " + err.Error()}, nil
-	}
-	if protected {
-		return &tools.Result{Success: false, Error: "this job is managed by Thinking settings and cannot be deleted directly"}, nil
-	}
-
 	if err := t.server.store.DeleteJob(jobID); err != nil {
 		return &tools.Result{Success: false, Error: "failed to delete job: " + err.Error()}, nil
 	}

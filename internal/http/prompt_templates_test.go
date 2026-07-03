@@ -11,7 +11,6 @@ func TestServerPromptTemplatesFromSettingsUsesCustomValues(t *testing.T) {
 	templates := serverPromptTemplatesFromSettings(map[string]string{
 		gitPRDescriptionPromptTemplateSettingKey: "custom pr {{files}}",
 		workflowBareStatusRetryPromptSettingKey:  "retry {{node_label}}",
-		thinkingRunTaskPromptSettingKey:          "custom thinking",
 		scheduleToCronSystemPromptSettingKey:     "custom scheduler",
 	})
 
@@ -20,9 +19,6 @@ func TestServerPromptTemplatesFromSettingsUsesCustomValues(t *testing.T) {
 	}
 	if templates.WorkflowBareStatusRetryPromptTemplate != "retry {{node_label}}" {
 		t.Fatalf("unexpected retry template: %q", templates.WorkflowBareStatusRetryPromptTemplate)
-	}
-	if templates.ThinkingRunTaskPrompt != "custom thinking" {
-		t.Fatalf("unexpected thinking prompt: %q", templates.ThinkingRunTaskPrompt)
 	}
 	if templates.ScheduleToCronSystemPrompt != "custom scheduler" {
 		t.Fatalf("unexpected scheduler prompt: %q", templates.ScheduleToCronSystemPrompt)

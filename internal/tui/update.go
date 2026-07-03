@@ -65,7 +65,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tickMsg:
-		cmds = append(cmds, m.updateTick()...)
+		var tickCmds []tea.Cmd
+		m, tickCmds = m.updateTick()
+		cmds = append(cmds, tickCmds...)
 
 	case memoryUpdateMsg:
 		m = m.updateMemory(msg)
@@ -78,10 +80,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m, asyncCmds = m.updateSessionSync(msg)
 		cmds = append(cmds, asyncCmds...)
 
+	case startInitialRunMsg:
+		var runCmd tea.Cmd
+		m, runCmd = m.startExistingSessionRun(msg.task)
+		cmds = append(cmds, runCmd)
+
+	case externalSessionEventMsg:
+		m = m.updateExternalSessionEvent(msg.event)
+		cmds = append(cmds, sessionEventCmd(m.sessionEvents))
+
 	case agentResponseMsg:
 		var asyncCmds []tea.Cmd
 		m, asyncCmds = m.updateAgentResponse(msg)
 		cmds = append(cmds, asyncCmds...)
+
+	case agentStreamMsg:
+		if msg.hasEvent {
+			m = m.updateAgentEvent(msg.event)
+			cmds = append(cmds, agentStreamCmd(msg.stream))
+		}
+		if msg.hasResponse {
+			var asyncCmds []tea.Cmd
+			m, asyncCmds = m.updateAgentResponse(msg.response)
+			cmds = append(cmds, asyncCmds...)
+		}
+
+	case agentStreamClosedMsg:
+		// The response message owns terminal state. A closed stream without a
+		// response can happen after cancellation and does not need another update.
 
 	case tokenUpdateMsg:
 		m = m.updateTokens(msg)

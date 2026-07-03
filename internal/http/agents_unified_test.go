@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -212,6 +214,65 @@ func TestComposeDockerAgentSystemPromptIncludesInstructionBlocks(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "Review carefully.") {
 		t.Fatalf("prompt missing instruction block:\n%s", prompt)
+	}
+}
+
+func TestImportAgentYAMLFromFolderStoresDefinitionDir(t *testing.T) {
+	server, store := newUnifiedAgentsTestServer(t)
+	definitionDir := t.TempDir()
+	configPath := filepath.Join(definitionDir, "agent.yaml")
+	yamlDef := `
+version: "1"
+agent:
+  id: folder-reviewer
+  name: Folder Reviewer
+runtime:
+  type: docker
+`
+	if err := os.WriteFile(configPath, []byte(yamlDef), 0o644); err != nil {
+		t.Fatalf("failed to write agent.yaml: %v", err)
+	}
+
+	body, _ := json.Marshal(importAgentYAMLRequest{ConfigPath: definitionDir})
+	req := httptest.NewRequest(http.MethodPost, "/unified-agents/import-yaml", strings.NewReader(string(body)))
+	rec := httptest.NewRecorder()
+	server.handleImportAgentYAML(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	record, err := store.GetAgentDefinition("folder-reviewer")
+	if err != nil {
+		t.Fatalf("imported definition not found: %v", err)
+	}
+	def, err := agentdef.ParseYAML([]byte(record.DefinitionYAML))
+	if err != nil {
+		t.Fatalf("stored YAML did not parse: %v", err)
+	}
+	if def.Local.DefinitionDir != definitionDir {
+		t.Fatalf("expected definition_dir %q, got %q", definitionDir, def.Local.DefinitionDir)
+	}
+}
+
+func TestComposeDockerAgentSystemPromptIncludesDefinitionFolderSkills(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+	definitionDir := t.TempDir()
+	skillsDir := filepath.Join(definitionDir, "skills")
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		t.Fatalf("failed to create skills dir: %v", err)
+	}
+	skill := []byte("---\nname: Deep Review\nstrategy: always\n---\nAlways check folder-local invariants.")
+	if err := os.WriteFile(filepath.Join(skillsDir, "deep-review.md"), skill, 0o644); err != nil {
+		t.Fatalf("failed to write skill: %v", err)
+	}
+	def := &agentdef.Definition{
+		Agent:   agentdef.AgentMeta{ID: "folder-skills", Name: "Folder Skills"},
+		Runtime: agentdef.Runtime{Type: agentdef.RuntimeDocker},
+		Local:   agentdef.Local{DefinitionDir: definitionDir},
+	}
+
+	prompt := server.composeDockerAgentSystemPrompt(def, "")
+	if !strings.Contains(prompt, "Connected skills folder: "+skillsDir) || !strings.Contains(prompt, "- Deep Review [deep-review.md]") {
+		t.Fatalf("prompt missing definition folder skills listing:\n%s", prompt)
 	}
 }
 

@@ -196,19 +196,8 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 	if err := s.store.SaveJobExecution(exec); err != nil {
 		logging.Error("Failed to link execution record to session for job %s: %v", job.ID, err)
 	}
-	isThinkingJob := false
-	if thinking, thinkErr := s.isThinkingJob(job.ID); thinkErr != nil {
-		logging.Warn("Failed to check thinking job for project assignment: %v", thinkErr)
-	} else if thinking {
-		isThinkingJob = true
-		if assignErr := s.assignSessionToThinkingProject(sess); assignErr != nil {
-			logging.Warn("Failed to assign Thinking project for session %s: %v", sess.ID, assignErr)
-		}
-	}
-	if !isThinkingJob {
-		if assignErr := s.assignSessionToJobProject(sess, job); assignErr != nil {
-			logging.Warn("Failed to assign recurring job project for session %s: %v", sess.ID, assignErr)
-		}
+	if assignErr := s.assignSessionToJobProject(sess, job); assignErr != nil {
+		logging.Warn("Failed to assign recurring job project for session %s: %v", sess.ID, assignErr)
 	}
 
 	// Run the agent with the job's task prompt
@@ -220,7 +209,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 		logging.Warn("Failed to persist job session provider metadata: %v", err)
 	}
 
-	contextWindow := s.resolveContextWindowForProvider(providerType)
+	contextWindow := s.resolveContextWindowForProvider(providerType, model)
 	jobWorkDir := s.resolveJobWorkDir(job)
 	effectiveTaskPrompt, resolveErr := jobs.ResolveTaskPrompt(job, jobWorkDir)
 	if resolveErr != nil {

@@ -83,6 +83,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	var streamWriteMu sync.Mutex
 	streamWritable := true
 	writeEvent := func(event ChatStreamEvent) bool {
+		s.publishSessionEvent(sessionID, event)
 		streamWriteMu.Lock()
 		defer streamWriteMu.Unlock()
 		if !streamWritable {
@@ -130,7 +131,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			sess.SetStatus(session.StatusFailed)
 			_ = s.sessionManager.Save(sess)
 			s.refreshSessionSummaryWithPrompt(runCtx, sess)
-			s.triggerSerialSessionQueueIfTerminal(sess)
+			s.triggerSerialSessionQueueIfAdvanceable(sess)
 			_ = writeEvent(ChatStreamEvent{Type: "error", Error: "Agent error: " + runErr.Error(), Status: string(sess.Status), Messages: s.messagesToResponse(sess.Messages)})
 			return
 		}
@@ -144,7 +145,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.refreshSessionSummaryWithPrompt(runCtx, sess)
-		s.triggerSerialSessionQueueIfTerminal(sess)
+		s.triggerSerialSessionQueueIfAdvanceable(sess)
 		_ = writeEvent(ChatStreamEvent{Type: "done", Content: chatResp.Content, Messages: s.messagesToResponse(sess.Messages), Status: string(sess.Status), Usage: &chatResp.Usage})
 		return
 	}
@@ -167,7 +168,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			sess.SetStatus(session.StatusFailed)
 			_ = s.sessionManager.Save(sess)
 			s.refreshSessionSummaryWithPrompt(runCtx, sess)
-			s.triggerSerialSessionQueueIfTerminal(sess)
+			s.triggerSerialSessionQueueIfAdvanceable(sess)
 			_ = writeEvent(ChatStreamEvent{
 				Type:     "error",
 				Error:    "Workflow error: " + runErr.Error(),
@@ -187,7 +188,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		s.triggerSerialSessionQueueIfTerminal(sess)
+		s.triggerSerialSessionQueueIfAdvanceable(sess)
 		_ = writeEvent(ChatStreamEvent{
 			Type:     "done",
 			Content:  content,
@@ -209,7 +210,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		sess.AddAssistantMessage(fmt.Sprintf("Unable to start request: %s", err.Error()), nil)
 		sess.SetStatus(session.StatusFailed)
 		s.sessionManager.Save(sess)
-		s.triggerSerialSessionQueueIfTerminal(sess)
+		s.triggerSerialSessionQueueIfAdvanceable(sess)
 		_ = writeEvent(ChatStreamEvent{
 			Type:     "error",
 			Error:    "Provider configuration error: " + err.Error(),
@@ -331,7 +332,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		addRequestFailedAssistantMessage(sess, adaptedErr)
 		sess.SetStatus(session.StatusFailed)
 		s.sessionManager.Save(sess)
-		s.triggerSerialSessionQueueIfTerminal(sess)
+		s.triggerSerialSessionQueueIfAdvanceable(sess)
 		_ = writeEvent(ChatStreamEvent{
 			Type:     "error",
 			Error:    "Agent error: " + adaptedErr.Error(),
@@ -346,7 +347,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.refreshSessionSummaryWithPrompt(runCtx, sess)
-	s.triggerSerialSessionQueueIfTerminal(sess)
+	s.triggerSerialSessionQueueIfAdvanceable(sess)
 	_ = writeEvent(ChatStreamEvent{
 		Type:     "done",
 		Content:  content,

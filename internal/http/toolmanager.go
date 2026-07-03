@@ -113,6 +113,7 @@ func (s *Server) toolManagerForSession(sess *session.Session) *tools.Manager {
 
 		allowed["question"] = struct{}{}
 		allowed["session_task_progress"] = struct{}{}
+		allowed["man"] = struct{}{}
 
 		for _, def := range manager.GetDefinitions() {
 			if _, ok := allowed[def.Name]; !ok {
@@ -132,6 +133,8 @@ func (s *Server) registerServerBackedTools(manager *tools.Manager) {
 	logging.Debug("Registering server-backed tools...")
 	manager.Register(newRecurringJobsTool(s))
 	manager.Register(newMCPManageTool(s))
+	manager.Register(newMCPListToolsTool(s))
+	manager.Register(newMCPCallTool(s))
 	manager.Register(newDelegateToSubAgentTool(s))
 	manager.Register(newDelegateToAgentTool(s))
 	manager.Register(newDelegateToExternalAgentTool(s))
@@ -145,6 +148,7 @@ func (s *Server) registerServerBackedTools(manager *tools.Manager) {
 	}
 	manager.RegisterQuestionTool(s.sessionManager)
 	manager.RegisterSessionTaskProgressTool(s.sessionManager)
+	manager.Register(tools.NewProjectSessionHistoryTool(s.store))
 	manager.RegisterSQLQueryTool(s.store)
 	if s.config != nil {
 		openAIImageOutputDir := filepath.Join(strings.TrimSpace(s.config.DataPath), "generated", "openai")

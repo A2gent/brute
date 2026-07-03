@@ -21,6 +21,8 @@ import (
 
 var integrationToolsByProvider = map[string][]string{
 	"google_calendar": {"google_calendar_query"},
+	"jira":            {"jira_query"},
+	"circleci":        {"circleci_query"},
 	"brave_search":    {"brave_search_query"},
 	"elevenlabs":      {"elevenlabs_tts"},
 	"leonardo":        {"leonardo_generate_image"},
@@ -45,6 +47,9 @@ var integrationToolNameSet = func() map[string]struct{} {
 
 func (s *Server) getSkillsFolder(settings map[string]string) string {
 	folder := strings.TrimSpace(settings[skillsFolderSettingKey])
+	if folder == "" {
+		folder = strings.TrimSpace(os.Getenv(skillsFolderSettingKey))
+	}
 	if folder == "" {
 		p, err := s.store.GetProject(storage.SystemProjectSoulID)
 		if err == nil && p != nil && p.Folder != nil {

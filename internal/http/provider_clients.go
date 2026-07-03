@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/A2gent/brute/internal/codexauth"
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/anthropic"
@@ -83,10 +84,11 @@ func (s *Server) resolveSessionModel(sess *session.Session, providerType config.
 	return s.resolveModelForProvider(providerType)
 }
 
-func (s *Server) resolveContextWindowForProvider(providerType config.ProviderType) int {
+func (s *Server) resolveContextWindowForProvider(providerType config.ProviderType, model string) int {
 	if providerType == config.ProviderAutoRouter {
 		return 0
 	}
+	provider := s.config.Providers[string(providerType)]
 	if config.IsFallbackAggregateRef(string(providerType)) || providerType == config.ProviderFallback {
 		chain, err := s.fallbackNodesForProvider(providerType)
 		if err != nil {
@@ -94,20 +96,21 @@ func (s *Server) resolveContextWindowForProvider(providerType config.ProviderTyp
 		}
 		minContext := 0
 		for _, node := range chain {
-			def := config.GetProviderDefinition(config.ProviderType(node.Provider))
-			if def == nil || def.ContextWindow <= 0 {
+			nodeType := config.ProviderType(node.Provider)
+			if config.GetProviderDefinition(nodeType) == nil {
 				continue
 			}
-			if minContext == 0 || def.ContextWindow < minContext {
-				minContext = def.ContextWindow
+			window := config.ResolveContextWindow(nodeType, s.config.Providers[string(nodeType)], node.Model)
+			if window <= 0 {
+				continue
+			}
+			if minContext == 0 || window < minContext {
+				minContext = window
 			}
 		}
 		return minContext
 	}
-	if def := config.GetProviderDefinition(providerType); def != nil && def.ContextWindow > 0 {
-		return def.ContextWindow
-	}
-	return 0
+	return config.ResolveContextWindow(providerType, provider, model)
 }
 
 func (s *Server) providerStatefulResponses(providerType config.ProviderType) bool {
@@ -120,6 +123,28 @@ func (s *Server) providerStatefulResponsesForConfig(providerType config.Provider
 	return false
 }
 
+func (s *Server) syncOpenAICodexOAuthFromCache() bool {
+	if s == nil || s.config == nil {
+		return false
+	}
+	oauth, _, err := codexauth.Load("")
+	if err != nil || oauth == nil || strings.TrimSpace(oauth.AccessToken) == "" {
+		return false
+	}
+	provider := s.config.Providers[string(config.ProviderOpenAICodex)]
+	current := ""
+	if provider.OAuth != nil {
+		current = strings.TrimSpace(provider.OAuth.AccessToken)
+	}
+	if current == strings.TrimSpace(oauth.AccessToken) {
+		return true
+	}
+	// WHY: Codex CLI refreshes ~/.codex/auth.json automatically during use. Brute
+	// must not keep using an older copied token snapshot from config after that.
+	provider.OAuth = oauth
+	s.config.Providers[string(config.ProviderOpenAICodex)] = provider
+	return true
+}
 func (s *Server) createLLMClient(providerType config.ProviderType, model string, sess *session.Session) (llm.Client, error) {
 	if providerType == config.ProviderAutoRouter {
 		return nil, fmt.Errorf("automatic router requires dynamic prompt routing")
@@ -211,8 +236,13 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 	}
 
 	apiKey := strings.TrimSpace(provider.APIKey)
+	oauthBacked := false
+	if providerType == config.ProviderOpenAICodex && apiKey == "" && s.syncOpenAICodexOAuthFromCache() {
+		provider = s.config.Providers[string(providerType)]
+	}
 	if apiKey == "" && s.providerSupportsOAuth(providerType) && provider.OAuth != nil {
 		apiKey = strings.TrimSpace(provider.OAuth.AccessToken)
+		oauthBacked = apiKey != ""
 	}
 	if apiKey == "" {
 		apiKey = s.apiKeyFromEnv(providerType)
@@ -235,14 +265,27 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return lmstudio.NewClient(apiKey, modelName, baseURL), nil
 	case config.ProviderOpenAICodex:
-		return openaicodex.NewClientWithOptions(apiKey, modelName, baseURL, openaicodex.Options{
+		options := openaicodex.Options{
 			PromptCacheKey:    provider.PromptCacheKey,
 			ReasoningEffort:   provider.ReasoningEffort,
 			TextVerbosity:     provider.TextVerbosity,
 			ServiceTier:       provider.ServiceTier,
 			MaxTokens:         provider.MaxTokens,
 			StatefulResponses: s.providerStatefulResponsesForConfig(providerType, provider.StatefulResponses),
-		}), nil
+		}
+		if oauthBacked {
+			options.AccessTokenProvider = func() string {
+				if !s.syncOpenAICodexOAuthFromCache() {
+					return ""
+				}
+				provider := s.config.Providers[string(config.ProviderOpenAICodex)]
+				if provider.OAuth == nil {
+					return ""
+				}
+				return strings.TrimSpace(provider.OAuth.AccessToken)
+			}
+		}
+		return openaicodex.NewClientWithOptions(apiKey, modelName, baseURL, options), nil
 	default:
 		return anthropic.NewClientWithBaseURL(apiKey, modelName, baseURL), nil
 	}

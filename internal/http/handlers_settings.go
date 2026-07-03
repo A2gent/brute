@@ -20,6 +20,14 @@ const repeatInitialPromptSettingKey = "AAGENT_REPEAT_INITIAL_PROMPT"
 
 const defaultAgentName = "A2gent"
 
+func isBranchTaskDocAppSettingKey(key string) bool {
+	trimmedKey := strings.TrimSpace(key)
+	return trimmedKey == projectBranchTaskDocDirectorySettingKey ||
+		trimmedKey == projectBranchTaskDocModeSettingKey ||
+		strings.HasPrefix(trimmedKey, legacyBranchTaskDocDirectorySettingPrefix) ||
+		strings.HasPrefix(trimmedKey, legacyBranchTaskDocModeSettingPrefix)
+}
+
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	settings, err := s.store.GetSettings()
 	if err != nil {
@@ -63,6 +71,9 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 func settingsResponse(settings map[string]string) SettingsResponse {
 	out := make(map[string]string, len(settings)+1)
 	for key, value := range settings {
+		if isBranchTaskDocAppSettingKey(key) {
+			continue
+		}
 		out[key] = value
 	}
 	if strings.TrimSpace(out[toolResultCompressionSettingKey]) == "" {
@@ -134,7 +145,7 @@ func syncSettingsToEnv(previous map[string]string, next map[string]string) {
 			continue
 		}
 		k := strings.TrimSpace(key)
-		if k == "" {
+		if k == "" || isBranchTaskDocAppSettingKey(k) {
 			continue
 		}
 		if err := os.Unsetenv(k); err != nil {
@@ -144,7 +155,7 @@ func syncSettingsToEnv(previous map[string]string, next map[string]string) {
 
 	for key, value := range next {
 		k := strings.TrimSpace(key)
-		if k == "" {
+		if k == "" || isBranchTaskDocAppSettingKey(k) {
 			continue
 		}
 		if err := os.Setenv(k, value); err != nil {

@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,7 +48,7 @@ func NewSQLiteStore(dataPath string) (*SQLiteStore, error) {
 }
 
 func openSQLiteConnection(dbPath string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -57,6 +58,17 @@ func openSQLiteConnection(dbPath string) (*sql.DB, error) {
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
 	return db, nil
+}
+
+func sqliteDSN(dbPath string) string {
+	values := url.Values{}
+	values.Add("_pragma", "busy_timeout=30000")
+	values.Add("_pragma", "foreign_keys=ON")
+	values.Add("_pragma", "synchronous=NORMAL")
+
+	u := url.URL{Scheme: "file", Path: filepath.ToSlash(dbPath)}
+	u.RawQuery = values.Encode()
+	return u.String()
 }
 
 func isSQLiteReadonlyError(err error) bool {

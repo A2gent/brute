@@ -2,15 +2,10 @@ package http
 
 import (
 	"encoding/json"
-	"fmt"
-	"math"
 	"net/http"
-	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
 
+	"github.com/A2gent/brute/internal/codexauth"
 	"github.com/A2gent/brute/internal/config"
 )
 
@@ -40,62 +35,14 @@ func (s *Server) handleOpenAICodexOAuthImport(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	authPath := defaultOpenAICodexAuthPath()
-	if strings.TrimSpace(req.Path) != "" {
-		authPath = strings.TrimSpace(req.Path)
-	}
-	if strings.HasPrefix(authPath, "~") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			s.errorResponse(w, http.StatusInternalServerError, "Failed to resolve home directory: "+err.Error())
-			return
-		}
-		authPath = filepath.Join(home, strings.TrimPrefix(authPath, "~/"))
-	}
-
-	raw, err := os.ReadFile(authPath)
+	oauth, authPath, err := codexauth.Load(strings.TrimSpace(req.Path))
 	if err != nil {
-		s.errorResponse(w, http.StatusBadRequest, "Failed to read Codex auth file. Run `codex login` first, then retry import: "+err.Error())
-		return
-	}
-
-	var payload interface{}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		s.errorResponse(w, http.StatusBadRequest, "Invalid Codex auth JSON: "+err.Error())
-		return
-	}
-
-	accessToken := deepFindString(payload, map[string]struct{}{
-		"access_token": {},
-		"accesstoken":  {},
-		"token":        {},
-	})
-	if accessToken == "" {
-		s.errorResponse(w, http.StatusBadRequest, "No access token found in Codex auth file")
-		return
-	}
-
-	refreshToken := deepFindString(payload, map[string]struct{}{
-		"refresh_token": {},
-		"refreshtoken":  {},
-	})
-	expiresAt := deepFindTimestamp(payload, map[string]struct{}{
-		"expires_at": {},
-		"expiresat":  {},
-		"expiry":     {},
-		"expires":    {},
-	})
-	if expiresAt > 0 && expiresAt < time.Now().Unix() {
-		s.errorResponse(w, http.StatusBadRequest, "Imported OAuth token is expired. Run `codex login` again, then retry import.")
+		s.errorResponse(w, http.StatusBadRequest, "Failed to import Codex OAuth: "+err.Error())
 		return
 	}
 
 	provider := s.config.Providers[string(config.ProviderOpenAICodex)]
-	provider.OAuth = &config.OAuthConfig{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-		ExpiresAt:    expiresAt,
-	}
+	provider.OAuth = oauth
 	s.config.Providers[string(config.ProviderOpenAICodex)] = provider
 
 	if err := s.config.Save(config.GetConfigPath()); err != nil {
@@ -107,11 +54,15 @@ func (s *Server) handleOpenAICodexOAuthImport(w http.ResponseWriter, r *http.Req
 		Success:   true,
 		Imported:  true,
 		Path:      authPath,
-		ExpiresAt: expiresAt,
+		ExpiresAt: oauth.ExpiresAt,
 	})
 }
 
 func (s *Server) handleOpenAICodexOAuthStatus(w http.ResponseWriter, r *http.Request) {
+	// Keep the connected OAuth snapshot aligned with Codex CLI's local cache so
+	// Caesar does not show stale expiry data after Codex refreshes the token.
+	s.syncOpenAICodexOAuthFromCache()
+
 	provider := s.config.Providers[string(config.ProviderOpenAICodex)]
 	if provider.OAuth == nil || strings.TrimSpace(provider.OAuth.AccessToken) == "" {
 		s.jsonResponse(w, http.StatusOK, ProviderOAuthStatusResponse{Enabled: false})
@@ -133,118 +84,4 @@ func (s *Server) handleOpenAICodexOAuthDisconnect(w http.ResponseWriter, r *http
 		return
 	}
 	s.jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
-}
-
-func defaultOpenAICodexAuthPath() string {
-	if codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME")); codexHome != "" {
-		return filepath.Join(codexHome, "auth.json")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "~/.codex/auth.json"
-	}
-	return filepath.Join(home, ".codex", "auth.json")
-}
-
-func deepFindString(value interface{}, keySet map[string]struct{}) string {
-	switch v := value.(type) {
-	case map[string]interface{}:
-		for key, val := range v {
-			if _, ok := keySet[strings.ToLower(strings.TrimSpace(key))]; ok {
-				if s := parseString(val); s != "" {
-					return s
-				}
-			}
-		}
-		for _, val := range v {
-			if s := deepFindString(val, keySet); s != "" {
-				return s
-			}
-		}
-	case []interface{}:
-		for _, item := range v {
-			if s := deepFindString(item, keySet); s != "" {
-				return s
-			}
-		}
-	}
-	return ""
-}
-
-func deepFindTimestamp(value interface{}, keySet map[string]struct{}) int64 {
-	switch v := value.(type) {
-	case map[string]interface{}:
-		for key, val := range v {
-			if _, ok := keySet[strings.ToLower(strings.TrimSpace(key))]; ok {
-				if ts := parseTimestamp(val); ts > 0 {
-					return ts
-				}
-			}
-		}
-		for _, val := range v {
-			if ts := deepFindTimestamp(val, keySet); ts > 0 {
-				return ts
-			}
-		}
-	case []interface{}:
-		for _, item := range v {
-			if ts := deepFindTimestamp(item, keySet); ts > 0 {
-				return ts
-			}
-		}
-	}
-	return 0
-}
-
-func parseString(value interface{}) string {
-	if value == nil {
-		return ""
-	}
-	switch v := value.(type) {
-	case string:
-		return strings.TrimSpace(v)
-	default:
-		return strings.TrimSpace(fmt.Sprintf("%v", value))
-	}
-}
-
-func parseTimestamp(value interface{}) int64 {
-	switch v := value.(type) {
-	case float64:
-		if math.IsNaN(v) || math.IsInf(v, 0) {
-			return 0
-		}
-		return normalizeUnixTS(int64(v))
-	case int64:
-		return normalizeUnixTS(v)
-	case int:
-		return normalizeUnixTS(int64(v))
-	case json.Number:
-		if i, err := v.Int64(); err == nil {
-			return normalizeUnixTS(i)
-		}
-		if f, err := v.Float64(); err == nil {
-			return normalizeUnixTS(int64(f))
-		}
-	case string:
-		raw := strings.TrimSpace(v)
-		if raw == "" {
-			return 0
-		}
-		if i, err := strconv.ParseInt(raw, 10, 64); err == nil {
-			return normalizeUnixTS(i)
-		}
-		if t, err := time.Parse(time.RFC3339, raw); err == nil {
-			return t.Unix()
-		}
-	}
-	return 0
-}
-
-func normalizeUnixTS(ts int64) int64 {
-	// Convert milliseconds to seconds when needed.
-	if ts > 9999999999 {
-		return ts / 1000
-	}
-	return ts
 }

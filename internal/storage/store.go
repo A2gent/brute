@@ -105,6 +105,7 @@ type LeonardoGeneration struct {
 // MCPServer represents a configured MCP server endpoint.
 type MCPServer struct {
 	ID                  string
+	ProjectID           *string
 	Name                string
 	Transport           string // "stdio" | "http"
 	Enabled             bool

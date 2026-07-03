@@ -10,6 +10,17 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+var localDockerAgentYAMLDirectoryConfigNames = []string{
+	"agent.yaml",
+	"agent.yml",
+	"definition.yaml",
+	"definition.yml",
+	"config.yaml",
+	"config.yml",
+	"local-agent.yaml",
+	"local-agent.yml",
+}
+
 func parseLocalDockerAgentYAMLConfig(raw []byte) (*localDockerAgentYAMLConfig, error) {
 	if len(strings.TrimSpace(string(raw))) == 0 {
 		return nil, fmt.Errorf("YAML config is empty")
@@ -108,13 +119,37 @@ func readLocalDockerAgentYAMLConfigFile(path string, baseDir string) ([]byte, st
 		return nil, resolved, fmt.Errorf("failed to access YAML config: %w", err)
 	}
 	if info.IsDir() {
-		return nil, resolved, fmt.Errorf("YAML config path is a directory")
+		candidate, resolveErr := resolveLocalDockerAgentYAMLDirectoryConfigFile(resolved)
+		if resolveErr != nil {
+			return nil, resolved, resolveErr
+		}
+		resolved = candidate
 	}
 	raw, err := os.ReadFile(resolved)
 	if err != nil {
 		return nil, resolved, fmt.Errorf("failed to read YAML config: %w", err)
 	}
 	return raw, resolved, nil
+}
+
+func resolveLocalDockerAgentYAMLDirectoryConfigFile(dir string) (string, error) {
+	dir = filepath.Clean(strings.TrimSpace(dir))
+	if dir == "" {
+		return "", fmt.Errorf("YAML config directory is empty")
+	}
+	candidates := append([]string{}, localDockerAgentYAMLDirectoryConfigNames...)
+	base := filepath.Base(dir)
+	if base != "." && base != string(filepath.Separator) {
+		candidates = append(candidates, base+".yaml", base+".yml")
+	}
+	for _, name := range candidates {
+		candidate := filepath.Join(dir, name)
+		info, err := os.Stat(candidate)
+		if err == nil && !info.IsDir() {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("YAML config directory %s must contain agent.yaml, definition.yaml, config.yaml, local-agent.yaml, or <folder-name>.yaml", dir)
 }
 
 func expandHomePath(path string) string {

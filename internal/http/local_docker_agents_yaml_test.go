@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -199,6 +202,51 @@ func TestLocalDockerAgentSpecToCreateRequestPreservesLegacyFields(t *testing.T) 
 	}
 	if len(req.Tools.Enabled) != 2 || req.Tools.Enabled[1] != "bash" {
 		t.Fatalf("tools not preserved: %#v", req.Tools)
+	}
+}
+func TestReadLocalDockerAgentYAMLConfigFileAcceptsDefinitionFolder(t *testing.T) {
+	dir := t.TempDir()
+	definitionDir := filepath.Join(dir, "reviewer")
+	if err := os.MkdirAll(definitionDir, 0o755); err != nil {
+		t.Fatalf("failed to create definition dir: %v", err)
+	}
+	configPath := filepath.Join(definitionDir, "agent.yaml")
+	if err := os.WriteFile(configPath, []byte("version: 1\nagent:\n  name: folder-reviewer\n"), 0o644); err != nil {
+		t.Fatalf("failed to write agent.yaml: %v", err)
+	}
+
+	raw, resolved, err := readLocalDockerAgentYAMLConfigFile(definitionDir, "")
+	if err != nil {
+		t.Fatalf("readLocalDockerAgentYAMLConfigFile returned error: %v", err)
+	}
+	if resolved != configPath {
+		t.Fatalf("expected folder config %s, got %s", configPath, resolved)
+	}
+	if !strings.Contains(string(raw), "folder-reviewer") {
+		t.Fatalf("unexpected config content: %s", raw)
+	}
+}
+
+func TestAppendLocalDockerAgentDefinitionDirArgsMountsSoulDefinitionAndSkills(t *testing.T) {
+	definitionDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(definitionDir, "skills"), 0o755); err != nil {
+		t.Fatalf("failed to create skills dir: %v", err)
+	}
+
+	args, err := appendLocalDockerAgentDefinitionDirArgs([]string{"run"}, definitionDir, "Dev Reviewer")
+	if err != nil {
+		t.Fatalf("appendLocalDockerAgentDefinitionDirArgs returned error: %v", err)
+	}
+	joined := strings.Join(args, "\n")
+	for _, want := range []string{
+		definitionDir + ":/soul/agents/dev-reviewer:ro",
+		"A2GENT_AGENT_DEFINITION_DIR=/soul/agents/dev-reviewer",
+		"AAGENT_AGENT_DEFINITION_DIR=/soul/agents/dev-reviewer",
+		"AAGENT_SKILLS_FOLDER=/soul/agents/dev-reviewer/skills",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected docker args to contain %q, got:\n%s", want, joined)
+		}
 	}
 }
 
@@ -569,5 +617,131 @@ func TestRegisterLocalDockerAgentDefaultsMetadataFromContainerLabels(t *testing.
 	}
 	if got.Category != "engineering" || got.AvatarURL != "https://example.com/avatar.png" {
 		t.Fatalf("container label publish metadata not used: %#v", got)
+	}
+}
+
+func TestRegisterLocalDockerAgentDerivesValidHandleFromAgentNameLabel(t *testing.T) {
+	var got squareRegisterAgentRequest
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/agents/register" {
+			t.Fatalf("unexpected registry request: %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode registry request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"agent":{"id":"agent-1","name":%q,"agent_handle":%q,"public_id":%q},"api_key":"sq_key"}`, got.Name, got.AgentHandle, got.AgentHandle)
+	}))
+	defer registry.Close()
+
+	server := &Server{}
+	_, status, err := server.registerLocalDockerAgent(context.Background(), &LocalDockerAgent{
+		ID:       "container-1",
+		Name:     "agent-dev-code-reviewer__project-bb113706-4903-40b7-8966-a23eb10ae220",
+		HostPort: 18080,
+		APIURL:   "http://127.0.0.1:18080",
+		Labels: map[string]string{
+			"a2gent.agent_name": "Code Reviewer",
+		},
+	}, registerLocalDockerAgentRequest{
+		RegistryURL:        registry.URL,
+		OwnerEmail:         "owner@example.com",
+		ConfigureContainer: boolPtr(false),
+	})
+	if err != nil {
+		t.Fatalf("registerLocalDockerAgent returned error: status=%d err=%v", status, err)
+	}
+	if got.AgentHandle != "code-reviewer" {
+		t.Fatalf("expected handle from agent name label, got %q", got.AgentHandle)
+	}
+}
+
+func TestSlugifyForA2AgentHandleMatchesSquareHandleRules(t *testing.T) {
+	cases := map[string]string{
+		"YouTube Transcriber (Gemini)": "youtube-transcriber-gemini",
+		"__Already_OK__":               "already_ok",
+		"AI":                           "ai0",
+		"!!!":                          "",
+	}
+	for input, want := range cases {
+		if got := slugifyForA2AgentHandle(input); got != want {
+			t.Fatalf("slugifyForA2AgentHandle(%q) = %q, want %q", input, got, want)
+		}
+	}
+
+	long := slugifyForA2AgentHandle("Agent " + strings.Repeat("x", 80) + "_")
+	if len(long) > 64 {
+		t.Fatalf("handle length = %d, want <= 64", len(long))
+	}
+	if strings.HasSuffix(long, "-") || strings.HasSuffix(long, "_") {
+		t.Fatalf("handle must not end with a separator: %q", long)
+	}
+}
+
+func TestRegisterLocalDockerAgentUploadsLocalAvatarAsset(t *testing.T) {
+	avatarPath := filepath.Join(t.TempDir(), "avatar.png")
+	if err := os.WriteFile(avatarPath, []byte("fake-png"), 0o644); err != nil {
+		t.Fatalf("write avatar: %v", err)
+	}
+
+	var got squareRegisterAgentRequest
+	uploaded := false
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/agents/register":
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatalf("decode registry request: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"agent":{"id":"agent-1","name":"Avatar Bot","agent_handle":"avatar-bot","public_id":"avatar-bot"},"api_key":"sq_key"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/owner/agents/agent-1/avatar":
+			if r.Header.Get("Authorization") != "Bearer sq_key" {
+				t.Fatalf("avatar upload did not use registered agent API key: %q", r.Header.Get("Authorization"))
+			}
+			if err := r.ParseMultipartForm(9 << 20); err != nil {
+				t.Fatalf("parse avatar multipart: %v", err)
+			}
+			file, _, err := r.FormFile("avatar")
+			if err != nil {
+				t.Fatalf("missing avatar form file: %v", err)
+			}
+			defer file.Close()
+			body, _ := io.ReadAll(file)
+			if string(body) != "fake-png" {
+				t.Fatalf("unexpected uploaded avatar body: %q", string(body))
+			}
+			uploaded = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"message":"avatar uploaded"}`)
+		default:
+			t.Fatalf("unexpected registry request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer registry.Close()
+
+	server := &Server{}
+	_, status, err := server.registerLocalDockerAgent(context.Background(), &LocalDockerAgent{
+		ID:       "container-1",
+		Name:     "avatar-bot",
+		HostPort: 18080,
+		APIURL:   "http://127.0.0.1:18080",
+		Labels: map[string]string{
+			"a2gent.agent_name":       "Avatar Bot",
+			"a2gent.agent_avatar_url": "http://localhost:5445/assets/images?path=" + avatarPath,
+		},
+	}, registerLocalDockerAgentRequest{
+		RegistryURL:        registry.URL,
+		OwnerEmail:         "owner@example.com",
+		AgentHandle:        "avatar-bot",
+		ConfigureContainer: boolPtr(false),
+	})
+	if err != nil {
+		t.Fatalf("registerLocalDockerAgent returned error: status=%d err=%v", status, err)
+	}
+	if got.AvatarURL != "" {
+		t.Fatalf("local avatar asset URL must not be sent as public avatar_url: %#v", got)
+	}
+	if !uploaded {
+		t.Fatalf("expected local avatar asset to be uploaded after registration")
 	}
 }

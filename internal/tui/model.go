@@ -2,9 +2,14 @@ package tui
 
 import (
 	"context"
+	"runtime"
+	"strings"
+	"time"
+
 	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/commands"
 	"github.com/A2gent/brute/internal/config"
+	httpserver "github.com/A2gent/brute/internal/http"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/tools"
@@ -12,8 +17,6 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"runtime"
-	"time"
 )
 
 type Model struct {
@@ -30,17 +33,18 @@ type Model struct {
 	agentConfig    agent.Config
 
 	// Display state
-	messages    []message
-	taskSummary string
-	serverPort  int
-	width       int
-	height      int
-	ready       bool
+	messages       []message
+	taskSummary    string
+	initialRunTask string
+	serverPort     int
+	width          int
+	height         int
+	ready          bool
 
 	// Token tracking
 	totalInputTokens  int
 	totalOutputTokens int
-	contextWindow     int // in tokens (default 128k for kimi-k2.5)
+	contextWindow     int // in tokens
 
 	// Message queue for when processing
 	queuedMessages []string
@@ -50,6 +54,8 @@ type Model struct {
 	processing        bool
 	loadingFrames     []string
 	loadingIndex      int
+	activeRunStatus   string
+	activeRunDetail   string
 
 	// Cancel support
 	cancelFunc    context.CancelFunc
@@ -103,12 +109,14 @@ type Model struct {
 
 	// HTTP server port updates
 	serverPortUpdates <-chan int
+	sessionEvents     <-chan httpserver.ChatStreamEvent
 
 	// Memory tracking
 	memoryMB float64
 
 	// Session sync tracking
-	lastSyncedMessageCount int
+	lastSyncedMessageCount     int
+	lastSyncedSessionUpdatedAt time.Time
 
 	// Question prompt state
 	showQuestionPrompt  bool
@@ -126,6 +134,7 @@ func New(
 	appConfig *config.Config,
 	serverPort int,
 	serverPortUpdates <-chan int,
+	sessionEvents <-chan httpserver.ChatStreamEvent,
 ) Model {
 	ta := textarea.New()
 	ta.Placeholder = ""
@@ -174,12 +183,20 @@ func New(
 		selectedWorkflow = builtinUserMainWorkflow()
 	}
 
-	// Determine context window from config
-	contextWindow := 128000 // default
+	// Determine context window from the configured provider/model so token
+	// accounting stays consistent with HTTP session execution.
+	contextWindow := 0
 	if appConfig != nil {
-		if def := config.GetProviderDefinition(config.ProviderType(appConfig.ActiveProvider)); def != nil {
-			contextWindow = def.ContextWindow
+		providerType := config.ProviderType(config.NormalizeProviderRef(appConfig.ActiveProvider))
+		provider := appConfig.Providers[string(providerType)]
+		model := agentConfig.Model
+		if model == "" {
+			model = provider.Model
 		}
+		if model == "" {
+			model = appConfig.DefaultModel
+		}
+		contextWindow = config.ResolveContextWindow(providerType, provider, model)
 	}
 	if agentConfig.ContextWindow <= 0 {
 		agentConfig.ContextWindow = contextWindow
@@ -195,6 +212,7 @@ func New(
 		agentConfig:       agentConfig,
 		messages:          make([]message, 0),
 		taskSummary:       initialTask,
+		initialRunTask:    strings.TrimSpace(initialTask),
 		serverPort:        serverPort,
 		lastUserInputTime: time.Now(),
 		loadingFrames:     []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
@@ -204,12 +222,14 @@ func New(
 		filteredCommands:  cmdRegistry.GetCommands(),
 		appConfig:         appConfig,
 		serverPortUpdates: serverPortUpdates,
+		sessionEvents:     sessionEvents,
 		selectedWorkflow:  selectedWorkflow,
 	}
 
 	// Load existing messages from session
 	for _, msg := range sess.Messages {
 		m.messages = append(m.messages, message{
+			id:          msg.ID,
 			role:        msg.Role,
 			content:     msg.Content,
 			timestamp:   msg.Timestamp,
@@ -218,6 +238,8 @@ func New(
 			metadata:    msg.Metadata,
 		})
 	}
+	m.lastSyncedMessageCount = len(sess.Messages)
+	m.lastSyncedSessionUpdatedAt = sess.UpdatedAt
 	m.applySessionTokenMetadata(sess)
 
 	return m
@@ -225,13 +247,21 @@ func New(
 
 // Init initializes the TUI
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		textarea.Blink,
 		tickCmd(),
 		updateMemoryCmd(),
 		serverPortCmd(m.serverPortUpdates),
+		sessionEventCmd(m.sessionEvents),
 		sessionSyncCmd(m.sessionManager, m.session.ID),
-	)
+	}
+	if strings.TrimSpace(m.initialRunTask) != "" {
+		task := m.initialRunTask
+		cmds = append(cmds, func() tea.Msg {
+			return startInitialRunMsg{task: task}
+		})
+	}
+	return tea.Batch(cmds...)
 }
 
 func serverPortCmd(portUpdates <-chan int) tea.Cmd {
@@ -244,6 +274,19 @@ func serverPortCmd(portUpdates <-chan int) tea.Cmd {
 			return nil
 		}
 		return serverPortMsg{port: port}
+	}
+}
+
+func sessionEventCmd(events <-chan httpserver.ChatStreamEvent) tea.Cmd {
+	if events == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		event, ok := <-events
+		if !ok {
+			return nil
+		}
+		return externalSessionEventMsg{event: event}
 	}
 }
 
@@ -303,10 +346,20 @@ func (m Model) hasDiscussion() bool {
 	return len(m.messages) > 0
 }
 
+func (m Model) hasActiveRunIndicator() bool {
+	if m.processing {
+		return true
+	}
+	return m.session != nil && m.hasDiscussion() && m.session.Status == session.StatusRunning
+}
+
 func (m Model) calculateViewportHeight() int {
 	fixedHeight := 2 // top bar + bottom bar
 	if m.hasDiscussion() || m.showQuestionPrompt {
 		fixedHeight += 4 // bottom textarea + active workflow/agent line
+	}
+	if m.hasActiveRunIndicator() {
+		fixedHeight++
 	}
 	viewportHeight := m.height - fixedHeight - m.calculateQuestionPromptHeight()
 	if viewportHeight < 1 {

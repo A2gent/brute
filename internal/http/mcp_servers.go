@@ -31,6 +31,7 @@ const (
 )
 
 type MCPServerRequest struct {
+	ProjectID      *string           `json:"project_id,omitempty"`
 	Name           string            `json:"name"`
 	Transport      string            `json:"transport"`
 	Enabled        *bool             `json:"enabled,omitempty"`
@@ -45,6 +46,7 @@ type MCPServerRequest struct {
 
 type MCPServerResponse struct {
 	ID                  string            `json:"id"`
+	ProjectID           string            `json:"project_id,omitempty"`
 	Name                string            `json:"name"`
 	Transport           string            `json:"transport"`
 	Enabled             bool              `json:"enabled"`
@@ -100,11 +102,20 @@ type mcpServerConfig struct {
 }
 
 func (s *Server) handleListMCPServers(w http.ResponseWriter, r *http.Request) {
+	projectID, hasProjectFilter := mcpProjectIDFromRequest(r)
+	if hasProjectFilter && projectID != "" {
+		if _, err := s.store.GetProject(projectID); err != nil {
+			s.errorResponse(w, http.StatusNotFound, "Project not found: "+err.Error())
+			return
+		}
+	}
+
 	servers, err := s.store.ListMCPServers()
 	if err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to list MCP servers: "+err.Error())
 		return
 	}
+	servers = filterMCPServersForProject(servers, projectID, hasProjectFilter)
 
 	resp := make([]MCPServerResponse, len(servers))
 	for i, server := range servers {
@@ -123,6 +134,10 @@ func (s *Server) handleCreateMCPServer(w http.ResponseWriter, r *http.Request) {
 
 	server, err := newMCPServerFromRequest(req)
 	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.validateMCPServerProject(server.ProjectID); err != nil {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -171,8 +186,15 @@ func (s *Server) handleUpdateMCPServer(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := s.validateMCPServerProject(next.ProjectID); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	next.ID = existing.ID
+	if req.ProjectID == nil {
+		next.ProjectID = existing.ProjectID
+	}
 	next.CreatedAt = existing.CreatedAt
 	next.LastTestAt = existing.LastTestAt
 	next.LastTestSuccess = existing.LastTestSuccess
@@ -206,7 +228,7 @@ func (s *Server) handleTestMCPServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, err := decodeMCPServerConfig(server)
+	cfg, err := s.resolveMCPServerRuntimeConfig(server)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Invalid MCP server config: "+err.Error())
 		return
@@ -234,11 +256,72 @@ func newMCPServerFromRequest(req MCPServerRequest) (*storage.MCPServer, error) {
 		return nil, err
 	}
 	return &storage.MCPServer{
+		ProjectID: normalizeMCPServerProjectID(req.ProjectID),
 		Name:      cfg.Name,
 		Transport: cfg.Transport,
 		Enabled:   cfg.Enabled,
 		Config:    encodeMCPServerConfig(cfg),
 	}, nil
+}
+
+func mcpProjectIDFromRequest(r *http.Request) (string, bool) {
+	if r == nil {
+		return "", false
+	}
+	values, ok := r.URL.Query()["project_id"]
+	if !ok {
+		return "", false
+	}
+	if len(values) == 0 {
+		return "", true
+	}
+	return strings.TrimSpace(values[0]), true
+}
+
+func normalizeMCPServerProjectID(projectID *string) *string {
+	if projectID == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*projectID)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func mcpServerProjectID(server *storage.MCPServer) string {
+	if server == nil || server.ProjectID == nil {
+		return ""
+	}
+	return strings.TrimSpace(*server.ProjectID)
+}
+
+func filterMCPServersForProject(servers []*storage.MCPServer, projectID string, includeGlobal bool) []*storage.MCPServer {
+	projectID = strings.TrimSpace(projectID)
+	filtered := make([]*storage.MCPServer, 0, len(servers))
+	for _, server := range servers {
+		serverProjectID := mcpServerProjectID(server)
+		if includeGlobal {
+			if serverProjectID == "" || serverProjectID == projectID {
+				filtered = append(filtered, server)
+			}
+			continue
+		}
+		if serverProjectID == "" {
+			filtered = append(filtered, server)
+		}
+	}
+	return filtered
+}
+
+func (s *Server) validateMCPServerProject(projectID *string) error {
+	if projectID == nil || strings.TrimSpace(*projectID) == "" {
+		return nil
+	}
+	if _, err := s.store.GetProject(strings.TrimSpace(*projectID)); err != nil {
+		return fmt.Errorf("project not found: %w", err)
+	}
+	return nil
 }
 
 func validateMCPServerRequest(req MCPServerRequest) (*mcpServerConfig, error) {
@@ -421,11 +504,29 @@ func decodeMCPServerConfig(server *storage.MCPServer) (*mcpServerConfig, error) 
 	return cfg, nil
 }
 
+func (s *Server) resolveMCPServerRuntimeConfig(server *storage.MCPServer) (*mcpServerConfig, error) {
+	cfg, err := decodeMCPServerConfig(server)
+	if err != nil {
+		return nil, err
+	}
+	projectID := mcpServerProjectID(server)
+	if projectID == "" || cfg.Transport != mcpTransportStdio {
+		return cfg, nil
+	}
+	projectRoot, err := s.resolveProjectRootFolder(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("project MCP working directory: %w", err)
+	}
+	cfg.Cwd = projectRoot
+	return cfg, nil
+}
+
 func mcpServerToResponse(server *storage.MCPServer) MCPServerResponse {
 	cfg, err := decodeMCPServerConfig(server)
 	if err != nil {
 		return MCPServerResponse{
 			ID:                  server.ID,
+			ProjectID:           mcpServerProjectID(server),
 			Name:                server.Name,
 			Transport:           server.Transport,
 			Enabled:             server.Enabled,
@@ -440,6 +541,7 @@ func mcpServerToResponse(server *storage.MCPServer) MCPServerResponse {
 	}
 	return MCPServerResponse{
 		ID:                  server.ID,
+		ProjectID:           mcpServerProjectID(server),
 		Name:                cfg.Name,
 		Transport:           cfg.Transport,
 		Enabled:             cfg.Enabled,

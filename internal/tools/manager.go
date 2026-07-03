@@ -84,6 +84,10 @@ func (m *Manager) Clone() *Manager {
 		workDir: m.workDir,
 	}
 	for name, tool := range m.tools {
+		if name == "man" {
+			cloned.tools[name] = NewManTool(cloned)
+			continue
+		}
 		cloned.tools[name] = tool
 	}
 	return cloned
@@ -105,6 +109,7 @@ func NewManager(workDir string) *Manager {
 	}
 
 	// Register built-in tools
+	m.Register(NewManTool(m))
 	m.Register(NewBashTool(workDir))
 	m.Register(NewCodeExecutionTool(workDir))
 	m.Register(NewReadTool(workDir))
@@ -132,8 +137,11 @@ func NewManager(workDir string) *Manager {
 
 // NewManagerWithStore creates a tool manager and registers store-backed tools.
 func NewManagerWithStore(workDir string, store storage.Store) *Manager {
-	_ = store
-	return NewManager(workDir)
+	m := NewManager(workDir)
+	if store != nil {
+		m.Register(NewProjectSessionHistoryTool(store))
+	}
+	return m
 }
 
 // RegisterQuestionTool registers the question tool with a session metadata store

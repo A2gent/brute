@@ -159,6 +159,11 @@ type Local struct {
 	HostPort        int                   `yaml:"host_port,omitempty" json:"host_port,omitempty"`
 	ProjectBindings map[string]string     `yaml:"project_bindings,omitempty" json:"project_bindings,omitempty"`
 	Credentials     map[string]Credential `yaml:"credentials,omitempty" json:"credentials,omitempty"`
+	// DefinitionDir is a local source folder for this agent definition. It is
+	// mounted read-only into Docker agents at /soul/agents/<agent-id> so YAML,
+	// skills, and related settings can be edited from Soul without entering the
+	// container.
+	DefinitionDir string `yaml:"definition_dir,omitempty" json:"definition_dir,omitempty"`
 }
 
 // Credential references a secret by environment variable or file, never value.
@@ -219,6 +224,7 @@ func (d *Definition) Normalize() {
 	}
 	d.LLM.Provider = strings.TrimSpace(d.LLM.Provider)
 	d.LLM.Model = strings.TrimSpace(d.LLM.Model)
+	d.Local.DefinitionDir = strings.TrimSpace(d.Local.DefinitionDir)
 	d.Publish.Square.Category = strings.ToLower(strings.TrimSpace(d.Publish.Square.Category))
 	d.Publish.Square.IconURL = strings.TrimSpace(d.Publish.Square.IconURL)
 	d.Publish.Square.AvatarURL = strings.TrimSpace(d.Publish.Square.AvatarURL)

@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"github.com/A2gent/brute/internal/agent"
+	httpserver "github.com/A2gent/brute/internal/http"
 	"github.com/A2gent/brute/internal/session"
 	"time"
 )
@@ -32,8 +34,29 @@ type (
 	sessionSyncMsg struct {
 		session *session.Session
 	}
+
+	startInitialRunMsg struct {
+		task string
+	}
+
+	externalSessionEventMsg struct {
+		event httpserver.ChatStreamEvent
+	}
+
+	agentStreamMsg struct {
+		stream      <-chan agentStreamMsg
+		event       agent.Event
+		hasEvent    bool
+		response    agentResponseMsg
+		hasResponse bool
+	}
+
+	agentStreamClosedMsg struct {
+		stream <-chan agentStreamMsg
+	}
 )
 type message struct {
+	id          string
 	role        string
 	content     string
 	timestamp   time.Time

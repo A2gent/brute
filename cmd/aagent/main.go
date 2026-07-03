@@ -206,10 +206,9 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create agent config
-	contextWindow := 0
-	if def := config.GetProviderDefinition(config.ProviderType(cfg.ActiveProvider)); def != nil {
-		contextWindow = def.ContextWindow
-	}
+	providerType := config.ProviderType(config.NormalizeProviderRef(cfg.ActiveProvider))
+	provider := cfg.Providers[string(providerType)]
+	contextWindow := config.ResolveContextWindow(providerType, provider, cfg.DefaultModel)
 	agentConfig := agent.Config{
 		Name:          agentFlag,
 		Model:         cfg.DefaultModel,
@@ -217,6 +216,9 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 		Temperature:   cfg.Temperature,
 		ContextWindow: contextWindow,
 	}
+
+	sessionEvents, unsubscribeSessionEvents := server.SubscribeSessionEvents(sess.ID)
+	defer unsubscribeSessionEvents()
 
 	// Create TUI model
 	tuiModel := tui.New(
@@ -229,6 +231,7 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 		cfg,
 		server.Port(),
 		server.PortReady(),
+		sessionEvents,
 	)
 
 	// Run the TUI
@@ -486,15 +489,16 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 
 		provider := cfg.Providers[string(providerType)]
 		apiKey := strings.TrimSpace(provider.APIKey)
-		if apiKey == "" && providerType == config.ProviderOpenAICodex && provider.OAuth != nil {
-			apiKey = strings.TrimSpace(provider.OAuth.AccessToken)
-		}
+		oauthBacked := false
 		if apiKey == "" && providerType == config.ProviderOpenAICodex {
 			if oauth, _, err := codexauth.Load(""); err == nil && oauth != nil {
 				provider.OAuth = oauth
 				cfg.Providers[string(providerType)] = provider
-				apiKey = strings.TrimSpace(oauth.AccessToken)
 			}
+		}
+		if apiKey == "" && providerType == config.ProviderOpenAICodex && provider.OAuth != nil {
+			apiKey = strings.TrimSpace(provider.OAuth.AccessToken)
+			oauthBacked = apiKey != ""
 		}
 		if apiKey == "" {
 			for _, envKey := range resolveEnvKeys(providerType) {
@@ -554,14 +558,24 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle, config.ProviderOpenAI:
 			return lmstudio.NewClient(apiKey, model, baseURL), model, nil
 		case config.ProviderOpenAICodex:
-			return openaicodex.NewClientWithOptions(apiKey, model, baseURL, openaicodex.Options{
+			options := openaicodex.Options{
 				PromptCacheKey:    provider.PromptCacheKey,
 				ReasoningEffort:   provider.ReasoningEffort,
 				TextVerbosity:     provider.TextVerbosity,
 				ServiceTier:       provider.ServiceTier,
 				MaxTokens:         provider.MaxTokens,
 				StatefulResponses: false,
-			}), model, nil
+			}
+			if oauthBacked {
+				options.AccessTokenProvider = func() string {
+					oauth, _, err := codexauth.Load("")
+					if err != nil || oauth == nil {
+						return ""
+					}
+					return strings.TrimSpace(oauth.AccessToken)
+				}
+			}
+			return openaicodex.NewClientWithOptions(apiKey, model, baseURL, options), model, nil
 		default:
 			return anthropic.NewClientWithBaseURL(apiKey, model, baseURL), model, nil
 		}

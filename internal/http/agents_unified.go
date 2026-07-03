@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -202,20 +204,24 @@ func (s *Server) handleImportAgentYAML(w http.ResponseWriter, r *http.Request) {
 	}
 	s.jsonResponse(w, status, result)
 }
-
 func (s *Server) importAgentYAMLDefinition(ctx context.Context, req importAgentYAMLRequest) (*importAgentYAMLResult, int, error) {
 	raw := []byte(req.ConfigYAML)
+	resolvedConfigPath := ""
 	if strings.TrimSpace(req.ConfigPath) != "" {
-		loaded, _, err := readLocalDockerAgentYAMLConfigFile(req.ConfigPath, "")
+		loaded, resolved, err := readLocalDockerAgentYAMLConfigFile(req.ConfigPath, "")
 		if err != nil {
 			return nil, http.StatusBadRequest, err
 		}
 		raw = loaded
+		resolvedConfigPath = resolved
 	}
 
 	def, err := agentdef.ParseYAML(raw)
 	if err != nil {
 		return nil, http.StatusBadRequest, err
+	}
+	if strings.TrimSpace(def.Local.DefinitionDir) == "" {
+		def.Local.DefinitionDir = inferAgentDefinitionSourceDir(req.ConfigPath, resolvedConfigPath, def)
 	}
 
 	switch def.Runtime.Type {
@@ -234,6 +240,36 @@ func (s *Server) importAgentYAMLDefinition(ctx context.Context, req importAgentY
 	default:
 		return nil, http.StatusNotImplemented, fmt.Errorf("Importing remote runtime agents is not supported yet; register them through Square/A2A instead")
 	}
+}
+
+func inferAgentDefinitionSourceDir(requestPath string, resolvedConfigPath string, def *agentdef.Definition) string {
+	resolvedConfigPath = strings.TrimSpace(resolvedConfigPath)
+	if resolvedConfigPath == "" {
+		return ""
+	}
+	if rawRequest := strings.TrimSpace(requestPath); rawRequest != "" {
+		candidate := expandHomePath(rawRequest)
+		if !filepath.IsAbs(candidate) {
+			candidate = filepath.Clean(candidate)
+		}
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
+	}
+
+	dir := filepath.Dir(resolvedConfigPath)
+	if def != nil {
+		agentID := strings.TrimSpace(def.Agent.ID)
+		if agentID != "" && filepath.Base(dir) == agentID {
+			return absoluteCleanPath(dir, ".")
+		}
+	}
+	for _, name := range localDockerAgentYAMLDirectoryConfigNames {
+		if filepath.Base(resolvedConfigPath) == name {
+			return absoluteCleanPath(dir, ".")
+		}
+	}
+	return ""
 }
 
 // importDockerAgentDefinition stores the definition as a local installation.
@@ -514,6 +550,7 @@ func localDockerCreateRequestBaseFromDefinition(def *agentdef.Definition) create
 		Networking: localDockerAgentYAMLNetworking{
 			InternetAccess: def.Networking.InternetAccess,
 		},
+		DefinitionDir: strings.TrimSpace(def.Local.DefinitionDir),
 	}
 
 	if len(def.Local.Credentials) > 0 {

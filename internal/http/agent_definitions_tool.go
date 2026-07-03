@@ -27,7 +27,7 @@ func (t *importAgentDefinitionYAMLTool) Name() string {
 }
 
 func (t *importAgentDefinitionYAMLTool) Description() string {
-	return `Create or update a unified local agent definition from YAML. Use this for reusable Agents-page definitions, not one-off containers. Local definitions run in Docker; legacy runtime.type=host YAML is accepted only as a migration marker and is coerced to Docker. Provide either config_yaml or config_path, preferably a reusable Soul file under agents/*.yaml. Updating an existing definition removes stale managed Docker containers so the next run uses the new definition.`
+	return `Create or update a unified local agent definition from YAML. Use this for reusable Agents-page definitions, not one-off containers. Local definitions run in Docker; legacy runtime.type=host YAML is accepted only as a migration marker and is coerced to Docker. Provide either config_yaml or config_path. Prefer a reusable Soul folder such as agents/<agent-id>/agent.yaml with adjacent skills/ and settings files; passing the folder path is supported. Updating an existing definition removes stale managed Docker containers so the next run uses the new definition.`
 }
 
 func (t *importAgentDefinitionYAMLTool) Schema() map[string]interface{} {
@@ -40,7 +40,7 @@ func (t *importAgentDefinitionYAMLTool) Schema() map[string]interface{} {
 			},
 			"config_path": map[string]interface{}{
 				"type":        "string",
-				"description": "Path to a unified agent YAML file. Reusable source files should live in the Soul project under agents/*.yaml.",
+				"description": "Path to a unified agent YAML file or definition folder. Reusable source should live in Soul under agents/<agent-id>/agent.yaml, optionally with adjacent skills/.",
 			},
 		},
 	}

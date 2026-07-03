@@ -9,6 +9,7 @@ import (
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/gemini"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
+	"github.com/A2gent/brute/internal/llm/openaicodex"
 	"github.com/go-chi/chi/v5"
 	"net/http"
 	"os"
@@ -42,7 +43,7 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 				DefaultURL:    def.DefaultURL,
 				RequiresKey:   def.RequiresKey,
 				DefaultModel:  def.DefaultModel,
-				ContextWindow: s.resolveContextWindowForProvider(def.Type),
+				ContextWindow: s.resolveContextWindowForProvider(def.Type, ""),
 				IsActive:      isActive,
 				Configured:    s.fallbackChainIsConfigured(chain),
 				HasAPIKey:     false,
@@ -62,7 +63,7 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 				DefaultURL:     def.DefaultURL,
 				RequiresKey:    def.RequiresKey,
 				DefaultModel:   def.DefaultModel,
-				ContextWindow:  s.resolveContextWindowForProvider(def.Type),
+				ContextWindow:  s.resolveContextWindowForProvider(def.Type, ""),
 				IsActive:       config.NormalizeProviderRef(s.config.ActiveProvider) == string(def.Type),
 				Configured:     s.autoRouterConfigured(existing),
 				HasAPIKey:      false,
@@ -109,7 +110,7 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 			DefaultURL:        def.DefaultURL,
 			RequiresKey:       def.RequiresKey,
 			DefaultModel:      def.DefaultModel,
-			ContextWindow:     def.ContextWindow,
+			ContextWindow:     s.resolveContextWindowForProvider(def.Type, model),
 			IsActive:          s.config.ActiveProvider == string(def.Type),
 			Configured:        configured,
 			HasAPIKey:         hasAPIKey,
@@ -136,7 +137,7 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 			DefaultURL:    "",
 			RequiresKey:   false,
 			DefaultModel:  "",
-			ContextWindow: s.resolveContextWindowForProvider(config.ProviderType(providerRef)),
+			ContextWindow: s.resolveContextWindowForProvider(config.ProviderType(providerRef), ""),
 			IsActive:      config.NormalizeProviderRef(s.config.ActiveProvider) == providerRef,
 			Configured:    s.fallbackChainIsConfigured(chain),
 			HasAPIKey:     false,
@@ -496,23 +497,32 @@ func (s *Server) handleListOpenAIModels(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleListOpenAICodexModels(w http.ResponseWriter, r *http.Request) {
+	models := openaicodex.ListModelCatalog(r.Context(), s.openAICodexModelCatalogOptions())
+	s.jsonResponse(w, http.StatusOK, ListProviderModelsResponse{Models: models})
+}
 
-	s.jsonResponse(w, http.StatusOK, ListProviderModelsResponse{
-		Models: []string{
-			"gpt-5.5",
-			"gpt-5.5-pro",
-			"gpt-5.4",
-			"gpt-5.4-pro",
-			"gpt-5.4-mini",
-			"gpt-5.4-nano",
-			"gpt-5.3-codex",
-			"gpt-5.2",
-			"gpt-5.2-codex",
-			"gpt-5.1-codex",
-			"gpt-5.1-codex-max",
-			"gpt-5.1-codex-mini",
-		},
-	})
+// openAICodexModelCatalogOptions resolves the base URL and API key used to
+// discover the live Codex model catalog. Only an API key drives discovery:
+// ChatGPT-account (OAuth) mode has no reliable source of callable models, so it
+// falls back to the curated list inside ListModelCatalog.
+func (s *Server) openAICodexModelCatalogOptions() openaicodex.ModelCatalogOptions {
+	provider := s.config.Providers[string(config.ProviderOpenAICodex)]
+	baseURL := strings.TrimSpace(provider.BaseURL)
+	if baseURL == "" {
+		if def := config.GetProviderDefinition(config.ProviderOpenAICodex); def != nil {
+			baseURL = def.DefaultURL
+		}
+	}
+
+	apiKey := strings.TrimSpace(provider.APIKey)
+	if apiKey == "" {
+		apiKey = s.apiKeyFromEnv(config.ProviderOpenAICodex)
+	}
+
+	return openaicodex.ModelCatalogOptions{
+		BaseURL: baseURL,
+		APIKey:  apiKey,
+	}
 }
 
 func (s *Server) handleListOpenRouterModels(w http.ResponseWriter, r *http.Request) {

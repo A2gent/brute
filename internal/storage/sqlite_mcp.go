@@ -39,9 +39,10 @@ func (s *SQLiteStore) SaveMCPServer(server *MCPServer) error {
 	}
 
 	_, err = s.db.Exec(`
-		INSERT INTO mcp_servers (id, name, transport, enabled, config, last_test_at, last_test_success, last_test_message, last_estimated_tokens, last_tool_count, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO mcp_servers (id, project_id, name, transport, enabled, config, last_test_at, last_test_success, last_test_message, last_estimated_tokens, last_tool_count, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
+			project_id = excluded.project_id,
 			name = excluded.name,
 			transport = excluded.transport,
 			enabled = excluded.enabled,
@@ -52,7 +53,7 @@ func (s *SQLiteStore) SaveMCPServer(server *MCPServer) error {
 			last_estimated_tokens = excluded.last_estimated_tokens,
 			last_tool_count = excluded.last_tool_count,
 			updated_at = excluded.updated_at
-	`, server.ID, server.Name, server.Transport, server.Enabled, string(configJSON), lastTestAt, lastTestSuccess, server.LastTestMessage, lastEstimatedTokens, lastToolCount, server.CreatedAt, server.UpdatedAt)
+	`, server.ID, nullableString(server.ProjectID), server.Name, server.Transport, server.Enabled, string(configJSON), lastTestAt, lastTestSuccess, server.LastTestMessage, lastEstimatedTokens, lastToolCount, server.CreatedAt, server.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to save mcp server: %w", err)
 	}
@@ -63,6 +64,7 @@ func (s *SQLiteStore) SaveMCPServer(server *MCPServer) error {
 // GetMCPServer returns an MCP server by id.
 func (s *SQLiteStore) GetMCPServer(id string) (*MCPServer, error) {
 	var server MCPServer
+	var projectID sql.NullString
 	var enabled int
 	var configJSON string
 	var lastTestAt sql.NullTime
@@ -72,11 +74,12 @@ func (s *SQLiteStore) GetMCPServer(id string) (*MCPServer, error) {
 	var lastToolCount sql.NullInt64
 
 	err := s.db.QueryRow(`
-		SELECT id, name, transport, enabled, config, last_test_at, last_test_success, last_test_message, last_estimated_tokens, last_tool_count, created_at, updated_at
+		SELECT id, project_id, name, transport, enabled, config, last_test_at, last_test_success, last_test_message, last_estimated_tokens, last_tool_count, created_at, updated_at
 		FROM mcp_servers
 		WHERE id = ?
 	`, id).Scan(
 		&server.ID,
+		&projectID,
 		&server.Name,
 		&server.Transport,
 		&enabled,
@@ -96,6 +99,7 @@ func (s *SQLiteStore) GetMCPServer(id string) (*MCPServer, error) {
 		return nil, err
 	}
 
+	setNullableString(&server.ProjectID, projectID)
 	server.Enabled = enabled == 1
 	if lastTestAt.Valid {
 		server.LastTestAt = &lastTestAt.Time
@@ -130,7 +134,7 @@ func (s *SQLiteStore) GetMCPServer(id string) (*MCPServer, error) {
 // ListMCPServers returns all MCP servers ordered by creation date.
 func (s *SQLiteStore) ListMCPServers() ([]*MCPServer, error) {
 	rows, err := s.db.Query(`
-		SELECT id, name, transport, enabled, config, last_test_at, last_test_success, last_test_message, last_estimated_tokens, last_tool_count, created_at, updated_at
+		SELECT id, project_id, name, transport, enabled, config, last_test_at, last_test_success, last_test_message, last_estimated_tokens, last_tool_count, created_at, updated_at
 		FROM mcp_servers
 		ORDER BY created_at DESC
 	`)
@@ -142,6 +146,7 @@ func (s *SQLiteStore) ListMCPServers() ([]*MCPServer, error) {
 	var servers []*MCPServer
 	for rows.Next() {
 		var server MCPServer
+		var projectID sql.NullString
 		var enabled int
 		var configJSON string
 		var lastTestAt sql.NullTime
@@ -151,6 +156,7 @@ func (s *SQLiteStore) ListMCPServers() ([]*MCPServer, error) {
 		var lastToolCount sql.NullInt64
 		if err := rows.Scan(
 			&server.ID,
+			&projectID,
 			&server.Name,
 			&server.Transport,
 			&enabled,
@@ -166,6 +172,7 @@ func (s *SQLiteStore) ListMCPServers() ([]*MCPServer, error) {
 			return nil, err
 		}
 
+		setNullableString(&server.ProjectID, projectID)
 		server.Enabled = enabled == 1
 		if lastTestAt.Valid {
 			server.LastTestAt = &lastTestAt.Time

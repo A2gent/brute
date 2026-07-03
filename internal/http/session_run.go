@@ -106,7 +106,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 			sess.SetStatus(session.StatusFailed)
 			_ = s.sessionManager.Save(sess)
 			s.refreshSessionSummaryWithPrompt(ctx, sess)
-			s.triggerSerialSessionQueueIfTerminal(sess)
+			s.triggerSerialSessionQueueIfAdvanceable(sess)
 			return runErr
 		}
 		if result.DirectAgent {
@@ -114,14 +114,14 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 			sess.SetStatus(session.StatusFailed)
 			_ = s.sessionManager.Save(sess)
 			s.refreshSessionSummaryWithPrompt(ctx, sess)
-			s.triggerSerialSessionQueueIfTerminal(sess)
+			s.triggerSerialSessionQueueIfAdvanceable(sess)
 			return runErr
 		}
 		if result.Workflow {
 			sess.AddAssistantMessage(fmt.Sprintf("Workflow failed: %s", runErr.Error()), nil)
 			sess.SetStatus(session.StatusFailed)
 			_ = s.sessionManager.Save(sess)
-			s.triggerSerialSessionQueueIfTerminal(sess)
+			s.triggerSerialSessionQueueIfAdvanceable(sess)
 			return runErr
 		}
 		adaptedErr := s.adaptProviderErrorMessage(result.ProviderType, runErr)
@@ -129,7 +129,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 		sess.SetStatus(session.StatusFailed)
 		_ = s.sessionManager.Save(sess)
 		s.refreshSessionSummaryWithPrompt(ctx, sess)
-		s.triggerSerialSessionQueueIfTerminal(sess)
+		s.triggerSerialSessionQueueIfAdvanceable(sess)
 		return adaptedErr
 	}
 
@@ -153,7 +153,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 	}
 
 	s.refreshSessionSummaryWithPrompt(ctx, sess)
-	s.triggerSerialSessionQueueIfTerminal(sess)
+	s.triggerSerialSessionQueueIfAdvanceable(sess)
 	return nil
 }
 

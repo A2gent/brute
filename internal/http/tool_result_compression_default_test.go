@@ -1,6 +1,7 @@
 package http
 
 import (
+	"os"
 	"testing"
 
 	"github.com/A2gent/brute/internal/config"
@@ -52,5 +53,50 @@ func TestSettingsResponseExposesCompressionEnabledByDefault(t *testing.T) {
 	resp := settingsResponse(map[string]string{})
 	if got := resp.Settings[toolResultCompressionSettingKey]; got != "true" {
 		t.Fatalf("settings response default = %q, want true", got)
+	}
+}
+
+func TestSettingsResponseHidesBranchTaskDocAppSettings(t *testing.T) {
+	resp := settingsResponse(map[string]string{
+		legacyBranchTaskDocDirectorySettingPrefix + "project-1": "/tmp/docs",
+		legacyBranchTaskDocModeSettingPrefix + "project-1":      "content",
+		projectBranchTaskDocDirectorySettingKey:                 "/tmp/global-docs",
+		projectBranchTaskDocModeSettingKey:                      "path",
+		"A2A_REGISTRY_URL":                                      "https://a2gent.net",
+	})
+
+	for key := range resp.Settings {
+		if isBranchTaskDocAppSettingKey(key) {
+			t.Fatalf("settings response exposed project-scoped branch task doc key %q", key)
+		}
+	}
+	if got := resp.Settings["A2A_REGISTRY_URL"]; got != "https://a2gent.net" {
+		t.Fatalf("settings response dropped unrelated setting: %q", got)
+	}
+}
+
+func TestSyncSettingsToEnvSkipsBranchTaskDocAppSettings(t *testing.T) {
+	legacyKey := legacyBranchTaskDocDirectorySettingPrefix + "project-1"
+	t.Setenv(legacyKey, "existing")
+	t.Setenv(projectBranchTaskDocModeSettingKey, "existing-mode")
+	t.Setenv("A2GENT_TEST_VISIBLE_SETTING", "")
+
+	syncSettingsToEnv(
+		map[string]string{legacyKey: "existing"},
+		map[string]string{
+			legacyKey:                          "/tmp/docs",
+			projectBranchTaskDocModeSettingKey: "path",
+			"A2GENT_TEST_VISIBLE_SETTING":      "visible",
+		},
+	)
+
+	if got := os.Getenv(legacyKey); got != "existing" {
+		t.Fatalf("legacy branch task doc env changed to %q", got)
+	}
+	if got := os.Getenv(projectBranchTaskDocModeSettingKey); got != "existing-mode" {
+		t.Fatalf("project branch task doc env changed to %q", got)
+	}
+	if got := os.Getenv("A2GENT_TEST_VISIBLE_SETTING"); got != "visible" {
+		t.Fatalf("unrelated env setting = %q, want visible", got)
 	}
 }

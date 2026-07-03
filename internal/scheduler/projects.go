@@ -5,16 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/storage"
 )
-
-const thinkingJobIDSettingKey = "A2GENT_THINKING_JOB_ID"
-const thinkingProjectID = "project-thinking"
-const thinkingProjectName = "Thinking"
 
 func (s *Scheduler) resolveJobWorkDir(job *storage.RecurringJob) string {
 	defaultDir := strings.TrimSpace(s.config.WorkDir)
@@ -65,33 +60,5 @@ func (s *Scheduler) assignSessionToJobProject(sess *session.Session, job *storag
 		return fmt.Errorf("job project not found: %w", err)
 	}
 	sess.ProjectID = &projectID
-	return s.sessionManager.Save(sess)
-}
-
-func (s *Scheduler) isThinkingJob(jobID string) (bool, error) {
-	settings, err := s.store.GetSettings()
-	if err != nil {
-		return false, err
-	}
-	thinkingJobID := strings.TrimSpace(settings[thinkingJobIDSettingKey])
-	if thinkingJobID == "" {
-		return false, nil
-	}
-	return thinkingJobID == strings.TrimSpace(jobID), nil
-}
-
-func (s *Scheduler) assignSessionToThinkingProject(sess *session.Session) error {
-	now := time.Now()
-	project := &storage.Project{
-		ID:        thinkingProjectID,
-		Name:      thinkingProjectName,
-		IsSystem:  true,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if err := s.store.SaveProject(project); err != nil {
-		return err
-	}
-	sess.ProjectID = &project.ID
 	return s.sessionManager.Save(sess)
 }

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/A2gent/brute/internal/tools"
+	"github.com/google/uuid"
 )
 
 type mcpManageTool struct {
@@ -16,8 +16,10 @@ type mcpManageTool struct {
 }
 
 type mcpManageParams struct {
-	Action string `json:"action"`
-	Server *struct {
+	Action    string `json:"action"`
+	ProjectID string `json:"project_id,omitempty"`
+	Server    *struct {
+		ProjectID      string            `json:"project_id,omitempty"`
 		Name           string            `json:"name"`
 		Transport      string            `json:"transport"`
 		Enabled        *bool             `json:"enabled,omitempty"`
@@ -43,7 +45,7 @@ func (t *mcpManageTool) Description() string {
 	return `Manage MCP server configurations for the agent.
 Actions:
 - add: add or update an MCP server by name
-- list: list all configured MCP servers
+- list: list configured MCP servers
 - remove: remove an MCP server by name`
 }
 
@@ -56,10 +58,18 @@ func (t *mcpManageTool) Schema() map[string]interface{} {
 				"description": "Operation to perform",
 				"enum":        []string{"add", "list", "remove"},
 			},
+			"project_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional project ID. When set, list returns global plus project servers; add/remove target that project scope. Omit for global scope.",
+			},
 			"server": map[string]interface{}{
 				"type":        "object",
 				"description": "Server payload for action=add and target for action=remove.",
 				"properties": map[string]interface{}{
+					"project_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional project ID for this server. Overrides top-level project_id. Omit for global scope.",
+					},
 					"name": map[string]interface{}{
 						"type":        "string",
 						"description": "Required for action=add/remove. MCP server name.",
@@ -123,7 +133,7 @@ func (t *mcpManageTool) Execute(ctx context.Context, params json.RawMessage) (*t
 	case "add":
 		return t.handleAdd(p)
 	case "list":
-		return t.handleList()
+		return t.handleList(p)
 	case "remove":
 		return t.handleRemove(p)
 	default:
@@ -153,9 +163,15 @@ func (t *mcpManageTool) handleAdd(p mcpManageParams) (*tools.Result, error) {
 		Headers:        p.Server.Headers,
 		TimeoutSeconds: p.Server.TimeoutSeconds,
 	}
+	if projectID := p.serverProjectID(); projectID != "" {
+		req.ProjectID = &projectID
+	}
 
 	next, err := newMCPServerFromRequest(req)
 	if err != nil {
+		return &tools.Result{Success: false, Error: err.Error()}, nil
+	}
+	if err := t.server.validateMCPServerProject(next.ProjectID); err != nil {
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}
 
@@ -170,9 +186,10 @@ func (t *mcpManageTool) handleAdd(p mcpManageParams) (*tools.Result, error) {
 		if existing == nil {
 			continue
 		}
-		if strings.EqualFold(strings.TrimSpace(existing.Name), strings.TrimSpace(next.Name)) {
+		if mcpServerProjectID(existing) == mcpServerProjectID(next) && strings.EqualFold(strings.TrimSpace(existing.Name), strings.TrimSpace(next.Name)) {
 			created = false
 			next.ID = existing.ID
+			next.ProjectID = existing.ProjectID
 			next.CreatedAt = existing.CreatedAt
 			next.LastTestAt = existing.LastTestAt
 			next.LastTestSuccess = existing.LastTestSuccess
@@ -200,11 +217,18 @@ func (t *mcpManageTool) handleAdd(p mcpManageParams) (*tools.Result, error) {
 	return jsonToolOutput(payload)
 }
 
-func (t *mcpManageTool) handleList() (*tools.Result, error) {
+func (t *mcpManageTool) handleList(p mcpManageParams) (*tools.Result, error) {
 	servers, err := t.server.store.ListMCPServers()
 	if err != nil {
 		return &tools.Result{Success: false, Error: "failed to list MCP servers: " + err.Error()}, nil
 	}
+	projectID := strings.TrimSpace(p.ProjectID)
+	if projectID != "" {
+		if _, err := t.server.store.GetProject(projectID); err != nil {
+			return &tools.Result{Success: false, Error: "project not found: " + err.Error()}, nil
+		}
+	}
+	servers = filterMCPServersForProject(servers, projectID, projectID != "")
 
 	resp := make([]MCPServerResponse, 0, len(servers))
 	for _, server := range servers {
@@ -230,6 +254,12 @@ func (t *mcpManageTool) handleRemove(p mcpManageParams) (*tools.Result, error) {
 	if name == "" {
 		return &tools.Result{Success: false, Error: "server.name is required for action=remove"}, nil
 	}
+	projectID := strings.TrimSpace(p.serverProjectID())
+	if projectID != "" {
+		if _, err := t.server.store.GetProject(projectID); err != nil {
+			return &tools.Result{Success: false, Error: "project not found: " + err.Error()}, nil
+		}
+	}
 
 	servers, err := t.server.store.ListMCPServers()
 	if err != nil {
@@ -241,7 +271,7 @@ func (t *mcpManageTool) handleRemove(p mcpManageParams) (*tools.Result, error) {
 		if existing == nil {
 			continue
 		}
-		if strings.EqualFold(strings.TrimSpace(existing.Name), name) {
+		if mcpServerProjectID(existing) == projectID && strings.EqualFold(strings.TrimSpace(existing.Name), name) {
 			if err := t.server.store.DeleteMCPServer(existing.ID); err != nil {
 				return &tools.Result{Success: false, Error: "failed to delete MCP server: " + err.Error()}, nil
 			}
@@ -256,6 +286,13 @@ func (t *mcpManageTool) handleRemove(p mcpManageParams) (*tools.Result, error) {
 		"name":    name,
 	}
 	return jsonToolOutput(payload)
+}
+
+func (p mcpManageParams) serverProjectID() string {
+	if p.Server != nil && strings.TrimSpace(p.Server.ProjectID) != "" {
+		return strings.TrimSpace(p.Server.ProjectID)
+	}
+	return strings.TrimSpace(p.ProjectID)
 }
 
 var _ tools.Tool = (*mcpManageTool)(nil)

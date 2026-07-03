@@ -60,8 +60,43 @@ func (m Model) showModelsSelection() (tea.Model, tea.Cmd) {
 		return m.fetchLMStudioModels()
 	}
 
+	// For OpenAI Codex, fetch the live catalog (curated + account-discovered).
+	if m.appConfig.ActiveProvider == string(config.ProviderOpenAICodex) {
+		return m.fetchOpenAICodexModels()
+	}
+
 	// For other providers, show known models
 	return m.showStaticModels()
+}
+
+// fetchOpenAICodexModels loads the Codex model catalog using the same shared
+// discovery the web API uses, so the terminal and web stay in sync (curated list
+// for OAuth, plus live /models discovery in API-key mode).
+func (m Model) fetchOpenAICodexModels() (tea.Model, tea.Cmd) {
+	opts := openaicodex.ModelCatalogOptions{}
+	if provider := m.appConfig.GetActiveProvider(); provider != nil {
+		opts.BaseURL = strings.TrimSpace(provider.BaseURL)
+		opts.APIKey = strings.TrimSpace(provider.APIKey)
+	}
+	if opts.BaseURL == "" {
+		if def := config.GetProviderDefinition(config.ProviderOpenAICodex); def != nil {
+			opts.BaseURL = def.DefaultURL
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	m.availableModels = openaicodex.ListModelCatalog(ctx, opts)
+
+	m.showModelsMenu = true
+	m.modelsMenuIndex = 0
+	for i, model := range m.availableModels {
+		if model == m.appConfig.DefaultModel {
+			m.modelsMenuIndex = i
+			break
+		}
+	}
+	return m, nil
 }
 
 // fetchLMStudioModels fetches models from LM Studio API
@@ -231,9 +266,10 @@ func (m Model) activateProvider(providerType config.ProviderType) (tea.Model, te
 
 	m.appConfig.ActiveProvider = string(providerType)
 	m.appConfig.DefaultModel = providerDef.DefaultModel
-	m.contextWindow = providerDef.ContextWindow
+	provider := m.appConfig.Providers[string(providerType)]
+	m.contextWindow = config.ResolveContextWindow(providerType, provider, providerDef.DefaultModel)
 	m.agentConfig.Model = providerDef.DefaultModel
-	m.agentConfig.ContextWindow = providerDef.ContextWindow
+	m.agentConfig.ContextWindow = m.contextWindow
 
 	// Save config
 	if err := m.appConfig.Save(config.GetConfigPath()); err != nil {
@@ -650,17 +686,8 @@ func (m Model) selectModel(modelName string) (tea.Model, tea.Cmd) {
 	provider.Model = modelName
 	m.appConfig.SetProvider(config.ProviderType(m.appConfig.ActiveProvider), provider)
 
-	// Update context window based on model (rough estimates)
-	switch {
-	case strings.Contains(modelName, "kimi"):
-		m.contextWindow = 131072
-	case strings.Contains(modelName, "claude"):
-		m.contextWindow = 200000
-	case strings.Contains(modelName, "gemini"):
-		m.contextWindow = 1048576
-	default:
-		m.contextWindow = 32768
-	}
+	// Keep TUI context accounting aligned with the HTTP backend resolver.
+	m.contextWindow = config.ResolveContextWindow(config.ProviderType(m.appConfig.ActiveProvider), provider, modelName)
 	m.agentConfig.Model = modelName
 	m.agentConfig.ContextWindow = m.contextWindow
 

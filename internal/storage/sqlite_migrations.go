@@ -1,6 +1,10 @@
 package storage
 
-import "fmt"
+import (
+	"database/sql"
+	"fmt"
+	"strings"
+)
 
 // Migrations stay isolated so schema changes remain easy to review without touching CRUD code.
 
@@ -122,6 +126,7 @@ func (s *SQLiteStore) migrate() error {
 		// MCP server registry
 		`CREATE TABLE IF NOT EXISTS mcp_servers (
 			id TEXT PRIMARY KEY,
+			project_id TEXT,
 			name TEXT NOT NULL,
 			transport TEXT NOT NULL,
 			enabled INTEGER NOT NULL DEFAULT 1,
@@ -134,11 +139,13 @@ func (s *SQLiteStore) migrate() error {
 			created_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL
 		)`,
+		`ALTER TABLE mcp_servers ADD COLUMN project_id TEXT`,
 		`ALTER TABLE mcp_servers ADD COLUMN last_test_at TIMESTAMP`,
 		`ALTER TABLE mcp_servers ADD COLUMN last_test_success INTEGER`,
 		`ALTER TABLE mcp_servers ADD COLUMN last_test_message TEXT`,
 		`ALTER TABLE mcp_servers ADD COLUMN last_estimated_tokens INTEGER`,
 		`ALTER TABLE mcp_servers ADD COLUMN last_tool_count INTEGER`,
+		`CREATE INDEX IF NOT EXISTS idx_mcp_servers_project_id ON mcp_servers(project_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_mcp_servers_transport ON mcp_servers(transport)`,
 		// Projects for optional session grouping
 		`CREATE TABLE IF NOT EXISTS projects (
@@ -254,15 +261,23 @@ func (s *SQLiteStore) migrate() error {
 	}
 
 	for _, m := range migrations {
-		// Ignore errors for ALTER TABLE (column may already exist)
-		_, err := s.db.Exec(m)
-		if err != nil && m[:5] != "ALTER" {
+		shouldRun, err := s.shouldRunMigration(m)
+		if err != nil {
+			return fmt.Errorf("failed to inspect migration target: %w", err)
+		}
+		if !shouldRun {
+			continue
+		}
+		// Ignore only duplicate-column ALTER errors so lock and syntax failures
+		// still stop startup instead of leaving a partially migrated schema.
+		_, err = s.db.Exec(m)
+		if err != nil && !(strings.HasPrefix(m, "ALTER") && isSQLiteDuplicateColumnError(err)) {
 			return fmt.Errorf("migration failed: %w", err)
 		}
 	}
 	// Move legacy global project prompt options into project rows once the
-	// settings column exists. The source app settings are left intact so older
-	// builds can still read them if users roll back.
+	// settings column exists. Branch task documentation settings are project
+	// scoped, so their old global env-style keys are removed after migration.
 	if err := s.migrateProjectPromptSettingsFromAppSettings(); err != nil {
 		return fmt.Errorf("failed to migrate project prompt settings: %w", err)
 	}
@@ -276,4 +291,131 @@ func (s *SQLiteStore) migrate() error {
 	}
 
 	return nil
+}
+
+func (s *SQLiteStore) shouldRunMigration(statement string) (bool, error) {
+	normalized := strings.TrimSpace(statement)
+	fields := strings.Fields(normalized)
+	if len(fields) == 0 {
+		return false, nil
+	}
+
+	if len(fields) >= 6 &&
+		strings.EqualFold(fields[0], "ALTER") &&
+		strings.EqualFold(fields[1], "TABLE") &&
+		strings.EqualFold(fields[3], "ADD") &&
+		strings.EqualFold(fields[4], "COLUMN") {
+		exists, err := s.columnExists(cleanSQLiteIdentifier(fields[2]), cleanSQLiteIdentifier(fields[5]))
+		return !exists, err
+	}
+
+	if len(fields) >= 6 &&
+		strings.EqualFold(fields[0], "CREATE") &&
+		strings.EqualFold(fields[1], "TABLE") &&
+		strings.EqualFold(fields[2], "IF") &&
+		strings.EqualFold(fields[3], "NOT") &&
+		strings.EqualFold(fields[4], "EXISTS") {
+		exists, err := s.tableExists(cleanSQLiteIdentifier(fields[5]))
+		return !exists, err
+	}
+
+	indexNamePos := -1
+	if len(fields) >= 6 &&
+		strings.EqualFold(fields[0], "CREATE") &&
+		strings.EqualFold(fields[1], "INDEX") &&
+		strings.EqualFold(fields[2], "IF") &&
+		strings.EqualFold(fields[3], "NOT") &&
+		strings.EqualFold(fields[4], "EXISTS") {
+		indexNamePos = 5
+	}
+	if len(fields) >= 7 &&
+		strings.EqualFold(fields[0], "CREATE") &&
+		strings.EqualFold(fields[1], "UNIQUE") &&
+		strings.EqualFold(fields[2], "INDEX") &&
+		strings.EqualFold(fields[3], "IF") &&
+		strings.EqualFold(fields[4], "NOT") &&
+		strings.EqualFold(fields[5], "EXISTS") {
+		indexNamePos = 6
+	}
+	if indexNamePos >= 0 {
+		exists, err := s.indexExists(cleanSQLiteIdentifier(fields[indexNamePos]))
+		return !exists, err
+	}
+
+	return true, nil
+}
+
+func (s *SQLiteStore) tableExists(name string) (bool, error) {
+	return s.sqliteMasterObjectExists("table", name)
+}
+
+func (s *SQLiteStore) indexExists(name string) (bool, error) {
+	return s.sqliteMasterObjectExists("index", name)
+}
+
+func (s *SQLiteStore) sqliteMasterObjectExists(objectType, name string) (bool, error) {
+	if strings.TrimSpace(name) == "" {
+		return false, nil
+	}
+	var found int
+	err := s.db.QueryRow(`SELECT 1 FROM sqlite_master WHERE type = ? AND name = ? LIMIT 1`, objectType, name).Scan(&found)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *SQLiteStore) columnExists(tableName, columnName string) (bool, error) {
+	if strings.TrimSpace(tableName) == "" || strings.TrimSpace(columnName) == "" {
+		return false, nil
+	}
+	rows, err := s.db.Query("PRAGMA table_info(" + quoteSQLiteIdentifier(tableName) + ")")
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name string
+		var columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var primaryKey int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return false, err
+		}
+		if strings.EqualFold(name, columnName) {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+func cleanSQLiteIdentifier(identifier string) string {
+	cleaned := strings.TrimSpace(identifier)
+	cleaned = strings.TrimSuffix(cleaned, "(")
+	cleaned = strings.Trim(cleaned, "`\"[]")
+	if idx := strings.Index(cleaned, "("); idx >= 0 {
+		cleaned = cleaned[:idx]
+	}
+	return strings.TrimSpace(cleaned)
+}
+
+func quoteSQLiteIdentifier(identifier string) string {
+	return `"` + strings.ReplaceAll(identifier, `"`, `""`) + `"`
+}
+
+func isSQLiteDuplicateColumnError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "duplicate column name")
 }

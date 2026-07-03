@@ -8,12 +8,12 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"net/url"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/A2gent/brute/internal/config"
+	"github.com/A2gent/brute/internal/llm/openaicodex"
 )
 
 const codexUsageRequestTimeout = 15 * time.Second
@@ -160,25 +160,8 @@ func fetchOpenAICodexUsage(ctx context.Context, client codexUsageHTTPClient, cod
 }
 
 func openAICodexUsageURL(codexBaseURL string) (string, error) {
-	raw := strings.TrimSpace(codexBaseURL)
-	if raw == "" {
-		raw = "https://chatgpt.com/backend-api/codex"
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return "", fmt.Errorf("invalid Codex base URL %q", codexBaseURL)
-	}
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	parsed.Path = strings.TrimRight(parsed.Path, "/")
-
-	// Codex responses use /backend-api/codex, while the ChatGPT usage endpoint
-	// lives one level up under /backend-api/wham/usage in upstream Codex.
-	if strings.HasSuffix(parsed.Path, "/codex") {
-		parsed.Path = strings.TrimSuffix(parsed.Path, "/codex")
-	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/wham/usage"
-	return parsed.String(), nil
+	// Shared with model discovery so both derive the usage endpoint identically.
+	return openaicodex.UsageURL(codexBaseURL)
 }
 
 func openAICodexUsageBars(payload codexUsageRateLimitResponse) []ProviderUsageBar {

@@ -93,6 +93,50 @@ func TestSupportedProviderDefinitionsAreUniqueAndDiscoverable(t *testing.T) {
 	}
 }
 
+func TestResolveContextWindowUsesModelSpecificOpenRouterLimits(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		provider Provider
+		model    string
+		want     int
+	}{
+		{
+			name:  "owl alpha short openrouter id gets one million tokens",
+			model: "openrouter/owl-alpha",
+			want:  1000000,
+		},
+		{
+			name:  "owl alpha nested openrouter id gets one million tokens",
+			model: "openrouter/openrouter/owl-alpha",
+			want:  1000000,
+		},
+		{
+			name:  "other openrouter model keeps provider default",
+			model: "openrouter/auto",
+			want:  128000,
+		},
+		{
+			name:     "configured provider context window wins",
+			provider: Provider{ContextWindow: 64000},
+			model:    "openrouter/openrouter/owl-alpha",
+			want:     64000,
+		},
+	}
+
+	for _, tt := range cases {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := ResolveContextWindow(ProviderOpenRouter, tt.provider, tt.model); got != tt.want {
+				t.Fatalf("ResolveContextWindow(openrouter, %#v, %q) = %d, want %d", tt.provider, tt.model, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDefaultConfigUsesEnvironmentDataPathAndSafeToolDefaults(t *testing.T) {
 	dataPath := filepath.Join(t.TempDir(), "data")
 	t.Setenv("AAGENT_DATA_PATH", dataPath)

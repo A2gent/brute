@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/A2gent/brute/internal/llm"
@@ -31,6 +32,7 @@ type Client struct {
 	model       string
 	accountID   string
 	options     Options
+	tokenMu     sync.Mutex
 	httpClient  *http.Client
 }
 
@@ -44,6 +46,7 @@ type Options struct {
 	MaxTokens             int
 	StatefulResponses     bool
 	ResponseHeaderTimeout time.Duration
+	AccessTokenProvider   func() string
 }
 
 type responsesRequest struct {
@@ -161,6 +164,27 @@ func NewClientWithOptions(accessToken, model, baseURL string, options Options) *
 	}
 }
 
+func (c *Client) currentAccessToken() string {
+	if c == nil {
+		return ""
+	}
+	c.tokenMu.Lock()
+	defer c.tokenMu.Unlock()
+
+	accessToken := strings.TrimSpace(c.accessToken)
+	if c.options.AccessTokenProvider != nil {
+		// WHY: Codex CLI refreshes its OAuth cache independently of this long-lived
+		// client. Re-read the token lazily so active Brute sessions do not keep a
+		// stale bearer after ~/.codex/auth.json changes.
+		if fresh := strings.TrimSpace(c.options.AccessTokenProvider()); fresh != "" {
+			accessToken = fresh
+			c.accessToken = fresh
+			c.accountID = extractAccountID(fresh)
+		}
+	}
+	return accessToken
+}
+
 func newHTTPClient(responseHeaderTimeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = responseHeaderTimeout
@@ -234,8 +258,9 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Originator", "a2gent")
-	if c.accessToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.accessToken)
+	accessToken := c.currentAccessToken()
+	if accessToken != "" {
+		req.Header.Set("Authorization", "Bearer "+accessToken)
 	}
 	if c.accountID != "" {
 		req.Header.Set("ChatGPT-Account-Id", c.accountID)

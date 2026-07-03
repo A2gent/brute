@@ -260,7 +260,9 @@ func (s *Server) registerLocalDockerAgent(ctx context.Context, agent *LocalDocke
 		agentHandle = strings.TrimSpace(parts[1])
 	}
 	if agentHandle == "" {
-		agentHandle = agent.Name
+		// WHY: managed Docker container names include runtime/project suffixes and can
+		// exceed Square's handle length. Prefer human/definition identity labels.
+		agentHandle = firstNonEmptyLocalAgentString(agent.Labels["a2gent.agent_name"], agentName, agent.Name)
 	}
 	agentHandle = slugifyForA2AgentHandle(agentHandle)
 	if agentHandle == "" {
@@ -517,20 +519,27 @@ func slugifyForA2AgentHandle(value string) string {
 		return ""
 	}
 	var out strings.Builder
-	lastDash := false
+	lastSeparator := false
 	for _, r := range strings.ToLower(strings.TrimSpace(value)) {
 		isValid := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-'
 		if isValid {
 			out.WriteRune(r)
-			lastDash = false
+			lastSeparator = r == '_' || r == '-'
 			continue
 		}
-		if !lastDash {
+		if !lastSeparator {
 			out.WriteByte('-')
-			lastDash = true
+			lastSeparator = true
 		}
 	}
-	return strings.Trim(out.String(), "-")
+	slug := strings.Trim(out.String(), "-_")
+	if len(slug) > 64 {
+		slug = strings.Trim(slug[:64], "-_")
+	}
+	if len(slug) == 2 {
+		slug += "0"
+	}
+	return slug
 }
 
 func upsertContainerA2RegistryIntegration(ctx context.Context, client *http.Client, containerURL string, integrationPayload []byte) (string, error) {

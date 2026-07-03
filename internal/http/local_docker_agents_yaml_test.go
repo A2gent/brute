@@ -620,6 +620,64 @@ func TestRegisterLocalDockerAgentDefaultsMetadataFromContainerLabels(t *testing.
 	}
 }
 
+func TestRegisterLocalDockerAgentDerivesValidHandleFromAgentNameLabel(t *testing.T) {
+	var got squareRegisterAgentRequest
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/agents/register" {
+			t.Fatalf("unexpected registry request: %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode registry request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"agent":{"id":"agent-1","name":%q,"agent_handle":%q,"public_id":%q},"api_key":"sq_key"}`, got.Name, got.AgentHandle, got.AgentHandle)
+	}))
+	defer registry.Close()
+
+	server := &Server{}
+	_, status, err := server.registerLocalDockerAgent(context.Background(), &LocalDockerAgent{
+		ID:       "container-1",
+		Name:     "agent-dev-code-reviewer__project-bb113706-4903-40b7-8966-a23eb10ae220",
+		HostPort: 18080,
+		APIURL:   "http://127.0.0.1:18080",
+		Labels: map[string]string{
+			"a2gent.agent_name": "Code Reviewer",
+		},
+	}, registerLocalDockerAgentRequest{
+		RegistryURL:        registry.URL,
+		OwnerEmail:         "owner@example.com",
+		ConfigureContainer: boolPtr(false),
+	})
+	if err != nil {
+		t.Fatalf("registerLocalDockerAgent returned error: status=%d err=%v", status, err)
+	}
+	if got.AgentHandle != "code-reviewer" {
+		t.Fatalf("expected handle from agent name label, got %q", got.AgentHandle)
+	}
+}
+
+func TestSlugifyForA2AgentHandleMatchesSquareHandleRules(t *testing.T) {
+	cases := map[string]string{
+		"YouTube Transcriber (Gemini)": "youtube-transcriber-gemini",
+		"__Already_OK__":               "already_ok",
+		"AI":                           "ai0",
+		"!!!":                          "",
+	}
+	for input, want := range cases {
+		if got := slugifyForA2AgentHandle(input); got != want {
+			t.Fatalf("slugifyForA2AgentHandle(%q) = %q, want %q", input, got, want)
+		}
+	}
+
+	long := slugifyForA2AgentHandle("Agent " + strings.Repeat("x", 80) + "_")
+	if len(long) > 64 {
+		t.Fatalf("handle length = %d, want <= 64", len(long))
+	}
+	if strings.HasSuffix(long, "-") || strings.HasSuffix(long, "_") {
+		t.Fatalf("handle must not end with a separator: %q", long)
+	}
+}
+
 func TestRegisterLocalDockerAgentUploadsLocalAvatarAsset(t *testing.T) {
 	avatarPath := filepath.Join(t.TempDir(), "avatar.png")
 	if err := os.WriteFile(avatarPath, []byte("fake-png"), 0o644); err != nil {

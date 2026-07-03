@@ -165,6 +165,8 @@ func defaultIntegrationName(provider string) string {
 		return "Google Calendar"
 	case "jira":
 		return "Jira"
+	case "circleci":
+		return "CircleCI"
 	case "elevenlabs":
 		return "ElevenLabs"
 	case "perplexity":

@@ -15,7 +15,7 @@ import (
 	"github.com/A2gent/brute/internal/tools"
 )
 
-func TestHandleListIntegrationBackedSkills_IncludesTavilyPerplexityAndJiraTools(t *testing.T) {
+func TestHandleListIntegrationBackedSkills_IncludesTavilyPerplexityJiraAndCircleCITools(t *testing.T) {
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create sqlite store: %v", err)
@@ -55,6 +55,16 @@ func TestHandleListIntegrationBackedSkills_IncludesTavilyPerplexityAndJiraTools(
 				"email":     "user@example.com",
 				"api_token": "jira-token",
 			},
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "integ-circleci",
+			Provider:  "circleci",
+			Name:      "CircleCI",
+			Mode:      "notify_only",
+			Enabled:   true,
+			Config:    map[string]string{"api_token": "circle-token"},
 			CreatedAt: now,
 			UpdatedAt: now,
 		},
@@ -100,6 +110,12 @@ func TestHandleListIntegrationBackedSkills_IncludesTavilyPerplexityAndJiraTools(
 		t.Fatalf("expected jira integration-backed skill in response: %#v", resp.Skills)
 	} else if len(got.Tools) != 1 || got.Tools[0].Name != "jira_query" {
 		t.Fatalf("expected jira_query tool, got %#v", got.Tools)
+	}
+
+	if got, ok := found["circleci"]; !ok {
+		t.Fatalf("expected circleci integration-backed skill in response: %#v", resp.Skills)
+	} else if len(got.Tools) != 1 || got.Tools[0].Name != "circleci_query" {
+		t.Fatalf("expected circleci_query tool, got %#v", got.Tools)
 	}
 }
 
@@ -185,6 +201,49 @@ func TestIntegrationCreateAcceptsJiraProviderAndMasksSecret(t *testing.T) {
 	}
 	if resp.Name != "Jira" {
 		t.Fatalf("expected default name Jira, got %q", resp.Name)
+	}
+	if got := resp.Config["api_token"]; got != "***" {
+		t.Fatalf("expected masked api_token in response, got %q", got)
+	}
+}
+
+func TestIntegrationCreateAcceptsCircleCIProviderAndMasksSecret(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	sessionManager := session.NewManager(store)
+	server := NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
+
+	body, err := json.Marshal(IntegrationRequest{
+		Provider: "circleci",
+		Mode:     "notify_only",
+		Config: map[string]string{
+			"api_token": "circleci-secret",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/integrations", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleCreateIntegration(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	var resp IntegrationResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Provider != "circleci" {
+		t.Fatalf("expected provider circleci, got %q", resp.Provider)
+	}
+	if resp.Name != "CircleCI" {
+		t.Fatalf("expected default name CircleCI, got %q", resp.Name)
 	}
 	if got := resp.Config["api_token"]; got != "***" {
 		t.Fatalf("expected masked api_token in response, got %q", got)

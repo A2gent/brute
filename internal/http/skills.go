@@ -22,6 +22,7 @@ import (
 var integrationToolsByProvider = map[string][]string{
 	"google_calendar": {"google_calendar_query"},
 	"jira":            {"jira_query"},
+	"circleci":        {"circleci_query"},
 	"brave_search":    {"brave_search_query"},
 	"elevenlabs":      {"elevenlabs_tts"},
 	"leonardo":        {"leonardo_generate_image"},

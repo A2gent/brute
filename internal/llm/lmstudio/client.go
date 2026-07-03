@@ -67,12 +67,42 @@ func NewClient(apiKey, model, baseURL string) *Client {
 
 // openAIRequest is the request format for OpenAI-compatible API
 type openAIRequest struct {
-	Model       string          `json:"model"`
-	Messages    []openAIMessage `json:"messages"`
-	MaxTokens   int             `json:"max_tokens,omitempty"`
-	Temperature float64         `json:"temperature,omitempty"`
-	Tools       []openAITool    `json:"tools,omitempty"`
-	Stream      bool            `json:"stream,omitempty"`
+	Model               string          `json:"model"`
+	Messages            []openAIMessage `json:"messages"`
+	MaxTokens           int             `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int             `json:"max_completion_tokens,omitempty"`
+	Temperature         *float64        `json:"temperature,omitempty"`
+	Tools               []openAITool    `json:"tools,omitempty"`
+	Stream              bool            `json:"stream,omitempty"`
+}
+
+// modelRequiresMaxCompletionTokens reports whether an OpenAI model rejects the
+// legacy max_tokens parameter and requires max_completion_tokens instead. This
+// applies to the GPT-5 family and the o-series reasoning models. Router-prefixed
+// ids (e.g. "openai/gpt-5.5") are handled by stripping the vendor segment.
+func modelRequiresMaxCompletionTokens(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if idx := strings.LastIndex(m, "/"); idx >= 0 {
+		m = m[idx+1:]
+	}
+	return strings.HasPrefix(m, "gpt-5") ||
+		strings.HasPrefix(m, "o1") ||
+		strings.HasPrefix(m, "o3") ||
+		strings.HasPrefix(m, "o4")
+}
+
+// applyTokenLimit sets the correct token-limit field for the target model and,
+// for models that only accept the default sampling temperature, omits an
+// explicit temperature to avoid an "unsupported parameter" rejection.
+func applyTokenLimit(req *openAIRequest, model string, maxTokens int, temperature float64) {
+	if modelRequiresMaxCompletionTokens(model) {
+		req.MaxCompletionTokens = maxTokens
+		return
+	}
+	req.MaxTokens = maxTokens
+	if temperature != 0 {
+		req.Temperature = &temperature
+	}
 }
 
 type openAIMessage struct {
@@ -265,12 +295,11 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	}
 
 	reqBody := openAIRequest{
-		Model:       model,
-		Messages:    messages,
-		MaxTokens:   maxTokens,
-		Temperature: request.Temperature,
-		Tools:       tools,
+		Model:    model,
+		Messages: messages,
+		Tools:    tools,
 	}
+	applyTokenLimit(&reqBody, model, maxTokens, request.Temperature)
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
@@ -413,13 +442,12 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	}
 
 	reqBody := openAIRequest{
-		Model:       model,
-		Messages:    messages,
-		MaxTokens:   maxTokens,
-		Temperature: request.Temperature,
-		Tools:       tools,
-		Stream:      true,
+		Model:    model,
+		Messages: messages,
+		Tools:    tools,
+		Stream:   true,
 	}
+	applyTokenLimit(&reqBody, model, maxTokens, request.Temperature)
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {

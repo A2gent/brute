@@ -60,8 +60,43 @@ func (m Model) showModelsSelection() (tea.Model, tea.Cmd) {
 		return m.fetchLMStudioModels()
 	}
 
+	// For OpenAI Codex, fetch the live catalog (curated + account-discovered).
+	if m.appConfig.ActiveProvider == string(config.ProviderOpenAICodex) {
+		return m.fetchOpenAICodexModels()
+	}
+
 	// For other providers, show known models
 	return m.showStaticModels()
+}
+
+// fetchOpenAICodexModels loads the Codex model catalog using the same shared
+// discovery the web API uses, so the terminal and web stay in sync (curated list
+// for OAuth, plus live /models discovery in API-key mode).
+func (m Model) fetchOpenAICodexModels() (tea.Model, tea.Cmd) {
+	opts := openaicodex.ModelCatalogOptions{}
+	if provider := m.appConfig.GetActiveProvider(); provider != nil {
+		opts.BaseURL = strings.TrimSpace(provider.BaseURL)
+		opts.APIKey = strings.TrimSpace(provider.APIKey)
+	}
+	if opts.BaseURL == "" {
+		if def := config.GetProviderDefinition(config.ProviderOpenAICodex); def != nil {
+			opts.BaseURL = def.DefaultURL
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	m.availableModels = openaicodex.ListModelCatalog(ctx, opts)
+
+	m.showModelsMenu = true
+	m.modelsMenuIndex = 0
+	for i, model := range m.availableModels {
+		if model == m.appConfig.DefaultModel {
+			m.modelsMenuIndex = i
+			break
+		}
+	}
+	return m, nil
 }
 
 // fetchLMStudioModels fetches models from LM Studio API

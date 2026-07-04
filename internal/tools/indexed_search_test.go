@@ -4,9 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+
+	"github.com/A2gent/brute/internal/filesearch"
 )
 
 func TestFileSearchToolUsesIndexedFuzzySearch(t *testing.T) {
+	filesearch.SetIndexingEnabled(true)
+	t.Cleanup(func() { filesearch.SetIndexingEnabled(false) })
+
 	tempDir := t.TempDir()
 	createTestFile(t, tempDir, "src/components/SearchBox.tsx", "export function SearchBox() { return null }\n")
 	createTestFile(t, tempDir, "node_modules/pkg/SearchBox.tsx", "dependency\n")
@@ -20,6 +25,9 @@ func TestFileSearchToolUsesIndexedFuzzySearch(t *testing.T) {
 }
 
 func TestContentSearchToolUsesIndexedContentSearch(t *testing.T) {
+	filesearch.SetIndexingEnabled(true)
+	t.Cleanup(func() { filesearch.SetIndexingEnabled(false) })
+
 	tempDir := t.TempDir()
 	createTestFile(t, tempDir, "src/app.ts", "export const indexedNeedle = true\n")
 

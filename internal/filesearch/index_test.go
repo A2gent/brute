@@ -82,6 +82,9 @@ func TestIndexPathSearchToleratesSmallTypos(t *testing.T) {
 }
 
 func TestManagerInvalidateRebuildsIndex(t *testing.T) {
+	SetIndexingEnabled(true)
+	t.Cleanup(func() { SetIndexingEnabled(false) })
+
 	root := t.TempDir()
 	writeTestFile(t, root, "src/old.ts", "export const oldValue = true\n")
 

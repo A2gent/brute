@@ -17,6 +17,7 @@ import (
 	"github.com/A2gent/brute/internal/a2atunnel"
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/contextcompress"
+	"github.com/A2gent/brute/internal/filesearch"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
@@ -103,6 +104,7 @@ func NewServer(
 	integrationtools.Register(s.toolManager, store, speechClips, sessionManager)
 
 	if settings, err := store.GetSettings(); err == nil {
+		filesearch.SetIndexingEnabledFromSettings(settings)
 		folder := strings.TrimSpace(settings[sessionsFolderSettingKey])
 		if folder == "" {
 			folder = filepath.Join(cfg.DataPath, "sessions")

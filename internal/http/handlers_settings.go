@@ -4,6 +4,7 @@ package http
 import (
 	"encoding/json"
 	"github.com/A2gent/brute/internal/agent"
+	"github.com/A2gent/brute/internal/filesearch"
 	"github.com/A2gent/brute/internal/logging"
 	"net/http"
 	"os"
@@ -58,6 +59,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	syncSettingsToEnv(oldSettings, req.Settings)
+	filesearch.SetIndexingEnabledFromSettings(req.Settings)
 	folder := strings.TrimSpace(req.Settings[sessionsFolderSettingKey])
 	if folder == "" {
 		folder = filepath.Join(s.config.DataPath, "sessions")
@@ -78,6 +80,9 @@ func settingsResponse(settings map[string]string) SettingsResponse {
 		// WHY: The UI should render the effective runtime default, not a missing key,
 		// so new installs and existing users both see compression enabled by default.
 		out[toolResultCompressionSettingKey] = "true"
+	}
+	if strings.TrimSpace(out[filesearch.IndexingEnabledSettingKey]) == "" {
+		out[filesearch.IndexingEnabledSettingKey] = "false"
 	}
 	return SettingsResponse{
 		Settings:                               out,

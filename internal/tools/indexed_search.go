@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -78,6 +79,9 @@ func (t *FileSearchTool) Execute(ctx context.Context, params json.RawMessage) (*
 		IncludeContent: false,
 	})
 	if err != nil {
+		if errors.Is(err, filesearch.ErrIndexingDisabled) {
+			return &Result{Success: false, Error: "file indexing is disabled; enable A2GENT_FILE_INDEXING_ENABLED in Caesar Tools settings, or use find_files for low-RAM filename search"}, nil
+		}
 		return nil, err
 	}
 	if len(result.FileMatches) == 0 {
@@ -162,6 +166,9 @@ func (t *ContentSearchTool) Execute(ctx context.Context, params json.RawMessage)
 		IncludeContent: true,
 	})
 	if err != nil {
+		if errors.Is(err, filesearch.ErrIndexingDisabled) {
+			return &Result{Success: false, Error: "file indexing is disabled; enable A2GENT_FILE_INDEXING_ENABLED in Caesar Tools settings, or use grep for low-RAM content search"}, nil
+		}
 		return nil, err
 	}
 	if len(result.ContentMatches) == 0 {

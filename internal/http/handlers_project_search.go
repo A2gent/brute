@@ -1,6 +1,7 @@
 package http
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -43,6 +44,10 @@ func (s *Server) handleProjectSearch(w http.ResponseWriter, r *http.Request) {
 		IncludeContent: includeContent,
 	})
 	if err != nil {
+		if errors.Is(err, filesearch.ErrIndexingDisabled) {
+			s.errorResponse(w, http.StatusConflict, "File indexing is disabled. Enable it in Caesar Tools settings to use indexed project search.")
+			return
+		}
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to search project files: "+err.Error())
 		return
 	}

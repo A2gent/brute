@@ -2,6 +2,7 @@ package filesearch
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -24,6 +25,8 @@ type Manager struct {
 	options     ManagerOptions
 	cachedBytes int64
 }
+
+var ErrIndexingDisabled = errors.New("file indexing is disabled")
 
 type managedIndex struct {
 	root       string
@@ -62,6 +65,9 @@ func NewManager(opts ManagerOptions) *Manager {
 // Search returns a fast result from the cache. It only blocks for a rebuild when
 // a project has no usable index yet or was explicitly invalidated.
 func (m *Manager) Search(ctx context.Context, root string, req SearchRequest) (SearchResult, error) {
+	if !IndexingEnabled() {
+		return SearchResult{}, ErrIndexingDisabled
+	}
 	if m == nil {
 		m = DefaultManager()
 	}
@@ -99,6 +105,9 @@ func (m *Manager) Invalidate(root string) {
 // avoids replacing a usable index synchronously so opening a project does not
 // steal CPU from the UI thread.
 func (m *Manager) Warm(root string) {
+	if !IndexingEnabled() {
+		return
+	}
 	if m == nil {
 		return
 	}
@@ -116,6 +125,18 @@ func (m *Manager) Warm(root string) {
 	m.entries[resolvedRoot] = entry
 	m.mu.Unlock()
 	go m.rebuild(resolvedRoot)
+}
+
+// Clear drops every cached project index. It is used when indexing is disabled
+// so the process can release the large text/trigram cache promptly.
+func (m *Manager) Clear() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.entries = make(map[string]*managedIndex)
+	m.cachedBytes = 0
 }
 
 func (m *Manager) indexFor(ctx context.Context, root string) (*Index, error) {
@@ -179,7 +200,7 @@ func (m *Manager) finishBuild(root string, idx *Index, err error) {
 	if entry.idx != nil {
 		m.cachedBytes -= entry.idx.stats.ApproxBytes
 	}
-	if err == nil && idx != nil {
+	if err == nil && idx != nil && IndexingEnabled() {
 		entry.idx = idx
 		entry.lastAccess = time.Now()
 		m.cachedBytes += idx.stats.ApproxBytes

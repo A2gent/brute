@@ -283,7 +283,7 @@ func (s *Server) handleTranscribeSpeech(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	audioFile, _, err := r.FormFile("audio")
+	audioFile, audioHeader, err := r.FormFile("audio")
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "audio form field is required")
 		return
@@ -305,14 +305,23 @@ func (s *Server) handleTranscribeSpeech(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	audioPath, cleanup, err := writeTempWAV(audioPayload)
+	audioPath, cleanup, err := writeTempAudioUpload(audioPayload, audioHeader.Filename)
 	if err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to persist audio payload: "+err.Error())
 		return
 	}
 	defer cleanup()
 
-	transcript, err := whispercpp.TranscribeWithConfig(ctx, audioPath, whispercpp.TranscribeOptions{
+	whisperAudioPath, whisperCleanup, err := convertAudioToWAVForWhisper(ctx, audioPath)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to prepare audio for transcription: "+err.Error())
+		return
+	}
+	if whisperCleanup != nil {
+		defer whisperCleanup()
+	}
+
+	transcript, err := whispercpp.TranscribeWithConfig(ctx, whisperAudioPath, whispercpp.TranscribeOptions{
 		Language:           r.FormValue("language"),
 		TranslateToEnglish: parseOptionalBool(r.FormValue("translate_to_english")),
 		Prompt:             r.FormValue("prompt"),
@@ -346,8 +355,9 @@ func parseOptionalBool(raw string) *bool {
 	}
 }
 
-func writeTempWAV(payload []byte) (string, func(), error) {
-	tmp, err := os.CreateTemp("", "aagent-stt-*.wav")
+func writeTempAudioUpload(payload []byte, filename string) (string, func(), error) {
+	ext := sanitizeAudioUploadExtension(filename)
+	tmp, err := os.CreateTemp("", "aagent-stt-*"+ext)
 	if err != nil {
 		return "", func() {}, err
 	}
@@ -364,6 +374,16 @@ func writeTempWAV(payload []byte) (string, func(), error) {
 		return "", func() {}, err
 	}
 	return tmp.Name(), cleanup, nil
+}
+
+func sanitizeAudioUploadExtension(filename string) string {
+	ext := strings.ToLower(strings.TrimSpace(filepath.Ext(filename)))
+	switch ext {
+	case ".wav", ".wave", ".m4a", ".mp3", ".webm", ".ogg", ".oga", ".opus", ".flac", ".aac", ".mp4", ".mpeg", ".mpga":
+		return ext
+	default:
+		return ".audio"
+	}
 }
 
 func (s *Server) resolveElevenLabsAPIKey() string {

@@ -52,3 +52,19 @@ func TestSpeechTranscribeEndpointReturnsStructuredErrorWhenSTTUnavailable(t *tes
 		t.Fatalf("expected model-not-found error, got: %q", msg)
 	}
 }
+
+func TestSanitizeAudioUploadExtensionPreservesCommonCompressedFormats(t *testing.T) {
+	tests := map[string]string{
+		"recording.m4a":       ".m4a",
+		"meeting.WEBM":        ".webm",
+		"voice.ogg":           ".ogg",
+		"unsafe/no-extension": ".audio",
+		"archive.tar.gz":      ".audio",
+	}
+
+	for filename, want := range tests {
+		if got := sanitizeAudioUploadExtension(filename); got != want {
+			t.Fatalf("sanitizeAudioUploadExtension(%q) = %q, want %q", filename, got, want)
+		}
+	}
+}

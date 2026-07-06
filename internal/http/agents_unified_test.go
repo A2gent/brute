@@ -87,6 +87,71 @@ func TestExportSubAgentYAML(t *testing.T) {
 	}
 }
 
+func TestProbeLocalDockerAgentHealthCapturesOfflineUsage(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{
+			"status":"offline",
+			"reason":"anthropic_usage_limit_reached",
+			"message":"Claude usage limit reached; this container stays offline until usage resets.",
+			"provider_usage":{"provider":"anthropic","status":"available","usage_left_text":"5h 0% left","refreshable":true}
+		}`))
+	}))
+	defer upstream.Close()
+
+	health := probeLocalDockerAgentHealth(context.Background(), upstream.Client(), upstream.URL)
+	if health.Healthy {
+		t.Fatalf("expected unhealthy health result: %+v", health)
+	}
+	if health.Status != "offline" || health.Reason != "anthropic_usage_limit_reached" || health.HTTPStatus != http.StatusServiceUnavailable {
+		t.Fatalf("unexpected health result: %+v", health)
+	}
+	if health.ProviderUsage == nil || health.ProviderUsage.Provider != string(config.ProviderAnthropic) {
+		t.Fatalf("expected provider usage in health result: %+v", health)
+	}
+}
+
+func TestConfiguredAgentPromptSkipsUnhealthyRunningContainer(t *testing.T) {
+	binding := dockerWorkspaceBinding{}
+	containers := map[string][]LocalDockerAgent{
+		"reviewer": {{
+			Running: true,
+			Health: &LocalDockerAgentHealth{
+				Status:  "offline",
+				Healthy: false,
+				Reason:  "anthropic_usage_limit_reached",
+			},
+		}},
+	}
+	if configuredAgentPromptHasRunningContainer([]string{"reviewer"}, binding, containers) {
+		t.Fatal("unhealthy running container should not be listed as available")
+	}
+
+	containers["reviewer"][0].Health = &LocalDockerAgentHealth{Status: "ok", Healthy: true}
+	if !configuredAgentPromptHasRunningContainer([]string{"reviewer"}, binding, containers) {
+		t.Fatal("healthy running container should be listed as available")
+	}
+}
+
+func TestApplyUnifiedAgentContainerStatusMarksUnhealthyRunningContainer(t *testing.T) {
+	entry := UnifiedAgentResponse{}
+	applyUnifiedAgentContainerStatus(&entry, []LocalDockerAgent{{
+		Running: true,
+		APIURL:  "http://127.0.0.1:18080",
+		Health:  &LocalDockerAgentHealth{Status: "offline", Healthy: false},
+	}})
+	if entry.Status != agentDefinitionStatusUnhealthy {
+		t.Fatalf("status = %q, want %q", entry.Status, agentDefinitionStatusUnhealthy)
+	}
+	if entry.APIURL != "http://127.0.0.1:18080" {
+		t.Fatalf("expected APIURL to remain available for diagnostics, got %q", entry.APIURL)
+	}
+}
+
 func TestLocalDockerCreateRequestBaseFromDefinitionCarriesPublishMetadata(t *testing.T) {
 	def := &agentdef.Definition{
 		Agent: agentdef.AgentMeta{

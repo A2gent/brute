@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/go-chi/chi/v5"
 )
@@ -39,7 +40,18 @@ type LocalDockerAgent struct {
 	Running        bool                           `json:"running"`
 	HostPort       int                            `json:"host_port,omitempty"`
 	APIURL         string                         `json:"api_url,omitempty"`
+	Health         *LocalDockerAgentHealth        `json:"health,omitempty"`
 	StartupSession *localDockerAgentStartupResult `json:"startup_session,omitempty"`
+}
+
+type LocalDockerAgentHealth struct {
+	Status        string                 `json:"status"`
+	Healthy       bool                   `json:"healthy"`
+	HTTPStatus    int                    `json:"http_status,omitempty"`
+	Reason        string                 `json:"reason,omitempty"`
+	Message       string                 `json:"message,omitempty"`
+	CheckedAt     string                 `json:"checked_at,omitempty"`
+	ProviderUsage *ProviderUsageResponse `json:"provider_usage,omitempty"`
 }
 
 type createLocalDockerAgentRequest struct {
@@ -103,6 +115,7 @@ func (s *Server) handleListLocalDockerAgents(w http.ResponseWriter, r *http.Requ
 		s.errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	annotateLocalDockerAgentHealth(r.Context(), agents)
 	s.jsonResponse(w, http.StatusOK, map[string]interface{}{"agents": agents})
 }
 
@@ -302,6 +315,9 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 			if provider == "" {
 				provider = "lmstudio"
 			}
+			if provider == string(config.ProviderAnthropic) {
+				args = appendClaudeRateLimitCacheDockerArgs(args)
+			}
 			args = append(args,
 				"--env", "AAGENT_PROVIDER="+provider,
 				"--env", "A2GENT_PARENT_PROXY_URL="+proxyBaseURL,
@@ -414,6 +430,33 @@ func buildLocalDockerAgentImage(ctx context.Context, req buildLocalDockerAgentIm
 		ContextDir: contextDir,
 		Output:     buildOutput,
 	}, nil
+}
+
+func appendClaudeRateLimitCacheDockerArgs(args []string) []string {
+	hostPath, err := claudeRateLimitsCachePath()
+	if err != nil {
+		logging.Warn("Claude usage cache path unavailable for Docker agent health: %v", err)
+		return args
+	}
+	info, err := os.Stat(hostPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			logging.Warn("Claude usage cache unavailable for Docker agent health: %v", err)
+		}
+		return args
+	}
+	if info.IsDir() {
+		logging.Warn("Claude usage cache path is a directory, skipping Docker health mount: %s", hostPath)
+		return args
+	}
+	args = append(args,
+		"--volume", hostPath+":"+containerClaudeRateLimitsCachePath+":ro",
+		"--env", claudeRateLimitsCachePathEnv+"="+containerClaudeRateLimitsCachePath,
+	)
+	if maxAge := strings.TrimSpace(os.Getenv(claudeRateLimitsCacheMaxAgeEnv)); maxAge != "" {
+		args = append(args, "--env", claudeRateLimitsCacheMaxAgeEnv+"="+maxAge)
+	}
+	return args
 }
 
 func (s *Server) handleStartLocalDockerAgent(w http.ResponseWriter, r *http.Request) {

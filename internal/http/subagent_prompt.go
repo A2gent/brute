@@ -171,6 +171,7 @@ func (s *Server) dockerAgentDefinitionContainersForPrompt() map[string][]LocalDo
 		logging.Warn("Failed to list Docker agents for system prompt: %v", err)
 		return map[string][]LocalDockerAgent{}
 	}
+	annotateLocalDockerAgentHealth(ctx, containers)
 
 	byDefinitionID := map[string][]LocalDockerAgent{}
 	for _, container := range containers {
@@ -190,7 +191,7 @@ func configuredAgentPromptHasRunningContainer(candidateIDs []string, binding doc
 			continue
 		}
 		for _, container := range containersByDefinitionID[candidateID] {
-			if !container.Running {
+			if !localDockerAgentAvailableForUse(container) {
 				continue
 			}
 			if !configuredAgentPromptContainerMatchesBinding(container, binding) {

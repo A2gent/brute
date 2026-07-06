@@ -119,7 +119,7 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 					logging.Warn("Model returned empty final response; retrying once for session=%s step=%d", sess.ID, step)
 					continue
 				}
-				message := "Model returned an empty final response after tool execution."
+				message := "Model returned an empty final response without tool calls after a retry. Check provider health, quota/usage, and child-agent logs; an upstream CLI or proxy may have failed without surfacing a normal error."
 				sess.AddAssistantMessageWithMetadata(message, nil, llmTimingMetadata(llmStart, llmCompleted, a.config.Provider, a.config.Model, map[string]interface{}{
 					"empty_final_response": true,
 				}))

@@ -51,7 +51,7 @@ const (
 	toolMetadataExternalWait      = "external_wait"
 	defaultCompactionTriggerPct   = 80.0
 	emptyFinalResponseMaxRetries  = 1
-	emptyFinalResponseRetryPrompt = `The previous model response was empty after tool execution. Produce a concise final response for the user now.
+	emptyFinalResponseRetryPrompt = `The previous model response was empty and contained no tool calls. Produce a concise final response for the user now.
 
 Summarize what was done, mention verification or blockers, and do not paste raw tool output. Call another tool only if it is truly required to complete the answer.`
 	stepLimitWarningThreshold = 3

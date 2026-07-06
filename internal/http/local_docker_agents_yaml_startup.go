@@ -104,12 +104,16 @@ func waitForLocalDockerAgentHTTP(ctx context.Context, client *http.Client, baseU
 		}
 		resp, err := client.Do(req)
 		if err == nil {
-			_, _ = io.Copy(io.Discard, resp.Body)
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 			_ = resp.Body.Close()
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 				return nil
 			}
-			lastErr = fmt.Errorf("health returned HTTP %d", resp.StatusCode)
+			if detail := strings.TrimSpace(string(body)); detail != "" {
+				lastErr = fmt.Errorf("health returned HTTP %d: %s", resp.StatusCode, detail)
+			} else {
+				lastErr = fmt.Errorf("health returned HTTP %d", resp.StatusCode)
+			}
 		} else {
 			lastErr = err
 		}

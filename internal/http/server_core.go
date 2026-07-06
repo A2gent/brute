@@ -192,13 +192,40 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	dockerSafeMode := strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_URL")) != ""
 	containerized := dockerSafeMode || isRunningInContainer()
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	statusCode := http.StatusOK
+	body := map[string]any{
 		"status":           "ok",
 		"agent_name":       agentName,
 		"docker_safe_mode": dockerSafeMode,
 		"containerized":    containerized,
-	})
+	}
+	activeProvider := ""
+	if s.config != nil {
+		activeProvider = config.NormalizeProviderRef(s.config.ActiveProvider)
+		if activeProvider != "" {
+			body["provider"] = activeProvider
+			if model := s.resolveModelForProvider(config.ProviderType(activeProvider)); strings.TrimSpace(model) != "" {
+				body["model"] = strings.TrimSpace(model)
+			}
+		}
+	}
+	if dockerSafeMode && activeProvider == string(config.ProviderAnthropic) {
+		usage := s.anthropicUsageStatus()
+		body["provider_usage"] = usage
+		if limitReached, detail := providerUsageLimitReached(usage, time.Now()); limitReached {
+			statusCode = http.StatusServiceUnavailable
+			body["status"] = "offline"
+			body["reason"] = "anthropic_usage_limit_reached"
+			message := "Claude usage limit reached; this container stays offline until usage resets."
+			if detail != "" {
+				message += " " + detail
+			}
+			body["message"] = message
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(body)
 }
 
 func isRunningInContainer() bool {

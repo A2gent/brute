@@ -550,6 +550,7 @@ Notes:
 - Claude Code provides `rate_limits.five_hour` and `rate_limits.seven_day` only for Claude.ai subscriber sessions after the first API response.
 - Brute reads `AAGENT_CLAUDE_RATE_LIMITS_PATH` or defaults to `~/.a2gent/claude-rate-limits.json`.
 - Brute treats the cache as stale after `AAGENT_CLAUDE_RATE_LIMITS_MAX_AGE` (default `12h`) and falls back to an unavailable message until a newer snapshot is written.
+- Anthropic Docker sub-agents that use the parent LLM proxy mount this cache read-only. If a cached Claude window has `0%` left, the child `/health` endpoint returns `503` with `status: "offline"` until the cache shows usage available again.
 - You can test the script with mock input from the Claude Code status line docs before enabling it in your real config.
 
 ### 11.4 TUI in container fails with `/dev/tty`

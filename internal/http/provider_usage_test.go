@@ -157,6 +157,102 @@ func TestProviderUsageStatusForAnthropicReturnsUnavailableWhenCacheIsStale(t *te
 	}
 }
 
+func TestProviderUsageLimitReachedIgnoresElapsedReset(t *testing.T) {
+	now := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
+	usage := ProviderUsageResponse{
+		Status: providerUsageStatusAvailable,
+		UsageBars: []ProviderUsageBar{{
+			Label:       "Claude 5h",
+			LeftPercent: 0,
+			Status:      "limit_reached",
+			ResetText:   "resets " + now.Add(-time.Minute).Format(time.RFC3339),
+		}},
+	}
+	if reached, detail := providerUsageLimitReached(usage, now); reached {
+		t.Fatalf("expected elapsed reset to be non-fatal, got reached with detail %q", detail)
+	}
+
+	usage.UsageBars[0].ResetText = "resets " + now.Add(time.Minute).Format(time.RFC3339)
+	if reached, detail := providerUsageLimitReached(usage, now); !reached || !strings.Contains(detail, "Claude 5h") {
+		t.Fatalf("expected future reset to be fatal, got reached=%v detail=%q", reached, detail)
+	}
+}
+
+func TestHealthReturnsOfflineForDockerSafeAnthropicLimitReached(t *testing.T) {
+	server, cleanup := newRequestLoggingTestServer(t)
+	defer cleanup()
+	server.config.ActiveProvider = string(config.ProviderAnthropic)
+	cachePath := filepath.Join(t.TempDir(), "claude-rate-limits.json")
+	writeAnthropicRateLimitCache(t, cachePath, `{
+		"rate_limits": {
+			"five_hour": {"used_percentage": 100, "resets_at": 4102444800},
+			"seven_day": {"used_percentage": 25, "resets_at": 4103049600}
+		}
+	}`, time.Now())
+	t.Setenv("A2GENT_PARENT_PROXY_URL", "http://parent.example/v1")
+	t.Setenv(claudeRateLimitsCachePathEnv, cachePath)
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	server.handleHealth(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("health status = %d, want %d; body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to parse health body: %v", err)
+	}
+	if body["status"] != "offline" || body["reason"] != "anthropic_usage_limit_reached" {
+		t.Fatalf("unexpected health body: %+v", body)
+	}
+	if !strings.Contains(rec.Body.String(), "Claude usage limit reached") || !strings.Contains(rec.Body.String(), "provider_usage") {
+		t.Fatalf("expected usage details in health body: %s", rec.Body.String())
+	}
+}
+
+func TestHealthStaysOKForDockerSafeAnthropicWhenUsageUnavailable(t *testing.T) {
+	server, cleanup := newRequestLoggingTestServer(t)
+	defer cleanup()
+	server.config.ActiveProvider = string(config.ProviderAnthropic)
+	t.Setenv("A2GENT_PARENT_PROXY_URL", "http://parent.example/v1")
+	t.Setenv(claudeRateLimitsCachePathEnv, filepath.Join(t.TempDir(), "missing-rate-limits.json"))
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	server.handleHealth(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("health status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"status":"ok"`) || !strings.Contains(rec.Body.String(), `"provider_usage"`) {
+		t.Fatalf("expected ok health body with usage diagnostics: %s", rec.Body.String())
+	}
+}
+
+func TestAppendClaudeRateLimitCacheDockerArgsMountsExistingCache(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "claude-rate-limits.json")
+	writeAnthropicRateLimitCache(t, cachePath, `{
+		"rate_limits": {
+			"five_hour": {"used_percentage": 42, "resets_at": 4102444800}
+		}
+	}`, time.Now())
+	t.Setenv(claudeRateLimitsCachePathEnv, cachePath)
+	t.Setenv(claudeRateLimitsCacheMaxAgeEnv, "30m")
+
+	got := appendClaudeRateLimitCacheDockerArgs([]string{"run"})
+	joined := strings.Join(got, "\n")
+	if !strings.Contains(joined, cachePath+":"+containerClaudeRateLimitsCachePath+":ro") {
+		t.Fatalf("expected cache volume mount in args: %#v", got)
+	}
+	if !strings.Contains(joined, claudeRateLimitsCachePathEnv+"="+containerClaudeRateLimitsCachePath) {
+		t.Fatalf("expected container cache env in args: %#v", got)
+	}
+	if !strings.Contains(joined, claudeRateLimitsCacheMaxAgeEnv+"=30m") {
+		t.Fatalf("expected cache max-age env in args: %#v", got)
+	}
+}
+
 func newAnthropicUsageTestServer(t *testing.T) *Server {
 	t.Helper()
 	claudePath := filepath.Join(t.TempDir(), "claude")

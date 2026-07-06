@@ -23,6 +23,7 @@ import (
 const (
 	agentDefinitionStatusRunning    = "running"
 	agentDefinitionStatusStopped    = "stopped"
+	agentDefinitionStatusUnhealthy  = "unhealthy"
 	agentDefinitionStatusNotCreated = "not_created"
 )
 
@@ -65,6 +66,7 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 		// Docker being unavailable should not hide saved configurations.
 		warnings = append(warnings, "docker agents unavailable: "+err.Error())
 	}
+	annotateLocalDockerAgentHealth(r.Context(), dockerAgents)
 
 	containersByDefID := make(map[string][]LocalDockerAgent)
 	for i := range dockerAgents {
@@ -91,15 +93,7 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 		if def, defErr := agentdef.FromSubAgent(sa); defErr == nil {
 			entry.Definition = def
 			if containers := containersByDefID[def.Agent.ID]; len(containers) > 0 {
-				entry.Containers = containers
-				entry.Status = agentDefinitionStatusStopped
-				for i := range containers {
-					if containers[i].Running {
-						entry.Status = agentDefinitionStatusRunning
-						entry.APIURL = containers[i].APIURL
-						break
-					}
-				}
+				applyUnifiedAgentContainerStatus(&entry, containers)
 			}
 		} else {
 			warnings = append(warnings, "sub-agent "+sa.ID+": "+defErr.Error())
@@ -128,15 +122,7 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 			warnings = append(warnings, "agent definition "+record.ID+": "+defErr.Error())
 		}
 		if containers := containersByDefID[record.ID]; len(containers) > 0 {
-			entry.Containers = containers
-			entry.Status = agentDefinitionStatusStopped
-			for i := range containers {
-				if containers[i].Running {
-					entry.Status = agentDefinitionStatusRunning
-					entry.APIURL = containers[i].APIURL
-					break
-				}
-			}
+			applyUnifiedAgentContainerStatus(&entry, containers)
 		}
 		agents = append(agents, entry)
 	}
@@ -147,11 +133,15 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 			continue // already attached to its definition entry
 		}
 		running := da.Running
+		status := da.Status
+		if da.Running && !localDockerAgentAvailableForUse(da) {
+			status = agentDefinitionStatusUnhealthy
+		}
 		agents = append(agents, UnifiedAgentResponse{
 			ID:          da.ID,
 			Name:        da.Name,
 			Runtime:     agentdef.RuntimeDocker,
-			Status:      da.Status,
+			Status:      status,
 			Running:     &running,
 			APIURL:      da.APIURL,
 			DockerAgent: &dockerAgents[i],
@@ -162,6 +152,29 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 		"agents":   agents,
 		"warnings": warnings,
 	})
+}
+
+func applyUnifiedAgentContainerStatus(entry *UnifiedAgentResponse, containers []LocalDockerAgent) {
+	entry.Containers = containers
+	entry.Status = agentDefinitionStatusStopped
+	sawUnhealthyRunning := false
+	for i := range containers {
+		if !containers[i].Running {
+			continue
+		}
+		if entry.APIURL == "" {
+			entry.APIURL = containers[i].APIURL
+		}
+		if localDockerAgentAvailableForUse(containers[i]) {
+			entry.Status = agentDefinitionStatusRunning
+			entry.APIURL = containers[i].APIURL
+			return
+		}
+		sawUnhealthyRunning = true
+	}
+	if sawUnhealthyRunning {
+		entry.Status = agentDefinitionStatusUnhealthy
+	}
 }
 
 func (s *Server) handleExportSubAgentYAML(w http.ResponseWriter, r *http.Request) {

@@ -23,6 +23,7 @@ const (
 
 	anthropicUsageSource               = "Claude Code statusLine cache"
 	defaultClaudeRateLimitsCachePath   = "~/.a2gent/claude-rate-limits.json"
+	containerClaudeRateLimitsCachePath = "/data/a2gent-parent-claude-rate-limits.json"
 	claudeRateLimitsCachePathEnv       = "AAGENT_CLAUDE_RATE_LIMITS_PATH"
 	claudeRateLimitsCacheMaxAgeEnv     = "AAGENT_CLAUDE_RATE_LIMITS_MAX_AGE"
 	defaultClaudeRateLimitsCacheMaxAge = 12 * time.Hour
@@ -113,6 +114,43 @@ func (s *Server) anthropicUsageStatus() ProviderUsageResponse {
 		return response
 	}
 	return status
+}
+
+func providerUsageLimitReached(usage ProviderUsageResponse, now time.Time) (bool, string) {
+	if usage.Status != providerUsageStatusAvailable {
+		return false, ""
+	}
+	for _, bar := range usage.UsageBars {
+		if bar.Status == "limit_reached" || bar.LeftPercent <= 0 {
+			if providerUsageResetElapsed(bar.ResetText, now) {
+				continue
+			}
+			detail := strings.TrimSpace(bar.Label)
+			if detail == "" {
+				detail = strings.TrimSpace(usage.UsageLeftText)
+			}
+			if reset := strings.TrimSpace(bar.ResetText); reset != "" {
+				if detail != "" {
+					detail += " "
+				}
+				detail += reset
+			}
+			return true, detail
+		}
+	}
+	return false, ""
+}
+
+func providerUsageResetElapsed(resetText string, now time.Time) bool {
+	raw := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(resetText), "resets "))
+	if raw == "" {
+		return false
+	}
+	resetAt, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return false
+	}
+	return !resetAt.After(now)
 }
 
 func readClaudeRateLimitCache(now time.Time) (ProviderUsageResponse, error) {

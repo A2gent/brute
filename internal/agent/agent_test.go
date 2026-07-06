@@ -336,6 +336,12 @@ func TestLoopFailsAfterRepeatedEmptyFinalResponses(t *testing.T) {
 	if lastMsg.Role != "assistant" || !strings.Contains(lastMsg.Content, "empty final response") {
 		t.Fatalf("expected explicit failure assistant message, got role=%q content=%q", lastMsg.Role, lastMsg.Content)
 	}
+	if !strings.Contains(lastMsg.Content, "provider health") || !strings.Contains(lastMsg.Content, "quota/usage") {
+		t.Fatalf("expected provider diagnostic hint in failure message, got %q", lastMsg.Content)
+	}
+	if strings.Contains(lastMsg.Content, "after tool execution") {
+		t.Fatalf("failure message should not blame tool execution unconditionally: %q", lastMsg.Content)
+	}
 	if strings.Contains(lastMsg.Content, "raw html from tool") {
 		t.Fatalf("failure message should not include raw tool output: %q", lastMsg.Content)
 	}

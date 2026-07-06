@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +16,8 @@ import (
 	"sync"
 	"time"
 )
+
+const localDockerAgentHealthProbeTimeout = 800 * time.Millisecond
 
 var localDockerPortReservations = struct {
 	sync.Mutex
@@ -293,6 +297,94 @@ func listLocalBruteContainers(ctx context.Context) ([]LocalDockerAgent, error) {
 		agents = append(agents, agent)
 	}
 	return agents, nil
+}
+
+type localDockerAgentHealthPayload struct {
+	Status        string                 `json:"status"`
+	Reason        string                 `json:"reason"`
+	Message       string                 `json:"message"`
+	ProviderUsage *ProviderUsageResponse `json:"provider_usage"`
+}
+
+func annotateLocalDockerAgentHealth(ctx context.Context, agents []LocalDockerAgent) {
+	if len(agents) == 0 {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	client := &http.Client{Timeout: localDockerAgentHealthProbeTimeout}
+	var wg sync.WaitGroup
+	for i := range agents {
+		if !agents[i].Running || strings.TrimSpace(agents[i].APIURL) == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			health := probeLocalDockerAgentHealth(ctx, client, agents[idx].APIURL)
+			agents[idx].Health = &health
+		}(i)
+	}
+	wg.Wait()
+}
+
+func probeLocalDockerAgentHealth(ctx context.Context, client *http.Client, baseURL string) LocalDockerAgentHealth {
+	health := LocalDockerAgentHealth{
+		Status:    "unavailable",
+		Healthy:   false,
+		CheckedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if client == nil {
+		client = &http.Client{Timeout: localDockerAgentHealthProbeTimeout}
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, localDockerAgentHealthProbeTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/health", nil)
+	if err != nil {
+		health.Message = err.Error()
+		return health
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		health.Message = err.Error()
+		return health
+	}
+	defer resp.Body.Close()
+
+	health.HTTPStatus = resp.StatusCode
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+	var payload localDockerAgentHealthPayload
+	if len(body) > 0 {
+		_ = json.Unmarshal(body, &payload)
+	}
+	payloadStatus := strings.TrimSpace(payload.Status)
+	if payloadStatus != "" {
+		health.Status = payloadStatus
+	} else if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		health.Status = "ok"
+	} else {
+		health.Status = "unhealthy"
+	}
+	health.Reason = strings.TrimSpace(payload.Reason)
+	health.Message = strings.TrimSpace(payload.Message)
+	health.ProviderUsage = payload.ProviderUsage
+	if health.Message == "" && len(body) > 0 && payloadStatus == "" {
+		health.Message = strings.TrimSpace(string(body))
+	}
+	health.Healthy = resp.StatusCode >= 200 && resp.StatusCode < 300 && (payloadStatus == "" || payloadStatus == "ok" || payloadStatus == "healthy")
+	return health
+}
+
+func localDockerAgentAvailableForUse(agent LocalDockerAgent) bool {
+	if !agent.Running {
+		return false
+	}
+	if agent.Health == nil {
+		return true
+	}
+	return agent.Health.Healthy
 }
 
 func findLocalBruteContainer(ctx context.Context, containerID string) (*LocalDockerAgent, error) {

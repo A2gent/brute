@@ -173,15 +173,7 @@ func (s *Server) handleListPiperVoices(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCompletionSpeech(w http.ResponseWriter, r *http.Request) {
 	apiKey := s.resolveElevenLabsAPIKey()
 	voiceID := strings.TrimSpace(os.Getenv("ELEVENLABS_VOICE_ID"))
-	if apiKey == "" {
-		s.errorResponse(w, http.StatusBadRequest, "ElevenLabs API key is not configured. Add an enabled ElevenLabs integration in Integrations.")
-		return
-	}
-	if voiceID == "" {
-		s.errorResponse(w, http.StatusBadRequest, "ELEVENLABS_VOICE_ID is not configured")
-		return
-	}
-
+func (s *Server) handleCompletionSpeech(w http.ResponseWriter, r *http.Request) {
 	var reqBody speechCompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
@@ -193,60 +185,87 @@ func (s *Server) handleCompletionSpeech(w http.ResponseWriter, r *http.Request) 
 		s.errorResponse(w, http.StatusBadRequest, "text is required")
 		return
 	}
-
-	ttsReq := elevenLabsTTSRequest{
-		Text:    text,
-		ModelID: "eleven_multilingual_v2",
+	if s.toolManager == nil {
+		s.errorResponse(w, http.StatusServiceUnavailable, "Built-in speech tools are unavailable")
+		return
 	}
-	if speedRaw := strings.TrimSpace(os.Getenv("ELEVENLABS_SPEED")); speedRaw != "" {
-		if speed, err := strconv.ParseFloat(speedRaw, 64); err == nil && speed > 0 {
-			ttsReq.VoiceSettings = elevenLabsVoiceSettings{Speed: speed}
+	if s.speechClips == nil {
+		s.errorResponse(w, http.StatusServiceUnavailable, "Speech clip store is unavailable")
+		return
+	}
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"text":            text,
+		"output_mode":     "stream",
+		"auto_play_audio": false,
+	})
+	if err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to build speech request payload: "+err.Error())
+		return
+	}
+
+	// WHY: Review playback should use Brute's built-in local TTS tools instead of
+	// requiring an ElevenLabs integration. Try the lightweight web-friendly tools
+	// first, then fall back to the local Piper runtime when available.
+	toolNames := []string{"edge_tts", "macos_say_tts", "piper_tts"}
+	errorsByTool := make([]string, 0, len(toolNames))
+	for _, toolName := range toolNames {
+		result, execErr := s.toolManager.Execute(r.Context(), toolName, payload)
+		if execErr != nil {
+			errorsByTool = append(errorsByTool, fmt.Sprintf("%s: %v", toolName, execErr))
+			continue
 		}
-	}
+		if result == nil || !result.Success {
+			message := "speech generation failed"
+			if result != nil && strings.TrimSpace(result.Error) != "" {
+				message = strings.TrimSpace(result.Error)
+			}
+			errorsByTool = append(errorsByTool, fmt.Sprintf("%s: %s", toolName, message))
+			continue
+		}
 
-	jsonBody, err := json.Marshal(ttsReq)
-	if err != nil {
-		s.errorResponse(w, http.StatusInternalServerError, "Failed to build ElevenLabs request payload: "+err.Error())
+		clipID, expectedContentType := speechClipMetadata(result.Metadata)
+		if clipID == "" {
+			errorsByTool = append(errorsByTool, fmt.Sprintf("%s: did not return audio_clip metadata", toolName))
+			continue
+		}
+		contentType, audioPayload, ok := s.speechClips.Load(clipID)
+		if !ok || len(audioPayload) == 0 {
+			errorsByTool = append(errorsByTool, fmt.Sprintf("%s: generated speech clip is unavailable", toolName))
+			continue
+		}
+		if contentType == "" {
+			contentType = expectedContentType
+		}
+		if contentType == "" {
+			contentType = "audio/mpeg"
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(audioPayload)
 		return
 	}
 
-	ttsURL := fmt.Sprintf("https://api.elevenlabs.io/v1/text-to-speech/%s", url.PathEscape(voiceID))
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, ttsURL, bytes.NewReader(jsonBody))
-	if err != nil {
-		s.errorResponse(w, http.StatusInternalServerError, "Failed to build ElevenLabs request: "+err.Error())
-		return
+	detail := strings.Join(errorsByTool, "; ")
+	if detail == "" {
+		detail = "no local TTS tools are registered"
 	}
-	req.Header.Set("xi-api-key", apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "audio/mpeg")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		s.errorResponse(w, http.StatusBadGateway, "Failed to call ElevenLabs: "+err.Error())
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		s.proxyElevenLabsError(w, resp, "ElevenLabs playback failed")
-		return
-	}
-
-	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
-	if contentType == "" {
-		contentType = "audio/mpeg"
-	}
-	w.Header().Set("Content-Type", contentType)
-	w.WriteHeader(http.StatusOK)
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		// Client may disconnect mid-stream; nothing actionable for handler.
-		return
-	}
+	s.errorResponse(w, http.StatusBadGateway, "Failed to synthesize completion audio with built-in TTS: "+detail)
 }
 
-func (s *Server) handleGetSpeechClip(w http.ResponseWriter, r *http.Request) {
-	clipID := strings.TrimSpace(chi.URLParam(r, "clipID"))
+func speechClipMetadata(metadata map[string]interface{}) (string, string) {
+	clipRaw, ok := metadata["audio_clip"]
+	if !ok {
+		return "", ""
+	}
+	clip, ok := clipRaw.(map[string]interface{})
+	if !ok {
+		return "", ""
+	}
+	clipID, _ := clip["clip_id"].(string)
+	contentType, _ := clip["content_type"].(string)
+	return strings.TrimSpace(clipID), strings.TrimSpace(contentType)
+}
 	if clipID == "" {
 		s.errorResponse(w, http.StatusBadRequest, "clipID is required")
 		return

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/llm"
+	"github.com/A2gent/brute/internal/llm/anthropic"
 	"github.com/A2gent/brute/internal/llm/gemini"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
 	"github.com/A2gent/brute/internal/llm/openaicodex"
@@ -544,16 +545,16 @@ func (s *Server) handleListCursorModels(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleListAnthropicModels(w http.ResponseWriter, r *http.Request) {
+	// Resolve an API key so the catalog can be pulled live from the official
+	// Anthropic Models API; falls back to a curated current list when absent.
+	provider := s.config.Providers[string(config.ProviderAnthropic)]
+	apiKey := strings.TrimSpace(provider.APIKey)
+	if apiKey == "" {
+		apiKey = s.apiKeyFromEnv(config.ProviderAnthropic)
+	}
+
 	s.jsonResponse(w, http.StatusOK, ListProviderModelsResponse{
-		Models: []string{
-			"sonnet",
-			"opus",
-			"haiku",
-			"claude-sonnet-4-6",
-			"claude-opus-4-6",
-			"claude-sonnet-4-5",
-			"claude-opus-4-5",
-		},
+		Models: anthropic.CLIModels(apiKey),
 	})
 }
 

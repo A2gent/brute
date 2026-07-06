@@ -172,10 +172,10 @@ func (m Model) showStaticModels() (tea.Model, tea.Cmd) {
 	case config.ProviderOpenRouter:
 		m.availableModels = []string{
 			"openrouter/auto",
+			"anthropic/claude-opus-4-8",
+			"anthropic/claude-sonnet-5",
 			"anthropic/claude-opus-4-6",
 			"anthropic/claude-sonnet-4-6",
-			"anthropic/claude-opus-4-5",
-			"anthropic/claude-sonnet-4-5",
 			"openai/gpt-4.1",
 			"openai/gpt-4.1-mini",
 			"google/gemini-3-flash-preview",
@@ -185,18 +185,17 @@ func (m Model) showStaticModels() (tea.Model, tea.Cmd) {
 	case config.ProviderCursor:
 		m.availableModels = []string{"composer-2.5", "composer-latest", "auto"}
 	case config.ProviderAnthropic:
-		m.availableModels = []string{
-			"claude-opus-4-6",
-			"claude-sonnet-4-6",
-			"claude-opus-4-5",
-			"claude-opus-4-5-20251101",
-			"claude-sonnet-4-5",
-			"claude-sonnet-4-5-20250929",
-			"claude-haiku-4-5",
-			"claude-opus-4-1",
-			"claude-opus-4-0",
-			"claude-sonnet-4-0",
+		// Pull the live catalog from the official Anthropic Models API when an
+		// API key is available (config or ANTHROPIC_API_KEY); otherwise fall
+		// back to a curated current list. CLI aliases lead the list.
+		apiKey := ""
+		if provider := m.appConfig.GetActiveProvider(); provider != nil {
+			apiKey = strings.TrimSpace(provider.APIKey)
 		}
+		if apiKey == "" {
+			apiKey = providerAPIKeyFromEnv(config.ProviderAnthropic)
+		}
+		m.availableModels = anthropic.CLIModels(apiKey)
 	case config.ProviderGoogle:
 		m.availableModels = []string{
 			"gemini-3-pro-preview",

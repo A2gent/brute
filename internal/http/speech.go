@@ -171,9 +171,6 @@ func (s *Server) handleListPiperVoices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCompletionSpeech(w http.ResponseWriter, r *http.Request) {
-	apiKey := s.resolveElevenLabsAPIKey()
-	voiceID := strings.TrimSpace(os.Getenv("ELEVENLABS_VOICE_ID"))
-func (s *Server) handleCompletionSpeech(w http.ResponseWriter, r *http.Request) {
 	var reqBody speechCompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
@@ -266,6 +263,8 @@ func speechClipMetadata(metadata map[string]interface{}) (string, string) {
 	contentType, _ := clip["content_type"].(string)
 	return strings.TrimSpace(clipID), strings.TrimSpace(contentType)
 }
+func (s *Server) handleGetSpeechClip(w http.ResponseWriter, r *http.Request) {
+	clipID := strings.TrimSpace(chi.URLParam(r, "clipID"))
 	if clipID == "" {
 		s.errorResponse(w, http.StatusBadRequest, "clipID is required")
 		return

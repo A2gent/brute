@@ -92,6 +92,7 @@ func NewServer(
 		store:                 store,
 		port:                  port,
 		portReady:             make(chan int, 1),
+		speechClips:           speechClips,
 		runParentCtx:          context.Background(),
 		activeRuns:            make(map[string]map[string]context.CancelFunc),
 		sessionEventSubs:      make(map[string]map[chan ChatStreamEvent]struct{}),

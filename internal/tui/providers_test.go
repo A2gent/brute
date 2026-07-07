@@ -7,11 +7,60 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/llm"
 )
+
+func TestCreateLLMClientAutoRouterRoutesCursorWithoutAnthropicHTTPFallback(t *testing.T) {
+	tmp := t.TempDir()
+	fakeAgent := filepath.Join(tmp, "agent")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1}}'\n"
+	if err := os.WriteFile(fakeAgent, []byte(script), 0o755); err != nil {
+		t.Fatalf("failed to write fake cursor agent: %v", err)
+	}
+	t.Setenv("AAGENT_CURSOR_CLI_PATH", fakeAgent)
+	t.Setenv("AAGENT_CURSOR_CLI_FORCE", "true")
+
+	cfg := config.DefaultConfig()
+	cfg.ActiveProvider = string(config.ProviderAutoRouter)
+	cfg.DefaultModel = "ornith-1.0-35b"
+	cfg.WorkDir = tmp
+	cfg.Providers[string(config.ProviderAutoRouter)] = config.Provider{
+		Name:           string(config.ProviderAutoRouter),
+		RouterProvider: string(config.ProviderLMStudio),
+		RouterRules: []config.RouterRule{
+			{Match: "single", Provider: string(config.ProviderCursor), Model: "composer-2.5"},
+		},
+	}
+	cfg.Providers[string(config.ProviderLMStudio)] = config.Provider{
+		Name:    string(config.ProviderLMStudio),
+		BaseURL: "http://127.0.0.1:1/v1",
+		Model:   "ornith-1.0-35b",
+	}
+	cfg.Providers[string(config.ProviderCursor)] = config.Provider{
+		Name:  string(config.ProviderCursor),
+		Model: "composer-2.5",
+	}
+
+	m := Model{appConfig: cfg}
+	client := m.createLLMClient(config.ProviderAutoRouter)
+	resp, err := client.Chat(context.Background(), &llm.ChatRequest{
+		Messages: []llm.Message{{Role: "user", Content: "add alias cc"}},
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), `Post "/messages"`) {
+			t.Fatalf("automatic router used Anthropic HTTP fallback instead of Cursor CLI: %v", err)
+		}
+		t.Fatalf("Chat returned error: %v", err)
+	}
+	if resp.Content != "ok" {
+		t.Fatalf("response content = %q, want ok", resp.Content)
+	}
+}
 
 func TestValidateActiveProviderConfigAcceptsOpenAICodexOAuth(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")

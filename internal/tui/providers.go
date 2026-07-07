@@ -363,7 +363,7 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 		case config.ProviderGoogle:
 			// Google Gemini uses a dedicated client with OpenAI-compatible API + Gemini extensions
 			return gemini.NewClient(apiKey, model, baseURL), model, nil
-		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenAI:
+		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenAI, config.ProviderOpenCodeZen:
 			// Other OpenAI-compatible providers
 			return lmstudio.NewClient(apiKey, model, baseURL), model, nil
 		case config.ProviderOpenAICodex:

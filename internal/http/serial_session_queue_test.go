@@ -144,6 +144,65 @@ func TestSerialQueuedProjectSessionsRunOneAtATime(t *testing.T) {
 	}
 }
 
+func TestStartSessionManuallyOverridesSerialQueueAutoStart(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	project := &storage.Project{
+		ID:        "project-manual-start",
+		Name:      "Manual Start",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatalf("failed to save project: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.DataPath = t.TempDir()
+	cfg.WorkDir = t.TempDir()
+
+	sessionManager := session.NewManager(store)
+	server := NewServer(cfg, nil, tools.NewManager(cfg.WorkDir), sessionManager, store, speechcache.New(0), 0)
+
+	sess, err := sessionManager.CreateQueued("build")
+	if err != nil {
+		t.Fatalf("create queued session: %v", err)
+	}
+	projectID := project.ID
+	sess.ProjectID = &projectID
+	sess.Metadata = map[string]interface{}{
+		sessionQueueModeMetadataKey: sessionQueueModeSerial,
+		sessionQueueAutoStartKey:    true,
+	}
+	sess.AddUserMessage("Start me manually")
+	if err := sessionManager.Save(sess); err != nil {
+		t.Fatalf("save queued session: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/sessions/"+sess.ID+"/start", nil)
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	fresh, err := sessionManager.Get(sess.ID)
+	if err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+	if fresh.Status != session.StatusQueued {
+		t.Fatalf("session status = %s, want %s", fresh.Status, session.StatusQueued)
+	}
+	if sessionIsSerialQueuedAutoRun(fresh) {
+		t.Fatalf("manual start should clear serial queue auto-start metadata")
+	}
+}
+
 func TestSerialQueueCanAdvanceAfterInactiveStatuses(t *testing.T) {
 	advanceStatuses := []session.Status{
 		session.StatusCompleted,

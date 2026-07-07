@@ -379,7 +379,16 @@ func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if sessionIsSerialQueuedAutoRun(sess) {
-		s.triggerSerialSessionQueueForSession(sess)
+		if sess.Metadata == nil {
+			sess.Metadata = map[string]interface{}{}
+		}
+		delete(sess.Metadata, sessionQueueAutoStartKey)
+		delete(sess.Metadata, sessionQueueModeMetadataKey)
+		if err := s.sessionManager.Save(sess); err != nil {
+			s.errorResponse(w, http.StatusInternalServerError, "Failed to start session: "+err.Error())
+			return
+		}
+		logging.LogSession("started", sess.ID, fmt.Sprintf("agent=%s manual override removed serial queue auto-start", sess.AgentID))
 		s.jsonResponse(w, http.StatusOK, s.sessionToResponse(sess))
 		return
 	}

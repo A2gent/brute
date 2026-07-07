@@ -158,6 +158,15 @@ func (s *Server) handleTestIntegration(w http.ResponseWriter, r *http.Request) {
 		s.jsonResponse(w, status, IntegrationTestResponse{Success: ok, Message: message})
 		return
 	}
+	if integration.Provider == "appsignal" {
+		ok, message := s.testAppSignalIntegration(r.Context(), integration)
+		status := http.StatusOK
+		if !ok {
+			status = http.StatusBadGateway
+		}
+		s.jsonResponse(w, status, IntegrationTestResponse{Success: ok, Message: message})
+		return
+	}
 
 	s.jsonResponse(w, http.StatusOK, IntegrationTestResponse{Success: true, Message: "Configuration is valid. Live provider connectivity checks are not yet implemented."})
 }

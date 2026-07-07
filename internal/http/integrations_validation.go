@@ -167,6 +167,8 @@ func defaultIntegrationName(provider string) string {
 		return "Jira"
 	case "circleci":
 		return "CircleCI"
+	case "appsignal":
+		return "AppSignal"
 	case "elevenlabs":
 		return "ElevenLabs"
 	case "perplexity":

@@ -3,8 +3,13 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +21,39 @@ import (
 	"github.com/A2gent/brute/internal/storage"
 	"github.com/A2gent/brute/internal/tools"
 )
+
+func healthyDockerAgentPortForTest(t *testing.T) int {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	parsed, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("failed to parse test health server URL: %v", err)
+	}
+	_, port, err := net.SplitHostPort(parsed.Host)
+	if err != nil {
+		t.Fatalf("failed to parse test health server host %q: %v", parsed.Host, err)
+	}
+	return mustAtoiForTest(t, port)
+}
+
+func mustAtoiForTest(t *testing.T, raw string) int {
+	t.Helper()
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		t.Fatalf("failed to parse integer %q: %v", raw, err)
+	}
+	return value
+}
 
 func TestToolManagerForSession_SubAgentIgnoresGlobalDisabledTools(t *testing.T) {
 	store, err := storage.NewSQLiteStore(t.TempDir())
@@ -327,6 +365,7 @@ workspace:
 		t.Fatalf("failed to save uncreated agent definition: %v", err)
 	}
 
+	runningAgentHealthPort := healthyDockerAgentPortForTest(t)
 	oldRunCommand := runCommand
 	runCommand = func(ctx context.Context, command string, args ...string) (string, error) {
 		if command != "docker" || len(args) == 0 || args[0] != "ps" {
@@ -339,7 +378,7 @@ workspace:
 				State:  "running",
 				Status: "Up",
 				Names:  "agent-youtube-transcriber-gemini",
-				Ports:  "0.0.0.0:18080->8080/tcp",
+				Ports:  "0.0.0.0:" + strconv.Itoa(runningAgentHealthPort) + "->8080/tcp",
 				Labels: localAgentManagerLabelKey + "=" + localAgentManagerLabelValue + "," + dockerRuntimeManagedLabelKey + "=true," + dockerRuntimeAgentDefLabelKey + "=youtube-transcriber-gemini",
 			},
 			{
@@ -443,6 +482,8 @@ func TestBuildSystemPromptForSession_IncludesAvailableSavedSubAgents(t *testing.
 		t.Fatalf("failed to save other project: %v", err)
 	}
 
+	runningReviewerHealthPort := healthyDockerAgentPortForTest(t)
+	wrongProjectReviewerHealthPort := healthyDockerAgentPortForTest(t)
 	oldRunCommand := runCommand
 	runCommand = func(ctx context.Context, command string, args ...string) (string, error) {
 		if command != "docker" || len(args) == 0 || args[0] != "ps" {
@@ -455,7 +496,7 @@ func TestBuildSystemPromptForSession_IncludesAvailableSavedSubAgents(t *testing.
 				State:  "running",
 				Status: "Up",
 				Names:  "agent-running-reviewer__project-project-current",
-				Ports:  "0.0.0.0:18080->8080/tcp",
+				Ports:  "0.0.0.0:" + strconv.Itoa(runningReviewerHealthPort) + "->8080/tcp",
 				Labels: localAgentManagerLabelKey + "=" + localAgentManagerLabelValue + "," + dockerRuntimeManagedLabelKey + "=true," + dockerRuntimeAgentDefLabelKey + "=running-reviewer,a2gent.project_id=project-current",
 			},
 			{
@@ -473,7 +514,7 @@ func TestBuildSystemPromptForSession_IncludesAvailableSavedSubAgents(t *testing.
 				State:  "running",
 				Status: "Up",
 				Names:  "agent-wrong-project-reviewer__project-project-other",
-				Ports:  "0.0.0.0:18082->8080/tcp",
+				Ports:  "0.0.0.0:" + strconv.Itoa(wrongProjectReviewerHealthPort) + "->8080/tcp",
 				Labels: localAgentManagerLabelKey + "=" + localAgentManagerLabelValue + "," + dockerRuntimeManagedLabelKey + "=true," + dockerRuntimeAgentDefLabelKey + "=wrong-project-reviewer,a2gent.project_id=project-other",
 			},
 		}

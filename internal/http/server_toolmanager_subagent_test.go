@@ -323,6 +323,10 @@ runtime:
 llm:
   provider: google
   model: models/gemini-3.1-pro-preview
+metrics:
+  cost: 30
+  speed: 90
+  intelligence: 75
 tools:
   mode: allow
   enabled:
@@ -413,8 +417,8 @@ workspace:
 		t.Fatalf("expected configured agent listing, got: %q", systemPrompt)
 	}
 	subAgentsSection := systemPrompt[subAgentsSectionStart:]
-	if !strings.Contains(subAgentsSection, "- youtube-transcriber-gemini — YouTube Transcriber (Gemini)") {
-		t.Fatalf("expected running stored YAML agent in compact prompt, got: %q", systemPrompt)
+	if !strings.Contains(subAgentsSection, "- youtube-transcriber-gemini - YouTube Transcriber (Gemini) (cost=30, speed=90, intelligence=75)") {
+		t.Fatalf("expected running stored YAML agent with metrics in compact prompt, got: %q", systemPrompt)
 	}
 	if strings.Contains(subAgentsSection, "stopped-agent") || strings.Contains(subAgentsSection, "Uncreated Agent") {
 		t.Fatalf("expected only running agents in prompt, got: %q", systemPrompt)
@@ -540,7 +544,7 @@ func TestBuildSystemPromptForSession_IncludesAvailableSavedSubAgents(t *testing.
 		t.Fatalf("expected configured agent listing, got: %q", systemPrompt)
 	}
 	subAgentsSection := systemPrompt[subAgentsSectionStart:]
-	if !strings.Contains(subAgentsSection, "- running-reviewer — Running Reviewer") {
+	if !strings.Contains(subAgentsSection, "- running-reviewer - Running Reviewer") {
 		t.Fatalf("expected running saved sub-agent in compact prompt, got: %q", systemPrompt)
 	}
 	if strings.Contains(subAgentsSection, "stopped-reviewer") || strings.Contains(subAgentsSection, "Stopped Reviewer") {

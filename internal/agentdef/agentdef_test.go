@@ -83,6 +83,38 @@ publish:
 	}
 }
 
+func TestParseYAMLAgentMetrics(t *testing.T) {
+	raw := `
+version: "1"
+agent:
+  id: router-helper
+runtime:
+  type: docker
+metrics:
+  cost: 25
+  speed: 80
+  intelligence: 70
+  source: artificialanalysis.ai normalized model metrics
+`
+	def, err := ParseYAML([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseYAML failed: %v", err)
+	}
+	if def.Metrics.Cost != 25 || def.Metrics.Speed != 80 || def.Metrics.Intelligence != 70 {
+		t.Fatalf("metrics not parsed: %+v", def.Metrics)
+	}
+	if got := def.Metrics.CompactString(); got != "cost=25, speed=80, intelligence=70" {
+		t.Fatalf("unexpected compact metrics string %q", got)
+	}
+}
+
+func TestParseYAMLRejectsOutOfRangeAgentMetrics(t *testing.T) {
+	_, err := ParseYAML([]byte("agent:\n  id: x\nmetrics:\n  cost: 101\n"))
+	if err == nil || !strings.Contains(err.Error(), "metrics.cost") {
+		t.Fatalf("expected metrics.cost error, got: %v", err)
+	}
+}
+
 func TestParseYAMLRejectsBadRuntime(t *testing.T) {
 	_, err := ParseYAML([]byte("version: \"1\"\nagent:\n  id: x\nruntime:\n  type: vm\n"))
 	if err == nil || !strings.Contains(err.Error(), "runtime.type") {

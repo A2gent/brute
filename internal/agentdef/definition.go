@@ -44,10 +44,14 @@ const CurrentVersion = "1"
 
 // Definition is the canonical unified agent definition.
 type Definition struct {
-	Version      string       `yaml:"version" json:"version"`
-	Agent        AgentMeta    `yaml:"agent" json:"agent"`
-	Runtime      Runtime      `yaml:"runtime" json:"runtime"`
-	LLM          LLM          `yaml:"llm,omitempty" json:"llm,omitempty"`
+	Version string    `yaml:"version" json:"version"`
+	Agent   AgentMeta `yaml:"agent" json:"agent"`
+	Runtime Runtime   `yaml:"runtime" json:"runtime"`
+	LLM     LLM       `yaml:"llm,omitempty" json:"llm,omitempty"`
+	// Metrics are compact orchestration hints for parent agents. Cost is a
+	// relative expense score where lower is cheaper; speed and intelligence are
+	// relative capability scores where higher is better.
+	Metrics      AgentMetrics `yaml:"metrics,omitempty" json:"metrics,omitempty"`
 	Instructions Instructions `yaml:"instructions,omitempty" json:"instructions,omitempty"`
 	Workspace    Workspace    `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 	Tools        Tools        `yaml:"tools,omitempty" json:"tools,omitempty"`
@@ -87,7 +91,40 @@ type Resources struct {
 	GPUs   string `yaml:"gpus,omitempty" json:"gpus,omitempty"`
 }
 
+// AgentMetrics exposes numeric routing hints for orchestration. Cost is an
+// expense score where lower is cheaper; speed and intelligence are capability
+// scores where higher is better. All values are expected on a compact 0-100
+// scale so parent agents can compare agents without parsing prose.
+type AgentMetrics struct {
+	Cost         int    `yaml:"cost,omitempty" json:"cost,omitempty"`
+	Speed        int    `yaml:"speed,omitempty" json:"speed,omitempty"`
+	Intelligence int    `yaml:"intelligence,omitempty" json:"intelligence,omitempty"`
+	Source       string `yaml:"source,omitempty" json:"source,omitempty"`
+}
+
+func (m AgentMetrics) IsZero() bool {
+	return m.Cost == 0 && m.Speed == 0 && m.Intelligence == 0 && strings.TrimSpace(m.Source) == ""
+}
+
+func (m AgentMetrics) CompactString() string {
+	parts := []string{}
+	if m.Cost > 0 {
+		parts = append(parts, fmt.Sprintf("cost=%d", m.Cost))
+	}
+	if m.Speed > 0 {
+		parts = append(parts, fmt.Sprintf("speed=%d", m.Speed))
+	}
+	if m.Intelligence > 0 {
+		parts = append(parts, fmt.Sprintf("intelligence=%d", m.Intelligence))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ", ")
+}
+
 // LLM selects the provider/model the agent uses.
+
 type LLM struct {
 	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
 	Model    string `yaml:"model,omitempty" json:"model,omitempty"`
@@ -224,6 +261,7 @@ func (d *Definition) Normalize() {
 	}
 	d.LLM.Provider = strings.TrimSpace(d.LLM.Provider)
 	d.LLM.Model = strings.TrimSpace(d.LLM.Model)
+	d.Metrics.Source = strings.TrimSpace(d.Metrics.Source)
 	d.Local.DefinitionDir = strings.TrimSpace(d.Local.DefinitionDir)
 	d.Publish.Square.Category = strings.ToLower(strings.TrimSpace(d.Publish.Square.Category))
 	d.Publish.Square.IconURL = strings.TrimSpace(d.Publish.Square.IconURL)
@@ -254,6 +292,26 @@ func (d *Definition) Validate() error {
 	}
 	if d.Tools.Mode != "" && d.Tools.Mode != ToolsModeAll && d.Tools.Mode != ToolsModeAllow {
 		return fmt.Errorf("tools.mode must be all or allow (got %q)", d.Tools.Mode)
+	}
+	if err := validateAgentMetrics(d.Metrics); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateAgentMetrics(metrics AgentMetrics) error {
+	values := []struct {
+		name  string
+		value int
+	}{
+		{name: "cost", value: metrics.Cost},
+		{name: "speed", value: metrics.Speed},
+		{name: "intelligence", value: metrics.Intelligence},
+	}
+	for _, item := range values {
+		if item.value < 0 || item.value > 100 {
+			return fmt.Errorf("metrics.%s must be between 0 and 100 (got %d)", item.name, item.value)
+		}
 	}
 	return nil
 }

@@ -25,8 +25,9 @@ const (
 )
 
 type configuredAgentPromptEntry struct {
-	ID   string
-	Name string
+	ID      string
+	Name    string
+	Metrics agentdef.AgentMetrics
 }
 
 func (s *Server) resolveSubAgentsSection(sess *session.Session) (string, int) {
@@ -49,8 +50,9 @@ func (s *Server) resolveSubAgentsSection(sess *session.Session) (string, int) {
 				continue
 			}
 			entry := configuredAgentPromptEntry{
-				ID:   strings.TrimSpace(sa.ID),
-				Name: strings.TrimSpace(sa.Name),
+				ID:      strings.TrimSpace(sa.ID),
+				Name:    strings.TrimSpace(sa.Name),
+				Metrics: def.Metrics,
 			}
 			if entry.ID == "" {
 				continue
@@ -89,8 +91,9 @@ func (s *Server) resolveSubAgentsSection(sess *session.Session) (string, int) {
 			}
 			defAgentID := strings.TrimSpace(def.Agent.ID)
 			entry := configuredAgentPromptEntry{
-				ID:   strings.TrimSpace(record.ID),
-				Name: strings.TrimSpace(def.Agent.Name),
+				ID:      strings.TrimSpace(record.ID),
+				Name:    strings.TrimSpace(def.Agent.Name),
+				Metrics: def.Metrics,
 			}
 			if entry.ID == "" {
 				entry.ID = defAgentID
@@ -148,7 +151,11 @@ func (s *Server) resolveSubAgentsSection(sess *session.Session) (string, int) {
 	lines := make([]string, 0, len(entries)+1)
 	lines = append(lines, availableConfiguredAgentsPromptHeader)
 	for _, entry := range entries {
-		lines = append(lines, fmt.Sprintf("- %s — %s", entry.ID, entry.Name))
+		line := fmt.Sprintf("- %s - %s", entry.ID, entry.Name)
+		if metrics := strings.TrimSpace(entry.Metrics.CompactString()); metrics != "" {
+			line += fmt.Sprintf(" (%s)", metrics)
+		}
+		lines = append(lines, line)
 	}
 
 	section := strings.Join(lines, "\n")

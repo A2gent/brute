@@ -130,6 +130,7 @@ func (s *Server) registerProviderRoutes(r chi.Router) {
 		r.Get("/openrouter/models", s.handleListOpenRouterModels)
 		r.Get("/opencode_zen/models", s.handleListOpenCodeZenModels)
 		r.Get("/anthropic/models", s.handleListAnthropicModels)
+		r.Get("/cursor/models", s.handleListCursorModels)
 		r.Get("/{providerType}/usage", s.handleProviderUsage)
 		r.Put("/{providerType}", s.handleUpdateProvider)
 		r.Delete("/{providerType}", s.handleDeleteProvider)

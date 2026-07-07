@@ -1,8 +1,14 @@
 package http
 
 import (
+	"bytes"
+	"encoding/json"
+	stdhttp "net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/A2gent/brute/internal/config"
 )
 
 func TestApplyLeadingSessionQueueDirective(t *testing.T) {
@@ -20,6 +26,39 @@ func TestApplyLeadingSessionQueueDirective(t *testing.T) {
 	}
 	if req.QueueMode != sessionQueueModeSerial {
 		t.Fatalf("queue mode = %q, want %q", req.QueueMode, sessionQueueModeSerial)
+	}
+}
+
+func TestCreateSessionKeepsEmptyLMStudioModel(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+	server.config.ActiveProvider = string(config.ProviderKimi)
+	server.config.DefaultModel = "kimi-k2.5"
+
+	body, err := json.Marshal(CreateSessionRequest{
+		AgentID:  "build",
+		Provider: string(config.ProviderLMStudio),
+		Model:    "",
+	})
+	if err != nil {
+		t.Fatalf("failed to encode request: %v", err)
+	}
+	req := httptest.NewRequest(stdhttp.MethodPost, "/sessions", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	server.handleCreateSession(rec, req)
+
+	if rec.Code != stdhttp.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp CreateSessionResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Provider != string(config.ProviderLMStudio) {
+		t.Fatalf("provider = %q, want %q", resp.Provider, config.ProviderLMStudio)
+	}
+	if resp.Model != "" {
+		t.Fatalf("model = %q, want empty", resp.Model)
 	}
 }
 

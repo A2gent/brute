@@ -316,10 +316,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			providerType = config.NormalizeProviderRef(s.config.ActiveProvider)
 		}
 	}
-	model := strings.TrimSpace(req.Model)
-	if model == "" {
-		model = s.resolveModelForProvider(config.ProviderType(providerType))
-	}
+	model := s.resolveCreateSessionModel(providerType, req.Model)
 	if req.LinkType != "" {
 		sess.Metadata["link_type"] = req.LinkType
 	}

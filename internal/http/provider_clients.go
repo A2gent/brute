@@ -62,6 +62,24 @@ func (s *Server) resolveModelForProvider(providerType config.ProviderType) strin
 	return strings.TrimSpace(s.config.DefaultModel)
 }
 
+func (s *Server) resolveCreateSessionModel(providerRef string, rawModel string) string {
+	model := strings.TrimSpace(rawModel)
+	if model != "" {
+		return model
+	}
+
+	providerType := config.ProviderType(config.NormalizeProviderRef(providerRef))
+	if providerType == config.ProviderLMStudio {
+		provider := s.config.Providers[string(config.ProviderLMStudio)]
+		// LM Studio can validly run without a configured model and choose one at
+		// request time. Do not fall through to the global DefaultModel, because that
+		// can display impossible pairs such as lmstudio / kimi-k2.5.
+		return strings.TrimSpace(provider.Model)
+	}
+
+	return s.resolveModelForProvider(providerType)
+}
+
 func (s *Server) resolveSessionProviderType(sess *session.Session) config.ProviderType {
 	if sess != nil && sess.Metadata != nil {
 		if raw, ok := sess.Metadata["provider"]; ok {

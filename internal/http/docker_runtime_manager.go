@@ -20,12 +20,14 @@ import (
 )
 
 const (
-	dockerRuntimeManagedLabelKey  = "a2gent.runtime_managed"
-	dockerRuntimeAgentDefLabelKey = "a2gent.agent_def_id"
-	dockerAgentIdleTimeoutEnvVar  = "A2GENT_DOCKER_AGENT_IDLE_TIMEOUT"
-	dockerRuntimeReaperInterval   = 1 * time.Minute
-	dockerRuntimeCreateTimeout    = 60 * time.Second
-	dockerRuntimeHealthTimeout    = 30 * time.Second
+	dockerRuntimeManagedLabelKey     = "a2gent.runtime_managed"
+	dockerRuntimeAgentDefLabelKey    = "a2gent.agent_def_id"
+	dockerRuntimeLLMProviderLabelKey = "a2gent.llm_provider"
+	dockerRuntimeLLMModelLabelKey    = "a2gent.llm_model"
+	dockerAgentIdleTimeoutEnvVar     = "A2GENT_DOCKER_AGENT_IDLE_TIMEOUT"
+	dockerRuntimeReaperInterval      = 1 * time.Minute
+	dockerRuntimeCreateTimeout       = 60 * time.Second
+	dockerRuntimeHealthTimeout       = 30 * time.Second
 )
 
 type dockerRuntimeManager struct {
@@ -431,6 +433,13 @@ func (m *dockerRuntimeManager) createAgentContainer(ctx context.Context, def *ag
 	}
 	if req.Labels == nil {
 		req.Labels = map[string]string{}
+	}
+	provider, model := dockerDelegationLLMMetadataFromDefinition(def)
+	if provider != "" {
+		req.Labels[dockerRuntimeLLMProviderLabelKey] = provider
+	}
+	if model != "" {
+		req.Labels[dockerRuntimeLLMModelLabelKey] = model
 	}
 	req.Labels[dockerRuntimeManagedLabelKey] = "true"
 	req.Labels[dockerRuntimeAgentDefLabelKey] = def.Agent.ID

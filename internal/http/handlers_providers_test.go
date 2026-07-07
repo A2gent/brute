@@ -9,6 +9,10 @@ import (
 	"testing"
 
 	"github.com/A2gent/brute/internal/config"
+	"github.com/A2gent/brute/internal/session"
+	"github.com/A2gent/brute/internal/speechcache"
+	"github.com/A2gent/brute/internal/storage"
+	"github.com/A2gent/brute/internal/tools"
 )
 
 func TestListProvidersMarksCursorConfiguredWhenCLIAvailable(t *testing.T) {
@@ -58,5 +62,39 @@ func TestListProvidersMarksCursorConfiguredWhenCLIAvailable(t *testing.T) {
 	}
 	if cursor.BaseURL != "" {
 		t.Fatalf("expected cursor base URL to remain empty, got %q", cursor.BaseURL)
+	}
+}
+
+func TestCursorModelsRouteReturnsKnownComposerModels(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	cfg := config.DefaultConfig()
+	server := NewServer(cfg, nil, tools.NewManager("."), session.NewManager(store), store, speechcache.New(0), 0)
+
+	req := httptest.NewRequest(http.MethodGet, "/providers/cursor/models", nil)
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cursor models status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+
+	var response ListProviderModelsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode cursor models response: %v", err)
+	}
+
+	expected := []string{"composer-2.5", "composer-latest", "auto"}
+	if len(response.Models) != len(expected) {
+		t.Fatalf("cursor models len = %d, want %d (%v)", len(response.Models), len(expected), response.Models)
+	}
+	for index, model := range expected {
+		if response.Models[index] != model {
+			t.Fatalf("cursor model[%d] = %q, want %q", index, response.Models[index], model)
+		}
 	}
 }

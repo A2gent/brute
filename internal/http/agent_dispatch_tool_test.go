@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/A2gent/brute/internal/agentdef"
+	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/storage"
 )
 
@@ -120,6 +121,69 @@ func TestRewriteDockerDelegationTaskMapsMultiProjectMounts(t *testing.T) {
 		if !strings.Contains(got, expected) {
 			t.Fatalf("expected rewritten task to contain %q:\n%s", expected, got)
 		}
+	}
+}
+
+func TestDockerDelegationCreateSessionPayloadIncludesChildProviderAndModel(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+	server.dockerRuntime = newDockerRuntimeManager(server)
+	t.Setenv(dockerDelegationTaskTimeoutEnvVar, "2s")
+
+	var createPayload CreateSessionRequest
+	child := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		switch r.URL.Path {
+		case "/health":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case "/sessions":
+			if err := json.NewDecoder(r.Body).Decode(&createPayload); err != nil {
+				t.Fatalf("failed to decode create session payload: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(stdhttp.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"child-1","agent_id":"build","provider":"openai","model":"gpt-5.5","status":"idle","created_at":"2026-01-01T00:00:00Z"}`))
+		case "/sessions/child-1/chat/stream":
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			_, _ = w.Write([]byte(`{"type":"done","content":"done","status":"completed"}` + "\n"))
+		default:
+			t.Fatalf("unexpected child path: %s", r.URL.Path)
+		}
+	}))
+	defer child.Close()
+
+	result, err := server.runDockerAgentDelegation(context.Background(), &LocalDockerAgent{
+		ID:       "container-1",
+		Name:     "reviewer",
+		Running:  true,
+		HostPort: 12345,
+		APIURL:   child.URL,
+		Labels: map[string]string{
+			dockerRuntimeLLMProviderLabelKey: "openai",
+			dockerRuntimeLLMModelLabelKey:    "gpt-5.5",
+		},
+	}, "review")
+	if err != nil {
+		t.Fatalf("delegation returned error: %v", err)
+	}
+	if result == nil || !result.Success {
+		t.Fatalf("delegation failed: %+v", result)
+	}
+	if createPayload.Provider != "openai" || createPayload.Model != "gpt-5.5" {
+		t.Fatalf("create session provider/model = %q/%q, want openai/gpt-5.5", createPayload.Provider, createPayload.Model)
+	}
+}
+
+func TestDockerDelegationCreateSessionPayloadOmitsLMStudioModelWhenUnset(t *testing.T) {
+	provider, model := dockerDelegationLLMMetadata(&LocalDockerAgent{
+		Labels: map[string]string{
+			dockerRuntimeLLMProviderLabelKey: string(config.ProviderLMStudio),
+		},
+	})
+	if provider != string(config.ProviderLMStudio) {
+		t.Fatalf("provider = %q, want %q", provider, config.ProviderLMStudio)
+	}
+	if model != "" {
+		t.Fatalf("model = %q, want empty", model)
 	}
 }
 

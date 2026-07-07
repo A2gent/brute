@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/A2gent/brute/internal/agentdef"
+	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/storage"
@@ -277,6 +278,10 @@ func (s *Server) runDockerAgentDelegationWithWorkspace(ctx context.Context, agen
 		AgentID:  "build",
 		Metadata: createMetadata,
 	}
+	if provider, model := dockerDelegationLLMMetadata(agent); provider != "" {
+		createPayload.Provider = provider
+		createPayload.Model = model
+	}
 	var created CreateSessionResponse
 	if err := postLocalDockerAgentJSON(taskCtx, client, baseURL+"/sessions", createPayload, &created); err != nil {
 		return daErrorResult("failed to create session on docker agent: " + err.Error()), nil
@@ -349,6 +354,27 @@ func (s *Server) runDockerAgentDelegationWithWorkspace(ctx context.Context, agen
 		Output:   string(body),
 		Metadata: metadata,
 	}, nil
+}
+
+func dockerDelegationLLMMetadata(agent *LocalDockerAgent) (string, string) {
+	if agent == nil {
+		return "", ""
+	}
+	provider := config.NormalizeProviderRef(agent.Labels[dockerRuntimeLLMProviderLabelKey])
+	model := strings.TrimSpace(agent.Labels[dockerRuntimeLLMModelLabelKey])
+	if provider == "" && agent.Health != nil && agent.Health.ProviderUsage != nil {
+		provider = config.NormalizeProviderRef(agent.Health.ProviderUsage.Provider)
+	}
+	return provider, model
+}
+
+func dockerDelegationLLMMetadataFromDefinition(def *agentdef.Definition) (string, string) {
+	if def == nil {
+		return "", ""
+	}
+	provider := config.NormalizeProviderRef(localDockerAgentRuntimeProvider(def.LLM.Provider))
+	model := strings.TrimSpace(def.LLM.Model)
+	return provider, model
 }
 
 type dockerWorkspacePathMapping struct {

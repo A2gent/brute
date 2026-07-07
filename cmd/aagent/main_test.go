@@ -7,8 +7,28 @@ import (
 	"testing"
 
 	"github.com/A2gent/brute/internal/config"
+	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/llm/openaicodex"
 )
+
+func TestInitLLMClientUsesClaudeCLIForAnthropicTUI(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.ActiveProvider = string(config.ProviderAnthropic)
+	cfg.DefaultModel = "claude-opus-4-8"
+	cfg.WorkDir = t.TempDir()
+	cfg.Providers[string(config.ProviderAnthropic)] = config.Provider{
+		Name:  string(config.ProviderAnthropic),
+		Model: "claude-opus-4-8",
+	}
+
+	client, err := initLLMClient(cfg)
+	if err != nil {
+		t.Fatalf("initLLMClient(anthropic): %v", err)
+	}
+	if _, ok := client.(*claudecli.Client); !ok {
+		t.Fatalf("initLLMClient(anthropic) returned %T, want *claudecli.Client", client)
+	}
+}
 
 func TestInitLLMClientUsesOpenAICodexOAuth(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")

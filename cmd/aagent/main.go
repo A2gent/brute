@@ -17,6 +17,8 @@ import (
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/anthropic"
 	"github.com/A2gent/brute/internal/llm/autorouter"
+	"github.com/A2gent/brute/internal/llm/claudecli"
+	"github.com/A2gent/brute/internal/llm/cursorcli"
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
 	"github.com/A2gent/brute/internal/llm/openaicodex"
@@ -555,7 +557,11 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 
 		logging.Info("Using LLM provider: %s API: %s model=%s", providerType, baseURL, model)
 		switch providerType {
-		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle, config.ProviderOpenAI:
+		case config.ProviderAnthropic:
+			return claudecli.NewClient(model, cfg.WorkDir), model, nil
+		case config.ProviderCursor:
+			return cursorcli.NewClientWithOptions(model, cursorcli.Options{WorkDir: cfg.WorkDir, APIKey: apiKey}), model, nil
+		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle, config.ProviderOpenAI, config.ProviderOpenCodeZen:
 			return lmstudio.NewClient(apiKey, model, baseURL), model, nil
 		case config.ProviderOpenAICodex:
 			options := openaicodex.Options{

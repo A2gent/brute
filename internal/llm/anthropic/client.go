@@ -53,6 +53,10 @@ func NewClient(apiKey, model string) *Client {
 
 // NewClientWithBaseURL creates a new Anthropic-compatible client with a custom base URL
 func NewClientWithBaseURL(apiKey, model, baseURL string) *Client {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		baseURL = defaultBaseURL
+	}
 	return &Client{
 		apiKey:       apiKey,
 		baseURL:      baseURL,

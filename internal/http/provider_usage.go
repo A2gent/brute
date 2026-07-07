@@ -84,6 +84,8 @@ func (s *Server) providerUsageStatus(ctx context.Context, providerType config.Pr
 		return usage
 	case config.ProviderAnthropic:
 		return s.anthropicUsageStatus()
+	case config.ProviderOpenRouter:
+		return s.openRouterUsageStatus(ctx)
 	default:
 		response.Status = providerUsageStatusUnsupported
 		response.Source = strings.TrimSpace(string(providerType))

@@ -322,6 +322,25 @@ func (s *Server) handleLLMProxyProviderChatCompletions(w http.ResponseWriter, r 
 	s.handleLLMProxyChatCompletionsWithProvider(config.NormalizeProviderRef(chi.URLParam(r, "providerRef")), w, r)
 }
 
+func (s *Server) handleLLMProxyProviderCredits(w http.ResponseWriter, r *http.Request) {
+	providerRef := config.NormalizeProviderRef(chi.URLParam(r, "providerRef"))
+	if providerRef != string(config.ProviderOpenRouter) {
+		s.errorResponse(w, http.StatusNotFound, "Credits proxy is only supported for OpenRouter")
+		return
+	}
+	baseURL, apiKey, err := s.openRouterCreditsAuth()
+	if err != nil {
+		s.errorResponse(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	payload, err := fetchOpenRouterCredits(r.Context(), http.DefaultClient, baseURL, apiKey)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, payload)
+}
+
 func (s *Server) handleLLMProxyChatCompletionsWithProvider(providerHint string, w http.ResponseWriter, r *http.Request) {
 	if !s.llmProxyEnabled() {
 		s.errorResponse(w, http.StatusNotFound, "LLM provider proxy is disabled")

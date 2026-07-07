@@ -99,6 +99,11 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 			hasAPIKey = false
 			hasOAuth = false
 		}
+		if def.Type == config.ProviderCursor {
+			baseURL = ""
+			configured = s.providerConfiguredForUse(def.Type)
+			hasAPIKey = hasAPIKey || strings.TrimSpace(s.apiKeyFromEnv(def.Type)) != ""
+		}
 
 		if def.RequiresKey {
 

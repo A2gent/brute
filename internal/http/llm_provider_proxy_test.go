@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -153,6 +154,38 @@ func TestLLMProxyStreamFinalToolCallDoesNotDuplicateStreamedArguments(t *testing
 	}
 	if !foundFinalName {
 		t.Fatalf("expected final tool-call name chunk, got stream:\n%s", rec.Body.String())
+	}
+}
+
+func TestLLMProxyProviderCreditsForOpenRouter(t *testing.T) {
+	creditsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/credits" {
+			t.Fatalf("path = %q, want /v1/credits", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-openrouter-key" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"total_credits":1,"total_usage":1}}`))
+	}))
+	defer creditsServer.Close()
+
+	server, cleanup := newRequestLoggingTestServer(t)
+	defer cleanup()
+	server.config.Providers[string(config.ProviderOpenRouter)] = config.Provider{
+		BaseURL: creditsServer.URL + "/v1",
+		APIKey:  "test-openrouter-key",
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/providers/openrouter/credits", nil)
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("credits status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"total_credits":1`) {
+		t.Fatalf("unexpected credits body: %s", rec.Body.String())
 	}
 }
 

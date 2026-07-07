@@ -28,6 +28,7 @@ type Options struct {
 	Executable string
 	WorkDir    string
 	Force      bool
+	Trust      bool
 	Sandbox    string
 	APIKey     string
 }
@@ -106,17 +107,26 @@ func (b *limitedBuffer) String() string {
 func NewClient(model, workDir string) *Client {
 	return NewClientWithOptions(model, Options{
 		WorkDir: workDir,
-		Force:   envBoolDefault("AAGENT_CURSOR_CLI_FORCE", false),
-		Sandbox: strings.TrimSpace(os.Getenv("AAGENT_CURSOR_CLI_SANDBOX")),
-		APIKey:  strings.TrimSpace(os.Getenv("CURSOR_API_KEY")),
 	})
 }
 
 func NewClientWithOptions(model string, options Options) *Client {
 	options.Executable = normalizeExecutable(options.Executable)
 	options.WorkDir = normalizeWorkDir(options.WorkDir)
+	if envBoolDefault("AAGENT_CURSOR_CLI_FORCE", false) {
+		options.Force = true
+	}
+	if envBoolDefault("AAGENT_CURSOR_CLI_TRUST", true) {
+		options.Trust = true
+	}
 	options.Sandbox = strings.TrimSpace(options.Sandbox)
+	if options.Sandbox == "" {
+		options.Sandbox = strings.TrimSpace(os.Getenv("AAGENT_CURSOR_CLI_SANDBOX"))
+	}
 	options.APIKey = strings.TrimSpace(options.APIKey)
+	if options.APIKey == "" {
+		options.APIKey = strings.TrimSpace(os.Getenv("CURSOR_API_KEY"))
+	}
 	return &Client{
 		model:   normalizeModel(model),
 		options: options,
@@ -360,6 +370,9 @@ func (c *Client) appendCommonArgs(args []string) []string {
 	args = append(args, "--workspace", c.options.WorkDir)
 	if c.options.Force {
 		args = append(args, "--force")
+	}
+	if c.options.Trust && !c.options.Force {
+		args = append(args, "--trust")
 	}
 	if c.options.Sandbox != "" {
 		args = append(args, "--sandbox", c.options.Sandbox)
@@ -652,7 +665,7 @@ func normalizeCursorCLIErrorMessage(raw string) string {
 	case isCursorCLICreditsError(lower):
 		return msg + "\nA2gent hint: Cursor Agent CLI reported a credits, quota, usage, or billing problem. Check Cursor plan usage and billing."
 	case isCursorCLIPermissionError(lower):
-		return msg + "\nA2gent hint: Cursor Agent CLI could not proceed because a tool permission was denied or required an interactive prompt. Configure .cursor/cli.json permissions or opt in to AAGENT_CURSOR_CLI_FORCE=true for trusted workspaces."
+		return msg + "\nA2gent hint: Cursor Agent CLI could not proceed because a tool permission was denied or required an interactive prompt. Configure .cursor/cli.json permissions, leave AAGENT_CURSOR_CLI_TRUST enabled for workspace trust prompts, or opt in to AAGENT_CURSOR_CLI_FORCE=true for trusted workspaces."
 	case isCursorCLIAuthError(lower):
 		return msg + "\nA2gent hint: Cursor Agent CLI authentication is not ready. Run `agent login` locally or set CURSOR_API_KEY."
 	default:

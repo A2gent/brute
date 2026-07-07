@@ -111,6 +111,7 @@ func (s *Server) registerLLMProxyRoutes(r chi.Router) {
 		r.Get("/models", s.handleLLMProxyModels)
 		r.Post("/chat/completions", s.handleLLMProxyChatCompletions)
 		r.Get("/providers/{providerRef}/models", s.handleLLMProxyProviderModels)
+		r.Get("/providers/{providerRef}/credits", s.handleLLMProxyProviderCredits)
 		r.Post("/providers/{providerRef}/chat/completions", s.handleLLMProxyProviderChatCompletions)
 	})
 }

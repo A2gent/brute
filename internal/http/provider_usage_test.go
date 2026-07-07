@@ -79,6 +79,74 @@ func TestFetchOpenAICodexUsageSendsOAuthHeadersAndParsesPayload(t *testing.T) {
 	}
 }
 
+func TestOpenRouterUsageStatusReturnsCredits(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/credits" {
+			t.Fatalf("path = %q, want /v1/credits", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-openrouter-key" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"total_credits":10,"total_usage":2.5}}`))
+	}))
+	defer server.Close()
+
+	s := &Server{config: config.DefaultConfig()}
+	s.config.Providers[string(config.ProviderOpenRouter)] = config.Provider{
+		BaseURL: server.URL + "/v1",
+		APIKey:  "test-openrouter-key",
+	}
+	usage := s.providerUsageStatus(context.Background(), config.ProviderOpenRouter)
+	if usage.Status != providerUsageStatusAvailable {
+		t.Fatalf("status = %q, want %q: %+v", usage.Status, providerUsageStatusAvailable, usage)
+	}
+	if len(usage.UsageBars) != 1 || usage.UsageBars[0].LeftPercent != 75 || usage.UsageBars[0].Status != "ok" {
+		t.Fatalf("unexpected usage bars: %+v", usage.UsageBars)
+	}
+	if !strings.Contains(usage.UsageLeftText, "Credits remaining: 7.5") {
+		t.Fatalf("unexpected usage text: %q", usage.UsageLeftText)
+	}
+}
+
+func TestHealthMarksDockerSafeOpenRouterOfflineWhenCreditsExhausted(t *testing.T) {
+	creditsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/credits" {
+			t.Fatalf("path = %q, want /v1/credits", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"total_credits":5,"total_usage":5}}`))
+	}))
+	defer creditsServer.Close()
+
+	server, cleanup := newRequestLoggingTestServer(t)
+	defer cleanup()
+	server.config.ActiveProvider = string(config.ProviderOpenRouter)
+	server.config.Providers[string(config.ProviderOpenRouter)] = config.Provider{
+		BaseURL: creditsServer.URL + "/v1",
+		APIKey:  "test-openrouter-key",
+	}
+	t.Setenv("A2GENT_PARENT_PROXY_URL", "http://parent.example/v1")
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	server.handleHealth(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("health status = %d, want %d; body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to parse health body: %v", err)
+	}
+	if body["status"] != "offline" || body["reason"] != "openrouter_usage_limit_reached" {
+		t.Fatalf("unexpected health body: %+v", body)
+	}
+	if !strings.Contains(rec.Body.String(), "OpenRouter credits") || !strings.Contains(rec.Body.String(), "provider_usage") {
+		t.Fatalf("expected OpenRouter usage details in health body: %s", rec.Body.String())
+	}
+}
+
 func TestProviderUsageStatusForAnthropicReturnsCachedRateLimits(t *testing.T) {
 	server := newAnthropicUsageTestServer(t)
 	cachePath := filepath.Join(t.TempDir(), "claude-rate-limits.json")
@@ -206,7 +274,52 @@ func TestHealthReturnsOfflineForDockerSafeAnthropicLimitReached(t *testing.T) {
 	if body["status"] != "offline" || body["reason"] != "anthropic_usage_limit_reached" {
 		t.Fatalf("unexpected health body: %+v", body)
 	}
-	if !strings.Contains(rec.Body.String(), "Claude usage limit reached") || !strings.Contains(rec.Body.String(), "provider_usage") {
+	if !strings.Contains(rec.Body.String(), "anthropic usage limit reached") || !strings.Contains(rec.Body.String(), "provider_usage") {
+		t.Fatalf("expected usage details in health body: %s", rec.Body.String())
+	}
+}
+
+func TestHealthMarksDockerSafeCodexOfflineWhenUsageLimitReached(t *testing.T) {
+	usageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/wham/usage" {
+			t.Fatalf("unexpected usage path %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"plan_type":"plus",
+			"rate_limit":{
+				"allowed":false,
+				"limit_reached":true,
+				"primary_window":{"used_percent":100,"reset_at":4102444800}
+			}
+		}`))
+	}))
+	defer usageServer.Close()
+
+	server, cleanup := newRequestLoggingTestServer(t)
+	defer cleanup()
+	server.config.ActiveProvider = string(config.ProviderOpenAICodex)
+	server.config.Providers[string(config.ProviderOpenAICodex)] = config.Provider{
+		BaseURL: usageServer.URL,
+		OAuth:   &config.OAuthConfig{AccessToken: "header.payload.signature"},
+	}
+	t.Setenv("A2GENT_PARENT_PROXY_URL", "http://parent.example/v1")
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	server.handleHealth(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("health status = %d, want %d; body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to parse health body: %v", err)
+	}
+	if body["status"] != "offline" || body["reason"] != "openai_codex_usage_limit_reached" {
+		t.Fatalf("unexpected health body: %+v", body)
+	}
+	if !strings.Contains(rec.Body.String(), "openai_codex usage limit reached") || !strings.Contains(rec.Body.String(), "provider_usage") {
 		t.Fatalf("expected usage details in health body: %s", rec.Body.String())
 	}
 }

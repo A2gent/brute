@@ -210,23 +210,42 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if dockerSafeMode && activeProvider == string(config.ProviderAnthropic) {
-		usage := s.anthropicUsageStatus()
-		body["provider_usage"] = usage
-		if limitReached, detail := providerUsageLimitReached(usage, time.Now()); limitReached {
-			statusCode = http.StatusServiceUnavailable
-			body["status"] = "offline"
-			body["reason"] = "anthropic_usage_limit_reached"
-			message := "Claude usage limit reached; this container stays offline until usage resets."
-			if detail != "" {
-				message += " " + detail
+	if dockerSafeMode && activeProvider != "" {
+		providerType := config.ProviderType(activeProvider)
+		if config.GetProviderDefinition(providerType) != nil {
+			usage := s.providerUsageStatus(r.Context(), providerType)
+			body["provider_usage"] = usage
+			if limitReached, detail := providerUsageLimitReached(usage, time.Now()); limitReached {
+				statusCode = http.StatusServiceUnavailable
+				body["status"] = "offline"
+				body["reason"] = providerUsageLimitHealthReason(activeProvider)
+				body["message"] = providerUsageLimitHealthMessage(usage, detail)
 			}
-			body["message"] = message
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	json.NewEncoder(w).Encode(body)
+}
+
+func providerUsageLimitHealthReason(provider string) string {
+	provider = config.NormalizeProviderRef(provider)
+	if provider == "" {
+		provider = "provider"
+	}
+	return provider + "_usage_limit_reached"
+}
+
+func providerUsageLimitHealthMessage(usage ProviderUsageResponse, detail string) string {
+	providerName := strings.TrimSpace(usage.Provider)
+	if providerName == "" {
+		providerName = "Provider"
+	}
+	message := providerName + " usage limit reached; this container stays offline until usage resets."
+	if detail = strings.TrimSpace(detail); detail != "" {
+		message += " " + detail
+	}
+	return message
 }
 
 func isRunningInContainer() bool {

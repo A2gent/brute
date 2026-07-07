@@ -59,6 +59,33 @@ func TestParseCLIResultAndUsage(t *testing.T) {
 	}
 }
 
+func TestClientArgsTrustWorkspaceByDefault(t *testing.T) {
+	t.Setenv("AAGENT_CURSOR_CLI_FORCE", "false")
+	t.Setenv("AAGENT_CURSOR_CLI_TRUST", "")
+
+	client := NewClientWithOptions("composer-2.5", Options{WorkDir: t.TempDir()})
+	args := strings.Join(client.buildArgs("composer-2.5", "hello"), "\n")
+
+	if !strings.Contains(args, "--trust") {
+		t.Fatalf("expected default args to include --trust: %s", args)
+	}
+	if strings.Contains(args, "--force") {
+		t.Fatalf("expected default args not to include --force: %s", args)
+	}
+}
+
+func TestClientArgsCanDisableWorkspaceTrustViaEnv(t *testing.T) {
+	t.Setenv("AAGENT_CURSOR_CLI_FORCE", "false")
+	t.Setenv("AAGENT_CURSOR_CLI_TRUST", "false")
+
+	client := NewClientWithOptions("composer-2.5", Options{WorkDir: t.TempDir()})
+	args := strings.Join(client.buildArgs("composer-2.5", "hello"), "\n")
+
+	if strings.Contains(args, "--trust") {
+		t.Fatalf("expected AAGENT_CURSOR_CLI_TRUST=false to omit --trust: %s", args)
+	}
+}
+
 func TestClientChatInvokesCursorAgentExecutable(t *testing.T) {
 	tmp := t.TempDir()
 	argsFile := filepath.Join(tmp, "args.txt")
@@ -170,6 +197,7 @@ func TestClientChatStreamInvokesCursorStreamJSON(t *testing.T) {
 		"stream-json",
 		"--stream-partial-output",
 		"--workspace",
+		"--trust",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("captured args missing %q: %s", want, joined)

@@ -112,14 +112,21 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 			continue
 		}
 		agentProjectID := agentDefinitionRecordProjectID(record)
+		var parsedDef *agentdef.Definition
+		if def, defErr := agentdef.ParseYAML([]byte(record.DefinitionYAML)); defErr == nil {
+			parsedDef = def
+			if agentProjectID == "" {
+				agentProjectID = stringFromOptional(projectIDFromDefinition(def))
+			}
+		} else {
+			warnings = append(warnings, "agent definition "+record.ID+": "+defErr.Error())
+		}
 		if !matchesUnifiedAgentProjectFilter(agentProjectID, projectFilter, filterHasProject) {
 			continue
 		}
 		entry := UnifiedAgentResponse{ID: record.ID, Name: record.Name, Runtime: record.Runtime, ProjectID: agentProjectID, Managed: true, Status: agentDefinitionStatusNotCreated}
-		if def, defErr := agentdef.ParseYAML([]byte(record.DefinitionYAML)); defErr == nil {
-			entry.Definition = def
-		} else {
-			warnings = append(warnings, "agent definition "+record.ID+": "+defErr.Error())
+		if parsedDef != nil {
+			entry.Definition = parsedDef
 		}
 		if containers := containersByDefID[record.ID]; len(containers) > 0 {
 			applyUnifiedAgentContainerStatus(&entry, containers)
@@ -170,6 +177,13 @@ func subAgentProjectID(sa *storage.SubAgent) string {
 		return ""
 	}
 	return strings.TrimSpace(*sa.ProjectID)
+}
+
+func stringFromOptional(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 func agentDefinitionRecordProjectID(record *storage.AgentDefinitionRecord) string {

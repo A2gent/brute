@@ -444,6 +444,90 @@ func TestDefinitionForUnifiedAgentUsesSavedSubAgent(t *testing.T) {
 	}
 }
 
+func TestListUnifiedAgentsSeparatesProjectSpecificDefinitions(t *testing.T) {
+	server, store := newUnifiedAgentsTestServer(t)
+
+	now := time.Now()
+	projectRoot := t.TempDir()
+	project := &storage.Project{ID: "proj-app", Name: "App", Folder: &projectRoot, CreatedAt: now, UpdatedAt: now}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatalf("failed to save project: %v", err)
+	}
+
+	projectYAML := `
+version: "1"
+agent:
+  id: project-reviewer
+  name: Project Reviewer
+runtime:
+  type: docker
+workspace:
+  scope: configured_project
+  mount: rw
+local:
+  project_bindings:
+    configured_project: proj-app
+`
+	globalYAML := `
+version: "1"
+agent:
+  id: global-reviewer
+  name: Global Reviewer
+runtime:
+  type: docker
+workspace:
+  scope: current_project
+  mount: rw
+`
+	if err := store.SaveAgentDefinition(&storage.AgentDefinitionRecord{ID: "project-reviewer", Name: "Project Reviewer", Runtime: agentdef.RuntimeDocker, DefinitionYAML: projectYAML, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("failed to save project definition: %v", err)
+	}
+	if err := store.SaveAgentDefinition(&storage.AgentDefinitionRecord{ID: "global-reviewer", Name: "Global Reviewer", Runtime: agentdef.RuntimeDocker, DefinitionYAML: globalYAML, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("failed to save global definition: %v", err)
+	}
+
+	globalReq := httptest.NewRequest(http.MethodGet, "/unified-agents/", nil)
+	globalRec := httptest.NewRecorder()
+	server.handleListUnifiedAgents(globalRec, globalReq)
+	if globalRec.Code != http.StatusOK {
+		t.Fatalf("global list failed: %d %s", globalRec.Code, globalRec.Body.String())
+	}
+	var globalResp struct {
+		Agents []UnifiedAgentResponse `json:"agents"`
+	}
+	if err := json.Unmarshal(globalRec.Body.Bytes(), &globalResp); err != nil {
+		t.Fatalf("failed to decode global response: %v", err)
+	}
+	globalIDs := unifiedAgentIDs(globalResp.Agents)
+	if globalIDs["project-reviewer"] || !globalIDs["global-reviewer"] {
+		t.Fatalf("global list should include global definitions and exclude project-specific definitions, got %+v", globalResp.Agents)
+	}
+
+	projectReq := httptest.NewRequest(http.MethodGet, "/unified-agents/?project_id=proj-app", nil)
+	projectRec := httptest.NewRecorder()
+	server.handleListUnifiedAgents(projectRec, projectReq)
+	if projectRec.Code != http.StatusOK {
+		t.Fatalf("project list failed: %d %s", projectRec.Code, projectRec.Body.String())
+	}
+	var projectResp struct {
+		Agents []UnifiedAgentResponse `json:"agents"`
+	}
+	if err := json.Unmarshal(projectRec.Body.Bytes(), &projectResp); err != nil {
+		t.Fatalf("failed to decode project response: %v", err)
+	}
+	if len(projectResp.Agents) != 1 || projectResp.Agents[0].ID != "project-reviewer" || projectResp.Agents[0].ProjectID != "proj-app" {
+		t.Fatalf("project list should include only project definitions, got %+v", projectResp.Agents)
+	}
+}
+
+func unifiedAgentIDs(agents []UnifiedAgentResponse) map[string]bool {
+	ids := make(map[string]bool, len(agents))
+	for _, agent := range agents {
+		ids[agent.ID] = true
+	}
+	return ids
+}
+
 func TestImportDockerAgentYAMLStoresDefinition(t *testing.T) {
 	server, store := newUnifiedAgentsTestServer(t)
 

@@ -127,6 +127,7 @@ type AgentDefinitionRecord struct {
 	ID             string
 	Name           string
 	Runtime        string // "docker" | "remote"
+	ProjectID      *string
 	DefinitionYAML string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time

@@ -32,6 +32,7 @@ type UnifiedAgentResponse struct {
 	ID          string               `json:"id"`
 	Name        string               `json:"name"`
 	Runtime     string               `json:"runtime"`
+	ProjectID   string               `json:"project_id,omitempty"`
 	Status      string               `json:"status,omitempty"`
 	Running     *bool                `json:"running,omitempty"`
 	APIURL      string               `json:"api_url,omitempty"`
@@ -45,6 +46,7 @@ type UnifiedAgentResponse struct {
 type importAgentYAMLRequest struct {
 	ConfigYAML string `json:"config_yaml"`
 	ConfigPath string `json:"config_path"`
+	ProjectID  string `json:"project_id,omitempty"`
 }
 
 type importAgentYAMLResult struct {
@@ -52,6 +54,7 @@ type importAgentYAMLResult struct {
 	Created           bool                 `json:"created"`
 	ID                string               `json:"id"`
 	Name              string               `json:"name"`
+	ProjectID         string               `json:"project_id,omitempty"`
 	Definition        *agentdef.Definition `json:"definition"`
 	RemovedContainers []string             `json:"removed_containers"`
 	Note              string               `json:"note"`
@@ -60,6 +63,7 @@ type importAgentYAMLResult struct {
 func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request) {
 	agents := []UnifiedAgentResponse{}
 	warnings := []string{}
+	projectFilter, filterHasProject := unifiedAgentsProjectFilter(r)
 
 	dockerAgents, err := listLocalBruteContainers(r.Context())
 	if err != nil {
@@ -81,13 +85,11 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	for _, sa := range subAgents {
-		entry := UnifiedAgentResponse{
-			ID:      sa.ID,
-			Name:    sa.Name,
-			Runtime: agentdef.RuntimeDocker,
-			Managed: true,
-			Status:  agentDefinitionStatusNotCreated,
+		agentProjectID := subAgentProjectID(sa)
+		if !matchesUnifiedAgentProjectFilter(agentProjectID, projectFilter, filterHasProject) {
+			continue
 		}
+		entry := UnifiedAgentResponse{ID: sa.ID, Name: sa.Name, Runtime: agentdef.RuntimeDocker, ProjectID: agentProjectID, Managed: true, Status: agentDefinitionStatusNotCreated}
 		resp := s.subAgentToResponse(sa)
 		entry.SubAgent = &resp
 		if def, defErr := agentdef.FromSubAgent(sa); defErr == nil {
@@ -109,13 +111,11 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 		if record == nil {
 			continue
 		}
-		entry := UnifiedAgentResponse{
-			ID:      record.ID,
-			Name:    record.Name,
-			Runtime: record.Runtime,
-			Managed: true,
-			Status:  agentDefinitionStatusNotCreated,
+		agentProjectID := agentDefinitionRecordProjectID(record)
+		if !matchesUnifiedAgentProjectFilter(agentProjectID, projectFilter, filterHasProject) {
+			continue
 		}
+		entry := UnifiedAgentResponse{ID: record.ID, Name: record.Name, Runtime: record.Runtime, ProjectID: agentProjectID, Managed: true, Status: agentDefinitionStatusNotCreated}
 		if def, defErr := agentdef.ParseYAML([]byte(record.DefinitionYAML)); defErr == nil {
 			entry.Definition = def
 		} else {
@@ -127,31 +127,56 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 		agents = append(agents, entry)
 	}
 
-	for i := range dockerAgents {
-		da := dockerAgents[i]
-		if strings.TrimSpace(da.Labels[dockerRuntimeAgentDefLabelKey]) != "" {
-			continue // already attached to its definition entry
+	if !filterHasProject {
+		for i := range dockerAgents {
+			da := dockerAgents[i]
+			if strings.TrimSpace(da.Labels[dockerRuntimeAgentDefLabelKey]) != "" {
+				continue
+			}
+			running := da.Running
+			status := da.Status
+			if da.Running && !localDockerAgentAvailableForUse(da) {
+				status = agentDefinitionStatusUnhealthy
+			}
+			agents = append(agents, UnifiedAgentResponse{ID: da.ID, Name: da.Name, Runtime: agentdef.RuntimeDocker, Status: status, Running: &running, APIURL: da.APIURL, DockerAgent: &dockerAgents[i]})
 		}
-		running := da.Running
-		status := da.Status
-		if da.Running && !localDockerAgentAvailableForUse(da) {
-			status = agentDefinitionStatusUnhealthy
-		}
-		agents = append(agents, UnifiedAgentResponse{
-			ID:          da.ID,
-			Name:        da.Name,
-			Runtime:     agentdef.RuntimeDocker,
-			Status:      status,
-			Running:     &running,
-			APIURL:      da.APIURL,
-			DockerAgent: &dockerAgents[i],
-		})
 	}
 
-	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"agents":   agents,
-		"warnings": warnings,
-	})
+	s.jsonResponse(w, http.StatusOK, map[string]interface{}{"agents": agents, "warnings": warnings})
+}
+
+func unifiedAgentsProjectFilter(r *http.Request) (string, bool) {
+	if r == nil {
+		return "", false
+	}
+	projectID := strings.TrimSpace(r.URL.Query().Get("project_id"))
+	if projectID == "" {
+		projectID = strings.TrimSpace(r.URL.Query().Get("projectID"))
+	}
+	return projectID, projectID != ""
+}
+
+func matchesUnifiedAgentProjectFilter(agentProjectID string, projectFilter string, filterHasProject bool) bool {
+	agentProjectID = strings.TrimSpace(agentProjectID)
+	projectFilter = strings.TrimSpace(projectFilter)
+	if filterHasProject {
+		return agentProjectID == projectFilter
+	}
+	return agentProjectID == ""
+}
+
+func subAgentProjectID(sa *storage.SubAgent) string {
+	if sa == nil || sa.ProjectID == nil {
+		return ""
+	}
+	return strings.TrimSpace(*sa.ProjectID)
+}
+
+func agentDefinitionRecordProjectID(record *storage.AgentDefinitionRecord) string {
+	if record == nil || record.ProjectID == nil {
+		return ""
+	}
+	return strings.TrimSpace(*record.ProjectID)
 }
 
 func applyUnifiedAgentContainerStatus(entry *UnifiedAgentResponse, containers []LocalDockerAgent) {
@@ -236,6 +261,13 @@ func (s *Server) importAgentYAMLDefinition(ctx context.Context, req importAgentY
 	if strings.TrimSpace(def.Local.DefinitionDir) == "" {
 		def.Local.DefinitionDir = inferAgentDefinitionSourceDir(req.ConfigPath, resolvedConfigPath, def)
 	}
+	projectID, err := s.normalizeAgentDefinitionProjectID(req.ProjectID)
+	if err != nil {
+		return nil, http.StatusBadRequest, err
+	}
+	if projectID != nil {
+		bindDefinitionToProject(def, *projectID)
+	}
 
 	switch def.Runtime.Type {
 	case agentdef.RuntimeHost:
@@ -253,6 +285,43 @@ func (s *Server) importAgentYAMLDefinition(ctx context.Context, req importAgentY
 	default:
 		return nil, http.StatusNotImplemented, fmt.Errorf("Importing remote runtime agents is not supported yet; register them through Square/A2A instead")
 	}
+}
+
+func (s *Server) normalizeAgentDefinitionProjectID(raw string) (*string, error) {
+	projectID := strings.TrimSpace(raw)
+	if projectID == "" {
+		return nil, nil
+	}
+	if _, err := s.store.GetProject(projectID); err != nil {
+		return nil, fmt.Errorf("Project not found: %w", err)
+	}
+	return &projectID, nil
+}
+
+func bindDefinitionToProject(def *agentdef.Definition, projectID string) {
+	if def == nil || strings.TrimSpace(projectID) == "" {
+		return
+	}
+	projectID = strings.TrimSpace(projectID)
+	def.Workspace.Scope = agentdef.WorkspaceScopeConfiguredProject
+	if strings.TrimSpace(def.Workspace.Mount) == "" {
+		def.Workspace.Mount = agentdef.WorkspaceMountRW
+	}
+	if def.Local.ProjectBindings == nil {
+		def.Local.ProjectBindings = map[string]string{}
+	}
+	def.Local.ProjectBindings[agentdef.WorkspaceScopeConfiguredProject] = projectID
+}
+
+func projectIDFromDefinition(def *agentdef.Definition) *string {
+	if def == nil || strings.TrimSpace(def.Workspace.Scope) != agentdef.WorkspaceScopeConfiguredProject {
+		return nil
+	}
+	projectID := strings.TrimSpace(def.Local.ProjectBindings[agentdef.WorkspaceScopeConfiguredProject])
+	if projectID == "" {
+		return nil
+	}
+	return &projectID
 }
 
 func inferAgentDefinitionSourceDir(requestPath string, resolvedConfigPath string, def *agentdef.Definition) string {
@@ -318,6 +387,7 @@ func (s *Server) importDockerAgentDefinition(ctx context.Context, def *agentdef.
 		ID:             id,
 		Name:           name,
 		Runtime:        agentdef.RuntimeDocker,
+		ProjectID:      projectIDFromDefinition(def),
 		DefinitionYAML: string(raw),
 		CreatedAt:      now,
 		UpdatedAt:      now,
@@ -344,6 +414,7 @@ func (s *Server) importDockerAgentDefinition(ctx context.Context, def *agentdef.
 		Created:           created,
 		ID:                record.ID,
 		Name:              record.Name,
+		ProjectID:         agentDefinitionRecordProjectID(record),
 		Definition:        def,
 		RemovedContainers: removedContainers,
 		Note:              "Container starts on first delegation and is reused warm per project binding.",

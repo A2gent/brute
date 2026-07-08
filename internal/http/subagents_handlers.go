@@ -44,10 +44,18 @@ func (s *Server) handleListSubAgents(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to list sub-agents: "+err.Error())
 		return
 	}
+	projectFilter := strings.TrimSpace(r.URL.Query().Get("project_id"))
+	if projectFilter == "" {
+		projectFilter = strings.TrimSpace(r.URL.Query().Get("projectID"))
+	}
+	filterHasProject := projectFilter != ""
 
-	resp := make([]SubAgentResponse, len(agents))
-	for i, sa := range agents {
-		resp[i] = s.subAgentToResponse(sa)
+	resp := make([]SubAgentResponse, 0, len(agents))
+	for _, sa := range agents {
+		if !matchesUnifiedAgentProjectFilter(subAgentProjectID(sa), projectFilter, filterHasProject) {
+			continue
+		}
+		resp = append(resp, s.subAgentToResponse(sa))
 	}
 	s.jsonResponse(w, http.StatusOK, resp)
 }

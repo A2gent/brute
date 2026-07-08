@@ -250,14 +250,17 @@ func (s *SQLiteStore) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_project_git_review_overlay_cache_project_id ON project_git_review_overlay_cache(project_id)`,
 		// Stored unified agent definitions (docker/remote runtime installations).
 		`CREATE TABLE IF NOT EXISTS agent_definitions (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			runtime TEXT NOT NULL,
-			definition_yaml TEXT NOT NULL,
-			created_at TIMESTAMP NOT NULL,
-			updated_at TIMESTAMP NOT NULL
-		)`,
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				runtime TEXT NOT NULL,
+				project_id TEXT,
+				definition_yaml TEXT NOT NULL,
+				created_at TIMESTAMP NOT NULL,
+				updated_at TIMESTAMP NOT NULL
+			)`,
+		`ALTER TABLE agent_definitions ADD COLUMN project_id TEXT`,
 		`CREATE INDEX IF NOT EXISTS idx_agent_definitions_runtime ON agent_definitions(runtime)`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_definitions_project_id ON agent_definitions(project_id)`,
 	}
 
 	for _, m := range migrations {

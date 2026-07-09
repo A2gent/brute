@@ -96,8 +96,41 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 	return s.ExecuteJob(ctx, job)
 }
 
+type preparedJobExecution struct {
+	exec                *storage.JobExecution
+	sess                *session.Session
+	effectiveTaskPrompt string
+	startedAt           time.Time
+}
+
 // ExecuteJob runs a recurring job using the same workflow/agent routing as chat sessions.
 func (s *Server) ExecuteJob(ctx context.Context, job *storage.RecurringJob) (*storage.JobExecution, error) {
+	prepared, err := s.prepareJobExecution(job)
+	if err != nil {
+		return nil, err
+	}
+	if prepared.effectiveTaskPrompt == "" {
+		return prepared.exec, nil
+	}
+	s.finishJobExecution(ctx, job, prepared)
+	return prepared.exec, nil
+}
+
+// StartJobExecutionAsync prepares a loop run and continues execution in the background.
+// Manual "Run Now" uses this so the API can return session_id immediately for UI redirect.
+func (s *Server) StartJobExecutionAsync(job *storage.RecurringJob) (*storage.JobExecution, error) {
+	prepared, err := s.prepareJobExecution(job)
+	if err != nil {
+		return nil, err
+	}
+	if prepared.effectiveTaskPrompt == "" {
+		return prepared.exec, nil
+	}
+	go s.finishJobExecution(s.sessionRunParentContext(), job, prepared)
+	return prepared.exec, nil
+}
+
+func (s *Server) prepareJobExecution(job *storage.RecurringJob) (*preparedJobExecution, error) {
 	now := time.Now()
 
 	exec := &storage.JobExecution{
@@ -118,7 +151,7 @@ func (s *Server) ExecuteJob(ctx context.Context, job *storage.RecurringJob) (*st
 		finishedAt := time.Now()
 		exec.FinishedAt = &finishedAt
 		s.store.SaveJobExecution(exec)
-		return exec, nil
+		return &preparedJobExecution{exec: exec, startedAt: now}, nil
 	}
 	if assignErr := s.assignSessionToJobProject(sess, job); assignErr != nil {
 		logging.Warn("Failed to assign recurring job project for session %s: %v", sess.ID, assignErr)
@@ -138,17 +171,36 @@ func (s *Server) ExecuteJob(ctx context.Context, job *storage.RecurringJob) (*st
 	effectiveTaskPrompt, resolveErr := jobs.ResolveTaskPrompt(job, s.resolveSessionWorkDir(sess))
 	if resolveErr != nil {
 		s.failJobExecution(exec, sess, "Failed to resolve task instructions: "+resolveErr.Error())
-		return exec, nil
+		return &preparedJobExecution{exec: exec, sess: sess, startedAt: now}, nil
 	}
 	sess.AddUserMessage(effectiveTaskPrompt)
+	sess.SetStatus(session.StatusRunning)
 	if err := s.sessionManager.Save(sess); err != nil {
 		logging.Warn("Failed to persist job session prompt: %v", err)
 	}
 
+	return &preparedJobExecution{
+		exec:                exec,
+		sess:                sess,
+		effectiveTaskPrompt: effectiveTaskPrompt,
+		startedAt:           now,
+	}, nil
+}
+
+func (s *Server) finishJobExecution(ctx context.Context, job *storage.RecurringJob, prepared *preparedJobExecution) {
+	if prepared == nil || prepared.exec == nil || prepared.sess == nil || prepared.effectiveTaskPrompt == "" {
+		return
+	}
+
+	exec := prepared.exec
+	sess := prepared.sess
+	effectiveTaskPrompt := prepared.effectiveTaskPrompt
+	now := prepared.startedAt
+
 	result, runErr := s.runSessionWithoutStreaming(ctx, sess, effectiveTaskPrompt)
 	if finalizeErr := s.finalizeSessionRunWithoutStreaming(ctx, sess, result, runErr); finalizeErr != nil && !isCancellationError(finalizeErr) {
 		s.failJobExecution(exec, sess, finalizeErr.Error())
-		return exec, nil
+		return
 	}
 
 	finishedAt := time.Now()
@@ -180,8 +232,6 @@ func (s *Server) ExecuteJob(ctx context.Context, job *storage.RecurringJob) (*st
 	if err := s.store.SaveJob(job); err != nil {
 		logging.Error("Failed to update job after execution: %v", err)
 	}
-
-	return exec, nil
 }
 
 func (s *Server) failJobExecution(exec *storage.JobExecution, sess *session.Session, message string) {

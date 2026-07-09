@@ -263,7 +263,7 @@ func (s *Server) handleRunJobNow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	exec, err := s.executeJob(r.Context(), job)
+	exec, err := s.StartJobExecutionAsync(job)
 	if err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to execute job: "+err.Error())
 		return

@@ -53,6 +53,8 @@ type SessionResponse struct {
 	Model                string                       `json:"model,omitempty"`
 	RoutedProvider       string                       `json:"routed_provider,omitempty"`
 	RoutedModel          string                       `json:"routed_model,omitempty"`
+	RoutedRule           string                       `json:"routed_rule,omitempty"`
+	RoutedReason         string                       `json:"routed_reason,omitempty"`
 	Title                string                       `json:"title"`
 	Summary              string                       `json:"summary,omitempty"`
 	Status               string                       `json:"status"`
@@ -181,6 +183,10 @@ type ChatStreamEvent struct {
 	Provider                *StreamProviderEvent     `json:"provider,omitempty"`
 	Workflow                interface{}              `json:"workflow,omitempty"`
 	WorkflowTranscriptEntry interface{}              `json:"workflow_transcript_entry,omitempty"`
+	RoutedProvider          string                   `json:"routed_provider,omitempty"`
+	RoutedModel             string                   `json:"routed_model,omitempty"`
+	RoutedRule              string                   `json:"routed_rule,omitempty"`
+	RoutedReason            string                   `json:"routed_reason,omitempty"`
 	Step                    int                      `json:"step,omitempty"`
 }
 

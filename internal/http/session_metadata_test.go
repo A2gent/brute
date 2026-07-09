@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/A2gent/brute/internal/config"
+	"github.com/A2gent/brute/internal/session"
 )
 
 func TestApplyLeadingSessionQueueDirective(t *testing.T) {
@@ -62,6 +63,42 @@ func TestCreateSessionKeepsEmptyLMStudioModel(t *testing.T) {
 	}
 }
 
+func TestCreateSessionRespectsActiveProviderWhenAutomaticRouterIsConfigured(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+	server.config.ActiveProvider = string(config.ProviderCursor)
+	server.config.Providers[string(config.ProviderCursor)] = config.Provider{
+		Name:  string(config.ProviderCursor),
+		Model: "composer-2.5",
+	}
+	server.config.Providers[string(config.ProviderAutoRouter)] = config.Provider{
+		Name:           string(config.ProviderAutoRouter),
+		RouterProvider: string(config.ProviderLMStudio),
+		RouterRules: []config.RouterRule{
+			{Match: "coding", Provider: string(config.ProviderLMStudio)},
+		},
+	}
+
+	body, err := json.Marshal(CreateSessionRequest{AgentID: "build", Queued: true})
+	if err != nil {
+		t.Fatalf("failed to encode request: %v", err)
+	}
+	req := httptest.NewRequest(stdhttp.MethodPost, "/sessions", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	server.handleCreateSession(rec, req)
+
+	if rec.Code != stdhttp.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp CreateSessionResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Provider != string(config.ProviderCursor) || resp.Model != "composer-2.5" {
+		t.Fatalf("provider/model = %q/%q, want cursor/composer-2.5", resp.Provider, resp.Model)
+	}
+}
+
 func TestStripLeadingSessionQueueDirective(t *testing.T) {
 	tests := []struct {
 		name string
@@ -98,5 +135,48 @@ func TestSessionRunDurationSecondsUsesUpdatedAtForCompletedSessions(t *testing.T
 
 	if got, want := sessionRunDurationSeconds(createdAt, updatedAt, "completed"), int64(90); got != want {
 		t.Fatalf("duration = %d, want %d", got, want)
+	}
+}
+
+func TestSetSessionRoutedProviderAndModelPersistsRouterDecision(t *testing.T) {
+	sess := session.New("build")
+
+	changed := setSessionRoutedProviderAndModel(
+		sess,
+		config.ProviderAutoRouter,
+		config.ProviderCursor,
+		"composer-2.5",
+		"coding, mid complexity",
+		"The primary action is editing and testing source code.",
+	)
+	if !changed {
+		t.Fatal("expected routing metadata to change")
+	}
+
+	provider, model := sessionRoutedProviderAndModel(sess)
+	if provider != "cursor" || model != "composer-2.5" {
+		t.Fatalf("routed target = %q/%q, want cursor/composer-2.5", provider, model)
+	}
+	rule, reason := sessionRoutingRuleAndReason(sess)
+	if rule != "coding, mid complexity" {
+		t.Fatalf("routed rule = %q", rule)
+	}
+	if reason != "The primary action is editing and testing source code." {
+		t.Fatalf("routed reason = %q", reason)
+	}
+}
+
+func TestSetSessionRoutedProviderAndModelClearsDecisionForDirectProvider(t *testing.T) {
+	sess := session.New("build")
+	setSessionRoutedProviderAndModel(sess, config.ProviderAutoRouter, config.ProviderCursor, "composer-2.5", "coding", "source edits")
+
+	changed := setSessionRoutedProviderAndModel(sess, config.ProviderCursor, config.ProviderCursor, "composer-2.5", "", "")
+	if !changed {
+		t.Fatal("expected direct provider to clear automatic-router metadata")
+	}
+	for _, key := range []string{"routed_provider", "routed_model", "routed_rule", "routed_reason"} {
+		if _, exists := sess.Metadata[key]; exists {
+			t.Fatalf("metadata %q was not cleared", key)
+		}
 	}
 }

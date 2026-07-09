@@ -223,7 +223,7 @@ func (c *Client) selectRoutingRuleViaLLM(ctx context.Context, userPrompt string,
 
 	req := &llm.ChatRequest{
 		Messages: []llm.Message{
-			{Role: "system", Content: "You are a strict model router. Choose exactly one routing rule index that best matches the user prompt intent. Return JSON only: {\"index\":<number>,\"reason\":\"short\"}."},
+			{Role: "system", Content: automaticRouterSystemPrompt},
 			{Role: "user", Content: fmt.Sprintf("Rules: %s\n\nUser prompt: %s", string(rulesJSON), userPrompt)},
 		},
 		Temperature: 0,
@@ -242,13 +242,22 @@ func (c *Client) selectRoutingRuleViaLLM(ctx context.Context, userPrompt string,
 		return nil, "", err
 	}
 	if choice.Index < 1 || choice.Index > len(rules) {
-		logging.Warn("Automatic router returned out-of-range index: %d. Falling back to default rule (index 1).", choice.Index)
-		choice.Reason = fmt.Sprintf("out-of-range index %d fallback", choice.Index)
-		choice.Index = 1
+		return nil, "", fmt.Errorf("router returned out-of-range index %d; expected 1-%d", choice.Index, len(rules))
 	}
 	selected := rules[choice.Index-1]
 	return &selected, strings.TrimSpace(choice.Reason), nil
 }
+
+const automaticRouterSystemPrompt = `You are a strict model router. Classify the primary action the user is asking the agent to perform and choose exactly one of the supplied routing rules.
+
+Important classification rules:
+- Classify by the requested deliverable and action, not by incidental words, filenames, or subject matter.
+- Choose a documentation rule only when the primary deliverable is prose documentation, reference material, or explanatory text.
+- Choose a coding or refactoring rule when the user asks to create, edit, move, remove, debug, test, or review source code, even when the feature itself concerns Markdown, docs, or text files.
+- Choose only a 1-based index that exists in the supplied Rules array. Never return 0, -1, or an invented rule.
+
+Return exactly one complete JSON object on one line and nothing else:
+{"index":<1-based integer>,"reason":"brief primary-intent explanation"}`
 
 type routerChoice struct {
 	Index  int    `json:"index"`

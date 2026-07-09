@@ -289,11 +289,7 @@ func (s *Server) handleTelegramInboundMessage(
 		if sess.Metadata == nil {
 			sess.Metadata = map[string]interface{}{}
 		}
-		providerType := config.NormalizeProviderRef(strings.TrimSpace(s.config.ActiveProvider))
-		autoCfg := s.config.Providers[string(config.ProviderAutoRouter)]
-		if s.autoRouterConfigured(autoCfg) {
-			providerType = string(config.ProviderAutoRouter)
-		}
+		providerType := s.defaultSessionProviderRef()
 		model := s.resolveModelForProvider(config.ProviderType(providerType))
 		sess.Metadata["provider"] = providerType
 		sess.Metadata["model"] = model
@@ -364,6 +360,14 @@ func (s *Server) handleTelegramInboundMessage(
 		sess.SetStatus(session.StatusFailed)
 		_ = s.sessionManager.Save(sess)
 		return nil, fmt.Errorf("provider configuration error: %w", err)
+	}
+	if setSessionRoutedProviderAndModel(sess, providerType, target.ProviderType, target.Model, target.RoutingRule, target.RoutingReason) {
+		if err := s.sessionManager.Save(sess); err != nil {
+			logging.Warn("Failed to persist Telegram session routed target metadata: %v", err)
+		}
+	}
+	if event := routerDecisionStreamEvent(providerType, target); event != nil {
+		s.publishSessionEvent(sess.ID, *event)
 	}
 
 	agentConfig := agent.Config{

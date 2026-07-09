@@ -82,9 +82,15 @@ func (s *Server) sessionSnapshotStreamEvent(sess *session.Session) ChatStreamEve
 	if sess == nil {
 		return ChatStreamEvent{Type: "status"}
 	}
+	routedProvider, routedModel := sessionRoutedProviderAndModel(sess)
+	routedRule, routedReason := sessionRoutingRuleAndReason(sess)
 	return ChatStreamEvent{
-		Type:     "session_snapshot",
-		Status:   string(sess.Status),
-		Messages: s.messagesToResponse(sess.Messages),
+		Type:           "session_snapshot",
+		Status:         string(sess.Status),
+		Messages:       s.messagesToResponse(sess.Messages),
+		RoutedProvider: routedProvider,
+		RoutedModel:    routedModel,
+		RoutedRule:     routedRule,
+		RoutedReason:   routedReason,
 	}
 }

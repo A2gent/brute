@@ -20,6 +20,7 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 	}
 	provider, model := sessionProviderAndModel(sess)
 	routedProvider, routedModel := sessionRoutedProviderAndModel(sess)
+	routedRule, routedReason := sessionRoutingRuleAndReason(sess)
 	snapshot := sessionSystemPromptSnapshot(sess)
 	var snapshotPayload *SystemPromptSnapshotPayload
 	if snapshot != nil {
@@ -62,6 +63,8 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		Model:                model,
 		RoutedProvider:       routedProvider,
 		RoutedModel:          routedModel,
+		RoutedRule:           routedRule,
+		RoutedReason:         routedReason,
 		Title:                sess.Title,
 		Summary:              sess.Summary,
 		Status:               string(sess.Status),

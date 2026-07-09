@@ -190,11 +190,7 @@ func (s *Server) makeA2AAgentFactory() a2atunnel.AgentRunnerBuilder {
 				}
 			}
 			if _, hasProvider := sess.Metadata["provider"]; !hasProvider {
-				providerRef := config.NormalizeProviderRef(s.config.ActiveProvider)
-				autoCfg := s.config.Providers[string(config.ProviderAutoRouter)]
-				if s.autoRouterConfigured(autoCfg) {
-					providerRef = string(config.ProviderAutoRouter)
-				}
+				providerRef := s.defaultSessionProviderRef()
 				sess.Metadata["provider"] = providerRef
 				if providerRef != string(config.ProviderAutoRouter) {
 					sess.Metadata["model"] = s.resolveModelForProvider(config.ProviderType(providerRef))
@@ -214,10 +210,13 @@ func (s *Server) makeA2AAgentFactory() a2atunnel.AgentRunnerBuilder {
 		if err != nil {
 			return nil, err
 		}
-		if setSessionRoutedProviderAndModel(sess, providerType, target.ProviderType, target.Model) {
+		if setSessionRoutedProviderAndModel(sess, providerType, target.ProviderType, target.Model, target.RoutingRule, target.RoutingReason) {
 			if err := s.sessionManager.Save(sess); err != nil {
 				logging.Warn("Failed to persist inbound A2A routed target metadata: %v", err)
 			}
+		}
+		if event := routerDecisionStreamEvent(providerType, target); event != nil {
+			s.publishSessionEvent(sess.ID, *event)
 		}
 
 		cfg := agent.Config{
@@ -593,10 +592,13 @@ func (s *Server) resumeSessionAfterExternalToolResult(sessionID string) {
 			logging.Warn("Provider resolution failed while resuming external tool result: session=%s error=%v", sessionID, err)
 			return
 		}
-		if setSessionRoutedProviderAndModel(sess, providerType, target.ProviderType, target.Model) {
+		if setSessionRoutedProviderAndModel(sess, providerType, target.ProviderType, target.Model, target.RoutingRule, target.RoutingReason) {
 			if err := s.sessionManager.Save(sess); err != nil {
 				logging.Warn("Failed to persist routed metadata while resuming external tool result: %v", err)
 			}
+		}
+		if event := routerDecisionStreamEvent(providerType, target); event != nil {
+			s.publishSessionEvent(sess.ID, *event)
 		}
 
 		agentConfig := agent.Config{

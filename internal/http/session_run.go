@@ -72,10 +72,13 @@ func (s *Server) runSessionWithoutStreaming(ctx context.Context, sess *session.S
 		return result, &sessionProviderConfigError{err: err}
 	}
 	result.ProviderType = target.ProviderType
-	if setSessionRoutedProviderAndModel(sess, providerType, target.ProviderType, target.Model) {
+	if setSessionRoutedProviderAndModel(sess, providerType, target.ProviderType, target.Model, target.RoutingRule, target.RoutingReason) {
 		if err := s.sessionManager.Save(sess); err != nil {
 			logging.Warn("Failed to persist session routed target metadata: %v", err)
 		}
+	}
+	if event := routerDecisionStreamEvent(providerType, target); event != nil {
+		publishEvent(*event)
 	}
 
 	agentConfig := agent.Config{

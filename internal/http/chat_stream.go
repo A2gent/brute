@@ -220,10 +220,13 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if setSessionRoutedProviderAndModel(sess, providerType, target.ProviderType, target.Model) {
+	if setSessionRoutedProviderAndModel(sess, providerType, target.ProviderType, target.Model, target.RoutingRule, target.RoutingReason) {
 		if err := s.sessionManager.Save(sess); err != nil {
 			logging.Warn("Failed to persist session routed target metadata: %v", err)
 		}
+	}
+	if event := routerDecisionStreamEvent(providerType, target); event != nil {
+		_ = writeEvent(*event)
 	}
 
 	agentConfig := agent.Config{

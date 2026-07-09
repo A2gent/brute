@@ -411,8 +411,11 @@ func (s *Server) executeWorkflowNode(
 		_ = s.sessionManager.Save(child)
 		return "", child.ID, fmt.Errorf("provider resolution failed: %w", err)
 	}
-	if setSessionRoutedProviderAndModel(child, providerType, target.ProviderType, target.Model) {
+	if setSessionRoutedProviderAndModel(child, providerType, target.ProviderType, target.Model, target.RoutingRule, target.RoutingReason) {
 		_ = s.sessionManager.Save(child)
+	}
+	if event := routerDecisionStreamEvent(providerType, target); event != nil {
+		s.publishSessionEvent(child.ID, *event)
 	}
 
 	agentConfig := agent.Config{

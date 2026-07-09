@@ -16,9 +16,24 @@ import (
 type executionTarget struct {
 	ProviderType      config.ProviderType
 	Model             string
+	RoutingRule       string
+	RoutingReason     string
 	ContextWindow     int
 	StatefulResponses bool
 	Client            llm.Client
+}
+
+func routerDecisionStreamEvent(requestedProvider config.ProviderType, target *executionTarget) *ChatStreamEvent {
+	if requestedProvider != config.ProviderAutoRouter || target == nil {
+		return nil
+	}
+	return &ChatStreamEvent{
+		Type:           "router_decision",
+		RoutedProvider: strings.TrimSpace(string(target.ProviderType)),
+		RoutedModel:    strings.TrimSpace(target.Model),
+		RoutedRule:     strings.TrimSpace(target.RoutingRule),
+		RoutedReason:   strings.TrimSpace(target.RoutingReason),
+	}
 }
 
 func normalizeRouterRules(raw []config.RouterRule) []config.RouterRule {
@@ -111,6 +126,17 @@ func (s *Server) autoRouterConfigured(provider config.Provider) bool {
 	return s.validateAutoRouterProvider(provider) == nil
 }
 
+func (s *Server) defaultSessionProviderRef() string {
+	if active := config.NormalizeProviderRef(s.config.ActiveProvider); active != "" {
+		return active
+	}
+	autoCfg := s.config.Providers[string(config.ProviderAutoRouter)]
+	if s.autoRouterConfigured(autoCfg) {
+		return string(config.ProviderAutoRouter)
+	}
+	return ""
+}
+
 func (s *Server) resolveExecutionTarget(ctx context.Context, providerType config.ProviderType, model string, userPrompt string, sess *session.Session) (*executionTarget, error) {
 	requestedModel := strings.TrimSpace(model)
 	if providerType != config.ProviderAutoRouter {
@@ -135,7 +161,11 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, providerType config
 		return nil, err
 	}
 	rules, _ := s.normalizeAndValidateRouterRules(autoCfg.RouterRules)
-	chosen, reason := s.selectRoutingRule(ctx, strings.TrimSpace(userPrompt), autoCfg, rules)
+	chosen, reason, err := s.selectRoutingRule(ctx, strings.TrimSpace(userPrompt), autoCfg, rules)
+	if err != nil {
+		logging.Error("Automatic router model decision failed: %v", err)
+		return nil, fmt.Errorf("automatic router failed: %w", err)
+	}
 	if chosen == nil {
 		return nil, fmt.Errorf("automatic router could not resolve a route")
 	}
@@ -153,31 +183,33 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, providerType config
 	return &executionTarget{
 		ProviderType:      targetProvider,
 		Model:             targetModel,
+		RoutingRule:       strings.TrimSpace(chosen.Match),
+		RoutingReason:     strings.TrimSpace(reason),
 		ContextWindow:     s.resolveContextWindowForProvider(targetProvider, targetModel),
 		StatefulResponses: s.providerStatefulResponses(targetProvider),
 		Client:            client,
 	}, nil
 }
 
-func (s *Server) selectRoutingRule(ctx context.Context, userPrompt string, autoCfg config.Provider, rules []config.RouterRule) (*config.RouterRule, string) {
+func (s *Server) selectRoutingRule(ctx context.Context, userPrompt string, autoCfg config.Provider, rules []config.RouterRule) (*config.RouterRule, string, error) {
 	if len(rules) == 0 {
-		return nil, ""
+		return nil, "", fmt.Errorf("no routing rules are configured")
 	}
 	if len(rules) == 1 {
-		return &rules[0], "single rule"
+		return &rules[0], "single rule", nil
 	}
 	if userPrompt == "" {
-		return &rules[0], "empty prompt fallback"
+		return nil, "", fmt.Errorf("cannot classify an empty prompt")
 	}
 
 	rule, reason, err := s.selectRoutingRuleViaLLM(ctx, userPrompt, autoCfg, rules)
-	if err == nil && rule != nil {
-		return rule, reason
-	}
 	if err != nil {
-		logging.Warn("Automatic router model decision failed, using keyword fallback: %v", err)
+		return nil, "", err
 	}
-	return selectRoutingRuleByKeyword(userPrompt, rules), "keyword fallback"
+	if rule == nil {
+		return nil, "", fmt.Errorf("router returned no rule")
+	}
+	return rule, reason, nil
 }
 
 func (s *Server) selectRoutingRuleViaLLM(ctx context.Context, userPrompt string, autoCfg config.Provider, rules []config.RouterRule) (*config.RouterRule, string, error) {
@@ -210,11 +242,13 @@ func (s *Server) selectRoutingRuleViaLLM(ctx context.Context, userPrompt string,
 
 	req := &llm.ChatRequest{
 		Messages: []llm.Message{
-			{Role: "system", Content: "You are a strict model router. Choose exactly one routing rule index that best matches the user prompt intent. Return JSON only: {\"index\":<number>,\"reason\":\"short\"}."},
+			{Role: "system", Content: automaticRouterSystemPrompt},
 			{Role: "user", Content: fmt.Sprintf("Rules: %s\n\nUser prompt: %s", string(rulesJSON), userPrompt)},
 		},
 		Temperature: 0,
-		MaxTokens:   120,
+		// Gemini thinking models can consume a small output budget before emitting the
+		// JSON answer. Keep this aligned with the standalone automatic-router client.
+		MaxTokens: 2048,
 	}
 	if routerModel != "" {
 		req.Model = routerModel
@@ -229,13 +263,22 @@ func (s *Server) selectRoutingRuleViaLLM(ctx context.Context, userPrompt string,
 		return nil, "", err
 	}
 	if choice.Index < 1 || choice.Index > len(rules) {
-		logging.Warn("Automatic router returned out-of-range index: %d. Falling back to default rule (index 1).", choice.Index)
-		choice.Reason = fmt.Sprintf("out-of-range index %d fallback", choice.Index)
-		choice.Index = 1
+		return nil, "", fmt.Errorf("router returned out-of-range index %d; expected 1-%d", choice.Index, len(rules))
 	}
 	selected := rules[choice.Index-1]
 	return &selected, strings.TrimSpace(choice.Reason), nil
 }
+
+const automaticRouterSystemPrompt = `You are a strict model router. Classify the primary action the user is asking the agent to perform and choose exactly one of the supplied routing rules.
+
+Important classification rules:
+- Classify by the requested deliverable and action, not by incidental words, filenames, or subject matter.
+- Choose a documentation rule only when the primary deliverable is prose documentation, reference material, or explanatory text.
+- Choose a coding or refactoring rule when the user asks to create, edit, move, remove, debug, test, or review source code, even when the feature itself concerns Markdown, docs, or text files.
+- Choose only a 1-based index that exists in the supplied Rules array. Never return 0, -1, or an invented rule.
+
+Return exactly one complete JSON object on one line and nothing else:
+{"index":<1-based integer>,"reason":"brief primary-intent explanation"}`
 
 type routerChoice struct {
 	Index  int    `json:"index"`
@@ -261,29 +304,4 @@ func parseRouterChoice(raw string) (*routerChoice, error) {
 		return &routerChoice{Index: n}, nil
 	}
 	return nil, fmt.Errorf("invalid router response: %s", raw)
-}
-
-func selectRoutingRuleByKeyword(userPrompt string, rules []config.RouterRule) *config.RouterRule {
-	if len(rules) == 0 {
-		return nil
-	}
-	prompt := strings.ToLower(strings.TrimSpace(userPrompt))
-	bestIndex := 0
-	bestScore := -1
-	for i, rule := range rules {
-		match := strings.ToLower(strings.TrimSpace(rule.Match))
-		if match == "" {
-			continue
-		}
-		score := 0
-		if strings.Contains(prompt, match) {
-			score = len(match) + 10
-		}
-		if score > bestScore {
-			bestScore = score
-			bestIndex = i
-		}
-	}
-	selected := rules[bestIndex]
-	return &selected
 }

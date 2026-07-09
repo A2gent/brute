@@ -118,6 +118,14 @@ func TestHandleSessionEventsReplaysSnapshotAndPublishedEvents(t *testing.T) {
 	}
 	sess.AddUserMessage("hello")
 	sess.SetStatus(session.StatusRunning)
+	setSessionRoutedProviderAndModel(
+		sess,
+		config.ProviderAutoRouter,
+		config.ProviderCursor,
+		"composer-2.5",
+		"coding, mid complexity",
+		"The primary action is editing source code.",
+	)
 	if err := sessionManager.Save(sess); err != nil {
 		t.Fatalf("failed to save session: %v", err)
 	}
@@ -138,6 +146,16 @@ func TestHandleSessionEventsReplaysSnapshotAndPublishedEvents(t *testing.T) {
 
 	if !recorder.waitFor("event: session_snapshot", time.Second) {
 		t.Fatalf("timed out waiting for snapshot, body: %s", recorder.String())
+	}
+	for _, expected := range []string{
+		`"routed_provider":"cursor"`,
+		`"routed_model":"composer-2.5"`,
+		`"routed_rule":"coding, mid complexity"`,
+		`"routed_reason":"The primary action is editing source code."`,
+	} {
+		if !strings.Contains(recorder.String(), expected) {
+			t.Fatalf("snapshot is missing %s, body: %s", expected, recorder.String())
+		}
 	}
 	if got := recorder.Header().Get("X-Accel-Buffering"); got != "no" {
 		t.Fatalf("X-Accel-Buffering = %q, want no", got)

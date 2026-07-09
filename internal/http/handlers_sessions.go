@@ -309,12 +309,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	providerType := config.NormalizeProviderRef(req.Provider)
 	if providerType == "" {
-		autoCfg := s.config.Providers[string(config.ProviderAutoRouter)]
-		if s.autoRouterConfigured(autoCfg) {
-			providerType = string(config.ProviderAutoRouter)
-		} else {
-			providerType = config.NormalizeProviderRef(s.config.ActiveProvider)
-		}
+		providerType = s.defaultSessionProviderRef()
 	}
 	model := s.resolveCreateSessionModel(providerType, req.Model)
 	if req.LinkType != "" {

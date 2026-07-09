@@ -224,7 +224,16 @@ func sessionRoutedProviderAndModel(sess *session.Session) (string, string) {
 	return provider, model
 }
 
-func setSessionRoutedProviderAndModel(sess *session.Session, requestedProvider config.ProviderType, routedProvider config.ProviderType, routedModel string) bool {
+func sessionRoutingRuleAndReason(sess *session.Session) (string, string) {
+	if sess == nil || sess.Metadata == nil {
+		return "", ""
+	}
+	rule, _ := sess.Metadata["routed_rule"].(string)
+	reason, _ := sess.Metadata["routed_reason"].(string)
+	return strings.TrimSpace(rule), strings.TrimSpace(reason)
+}
+
+func setSessionRoutedProviderAndModel(sess *session.Session, requestedProvider config.ProviderType, routedProvider config.ProviderType, routedModel string, routedRule string, routedReason string) bool {
 	if sess == nil {
 		return false
 	}
@@ -234,22 +243,24 @@ func setSessionRoutedProviderAndModel(sess *session.Session, requestedProvider c
 
 	changed := false
 	if requestedProvider != config.ProviderAutoRouter {
-		if _, ok := sess.Metadata["routed_provider"]; ok {
-			delete(sess.Metadata, "routed_provider")
-			changed = true
-		}
-		if _, ok := sess.Metadata["routed_model"]; ok {
-			delete(sess.Metadata, "routed_model")
-			changed = true
+		for _, key := range []string{"routed_provider", "routed_model", "routed_rule", "routed_reason"} {
+			if _, ok := sess.Metadata[key]; ok {
+				delete(sess.Metadata, key)
+				changed = true
+			}
 		}
 		return changed
 	}
 
 	nextProvider := strings.TrimSpace(string(routedProvider))
 	nextModel := strings.TrimSpace(routedModel)
+	nextRule := strings.TrimSpace(routedRule)
+	nextReason := strings.TrimSpace(routedReason)
 
 	currentProvider, _ := sess.Metadata["routed_provider"].(string)
 	currentModel, _ := sess.Metadata["routed_model"].(string)
+	currentRule, _ := sess.Metadata["routed_rule"].(string)
+	currentReason, _ := sess.Metadata["routed_reason"].(string)
 
 	if strings.TrimSpace(currentProvider) != nextProvider {
 		if nextProvider == "" {
@@ -265,6 +276,24 @@ func setSessionRoutedProviderAndModel(sess *session.Session, requestedProvider c
 			delete(sess.Metadata, "routed_model")
 		} else {
 			sess.Metadata["routed_model"] = nextModel
+		}
+		changed = true
+	}
+
+	if strings.TrimSpace(currentRule) != nextRule {
+		if nextRule == "" {
+			delete(sess.Metadata, "routed_rule")
+		} else {
+			sess.Metadata["routed_rule"] = nextRule
+		}
+		changed = true
+	}
+
+	if strings.TrimSpace(currentReason) != nextReason {
+		if nextReason == "" {
+			delete(sess.Metadata, "routed_reason")
+		} else {
+			sess.Metadata["routed_reason"] = nextReason
 		}
 		changed = true
 	}

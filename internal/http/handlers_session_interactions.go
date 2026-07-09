@@ -173,10 +173,13 @@ func (s *Server) resumeSessionAfterQuestionAnswer(sessionID string, userAnswer s
 			logging.Warn("Provider resolution failed while resuming question answer: session=%s error=%v", sessionID, err)
 			return
 		}
-		if setSessionRoutedProviderAndModel(sess, providerType, target.ProviderType, target.Model) {
+		if setSessionRoutedProviderAndModel(sess, providerType, target.ProviderType, target.Model, target.RoutingRule, target.RoutingReason) {
 			if err := s.sessionManager.Save(sess); err != nil {
 				logging.Warn("Failed to persist routed metadata while resuming session: %v", err)
 			}
+		}
+		if event := routerDecisionStreamEvent(providerType, target); event != nil {
+			s.publishSessionEvent(sess.ID, *event)
 		}
 
 		agentConfig := agent.Config{

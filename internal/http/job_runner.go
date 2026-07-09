@@ -93,6 +93,11 @@ func (s *Server) calculateNextRun(cronExpr string, after time.Time) (time.Time, 
 
 // executeJob runs a job and returns the execution record
 func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*storage.JobExecution, error) {
+	return s.ExecuteJob(ctx, job)
+}
+
+// ExecuteJob runs a recurring job using the same workflow/agent routing as chat sessions.
+func (s *Server) ExecuteJob(ctx context.Context, job *storage.RecurringJob) (*storage.JobExecution, error) {
 	now := time.Now()
 
 	exec := &storage.JobExecution{
@@ -106,7 +111,7 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 		return nil, fmt.Errorf("failed to create execution record: %w", err)
 	}
 
-	sess, err := s.sessionManager.CreateWithJob("job-runner", job.ID)
+	sess, err := s.sessionManager.CreateWithJob("build", job.ID)
 	if err != nil {
 		exec.Status = "failed"
 		exec.Error = "Failed to create session: " + err.Error()
@@ -119,19 +124,16 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 		logging.Warn("Failed to assign recurring job project for session %s: %v", sess.ID, assignErr)
 	}
 
+	jobs.ApplyRunConfigToSession(sess, job)
+	if err := s.sessionManager.Save(sess); err != nil {
+		logging.Warn("Failed to persist job session run config: %v", err)
+	}
+	_ = s.ensureSessionSystemPromptSnapshot(sess)
+
 	exec.SessionID = sess.ID
 	if err := s.store.SaveJobExecution(exec); err != nil {
 		logging.Error("Failed to link execution record to session: %v", err)
 	}
-
-	providerType := s.resolveJobProviderType(job)
-	model := s.resolveModelForProvider(providerType)
-	sess.Metadata["provider"] = string(providerType)
-	sess.Metadata["model"] = model
-	if err := s.sessionManager.Save(sess); err != nil {
-		logging.Warn("Failed to persist job session provider metadata: %v", err)
-	}
-	_ = s.ensureSessionSystemPromptSnapshot(sess)
 
 	effectiveTaskPrompt, resolveErr := jobs.ResolveTaskPrompt(job, s.resolveSessionWorkDir(sess))
 	if resolveErr != nil {
@@ -143,45 +145,25 @@ func (s *Server) executeJob(ctx context.Context, job *storage.RecurringJob) (*st
 		logging.Warn("Failed to persist job session prompt: %v", err)
 	}
 
-	target, clientErr := s.resolveExecutionTarget(ctx, providerType, model, effectiveTaskPrompt, sess)
-	if clientErr != nil {
-		s.failJobExecution(exec, sess, "Failed to initialize provider: "+clientErr.Error())
+	result, runErr := s.runSessionWithoutStreaming(ctx, sess, effectiveTaskPrompt)
+	if finalizeErr := s.finalizeSessionRunWithoutStreaming(ctx, sess, result, runErr); finalizeErr != nil && !isCancellationError(finalizeErr) {
+		s.failJobExecution(exec, sess, finalizeErr.Error())
 		return exec, nil
 	}
-	if setSessionRoutedProviderAndModel(sess, providerType, target.ProviderType, target.Model) {
-		if err := s.sessionManager.Save(sess); err != nil {
-			logging.Warn("Failed to persist job session routed target metadata: %v", err)
-		}
-	}
-
-	agentConfig := agent.Config{
-		Name:                "job-runner",
-		Provider:            string(target.ProviderType),
-		Model:               target.Model,
-		SystemPrompt:        s.buildSystemPromptForSession(sess),
-		MaxSteps:            s.config.MaxSteps,
-		Temperature:         s.config.Temperature,
-		ContextWindow:       target.ContextWindow,
-		UsePreviousResponse: target.StatefulResponses,
-	}
-	ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
-	output, _, err := ag.Run(ctx, sess, effectiveTaskPrompt)
 
 	finishedAt := time.Now()
 	exec.FinishedAt = &finishedAt
-
-	if err != nil {
+	if runErr != nil {
 		exec.Status = "failed"
-		exec.Error = err.Error()
-		if sess.Status == session.StatusRunning {
-			sess.SetStatus(session.StatusFailed)
-			if err := s.sessionManager.Save(sess); err != nil {
-				logging.Warn("Failed to mark job session failed: %v", err)
-			}
-		}
+		exec.Error = runErr.Error()
 	} else {
 		exec.Status = "success"
-		exec.Output = output
+		output := strings.TrimSpace(result.Content)
+		if len(output) > 10000 {
+			exec.Output = output[:10000] + "... (truncated)"
+		} else {
+			exec.Output = output
+		}
 	}
 
 	if err := s.store.SaveJobExecution(exec); err != nil {

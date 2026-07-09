@@ -172,6 +172,11 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 	// Start scheduler for recurring jobs
 	jobScheduler := scheduler.NewScheduler(store, sessionManager, llmClient, toolManager, cfg)
 	jobScheduler.SetToolManagerForSessionResolver(server.ToolManagerForSession)
+	jobScheduler.SetJobExecutor(func(ctx context.Context, job *storage.RecurringJob) {
+		if _, err := server.ExecuteJob(ctx, job); err != nil {
+			logging.Error("Scheduled job %s failed: %v", job.ID, err)
+		}
+	})
 	jobScheduler.Start(ctx)
 	defer jobScheduler.Stop()
 
@@ -325,6 +330,11 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// Start scheduler for recurring jobs
 	jobScheduler := scheduler.NewScheduler(store, sessionManager, llmClient, toolManager, cfg)
 	jobScheduler.SetToolManagerForSessionResolver(server.ToolManagerForSession)
+	jobScheduler.SetJobExecutor(func(ctx context.Context, job *storage.RecurringJob) {
+		if _, err := server.ExecuteJob(ctx, job); err != nil {
+			logging.Error("Scheduled job %s failed: %v", job.ID, err)
+		}
+	})
 	jobScheduler.Start(ctx)
 	defer jobScheduler.Stop()
 

@@ -25,6 +25,7 @@ type Scheduler struct {
 	llmClient                     llm.Client
 	toolManager                   *tools.Manager
 	toolManagerForSessionResolver func(*session.Session) *tools.Manager
+	jobExecutor                   func(context.Context, *storage.RecurringJob)
 	config                        *config.Config
 
 	ticker      *time.Ticker
@@ -58,6 +59,14 @@ func (s *Scheduler) SetToolManagerForSessionResolver(resolve func(*session.Sessi
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.toolManagerForSessionResolver = resolve
+}
+
+// SetJobExecutor routes scheduled loop runs through the HTTP server's job runner
+// so workflow/agent configuration matches manual "Run Now" executions.
+func (s *Scheduler) SetJobExecutor(executor func(context.Context, *storage.RecurringJob)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.jobExecutor = executor
 }
 
 func (s *Scheduler) toolManagerForSession(sess *session.Session) *tools.Manager {
@@ -166,6 +175,14 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 	logging.Info("Executing job: %s (%s)", job.Name, job.ID)
 	now := time.Now()
 	defer s.rescheduleJobAfterAttempt(job, now)
+
+	s.mu.Lock()
+	executor := s.jobExecutor
+	s.mu.Unlock()
+	if executor != nil {
+		executor(ctx, job)
+		return
+	}
 
 	// Create execution record
 	exec := &storage.JobExecution{

@@ -53,7 +53,17 @@ type RecurringJob struct {
 	TaskPrompt       string // The actual task instructions for the agent
 	TaskPromptSource string // "text" | "file"
 	TaskPromptFile   string // Absolute path when TaskPromptSource is "file"
+	RunTarget        string // "workflow" | "agent"
+	WorkflowID       string
+	WorkflowName     string
+	WorkflowDefJSON  string // Serialized workflow_definition payload
+	LaunchAgentID    string
+	LaunchAgentName  string
+	LaunchAgentRun   string // host | docker
+	UnifiedAgentID   string
+	DockerAgentID    string
 	LLMProvider      string // Optional provider override for this job
+	LLMModel         string // Optional model override for host-agent runs
 	Enabled          bool
 	LastRunAt        *time.Time
 	NextRunAt        *time.Time

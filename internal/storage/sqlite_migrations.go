@@ -261,6 +261,16 @@ func (s *SQLiteStore) migrate() error {
 		`ALTER TABLE agent_definitions ADD COLUMN project_id TEXT`,
 		`CREATE INDEX IF NOT EXISTS idx_agent_definitions_runtime ON agent_definitions(runtime)`,
 		`CREATE INDEX IF NOT EXISTS idx_agent_definitions_project_id ON agent_definitions(project_id)`,
+		`ALTER TABLE recurring_jobs ADD COLUMN run_target TEXT NOT NULL DEFAULT 'workflow'`,
+		`ALTER TABLE recurring_jobs ADD COLUMN workflow_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE recurring_jobs ADD COLUMN workflow_name TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE recurring_jobs ADD COLUMN workflow_definition TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE recurring_jobs ADD COLUMN launch_agent_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE recurring_jobs ADD COLUMN launch_agent_name TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE recurring_jobs ADD COLUMN launch_agent_runtime TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE recurring_jobs ADD COLUMN unified_agent_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE recurring_jobs ADD COLUMN docker_agent_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE recurring_jobs ADD COLUMN llm_model TEXT NOT NULL DEFAULT ''`,
 	}
 
 	for _, m := range migrations {

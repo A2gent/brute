@@ -8,45 +8,27 @@ import (
 
 // --- Recurring Jobs CRUD ---
 
-// SaveJob saves a recurring job to the database
-func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
-	_, err := s.db.Exec(`
-		INSERT INTO recurring_jobs (id, project_id, name, schedule_human, schedule_cron, task_prompt, task_prompt_source, task_prompt_file, llm_provider, enabled, last_run_at, next_run_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			project_id = excluded.project_id,
-			name = excluded.name,
-			schedule_human = excluded.schedule_human,
-			schedule_cron = excluded.schedule_cron,
-			task_prompt = excluded.task_prompt,
-			task_prompt_source = excluded.task_prompt_source,
-			task_prompt_file = excluded.task_prompt_file,
-			llm_provider = excluded.llm_provider,
-			enabled = excluded.enabled,
-			last_run_at = excluded.last_run_at,
-			next_run_at = excluded.next_run_at,
-			updated_at = excluded.updated_at
-	`, job.ID, nullableString(job.ProjectID), job.Name, job.ScheduleHuman, job.ScheduleCron, job.TaskPrompt, job.TaskPromptSource, job.TaskPromptFile, job.LLMProvider, job.Enabled, job.LastRunAt, job.NextRunAt, job.CreatedAt, job.UpdatedAt)
-	if err != nil {
-		return fmt.Errorf("failed to save job: %w", err)
-	}
-	return nil
-}
+const recurringJobSelectColumns = `
+	id, project_id, name, schedule_human, schedule_cron, task_prompt, task_prompt_source, task_prompt_file,
+	run_target, workflow_id, workflow_name, workflow_definition,
+	launch_agent_id, launch_agent_name, launch_agent_runtime, unified_agent_id, docker_agent_id,
+	llm_provider, llm_model, enabled, last_run_at, next_run_at, created_at, updated_at
+`
 
-// GetJob retrieves a recurring job by ID
-func (s *SQLiteStore) GetJob(id string) (*RecurringJob, error) {
+func scanRecurringJob(
+	scan func(dest ...interface{}) error,
+) (*RecurringJob, error) {
 	var job RecurringJob
 	var projectID sql.NullString
 	var lastRunAt, nextRunAt sql.NullTime
 	var enabled int
 
-	err := s.db.QueryRow(`
-		SELECT id, project_id, name, schedule_human, schedule_cron, task_prompt, task_prompt_source, task_prompt_file, llm_provider, enabled, last_run_at, next_run_at, created_at, updated_at
-		FROM recurring_jobs WHERE id = ?
-	`, id).Scan(&job.ID, &projectID, &job.Name, &job.ScheduleHuman, &job.ScheduleCron, &job.TaskPrompt, &job.TaskPromptSource, &job.TaskPromptFile, &job.LLMProvider, &enabled, &lastRunAt, &nextRunAt, &job.CreatedAt, &job.UpdatedAt)
-	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("job not found: %s", id)
-	}
+	err := scan(
+		&job.ID, &projectID, &job.Name, &job.ScheduleHuman, &job.ScheduleCron, &job.TaskPrompt, &job.TaskPromptSource, &job.TaskPromptFile,
+		&job.RunTarget, &job.WorkflowID, &job.WorkflowName, &job.WorkflowDefJSON,
+		&job.LaunchAgentID, &job.LaunchAgentName, &job.LaunchAgentRun, &job.UnifiedAgentID, &job.DockerAgentID,
+		&job.LLMProvider, &job.LLMModel, &enabled, &lastRunAt, &nextRunAt, &job.CreatedAt, &job.UpdatedAt,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -59,14 +41,67 @@ func (s *SQLiteStore) GetJob(id string) (*RecurringJob, error) {
 	if nextRunAt.Valid {
 		job.NextRunAt = &nextRunAt.Time
 	}
-
 	return &job, nil
+}
+
+// SaveJob saves a recurring job to the database
+func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
+	_, err := s.db.Exec(`
+		INSERT INTO recurring_jobs (`+recurringJobSelectColumns+`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			project_id = excluded.project_id,
+			name = excluded.name,
+			schedule_human = excluded.schedule_human,
+			schedule_cron = excluded.schedule_cron,
+			task_prompt = excluded.task_prompt,
+			task_prompt_source = excluded.task_prompt_source,
+			task_prompt_file = excluded.task_prompt_file,
+			run_target = excluded.run_target,
+			workflow_id = excluded.workflow_id,
+			workflow_name = excluded.workflow_name,
+			workflow_definition = excluded.workflow_definition,
+			launch_agent_id = excluded.launch_agent_id,
+			launch_agent_name = excluded.launch_agent_name,
+			launch_agent_runtime = excluded.launch_agent_runtime,
+			unified_agent_id = excluded.unified_agent_id,
+			docker_agent_id = excluded.docker_agent_id,
+			llm_provider = excluded.llm_provider,
+			llm_model = excluded.llm_model,
+			enabled = excluded.enabled,
+			last_run_at = excluded.last_run_at,
+			next_run_at = excluded.next_run_at,
+			updated_at = excluded.updated_at
+	`, job.ID, nullableString(job.ProjectID), job.Name, job.ScheduleHuman, job.ScheduleCron, job.TaskPrompt, job.TaskPromptSource, job.TaskPromptFile,
+		job.RunTarget, job.WorkflowID, job.WorkflowName, job.WorkflowDefJSON,
+		job.LaunchAgentID, job.LaunchAgentName, job.LaunchAgentRun, job.UnifiedAgentID, job.DockerAgentID,
+		job.LLMProvider, job.LLMModel, job.Enabled, job.LastRunAt, job.NextRunAt, job.CreatedAt, job.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("failed to save job: %w", err)
+	}
+	return nil
+}
+
+// GetJob retrieves a recurring job by ID
+func (s *SQLiteStore) GetJob(id string) (*RecurringJob, error) {
+	row := s.db.QueryRow(`
+		SELECT `+recurringJobSelectColumns+`
+		FROM recurring_jobs WHERE id = ?
+	`, id)
+	job, err := scanRecurringJob(row.Scan)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("job not found: %s", id)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return job, nil
 }
 
 // ListJobs lists all recurring jobs
 func (s *SQLiteStore) ListJobs() ([]*RecurringJob, error) {
 	rows, err := s.db.Query(`
-		SELECT id, project_id, name, schedule_human, schedule_cron, task_prompt, task_prompt_source, task_prompt_file, llm_provider, enabled, last_run_at, next_run_at, created_at, updated_at
+		SELECT ` + recurringJobSelectColumns + `
 		FROM recurring_jobs ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -76,26 +111,11 @@ func (s *SQLiteStore) ListJobs() ([]*RecurringJob, error) {
 
 	var jobs []*RecurringJob
 	for rows.Next() {
-		var job RecurringJob
-		var projectID sql.NullString
-		var lastRunAt, nextRunAt sql.NullTime
-		var enabled int
-
-		err := rows.Scan(&job.ID, &projectID, &job.Name, &job.ScheduleHuman, &job.ScheduleCron, &job.TaskPrompt, &job.TaskPromptSource, &job.TaskPromptFile, &job.LLMProvider, &enabled, &lastRunAt, &nextRunAt, &job.CreatedAt, &job.UpdatedAt)
+		job, err := scanRecurringJob(rows.Scan)
 		if err != nil {
 			return nil, err
 		}
-
-		job.Enabled = enabled == 1
-		setNullableString(&job.ProjectID, projectID)
-		if lastRunAt.Valid {
-			job.LastRunAt = &lastRunAt.Time
-		}
-		if nextRunAt.Valid {
-			job.NextRunAt = &nextRunAt.Time
-		}
-
-		jobs = append(jobs, &job)
+		jobs = append(jobs, job)
 	}
 
 	return jobs, nil
@@ -110,7 +130,7 @@ func (s *SQLiteStore) DeleteJob(id string) error {
 // GetDueJobs returns jobs that are due to run (next_run_at <= now and enabled)
 func (s *SQLiteStore) GetDueJobs(now time.Time) ([]*RecurringJob, error) {
 	rows, err := s.db.Query(`
-		SELECT id, project_id, name, schedule_human, schedule_cron, task_prompt, task_prompt_source, task_prompt_file, llm_provider, enabled, last_run_at, next_run_at, created_at, updated_at
+		SELECT `+recurringJobSelectColumns+`
 		FROM recurring_jobs 
 		WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?
 		ORDER BY next_run_at ASC
@@ -122,26 +142,11 @@ func (s *SQLiteStore) GetDueJobs(now time.Time) ([]*RecurringJob, error) {
 
 	var jobs []*RecurringJob
 	for rows.Next() {
-		var job RecurringJob
-		var projectID sql.NullString
-		var lastRunAt, nextRunAt sql.NullTime
-		var enabled int
-
-		err := rows.Scan(&job.ID, &projectID, &job.Name, &job.ScheduleHuman, &job.ScheduleCron, &job.TaskPrompt, &job.TaskPromptSource, &job.TaskPromptFile, &job.LLMProvider, &enabled, &lastRunAt, &nextRunAt, &job.CreatedAt, &job.UpdatedAt)
+		job, err := scanRecurringJob(rows.Scan)
 		if err != nil {
 			return nil, err
 		}
-
-		job.Enabled = enabled == 1
-		setNullableString(&job.ProjectID, projectID)
-		if lastRunAt.Valid {
-			job.LastRunAt = &lastRunAt.Time
-		}
-		if nextRunAt.Valid {
-			job.NextRunAt = &nextRunAt.Time
-		}
-
-		jobs = append(jobs, &job)
+		jobs = append(jobs, job)
 	}
 
 	return jobs, nil

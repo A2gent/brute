@@ -121,6 +121,7 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
+	applyCreateJobRunConfig(job, req)
 
 	nextRun, err := s.calculateNextRun(cronExpr, now)
 	if err == nil {
@@ -213,6 +214,7 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 	job.TaskPromptSource = taskPromptSource
 	job.TaskPromptFile = strings.TrimSpace(taskPromptFile)
 	job.TaskPrompt = strings.TrimSpace(taskPrompt)
+	applyUpdateJobRunConfig(job, req)
 
 	if req.ScheduleText != "" && req.ScheduleText != job.ScheduleHuman {
 		cronExpr, err := s.parseScheduleToCron(r.Context(), req.ScheduleText)
@@ -351,20 +353,30 @@ func (s *Server) jobToResponse(job *storage.RecurringJob) JobResponse {
 		projectID = strings.TrimSpace(*job.ProjectID)
 	}
 	return JobResponse{
-		ID:               job.ID,
-		ProjectID:        projectID,
-		Name:             job.Name,
-		ScheduleHuman:    job.ScheduleHuman,
-		ScheduleCron:     job.ScheduleCron,
-		TaskPrompt:       job.TaskPrompt,
-		TaskPromptSource: jobs.NormalizeTaskPromptSource(job.TaskPromptSource),
-		TaskPromptFile:   strings.TrimSpace(job.TaskPromptFile),
-		LLMProvider:      job.LLMProvider,
-		Enabled:          job.Enabled,
-		LastRunAt:        job.LastRunAt,
-		NextRunAt:        job.NextRunAt,
-		CreatedAt:        job.CreatedAt,
-		UpdatedAt:        job.UpdatedAt,
+		ID:                 job.ID,
+		ProjectID:          projectID,
+		Name:               job.Name,
+		ScheduleHuman:      job.ScheduleHuman,
+		ScheduleCron:       job.ScheduleCron,
+		TaskPrompt:         job.TaskPrompt,
+		TaskPromptSource:   jobs.NormalizeTaskPromptSource(job.TaskPromptSource),
+		TaskPromptFile:     strings.TrimSpace(job.TaskPromptFile),
+		RunTarget:          jobs.NormalizeRunTarget(job.RunTarget),
+		WorkflowID:         strings.TrimSpace(job.WorkflowID),
+		WorkflowName:       strings.TrimSpace(job.WorkflowName),
+		WorkflowDefinition: workflowDefinitionFromJSON(job.WorkflowDefJSON),
+		LaunchAgentID:      strings.TrimSpace(job.LaunchAgentID),
+		LaunchAgentName:    strings.TrimSpace(job.LaunchAgentName),
+		LaunchAgentRuntime: strings.TrimSpace(job.LaunchAgentRun),
+		UnifiedAgentID:     strings.TrimSpace(job.UnifiedAgentID),
+		DockerAgentID:      strings.TrimSpace(job.DockerAgentID),
+		LLMProvider:        job.LLMProvider,
+		LLMModel:           strings.TrimSpace(job.LLMModel),
+		Enabled:            job.Enabled,
+		LastRunAt:          job.LastRunAt,
+		NextRunAt:          job.NextRunAt,
+		CreatedAt:          job.CreatedAt,
+		UpdatedAt:          job.UpdatedAt,
 	}
 }
 

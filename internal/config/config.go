@@ -203,6 +203,20 @@ func SupportedProviders() []ProviderDefinition {
 	}
 }
 
+// TestableProviders returns providers that support direct connectivity tests.
+// Fallback chains and the auto router are aggregates, not single LLM endpoints.
+func TestableProviders() []ProviderDefinition {
+	all := SupportedProviders()
+	out := make([]ProviderDefinition, 0, len(all))
+	for _, def := range all {
+		if def.Type == ProviderFallback || def.Type == ProviderAutoRouter {
+			continue
+		}
+		out = append(out, def)
+	}
+	return out
+}
+
 // GetProviderDefinition returns the definition for a provider type
 func GetProviderDefinition(ptype ProviderType) *ProviderDefinition {
 	for _, p := range SupportedProviders() {

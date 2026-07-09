@@ -2,18 +2,13 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"sort"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/codexauth"
@@ -36,7 +31,6 @@ import (
 	"github.com/A2gent/brute/internal/tools/integrationtools"
 	"github.com/A2gent/brute/internal/tui"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 )
 
@@ -98,14 +92,7 @@ Starts both the HTTP API server and the TUI interface simultaneously.`,
 	logsCmd.Flags().IntP("lines", "n", 50, "Number of lines to show")
 	rootCmd.AddCommand(logsCmd)
 
-	testProvidersCmd := &cobra.Command{
-		Use:   "test-providers",
-		Short: "List supported LLM providers and test connectivity via the API server",
-		RunE:  testProviders,
-	}
-	testProvidersCmd.Flags().IntVarP(&portFlag, "port", "p", 5445, "HTTP API server port")
-	testProvidersCmd.Flags().Bool("list-only", false, "Only list supported providers without running connectivity tests")
-	rootCmd.AddCommand(testProvidersCmd)
+	registerTestProvidersCmd(rootCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -115,10 +102,7 @@ Starts both the HTTP API server and the TUI interface simultaneously.`,
 
 func runAgentWithServer(cmd *cobra.Command, args []string) error {
 	// Load .env files from common locations (ignore errors if not found)
-	homeDir, _ := os.UserHomeDir()
-	godotenv.Load(".env")                                  // Current directory
-	godotenv.Load(filepath.Join(homeDir, ".env"))          // Home directory
-	godotenv.Load(filepath.Join(homeDir, "git/mind/.env")) // Common project location
+	loadDotEnv()
 
 	// Load configuration
 	cfg, err := config.Load()
@@ -273,11 +257,7 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 }
 
 func runServer(cmd *cobra.Command, args []string) error {
-	// Load .env files from common locations (ignore errors if not found)
-	homeDir, _ := os.UserHomeDir()
-	godotenv.Load(".env")                                  // Current directory
-	godotenv.Load(filepath.Join(homeDir, ".env"))          // Home directory
-	godotenv.Load(filepath.Join(homeDir, "git/mind/.env")) // Common project location
+	loadDotEnv()
 
 	// Load configuration
 	cfg, err := config.Load()
@@ -446,128 +426,6 @@ func execCommand(name string, args ...string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
-}
-
-type providerTestAPIResult struct {
-	Provider   string `json:"provider"`
-	Success    bool   `json:"success"`
-	Message    string `json:"message"`
-	DurationMS int64  `json:"duration_ms"`
-}
-
-type providerTestAPIResponse struct {
-	Results []providerTestAPIResult `json:"results"`
-}
-
-func testProviders(cmd *cobra.Command, args []string) error {
-	homeDir, _ := os.UserHomeDir()
-	godotenv.Load(".env")
-	godotenv.Load(filepath.Join(homeDir, ".env"))
-
-	fmt.Println("Supported providers (from code):")
-	codeTypes := make(map[string]struct{})
-	for _, def := range config.SupportedProviders() {
-		if def.Type == config.ProviderFallback || def.Type == config.ProviderAutoRouter {
-			continue
-		}
-		codeTypes[string(def.Type)] = struct{}{}
-		fmt.Printf("  %-16s %s\n", def.Type, def.DisplayName)
-	}
-
-	listOnly, _ := cmd.Flags().GetBool("list-only")
-	if listOnly {
-		return nil
-	}
-
-	port, _ := cmd.Flags().GetInt("port")
-	baseURL := fmt.Sprintf("http://localhost:%d", port)
-	client := &http.Client{Timeout: 2 * time.Minute}
-
-	listResp, err := client.Get(baseURL + "/providers")
-	if err != nil {
-		return fmt.Errorf("failed to reach API server at %s: %w (start with: brute server)", baseURL, err)
-	}
-	defer listResp.Body.Close()
-	if listResp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(listResp.Body)
-		return fmt.Errorf("GET /providers failed (%d): %s", listResp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	var serverProviders []struct {
-		Type        string `json:"type"`
-		DisplayName string `json:"display_name"`
-		Configured  bool   `json:"configured"`
-	}
-	if err := json.NewDecoder(listResp.Body).Decode(&serverProviders); err != nil {
-		return fmt.Errorf("failed to decode /providers response: %w", err)
-	}
-
-	serverTypes := make(map[string]struct{}, len(serverProviders))
-	for _, p := range serverProviders {
-		serverTypes[p.Type] = struct{}{}
-	}
-	var missingOnServer []string
-	for t := range codeTypes {
-		if _, ok := serverTypes[t]; !ok {
-			missingOnServer = append(missingOnServer, t)
-		}
-	}
-	if len(missingOnServer) > 0 {
-		sort.Strings(missingOnServer)
-		fmt.Fprintf(os.Stderr, "\nWarning: running API server is missing providers present in code: %s\n", strings.Join(missingOnServer, ", "))
-		fmt.Fprintln(os.Stderr, "Rebuild and restart the server to pick up new providers (e.g. go build ./cmd/aagent && brute server).")
-	}
-
-	fmt.Printf("\nProviders exposed by API server (%s):\n", baseURL)
-	for _, p := range serverProviders {
-		status := "not configured"
-		if p.Configured {
-			status = "configured"
-		}
-		fmt.Printf("  %-16s %s (%s)\n", p.Type, p.DisplayName, status)
-	}
-
-	fmt.Println("\nRunning connectivity tests (POST /providers/test-all)...")
-	testResp, err := client.Post(baseURL+"/providers/test-all", "application/json", nil)
-	if err != nil {
-		return fmt.Errorf("failed to run provider tests: %w", err)
-	}
-	defer testResp.Body.Close()
-	body, err := io.ReadAll(testResp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read test response: %w", err)
-	}
-	if testResp.StatusCode != http.StatusOK {
-		return fmt.Errorf("POST /providers/test-all failed (%d): %s", testResp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	var payload providerTestAPIResponse
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return fmt.Errorf("failed to decode test response: %w", err)
-	}
-
-	fmt.Println("\nTest results:")
-	passed := 0
-	failed := 0
-	for _, result := range payload.Results {
-		status := "FAIL"
-		if result.Success {
-			status = "OK"
-			passed++
-		} else {
-			failed++
-		}
-		message := strings.TrimSpace(result.Message)
-		if len(message) > 120 {
-			message = message[:117] + "..."
-		}
-		fmt.Printf("  %-16s %-4s %4dms  %s\n", result.Provider, status, result.DurationMS, message)
-	}
-	fmt.Printf("\nSummary: %d passed, %d failed, %d total\n", passed, failed, len(payload.Results))
-	if failed > 0 {
-		return fmt.Errorf("%d provider test(s) failed", failed)
-	}
-	return nil
 }
 
 func listSessions(cmd *cobra.Command, args []string) error {

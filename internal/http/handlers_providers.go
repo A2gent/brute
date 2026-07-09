@@ -711,17 +711,14 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleTestAllProviders tests all configured providers concurrently
-func (s *Server) handleTestAllProviders(w http.ResponseWriter, r *http.Request) {
-	definitions := config.SupportedProviders()
+// ProviderConfiguredForUse reports whether the provider has enough configuration for a real request.
+func (s *Server) ProviderConfiguredForUse(providerType config.ProviderType) bool {
+	return s.providerConfiguredForUse(providerType)
+}
 
-	// Filter to only testable providers (not fallback chains or auto router)
-	var testableProviders []config.ProviderDefinition
-	for _, def := range definitions {
-		if def.Type != config.ProviderFallback && def.Type != config.ProviderAutoRouter {
-			testableProviders = append(testableProviders, def)
-		}
-	}
+// TestAllProviders runs connectivity tests for every testable provider concurrently.
+func (s *Server) TestAllProviders(ctx context.Context) []ProviderTestResult {
+	testableProviders := config.TestableProviders()
 
 	results := make([]ProviderTestResult, 0, len(testableProviders))
 	var mu sync.Mutex
@@ -758,7 +755,7 @@ func (s *Server) handleTestAllProviders(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 
-			ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+			ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 
 			req := &llm.ChatRequest{
@@ -802,6 +799,12 @@ func (s *Server) handleTestAllProviders(w http.ResponseWriter, r *http.Request) 
 
 	wg.Wait()
 
+	return results
+}
+
+// handleTestAllProviders tests all configured providers concurrently
+func (s *Server) handleTestAllProviders(w http.ResponseWriter, r *http.Request) {
+	results := s.TestAllProviders(r.Context())
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"results": results,

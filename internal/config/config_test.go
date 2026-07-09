@@ -58,6 +58,21 @@ func TestProviderRefHelpers(t *testing.T) {
 	}
 }
 
+func TestTestableProvidersExcludeAggregates(t *testing.T) {
+	t.Parallel()
+
+	for _, def := range TestableProviders() {
+		if def.Type == ProviderFallback || def.Type == ProviderAutoRouter {
+			t.Fatalf("TestableProviders includes aggregate provider %q", def.Type)
+		}
+	}
+
+	all := SupportedProviders()
+	if len(TestableProviders()) >= len(all) {
+		t.Fatalf("TestableProviders() should be smaller than SupportedProviders(); got %d vs %d", len(TestableProviders()), len(all))
+	}
+}
+
 func TestSupportedProviderDefinitionsAreUniqueAndDiscoverable(t *testing.T) {
 	t.Parallel()
 

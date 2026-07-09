@@ -257,7 +257,8 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Originator", "a2gent")
+	req.Header.Set("Originator", "codex_cli_rs")
+	req.Header.Set("User-agent", "codex_cli_rs/0.143.0")
 	accessToken := c.currentAccessToken()
 	if accessToken != "" {
 		req.Header.Set("Authorization", "Bearer "+accessToken)

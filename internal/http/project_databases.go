@@ -8,8 +8,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/A2gent/brute/internal/storage"
 	"github.com/A2gent/brute/internal/dbtool"
+	"github.com/A2gent/brute/internal/storage"
 )
 
 func (s *Server) handleListProjectDatabases(w http.ResponseWriter, r *http.Request) {

@@ -35,4 +35,3 @@ func TestMCPStdioFetchServer(t *testing.T) {
 		t.Fatalf("expected tools to be exposed, got %d\nlogs:\n%s", result.ToolCount, strings.Join(result.Logs, "\n"))
 	}
 }
-

@@ -54,7 +54,7 @@ func TestHandleBruteHTTPInternalEvent_ProxiesHealth(t *testing.T) {
 	server, _ := newBruteHTTPProxyTestServer(t)
 	payload, err := json.Marshal(bruteHTTPProxyEnvelope{
 		Metadata: map[string]interface{}{"internal_event": bruteHTTPInternalEvent},
-		HTTP: bruteHTTPProxyRequest{Method: http.MethodGet, Path: "/health"},
+		HTTP:     bruteHTTPProxyRequest{Method: http.MethodGet, Path: "/health"},
 	})
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
@@ -95,7 +95,7 @@ func TestHandleBruteHTTPInternalEvent_ProxiesSessions(t *testing.T) {
 
 	payload, err := json.Marshal(bruteHTTPProxyEnvelope{
 		Metadata: map[string]interface{}{"internal_event": bruteHTTPInternalEvent},
-		HTTP: bruteHTTPProxyRequest{Method: http.MethodGet, Path: "/sessions/"},
+		HTTP:     bruteHTTPProxyRequest{Method: http.MethodGet, Path: "/sessions/"},
 	})
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
@@ -121,7 +121,7 @@ func TestHandleBruteHTTPInternalEvent_RejectsUnsafePathAndHeaders(t *testing.T) 
 	server, _ := newBruteHTTPProxyTestServer(t)
 	badPathPayload, err := json.Marshal(bruteHTTPProxyEnvelope{
 		Metadata: map[string]interface{}{"internal_event": bruteHTTPInternalEvent},
-		HTTP: bruteHTTPProxyRequest{Method: http.MethodGet, Path: "../../sessions"},
+		HTTP:     bruteHTTPProxyRequest{Method: http.MethodGet, Path: "../../sessions"},
 	})
 	if err != nil {
 		t.Fatalf("marshal bad path payload: %v", err)

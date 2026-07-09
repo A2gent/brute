@@ -51,7 +51,7 @@ func (t *YoutubeTranscriptTool) Execute(ctx context.Context, params json.RawMess
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, fmt.Errorf("invalid parameters: %w", err)
 	}
-	
+
 	matches := ytRegex.FindStringSubmatch(args.URL)
 	if len(matches) < 2 {
 		return &tools.Result{Success: false, Error: "invalid youtube url"}, nil
@@ -110,12 +110,12 @@ func (t *YoutubeTranscriptTool) Execute(ctx context.Context, params json.RawMess
 		return nil, fmt.Errorf("failed to fetch transcript: %w", err)
 	}
 	defer resp2.Body.Close()
-	
+
 	body2, _ := io.ReadAll(resp2.Body)
-	
+
 	xmlRegex := regexp.MustCompile(`<[^>]*>`)
 	cleanText := xmlRegex.ReplaceAllString(string(body2), " ")
-	cleanText = strings.Join(strings.Fields(cleanText), " ") 
+	cleanText = strings.Join(strings.Fields(cleanText), " ")
 
 	return &tools.Result{
 		Success: true,

@@ -33,8 +33,8 @@ func TestInferTelegramChatIDForIntegration(t *testing.T) {
 	sessDM, _ := sm.Create("agent")
 	sessDM.Metadata = map[string]interface{}{
 		"integration_provider": "telegram",
-		"integration_id":   integrationID,
-		"telegram_chat_id": "dm-chat-id",
+		"integration_id":       integrationID,
+		"telegram_chat_id":     "dm-chat-id",
 	}
 	sessDM.UpdatedAt = time.Now().Add(-2 * time.Hour)
 	sm.Save(sessDM)
@@ -43,9 +43,9 @@ func TestInferTelegramChatIDForIntegration(t *testing.T) {
 	sessTopic, _ := sm.Create("agent")
 	sessTopic.Metadata = map[string]interface{}{
 		"integration_provider": "telegram",
-		"integration_id":     integrationID,
-		"telegram_chat_id":   "group-chat-id",
-		"telegram_thread_id": "42",
+		"integration_id":       integrationID,
+		"telegram_chat_id":     "group-chat-id",
+		"telegram_thread_id":   "42",
 	}
 	sessTopic.UpdatedAt = time.Now().Add(-1 * time.Hour)
 	sm.Save(sessTopic)

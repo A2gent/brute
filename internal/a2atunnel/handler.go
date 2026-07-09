@@ -32,7 +32,7 @@ type ToolManagerFactory func(sess *session.Session) *tools.Manager
 // InternalEventResult allows selected internal events to return a raw tunnel
 // payload instead of the default OutboundPayload envelope.
 type InternalEventResult struct {
-	Payload       []byte
+	Payload        []byte
 	ConversationID string
 }
 

@@ -6,10 +6,10 @@ func TestNormalizeScreenshotDisplayIndex(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		params   TakeScreenshotParams
-		want     int
-		wantErr  bool
+		name    string
+		params  TakeScreenshotParams
+		want    int
+		wantErr bool
 	}{
 		{
 			name:   "uses display alias",
@@ -59,4 +59,3 @@ func TestNormalizeScreenshotDisplayIndex(t *testing.T) {
 		})
 	}
 }
-

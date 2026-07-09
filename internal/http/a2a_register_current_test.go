@@ -43,7 +43,7 @@ func TestRegisterCurrentA2AAgentRegistersAndSavesIntegration(t *testing.T) {
 		t.Fatalf("NewSQLiteStore: %v", err)
 	}
 	if err := store.SaveSettings(map[string]string{
-		agentNameSettingKey:              "My Laptop Agent",
+		agentNameSettingKey:             "My Laptop Agent",
 		a2aRegistryOwnerEmailSettingKey: "owner@example.com",
 	}); err != nil {
 		t.Fatalf("SaveSettings: %v", err)

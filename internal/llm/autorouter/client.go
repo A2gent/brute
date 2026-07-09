@@ -242,12 +242,13 @@ func (c *Client) selectRoutingRuleViaLLM(ctx context.Context, userPrompt string,
 		return nil, "", err
 	}
 	if choice.Index < 1 || choice.Index > len(rules) {
-		return nil, "", fmt.Errorf("router returned out-of-range index: %d", choice.Index)
+		logging.Warn("Automatic router returned out-of-range index: %d. Falling back to default rule (index 1).", choice.Index)
+		choice.Reason = fmt.Sprintf("out-of-range index %d fallback", choice.Index)
+		choice.Index = 1
 	}
 	selected := rules[choice.Index-1]
 	return &selected, strings.TrimSpace(choice.Reason), nil
 }
-
 
 type routerChoice struct {
 	Index  int    `json:"index"`

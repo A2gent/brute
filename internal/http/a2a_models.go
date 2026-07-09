@@ -6,21 +6,21 @@ package http
 // AgentCard represents the A2A agent card that describes an agent's capabilities,
 // skills, and interaction requirements.
 type AgentCard struct {
-	Name                string                     `json:"name"`
-	Description         string                     `json:"description"`
-	SupportedInterfaces []AgentInterface           `json:"supportedInterfaces"`
-	Provider            *AgentProvider             `json:"provider,omitempty"`
-	Version             string                     `json:"version"`
-	DocumentationURL    string                     `json:"documentationUrl,omitempty"`
-	Capabilities        AgentCapabilities          `json:"capabilities"`
-	SecuritySchemes     map[string]SecurityScheme  `json:"securitySchemes,omitempty"`
-	Security            []SecurityRequirement      `json:"security,omitempty"`
-	DefaultInputModes   []string                   `json:"defaultInputModes"`
-	DefaultOutputModes  []string                   `json:"defaultOutputModes"`
-	Skills              []AgentSkill               `json:"skills"`
-	Tools               []AgentTool                `json:"tools,omitempty"`
-	Signatures          []AgentCardSignature       `json:"signatures,omitempty"`
-	IconURL             string                     `json:"iconUrl,omitempty"`
+	Name                string                    `json:"name"`
+	Description         string                    `json:"description"`
+	SupportedInterfaces []AgentInterface          `json:"supportedInterfaces"`
+	Provider            *AgentProvider            `json:"provider,omitempty"`
+	Version             string                    `json:"version"`
+	DocumentationURL    string                    `json:"documentationUrl,omitempty"`
+	Capabilities        AgentCapabilities         `json:"capabilities"`
+	SecuritySchemes     map[string]SecurityScheme `json:"securitySchemes,omitempty"`
+	Security            []SecurityRequirement     `json:"security,omitempty"`
+	DefaultInputModes   []string                  `json:"defaultInputModes"`
+	DefaultOutputModes  []string                  `json:"defaultOutputModes"`
+	Skills              []AgentSkill              `json:"skills"`
+	Tools               []AgentTool               `json:"tools,omitempty"`
+	Signatures          []AgentCardSignature      `json:"signatures,omitempty"`
+	IconURL             string                    `json:"iconUrl,omitempty"`
 }
 
 // AgentInterface declares a combination of a target URL, transport and protocol version.
@@ -71,7 +71,6 @@ type AgentTool struct {
 	Description string                 `json:"description"`
 	InputSchema map[string]interface{} `json:"input_schema,omitempty"`
 }
-
 
 // SecurityScheme defines a security scheme for authenticating with an agent.
 type SecurityScheme struct {

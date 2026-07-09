@@ -31,7 +31,7 @@ func TestHandleProjectDatabase(t *testing.T) {
 
 	var dbResp ProjectDatabaseResponse
 	json.NewDecoder(rr.Body).Decode(&dbResp)
-	
+
 	if dbResp.Name != "Test DB" || dbResp.Engine != "sqlite" {
 		t.Errorf("Unexpected db properties: %+v", dbResp)
 	}

@@ -382,10 +382,6 @@ func (s *Server) handleDeleteProjectFile(w http.ResponseWriter, r *http.Request)
 		s.errorResponse(w, http.StatusBadRequest, "File path is required")
 		return
 	}
-	if !isProjectEditableFile(normalizedRelPath) {
-		s.errorResponse(w, http.StatusBadRequest, "Images and videos cannot be deleted from the project editor")
-		return
-	}
 
 	info, err := os.Stat(resolvedPath)
 	if err != nil {

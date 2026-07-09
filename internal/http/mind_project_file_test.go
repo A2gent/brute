@@ -3,6 +3,7 @@ package http
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -109,6 +110,37 @@ func TestProjectFileEditorRejectsAbsolutePathWithProjectRootMessage(t *testing.T
 	}
 	if strings.Contains(body, "My Mind") {
 		t.Fatalf("project file validation should not mention My Mind, got %s", body)
+	}
+}
+
+func TestProjectFileEditorAllowsDeletingMediaFiles(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "image", path: "screenshots/capture.png"},
+		{name: "video", path: "clips/demo.mp4"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, projectID, projectDir := newProjectFileTestServer(t)
+			fullPath := filepath.Join(projectDir, filepath.FromSlash(tt.path))
+			if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+				t.Fatalf("failed to create parent directory: %v", err)
+			}
+			if err := os.WriteFile(fullPath, []byte("binary-preview-content"), 0o644); err != nil {
+				t.Fatalf("failed to write test file: %v", err)
+			}
+
+			rec := requestProjectFile(t, server, http.MethodDelete, projectID, tt.path, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+			}
+			if _, err := os.Stat(fullPath); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("expected deleted file to be missing, stat err=%v", err)
+			}
+		})
 	}
 }
 

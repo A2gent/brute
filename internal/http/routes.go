@@ -177,6 +177,7 @@ func (s *Server) registerMCPRoutes(r chi.Router) {
 	r.Route("/mcp/servers", func(r chi.Router) {
 		r.Get("/", s.handleListMCPServers)
 		r.Post("/", s.handleCreateMCPServer)
+		r.Post("/import", s.handleImportMCPServers)
 		r.Get("/{serverID}", s.handleGetMCPServer)
 		r.Put("/{serverID}", s.handleUpdateMCPServer)
 		r.Delete("/{serverID}", s.handleDeleteMCPServer)

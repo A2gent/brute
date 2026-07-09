@@ -178,6 +178,38 @@ func TestMCPListAndCallToolsForHTTPServer(t *testing.T) {
 	}
 }
 
+func TestMCPServersImportPlainJSON(t *testing.T) {
+	server, store := newProjectsAPITestServer(t)
+	defer store.Close()
+
+	payload := map[string]interface{}{
+		"mcpServers": map[string]interface{}{
+			"cloudflare-api": map[string]interface{}{
+				"url": "https://mcp.cloudflare.com/mcp",
+			},
+			"context7": map[string]interface{}{
+				"command": "npx",
+				"args":    []string{"-y", "@upstash/context7-mcp@latest"},
+			},
+		},
+	}
+	rec := requestProjectJSON(t, server, stdhttp.MethodPost, "/mcp/servers/import", payload)
+	if rec.Code != stdhttp.StatusOK {
+		t.Fatalf("import MCP servers status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	servers := listMCPServersForTest(t, server, "/mcp/servers/")
+	assertMCPServerNames(t, servers, []string{"cloudflare-api", "context7"})
+	for _, srv := range servers {
+		if srv.Name == "cloudflare-api" && (srv.Transport != mcpTransportHTTP || srv.URL != "https://mcp.cloudflare.com/mcp") {
+			t.Fatalf("cloudflare import = %#v", srv)
+		}
+		if srv.Status != "unchecked" {
+			t.Fatalf("status = %q, want unchecked", srv.Status)
+		}
+	}
+}
+
 func createMCPServerForTest(t *testing.T, server *Server, payload MCPServerRequest) MCPServerResponse {
 	t.Helper()
 	rec := requestProjectJSON(t, server, stdhttp.MethodPost, "/mcp/servers/", payload)

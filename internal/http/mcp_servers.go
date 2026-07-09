@@ -62,6 +62,7 @@ type MCPServerResponse struct {
 	LastTestMessage     string            `json:"last_test_message,omitempty"`
 	LastEstimatedTokens *int              `json:"last_estimated_tokens,omitempty"`
 	LastToolCount       *int              `json:"last_tool_count,omitempty"`
+	Status              string            `json:"status"`
 	CreatedAt           time.Time         `json:"created_at"`
 	UpdatedAt           time.Time         `json:"updated_at"`
 }
@@ -153,6 +154,22 @@ func (s *Server) handleCreateMCPServer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.jsonResponse(w, http.StatusCreated, mcpServerToResponse(server))
+}
+
+func (s *Server) handleImportMCPServers(w http.ResponseWriter, r *http.Request) {
+	var req MCPServersImportRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	resp, err := s.importMCPServers(req)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleGetMCPServer(w http.ResponseWriter, r *http.Request) {
@@ -295,21 +312,38 @@ func mcpServerProjectID(server *storage.MCPServer) string {
 	}
 	return strings.TrimSpace(*server.ProjectID)
 }
-
 func filterMCPServersForProject(servers []*storage.MCPServer, projectID string, includeGlobal bool) []*storage.MCPServer {
 	projectID = strings.TrimSpace(projectID)
 	filtered := make([]*storage.MCPServer, 0, len(servers))
+	if !includeGlobal {
+		for _, server := range servers {
+			if mcpServerProjectID(server) == "" {
+				filtered = append(filtered, server)
+			}
+		}
+		return filtered
+	}
+
+	byName := make(map[string]int, len(servers))
 	for _, server := range servers {
 		serverProjectID := mcpServerProjectID(server)
-		if includeGlobal {
-			if serverProjectID == "" || serverProjectID == projectID {
-				filtered = append(filtered, server)
+		if serverProjectID != "" && serverProjectID != projectID {
+			continue
+		}
+		nameKey := strings.ToLower(strings.TrimSpace(server.Name))
+		if nameKey == "" {
+			nameKey = strings.ToLower(strings.TrimSpace(server.ID))
+		}
+		if idx, exists := byName[nameKey]; exists {
+			// Project-local MCP config overrides a global server with the same name,
+			// matching common layered config behavior used by OpenCode/Cursor-style files.
+			if serverProjectID == projectID && serverProjectID != "" {
+				filtered[idx] = server
 			}
 			continue
 		}
-		if serverProjectID == "" {
-			filtered = append(filtered, server)
-		}
+		byName[nameKey] = len(filtered)
+		filtered = append(filtered, server)
 	}
 	return filtered
 }
@@ -535,6 +569,7 @@ func mcpServerToResponse(server *storage.MCPServer) MCPServerResponse {
 			LastTestMessage:     server.LastTestMessage,
 			LastEstimatedTokens: server.LastEstimatedTokens,
 			LastToolCount:       server.LastToolCount,
+			Status:              mcpServerStatus(server),
 			CreatedAt:           server.CreatedAt,
 			UpdatedAt:           server.UpdatedAt,
 		}
@@ -557,7 +592,21 @@ func mcpServerToResponse(server *storage.MCPServer) MCPServerResponse {
 		LastTestMessage:     server.LastTestMessage,
 		LastEstimatedTokens: server.LastEstimatedTokens,
 		LastToolCount:       server.LastToolCount,
+		Status:              mcpServerStatus(server),
 		CreatedAt:           server.CreatedAt,
 		UpdatedAt:           server.UpdatedAt,
 	}
+}
+
+func mcpServerStatus(server *storage.MCPServer) string {
+	if server == nil || !server.Enabled {
+		return "disabled"
+	}
+	if server.LastTestSuccess == nil {
+		return "unchecked"
+	}
+	if *server.LastTestSuccess {
+		return "working"
+	}
+	return "failing"
 }

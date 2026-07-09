@@ -188,6 +188,8 @@ func requestMCPHTTPRPC(ctx context.Context, client *http.Client, cfg *mcpServerC
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("MCP-Protocol-Version", mcpProtocolVersion)
 	for key, value := range cfg.Headers {
 		req.Header.Set(key, value)
 	}
@@ -206,13 +208,55 @@ func requestMCPHTTPRPC(ctx context.Context, client *http.Client, cfg *mcpServerC
 	}
 
 	var out map[string]interface{}
-	if err := json.Unmarshal(respBody, &out); err != nil {
+	if err := decodeMCPHTTPRPCResponse(respBody, resp.Header.Get("Content-Type"), &out); err != nil {
 		return nil, fmt.Errorf("failed to decode MCP response for %q: %w", method, err)
 	}
 	if rpcErr, ok := out["error"].(map[string]interface{}); ok && len(rpcErr) > 0 {
 		return nil, fmt.Errorf("MCP error for %q: %v", method, rpcErr)
 	}
 	return out, nil
+}
+
+func decodeMCPHTTPRPCResponse(body []byte, contentType string, out *map[string]interface{}) error {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		return fmt.Errorf("empty MCP response")
+	}
+	if strings.Contains(strings.ToLower(contentType), "text/event-stream") || bytes.HasPrefix(trimmed, []byte("event:")) || bytes.HasPrefix(trimmed, []byte("data:")) {
+		return decodeMCPEventStreamResponse(trimmed, out)
+	}
+	return json.Unmarshal(trimmed, out)
+}
+
+func decodeMCPEventStreamResponse(body []byte, out *map[string]interface{}) error {
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	var dataLines []string
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			if len(dataLines) > 0 {
+				candidate := strings.Join(dataLines, "\n")
+				dataLines = nil
+				if err := json.Unmarshal([]byte(candidate), out); err == nil {
+					return nil
+				}
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			if data != "" && data != "[DONE]" {
+				dataLines = append(dataLines, data)
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	if len(dataLines) > 0 {
+		return json.Unmarshal([]byte(strings.Join(dataLines, "\n")), out)
+	}
+	return fmt.Errorf("event stream did not contain a JSON data frame")
 }
 
 func (s *Server) listMCPServerTools(parent context.Context, server *storage.MCPServer) ([]MCPToolResponse, error) {

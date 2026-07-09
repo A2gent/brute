@@ -275,7 +275,7 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.BaseURL != nil {
 			baseURL := strings.TrimSpace(*req.BaseURL)
-			if providerType == config.ProviderLMStudio || providerType == config.ProviderOpenRouter || providerType == config.ProviderGoogle || providerType == config.ProviderOpenAI {
+			if providerType == config.ProviderLMStudio || providerType == config.ProviderOpenRouter || providerType == config.ProviderGoogle || providerType == config.ProviderOpenAI || providerType == config.ProviderGrok {
 				baseURL = normalizeOpenAIBaseURL(baseURL)
 			}
 			provider.BaseURL = baseURL
@@ -537,6 +537,10 @@ func (s *Server) handleListOpenRouterModels(w http.ResponseWriter, r *http.Reque
 
 func (s *Server) handleListOpenCodeZenModels(w http.ResponseWriter, r *http.Request) {
 	s.handleListOpenAICompatibleModels(w, r, config.ProviderOpenCodeZen, "OpenCode Zen")
+}
+
+func (s *Server) handleListGrokModels(w http.ResponseWriter, r *http.Request) {
+	s.handleListOpenAICompatibleModels(w, r, config.ProviderGrok, "Grok")
 }
 
 func (s *Server) handleListCursorModels(w http.ResponseWriter, r *http.Request) {

@@ -278,7 +278,7 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return gemini.NewClient(apiKey, modelName, baseURL), nil
-	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenAI, config.ProviderOpenCodeZen:
+	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenAI, config.ProviderOpenCodeZen, config.ProviderGrok:
 
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return lmstudio.NewClient(apiKey, modelName, baseURL), nil
@@ -399,6 +399,8 @@ func (s *Server) apiKeyEnvName(providerType config.ProviderType) string {
 		return "OPENAI_API_KEY"
 	case config.ProviderOpenAICodex:
 		return "OPENAI_API_KEY"
+	case config.ProviderGrok:
+		return "XAI_API_KEY"
 	default:
 		return ""
 	}

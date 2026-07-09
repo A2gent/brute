@@ -209,6 +209,8 @@ func (m Model) showStaticModels() (tea.Model, tea.Cmd) {
 		}
 	case config.ProviderOpenAI:
 		m.availableModels = []string{"gpt-4.1", "gpt-4.1-mini", "gpt-4o-mini"}
+	case config.ProviderGrok:
+		m.availableModels = []string{"grok-4.5", "grok-4", "grok-3", "grok-3-mini"}
 	default:
 		m.availableModels = []string{providerDef.DefaultModel}
 	}
@@ -363,7 +365,7 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 		case config.ProviderGoogle:
 			// Google Gemini uses a dedicated client with OpenAI-compatible API + Gemini extensions
 			return gemini.NewClient(apiKey, model, baseURL), model, nil
-		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenAI, config.ProviderOpenCodeZen:
+		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenAI, config.ProviderOpenCodeZen, config.ProviderGrok:
 			// Other OpenAI-compatible providers
 			return lmstudio.NewClient(apiKey, model, baseURL), model, nil
 		case config.ProviderOpenAICodex:
@@ -584,6 +586,8 @@ func providerAPIKeyEnvName(providerType config.ProviderType) string {
 		return "OPENAI_API_KEY"
 	case config.ProviderOpenAICodex:
 		return "OPENAI_API_KEY"
+	case config.ProviderGrok:
+		return "XAI_API_KEY"
 	default:
 		return ""
 	}

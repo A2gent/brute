@@ -488,6 +488,8 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 			return []string{"OPENAI_API_KEY"}
 		case config.ProviderOpenAICodex:
 			return []string{"OPENAI_API_KEY"}
+		case config.ProviderGrok:
+			return []string{"XAI_API_KEY"}
 		default:
 			return nil
 		}
@@ -571,7 +573,7 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 			return claudecli.NewClient(model, cfg.WorkDir), model, nil
 		case config.ProviderCursor:
 			return cursorcli.NewClientWithOptions(model, cursorcli.Options{WorkDir: cfg.WorkDir, APIKey: apiKey}), model, nil
-		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle, config.ProviderOpenAI, config.ProviderOpenCodeZen:
+		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle, config.ProviderOpenAI, config.ProviderOpenCodeZen, config.ProviderGrok:
 			return lmstudio.NewClient(apiKey, model, baseURL), model, nil
 		case config.ProviderOpenAICodex:
 			options := openaicodex.Options{

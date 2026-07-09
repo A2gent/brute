@@ -204,7 +204,7 @@ func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model 
 		// Google Gemini uses a dedicated client with OpenAI-compatible API + Gemini extensions
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return gemini.NewClient(apiKey, modelName, baseURL), nil
-	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenAI, config.ProviderOpenCodeZen:
+	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenAI, config.ProviderOpenCodeZen, config.ProviderGrok:
 		// Other OpenAI-compatible providers
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return lmstudio.NewClient(apiKey, modelName, baseURL), nil
@@ -293,6 +293,8 @@ func (s *Scheduler) apiKeyEnvName(providerType config.ProviderType) string {
 		return "OPENAI_API_KEY"
 	case config.ProviderOpenAICodex:
 		return "OPENAI_API_KEY"
+	case config.ProviderGrok:
+		return "XAI_API_KEY"
 	default:
 		return ""
 	}

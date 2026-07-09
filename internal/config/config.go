@@ -86,6 +86,7 @@ const (
 	ProviderGoogle      ProviderType = "google"
 	ProviderOpenAI      ProviderType = "openai"
 	ProviderOpenAICodex ProviderType = "openai_codex"
+	ProviderGrok        ProviderType = "grok"
 	ProviderFallback    ProviderType = "fallback_chain"
 	ProviderAutoRouter  ProviderType = "automatic_router"
 )
@@ -190,6 +191,14 @@ func SupportedProviders() []ProviderDefinition {
 			RequiresKey:   true,
 			DefaultModel:  "gpt-5.5",
 			ContextWindow: 1000000,
+		},
+		{
+			Type:          ProviderGrok,
+			DisplayName:   "Grok (x.ai)",
+			DefaultURL:    "https://api.x.ai/v1",
+			RequiresKey:   true,
+			DefaultModel:  "grok-4.5",
+			ContextWindow: 131072,
 		},
 	}
 }

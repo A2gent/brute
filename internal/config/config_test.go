@@ -93,6 +93,30 @@ func TestSupportedProviderDefinitionsAreUniqueAndDiscoverable(t *testing.T) {
 	}
 }
 
+func TestGrokProviderDefinition(t *testing.T) {
+	t.Parallel()
+
+	def := GetProviderDefinition(ProviderGrok)
+	if def == nil {
+		t.Fatal("GetProviderDefinition(grok) returned nil")
+	}
+	if def.Type != ProviderGrok {
+		t.Fatalf("type = %q, want %q", def.Type, ProviderGrok)
+	}
+	if def.DisplayName != "Grok (x.ai)" {
+		t.Fatalf("display name = %q", def.DisplayName)
+	}
+	if def.DefaultURL != "https://api.x.ai/v1" {
+		t.Fatalf("default URL = %q", def.DefaultURL)
+	}
+	if def.DefaultModel != "grok-4.5" {
+		t.Fatalf("default model = %q", def.DefaultModel)
+	}
+	if !def.RequiresKey {
+		t.Fatal("grok provider should require an API key")
+	}
+}
+
 func TestResolveContextWindowUsesModelSpecificOpenRouterLimits(t *testing.T) {
 	t.Parallel()
 

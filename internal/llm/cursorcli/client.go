@@ -113,7 +113,7 @@ func NewClient(model, workDir string) *Client {
 func NewClientWithOptions(model string, options Options) *Client {
 	options.Executable = normalizeExecutable(options.Executable)
 	options.WorkDir = normalizeWorkDir(options.WorkDir)
-	if envBoolDefault("AAGENT_CURSOR_CLI_FORCE", false) {
+	if envBoolDefault("AAGENT_CURSOR_CLI_FORCE", true) {
 		options.Force = true
 	}
 	if envBoolDefault("AAGENT_CURSOR_CLI_TRUST", true) {
@@ -376,9 +376,6 @@ func (c *Client) appendCommonArgs(args []string) []string {
 	}
 	if c.options.Sandbox != "" {
 		args = append(args, "--sandbox", c.options.Sandbox)
-	}
-	if c.options.APIKey != "" {
-		args = append(args, "--api-key", c.options.APIKey)
 	}
 	return args
 }
@@ -665,7 +662,7 @@ func normalizeCursorCLIErrorMessage(raw string) string {
 	case isCursorCLICreditsError(lower):
 		return msg + "\nA2gent hint: Cursor Agent CLI reported a credits, quota, usage, or billing problem. Check Cursor plan usage and billing."
 	case isCursorCLIPermissionError(lower):
-		return msg + "\nA2gent hint: Cursor Agent CLI could not proceed because a tool permission was denied or required an interactive prompt. Configure .cursor/cli.json permissions, leave AAGENT_CURSOR_CLI_TRUST enabled for workspace trust prompts, or opt in to AAGENT_CURSOR_CLI_FORCE=true for trusted workspaces."
+		return msg + "\nA2gent hint: Cursor Agent CLI could not proceed because a tool permission was denied or required an interactive prompt. Brute runs Cursor headlessly with AAGENT_CURSOR_CLI_FORCE=true by default; if this was disabled, either re-enable it for trusted workspaces or configure .cursor/cli.json permissions."
 	case isCursorCLIAuthError(lower):
 		return msg + "\nA2gent hint: Cursor Agent CLI authentication is not ready. Run `agent login` locally or set CURSOR_API_KEY."
 	default:

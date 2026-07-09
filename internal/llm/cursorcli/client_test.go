@@ -59,18 +59,33 @@ func TestParseCLIResultAndUsage(t *testing.T) {
 	}
 }
 
-func TestClientArgsTrustWorkspaceByDefault(t *testing.T) {
+func TestClientArgsForceCommandsByDefault(t *testing.T) {
+	t.Setenv("AAGENT_CURSOR_CLI_FORCE", "")
+	t.Setenv("AAGENT_CURSOR_CLI_TRUST", "")
+
+	client := NewClientWithOptions("composer-2.5", Options{WorkDir: t.TempDir()})
+	args := strings.Join(client.buildArgs("composer-2.5", "hello"), "\n")
+
+	if !strings.Contains(args, "--force") {
+		t.Fatalf("expected default args to include --force: %s", args)
+	}
+	if strings.Contains(args, "--trust") {
+		t.Fatalf("expected --force to replace --trust by default: %s", args)
+	}
+}
+
+func TestClientArgsCanDisableForceAndTrustWorkspaceViaEnv(t *testing.T) {
 	t.Setenv("AAGENT_CURSOR_CLI_FORCE", "false")
 	t.Setenv("AAGENT_CURSOR_CLI_TRUST", "")
 
 	client := NewClientWithOptions("composer-2.5", Options{WorkDir: t.TempDir()})
 	args := strings.Join(client.buildArgs("composer-2.5", "hello"), "\n")
 
-	if !strings.Contains(args, "--trust") {
-		t.Fatalf("expected default args to include --trust: %s", args)
-	}
 	if strings.Contains(args, "--force") {
-		t.Fatalf("expected default args not to include --force: %s", args)
+		t.Fatalf("expected AAGENT_CURSOR_CLI_FORCE=false to omit --force: %s", args)
+	}
+	if !strings.Contains(args, "--trust") {
+		t.Fatalf("expected args to include --trust when force is disabled: %s", args)
 	}
 }
 
@@ -144,6 +159,18 @@ func TestClientChatInvokesCursorAgentExecutable(t *testing.T) {
 	}
 }
 
+func TestClientDoesNotPutAPIKeyInArgs(t *testing.T) {
+	client := NewClientWithOptions("composer-2.5", Options{
+		WorkDir: t.TempDir(),
+		APIKey:  "cursor-secret-token",
+	})
+
+	args := strings.Join(client.buildArgs("composer-2.5", "hello"), "\n")
+	if strings.Contains(args, "cursor-secret-token") || strings.Contains(args, "--api-key") {
+		t.Fatalf("expected API key to be passed through environment only, got args: %s", args)
+	}
+}
+
 func TestClientChatStreamInvokesCursorStreamJSON(t *testing.T) {
 	tmp := t.TempDir()
 	argsFile := filepath.Join(tmp, "args.txt")
@@ -197,7 +224,7 @@ func TestClientChatStreamInvokesCursorStreamJSON(t *testing.T) {
 		"stream-json",
 		"--stream-partial-output",
 		"--workspace",
-		"--trust",
+		"--force",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("captured args missing %q: %s", want, joined)

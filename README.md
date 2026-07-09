@@ -131,6 +131,8 @@ Windows notes:
 - Auto-router and fallback chain support for reliability
 - In-session provider/model switching support (web app flow)
 
+Cursor Composer is launched through Cursor Agent CLI in headless `--print` mode. Because there is no interactive approval UI in this path, Brute passes `--force` by default so Cursor's native shell/edit tools can run; set `AAGENT_CURSOR_CLI_FORCE=false` to fall back to Cursor's allowlist prompts/config. Cursor API keys are passed through `CURSOR_API_KEY`, not command-line arguments.
+
 ### 3.4 Session and Persistence
 
 - SQLite persistence for sessions, messages, jobs, integrations, and app settings

@@ -326,3 +326,42 @@ data: [DONE]
 		t.Fatalf("last message = role %q content %q, want assistant Hello", last.Role, last.Content)
 	}
 }
+
+func TestHandleChatStreamSetsAntiBufferingHeader(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.DataPath = t.TempDir()
+	cfg.WorkDir = t.TempDir()
+	cfg.ActiveProvider = string(config.ProviderOpenAI)
+	cfg.DefaultModel = "test-model"
+	cfg.LLMRetries = 1
+	cfg.Providers[string(config.ProviderOpenAI)] = config.Provider{
+		APIKey:  "test-key",
+		BaseURL: "http://127.0.0.1:1/v1",
+		Model:   "test-model",
+	}
+
+	sessionManager := session.NewManager(store)
+	server := NewServer(cfg, nil, tools.NewManager(cfg.WorkDir), sessionManager, store, speechcache.New(0), 0)
+	sess, err := sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/sessions/"+sess.ID+"/chat/stream", bytes.NewBufferString(`{"message":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	routeCtx := chi.NewRouteContext()
+	routeCtx.URLParams.Add("sessionID", sess.ID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
+
+	rw := &failingStreamWriter{}
+	server.handleChatStream(rw, req)
+	if got := rw.Header().Get("X-Accel-Buffering"); got != "no" {
+		t.Fatalf("X-Accel-Buffering = %q, want no", got)
+	}
+}

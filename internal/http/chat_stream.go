@@ -73,6 +73,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -238,81 +239,8 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 
 	content, usage, err := ag.RunWithEvents(runCtx, sess, req.Message, func(ev agent.Event) {
-		switch ev.Type {
-		case agent.EventAssistantDelta:
-			_ = writeEvent(ChatStreamEvent{
-				Type:  "assistant_delta",
-				Delta: ev.Delta,
-			})
-		case agent.EventToolExecuting:
-			toolCalls := make([]StreamToolCallEvent, len(ev.ToolCalls))
-			for i, tc := range ev.ToolCalls {
-				toolCalls[i] = StreamToolCallEvent{
-					ID:               tc.ID,
-					Name:             tc.Name,
-					Input:            json.RawMessage(tc.Input),
-					ThoughtSignature: tc.ThoughtSignature,
-				}
-			}
-			_ = writeEvent(ChatStreamEvent{
-				Type:      "tool_executing",
-				Step:      ev.Step,
-				Message:   streamLastMessageResponse(s, sess),
-				ToolCalls: toolCalls,
-			})
-		case agent.EventToolProgress:
-			if ev.ToolProgress == nil {
-				return
-			}
-			_ = writeEvent(ChatStreamEvent{
-				Type: "tool_progress",
-				Step: ev.Step,
-				ToolProgress: &StreamToolProgressEvent{
-					ToolCallID: ev.ToolProgress.ToolCallID,
-					ToolName:   ev.ToolProgress.ToolName,
-					Status:     ev.ToolProgress.Status,
-					Content:    ev.ToolProgress.Content,
-					Metadata:   ev.ToolProgress.Metadata,
-				},
-			})
-		case agent.EventToolCompleted:
-			event := ChatStreamEvent{
-				Type:   "tool_completed",
-				Step:   ev.Step,
-				Status: string(sess.Status),
-			}
-			if len(sess.Messages) > 0 {
-				msg := s.messageToResponse(sess.Messages[len(sess.Messages)-1])
-				event.Message = &msg
-			}
+		if event, ok := s.agentEventToStreamEvent(sess, target.ProviderType, ev); ok {
 			_ = writeEvent(event)
-		case agent.EventStepCompleted:
-			_ = writeEvent(ChatStreamEvent{
-				Type: "step_completed",
-				Step: ev.Step,
-			})
-		case agent.EventProviderTrace:
-			if ev.Provider == nil {
-				return
-			}
-			s.applyProviderTraceToSession(sess, target.ProviderType, ev.Provider)
-			_ = writeEvent(ChatStreamEvent{
-				Type: "provider_trace",
-				Step: ev.Step,
-				Provider: &StreamProviderEvent{
-					Provider:      ev.Provider.Provider,
-					Model:         ev.Provider.Model,
-					Attempt:       ev.Provider.Attempt,
-					MaxAttempts:   ev.Provider.MaxAttempts,
-					NodeIndex:     ev.Provider.NodeIndex,
-					TotalNodes:    ev.Provider.TotalNodes,
-					Phase:         ev.Provider.Phase,
-					Reason:        ev.Provider.Reason,
-					FallbackTo:    ev.Provider.FallbackTo,
-					FallbackModel: ev.Provider.FallbackModel,
-					Recovered:     ev.Provider.Recovered,
-				},
-			})
 		}
 	})
 

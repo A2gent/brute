@@ -235,6 +235,7 @@ func (s *Server) registerSessionRoutes(r chi.Router) {
 		r.Get("/", s.handleListSessions)
 		r.Post("/", s.handleCreateSession)
 		r.Get("/{sessionID}/log", s.handleDownloadSessionLog)
+		r.Get("/{sessionID}/events", s.handleSessionEvents)
 		r.Get("/{sessionID}", s.handleGetSession)
 		r.Delete("/{sessionID}", s.handleDeleteSession)
 		r.Post("/{sessionID}/cancel", s.handleCancelSession)

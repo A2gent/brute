@@ -40,9 +40,12 @@ func (e *sessionProviderConfigError) Unwrap() error {
 
 func (s *Server) runSessionWithoutStreaming(ctx context.Context, sess *session.Session, userMessage string) (sessionRunResult, error) {
 	result := sessionRunResult{}
+	publishEvent := func(event ChatStreamEvent) {
+		s.publishSessionEvent(sess.ID, event)
+	}
 	if s.hasDirectAgentTarget(sess) {
 		result.DirectAgent = true
-		chatResp, err := s.runDirectAgentSession(ctx, sess, userMessage, nil)
+		chatResp, err := s.runDirectAgentSession(ctx, sess, userMessage, publishEvent)
 		result.Content = chatResp.Content
 		result.Usage = llm.TokenUsage{InputTokens: chatResp.Usage.InputTokens, OutputTokens: chatResp.Usage.OutputTokens}
 		result.Status = chatResp.Status
@@ -51,7 +54,10 @@ func (s *Server) runSessionWithoutStreaming(ctx context.Context, sess *session.S
 
 	if s.hasRunnableWorkflow(sess) {
 		result.Workflow = true
-		content, usage, err := s.runWorkflowSession(ctx, sess, userMessage, nil)
+		content, usage, err := s.runWorkflowSession(ctx, sess, userMessage, func(event ChatStreamEvent) bool {
+			publishEvent(event)
+			return true
+		})
 		result.Content = content
 		result.Usage = usage
 		return result, err
@@ -85,8 +91,8 @@ func (s *Server) runSessionWithoutStreaming(ctx context.Context, sess *session.S
 
 	ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 	content, usage, err := ag.RunWithEvents(ctx, sess, userMessage, func(ev agent.Event) {
-		if ev.Type == agent.EventProviderTrace && ev.Provider != nil {
-			s.applyProviderTraceToSession(sess, target.ProviderType, ev.Provider)
+		if event, ok := s.agentEventToStreamEvent(sess, target.ProviderType, ev); ok {
+			publishEvent(event)
 		}
 	})
 	result.Content = content
@@ -95,10 +101,19 @@ func (s *Server) runSessionWithoutStreaming(ctx context.Context, sess *session.S
 }
 
 func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *session.Session, result sessionRunResult, runErr error) error {
+	publishError := func(message string) {
+		s.publishSessionEvent(sess.ID, ChatStreamEvent{
+			Type:     "error",
+			Error:    message,
+			Status:   string(sess.Status),
+			Messages: s.messagesToResponse(sess.Messages),
+		})
+	}
 	if runErr != nil {
 		if isCancellationError(runErr) {
 			sess.SetStatus(session.StatusPaused)
 			_ = s.sessionManager.Save(sess)
+			publishError("Request was canceled before completion")
 			return runErr
 		}
 		if errors.Is(runErr, errSessionProviderConfiguration) {
@@ -107,6 +122,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 			_ = s.sessionManager.Save(sess)
 			s.refreshSessionSummaryWithPrompt(ctx, sess)
 			s.triggerSerialSessionQueueIfAdvanceable(sess)
+			publishError("Provider configuration error: " + runErr.Error())
 			return runErr
 		}
 		if result.DirectAgent {
@@ -115,6 +131,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 			_ = s.sessionManager.Save(sess)
 			s.refreshSessionSummaryWithPrompt(ctx, sess)
 			s.triggerSerialSessionQueueIfAdvanceable(sess)
+			publishError("Agent error: " + runErr.Error())
 			return runErr
 		}
 		if result.Workflow {
@@ -122,6 +139,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 			sess.SetStatus(session.StatusFailed)
 			_ = s.sessionManager.Save(sess)
 			s.triggerSerialSessionQueueIfAdvanceable(sess)
+			publishError("Workflow error: " + runErr.Error())
 			return runErr
 		}
 		adaptedErr := s.adaptProviderErrorMessage(result.ProviderType, runErr)
@@ -130,6 +148,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 		_ = s.sessionManager.Save(sess)
 		s.refreshSessionSummaryWithPrompt(ctx, sess)
 		s.triggerSerialSessionQueueIfAdvanceable(sess)
+		publishError("Agent error: " + adaptedErr.Error())
 		return adaptedErr
 	}
 
@@ -154,6 +173,19 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 
 	s.refreshSessionSummaryWithPrompt(ctx, sess)
 	s.triggerSerialSessionQueueIfAdvanceable(sess)
+	if event := s.inputRequiredStreamEvent(sess); event != nil {
+		s.publishSessionEvent(sess.ID, *event)
+	}
+	s.publishSessionEvent(sess.ID, ChatStreamEvent{
+		Type:     "done",
+		Content:  result.Content,
+		Messages: s.messagesToResponse(sess.Messages),
+		Status:   string(sess.Status),
+		Usage: &UsageResponse{
+			InputTokens:  result.Usage.InputTokens,
+			OutputTokens: result.Usage.OutputTokens,
+		},
+	})
 	return nil
 }
 

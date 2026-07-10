@@ -35,19 +35,6 @@ var CuratedModels = []string{
 
 const modelCatalogTimeout = 10 * time.Second
 
-const OAuthFallbackModel = "gpt-5.5"
-
-// NormalizeOAuthModel maps ChatGPT-plan usage buckets that the Codex responses
-// endpoint rejects to a known callable OAuth model. This protects existing
-// sessions/configs saved before the catalog stopped exposing Sol/Terra/Luna.
-func NormalizeOAuthModel(model string) string {
-	model = strings.TrimSpace(model)
-	if IsNonCallableOAuthUsageLimit(model, "") {
-		return OAuthFallbackModel
-	}
-	return model
-}
-
 // ModelCatalogOptions configures live discovery for ListModelCatalog. All
 // fields are optional; with none set, ListModelCatalog returns CuratedModels.
 type ModelCatalogOptions struct {
@@ -166,18 +153,6 @@ func discoverModelsFromModelsEndpoint(ctx context.Context, client *http.Client, 
 		}
 	}
 	return models
-}
-
-// IsNonCallableOAuthUsageLimit reports whether a Codex OAuth usage bucket refers
-// to a plan/rate-limit feature rather than a model accepted by the ChatGPT-account
-// Codex responses endpoint. The usage endpoint can surface buckets such as Sol,
-// Terra, Luna, and Spark even when POST /backend-api/codex/responses rejects them.
-func IsNonCallableOAuthUsageLimit(limitName, meteredFeature string) bool {
-	combined := strings.ToLower(strings.TrimSpace(limitName) + " " + strings.TrimSpace(meteredFeature))
-	return strings.Contains(combined, "spark") ||
-		strings.Contains(combined, "-sol") ||
-		strings.Contains(combined, "-terra") ||
-		strings.Contains(combined, "-luna")
 }
 
 // looksLikeModelID keeps discovery focused on Codex-family chat models and

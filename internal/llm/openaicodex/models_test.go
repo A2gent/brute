@@ -18,37 +18,6 @@ func contains(models []string, target string) bool {
 	return false
 }
 
-func TestIsNonCallableOAuthUsageLimitDetectsNonCallableBuckets(t *testing.T) {
-	cases := []struct {
-		limitName      string
-		meteredFeature string
-		want           bool
-	}{
-		{"gpt-5.3-codex-spark", "", true},
-		{"", "codex-spark", true},
-		{"gpt-5.6-sol-medium", "", true},
-		{"gpt-5.6-terra-medium", "", true},
-		{"gpt-5.6-luna-high", "", true},
-		{"Codex", "", false},
-		{"gpt-5.6-codex", "", false},
-		{"gpt-5.3-codex", "", false},
-	}
-	for _, tc := range cases {
-		if got := IsNonCallableOAuthUsageLimit(tc.limitName, tc.meteredFeature); got != tc.want {
-			t.Fatalf("IsNonCallableOAuthUsageLimit(%q, %q) = %v, want %v", tc.limitName, tc.meteredFeature, got, tc.want)
-		}
-	}
-}
-
-func TestNormalizeOAuthModelFallsBackForChatGPTUsageBuckets(t *testing.T) {
-	if got := NormalizeOAuthModel("gpt-5.6-sol-medium"); got != OAuthFallbackModel {
-		t.Fatalf("NormalizeOAuthModel(sol) = %q, want %q", got, OAuthFallbackModel)
-	}
-	if got := NormalizeOAuthModel("gpt-5.6-codex"); got != "gpt-5.6-codex" {
-		t.Fatalf("NormalizeOAuthModel(codex) = %q", got)
-	}
-}
-
 func TestListModelCatalogReturnsCuratedWithoutCredentials(t *testing.T) {
 	models := ListModelCatalog(context.Background(), ModelCatalogOptions{})
 	if len(models) != len(CuratedModels) {

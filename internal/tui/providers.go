@@ -314,17 +314,14 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 
 		provider := m.appConfig.Providers[string(targetType)]
 		apiKey := strings.TrimSpace(provider.APIKey)
-		oauthBacked := false
 		if apiKey == "" && providerSupportsOAuth(targetType) && provider.OAuth != nil {
 			apiKey = strings.TrimSpace(provider.OAuth.AccessToken)
-			oauthBacked = apiKey != ""
 		}
 		if apiKey == "" && providerSupportsOAuth(targetType) {
 			if oauth, _, err := codexauth.Load(""); err == nil && oauth != nil {
 				provider.OAuth = oauth
 				m.appConfig.Providers[string(targetType)] = provider
 				apiKey = strings.TrimSpace(oauth.AccessToken)
-				oauthBacked = apiKey != ""
 			}
 		}
 		if apiKey == "" {
@@ -375,9 +372,6 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 			// Other OpenAI-compatible providers
 			return lmstudio.NewClient(apiKey, model, baseURL), model, nil
 		case config.ProviderOpenAICodex:
-			if oauthBacked {
-				model = openaicodex.NormalizeOAuthModel(model)
-			}
 			return openaicodex.NewClientWithOptions(apiKey, model, baseURL, openaicodex.Options{
 				PromptCacheKey:    provider.PromptCacheKey,
 				ReasoningEffort:   provider.ReasoningEffort,

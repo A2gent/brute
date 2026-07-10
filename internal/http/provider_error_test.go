@@ -41,8 +41,11 @@ func TestAdaptProviderErrorMessageAddsCodexUnsupportedChatGPTModelHint(t *testin
 	if !strings.Contains(got, "Select a Codex-compatible model") {
 		t.Fatalf("adapted error missing model selection hint: %s", got)
 	}
-	if !strings.Contains(got, "gpt-5.5") {
+	if !strings.Contains(got, "gpt-5.6-sol") {
 		t.Fatalf("adapted error missing safe model example: %s", got)
+	}
+	if !strings.Contains(got, "exact model slug") {
+		t.Fatalf("adapted error missing exact-slug guidance: %s", got)
 	}
 }
 

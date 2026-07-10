@@ -63,6 +63,44 @@ func TestCreateSessionKeepsEmptyLMStudioModel(t *testing.T) {
 	}
 }
 
+func TestCreateSessionNormalizesLegacyOpenAICodexReasoningSuffix(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+	body, err := json.Marshal(CreateSessionRequest{
+		AgentID:  "build",
+		Provider: string(config.ProviderOpenAICodex),
+		Model:    "gpt-5.6-sol-medium",
+	})
+	if err != nil {
+		t.Fatalf("failed to encode request: %v", err)
+	}
+	req := httptest.NewRequest(stdhttp.MethodPost, "/sessions", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	server.handleCreateSession(rec, req)
+
+	if rec.Code != stdhttp.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp CreateSessionResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if got, want := resp.Model, "gpt-5.6-sol"; got != want {
+		t.Fatalf("model = %q, want %q", got, want)
+	}
+}
+
+func TestResolveSessionModelNormalizesLegacyOpenAICodexReasoningSuffix(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+	sess := session.New("build")
+	sess.Metadata["provider"] = string(config.ProviderOpenAICodex)
+	sess.Metadata["model"] = "gpt-5.6-terra-high"
+
+	if got, want := server.resolveSessionModel(sess, config.ProviderOpenAICodex), "gpt-5.6-terra"; got != want {
+		t.Fatalf("model = %q, want %q", got, want)
+	}
+}
+
 func TestCreateSessionRespectsActiveProviderWhenAutomaticRouterIsConfigured(t *testing.T) {
 	server, _ := newUnifiedAgentsTestServer(t)
 	server.config.ActiveProvider = string(config.ProviderCursor)

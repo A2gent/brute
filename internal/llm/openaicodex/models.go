@@ -18,6 +18,9 @@ import (
 // In API-key mode ListModelCatalog augments it with models discovered live from
 // the OpenAI /models endpoint.
 var CuratedModels = []string{
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
 	"gpt-5.6-codex",
 	"gpt-5.5",
 	"gpt-5.5-pro",
@@ -33,6 +36,34 @@ var CuratedModels = []string{
 	"gpt-5.1-codex-mini",
 }
 
+var legacyReasoningSuffixes = []string{
+	"-low",
+	"-medium",
+	"-high",
+	"-xhigh",
+	"-max",
+	"-ultra",
+}
+
+// NormalizeModelID converts legacy GPT-5.6 usage-bucket names to the exact
+// model slug accepted by the Codex responses endpoint. Reasoning effort is a
+// separate request field and must not be encoded in the model ID.
+func NormalizeModelID(model string) string {
+	trimmed := strings.TrimSpace(model)
+	lower := strings.ToLower(trimmed)
+	for _, base := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
+		if lower == base {
+			return base
+		}
+		for _, suffix := range legacyReasoningSuffixes {
+			if lower == base+suffix {
+				return base
+			}
+		}
+	}
+	return trimmed
+}
+
 const modelCatalogTimeout = 10 * time.Second
 
 // ModelCatalogOptions configures live discovery for ListModelCatalog. All
@@ -45,9 +76,9 @@ type ModelCatalogOptions struct {
 	// discovers models from the OpenAI-compatible /models endpoint. These are the
 	// only models the API-key backend will actually accept.
 	APIKey string
-	// AccessToken is a ChatGPT-account Codex OAuth token. When set without an API
-	// key, ListModelCatalog may inspect the usage endpoint, but usage buckets are
-	// not authoritative for callability.
+	// AccessToken is a ChatGPT-account Codex OAuth token. It is retained for the
+	// caller's credential context, but OAuth model discovery uses the curated
+	// catalog because the backend does not expose a /models endpoint.
 	AccessToken string
 	// HTTPClient overrides the default client (used in tests). Optional.
 	HTTPClient *http.Client
@@ -56,9 +87,9 @@ type ModelCatalogOptions struct {
 // ListModelCatalog returns the Codex model catalog.
 //
 // For ChatGPT-account (OAuth) usage the OAuth backend exposes no /models
-// endpoint. Usage buckets can mention plan/rate-limit features such as Sol,
-// Terra, Luna, or Spark that the Codex responses endpoint rejects for ChatGPT
-// accounts. Therefore OAuth mode returns only the curated callable catalog.
+// endpoint. Usage-bucket names can differ from callable model slugs (for
+// example, by adding a reasoning-effort suffix), so OAuth mode returns only
+// the curated catalog of model IDs verified against the responses endpoint.
 //
 // In API-key mode the OpenAI-compatible /models endpoint is authoritative — its
 // ids are genuinely callable — so those are merged in after the curated list.

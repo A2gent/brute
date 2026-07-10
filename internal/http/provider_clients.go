@@ -46,29 +46,36 @@ func (s *Server) resolveJobProviderType(job *storage.RecurringJob) config.Provid
 	return config.ProviderType(config.NormalizeProviderRef(s.config.ActiveProvider))
 }
 
+func normalizeModelForProvider(providerType config.ProviderType, model string) string {
+	if providerType == config.ProviderOpenAICodex {
+		return openaicodex.NormalizeModelID(model)
+	}
+	return strings.TrimSpace(model)
+}
+
 func (s *Server) resolveModelForProvider(providerType config.ProviderType) string {
 	if config.IsFallbackAggregateRef(string(providerType)) || providerType == config.ProviderFallback || providerType == config.ProviderAutoRouter {
 		return ""
 	}
 	provider := s.config.Providers[string(providerType)]
 	if strings.TrimSpace(provider.Model) != "" {
-		return strings.TrimSpace(provider.Model)
+		return normalizeModelForProvider(providerType, provider.Model)
 	}
 
 	if def := config.GetProviderDefinition(providerType); def != nil && strings.TrimSpace(def.DefaultModel) != "" {
-		return strings.TrimSpace(def.DefaultModel)
+		return normalizeModelForProvider(providerType, def.DefaultModel)
 	}
 
-	return strings.TrimSpace(s.config.DefaultModel)
+	return normalizeModelForProvider(providerType, s.config.DefaultModel)
 }
 
 func (s *Server) resolveCreateSessionModel(providerRef string, rawModel string) string {
-	model := strings.TrimSpace(rawModel)
+	providerType := config.ProviderType(config.NormalizeProviderRef(providerRef))
+	model := normalizeModelForProvider(providerType, rawModel)
 	if model != "" {
 		return model
 	}
 
-	providerType := config.ProviderType(config.NormalizeProviderRef(providerRef))
 	if providerType == config.ProviderLMStudio {
 		provider := s.config.Providers[string(config.ProviderLMStudio)]
 		// LM Studio can validly run without a configured model and choose one at
@@ -95,7 +102,7 @@ func (s *Server) resolveSessionModel(sess *session.Session, providerType config.
 	if sess != nil && sess.Metadata != nil {
 		if raw, ok := sess.Metadata["model"]; ok {
 			if model, ok := raw.(string); ok && strings.TrimSpace(model) != "" {
-				return strings.TrimSpace(model)
+				return normalizeModelForProvider(providerType, model)
 			}
 		}
 	}
@@ -609,7 +616,7 @@ func (s *Server) adaptProviderErrorMessage(providerType config.ProviderType, err
 		return fmt.Errorf("%s. This ChatGPT account does not include Codex usage. Upgrade the ChatGPT plan for Codex access, then reconnect OAuth", msg)
 	}
 	if providerType == config.ProviderOpenAICodex && strings.Contains(lowerMsg, "model is not supported when using codex with a chatgpt account") {
-		return fmt.Errorf("%s. Select a Codex-compatible model such as gpt-5.5 or gpt-5.6-codex in /providers/openai_codex. ChatGPT OAuth usage buckets like Sol/Terra/Luna can appear in plan limits but are rejected by the Codex responses endpoint", msg)
+		return fmt.Errorf("%s. Select a Codex-compatible model such as gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, or gpt-5.5 in /providers/openai_codex. Use the exact model slug; usage-bucket suffixes such as -medium are not model IDs", msg)
 	}
 	return err
 }

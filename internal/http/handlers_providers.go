@@ -281,7 +281,7 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 			provider.BaseURL = baseURL
 		}
 		if req.Model != nil {
-			provider.Model = strings.TrimSpace(*req.Model)
+			provider.Model = normalizeModelForProvider(providerType, *req.Model)
 		}
 		if req.PromptCacheKey != nil {
 			provider.PromptCacheKey = strings.TrimSpace(*req.PromptCacheKey)
@@ -507,8 +507,8 @@ func (s *Server) handleListOpenAICodexModels(w http.ResponseWriter, r *http.Requ
 	s.jsonResponse(w, http.StatusOK, ListProviderModelsResponse{Models: models})
 }
 
-// openAICodexModelCatalogOptions resolves credentials used to discover the live
-// Codex model catalog. API-key mode uses /models; OAuth mode uses usage buckets.
+// openAICodexModelCatalogOptions resolves credentials used for the Codex model
+// catalog. API-key mode uses /models; OAuth mode uses the verified curated list.
 func (s *Server) openAICodexModelCatalogOptions() openaicodex.ModelCatalogOptions {
 	provider := s.config.Providers[string(config.ProviderOpenAICodex)]
 	baseURL := strings.TrimSpace(provider.BaseURL)

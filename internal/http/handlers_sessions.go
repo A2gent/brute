@@ -464,7 +464,7 @@ func (s *Server) handleUpdateSessionProvider(w http.ResponseWriter, r *http.Requ
 	sess.Metadata["provider"] = provider
 
 	if req.Model != nil {
-		model := strings.TrimSpace(*req.Model)
+		model := normalizeModelForProvider(providerType, *req.Model)
 		if model == "" {
 			delete(sess.Metadata, "model")
 		} else {

@@ -157,7 +157,7 @@ func NewClientWithOptions(accessToken, model, baseURL string, options Options) *
 	return &Client{
 		accessToken: strings.TrimSpace(accessToken),
 		baseURL:     normalizedBaseURL,
-		model:       strings.TrimSpace(model),
+		model:       NormalizeModelID(model),
 		accountID:   extractAccountID(strings.TrimSpace(accessToken)),
 		options:     options,
 		httpClient:  newHTTPClient(options.ResponseHeaderTimeout),
@@ -202,7 +202,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	if request == nil {
 		request = &llm.ChatRequest{}
 	}
-	model := strings.TrimSpace(request.Model)
+	model := NormalizeModelID(request.Model)
 	if model == "" {
 		model = c.model
 	}

@@ -18,6 +18,22 @@ func contains(models []string, target string) bool {
 	return false
 }
 
+func TestNormalizeModelIDSeparatesLegacyReasoningSuffix(t *testing.T) {
+	tests := map[string]string{
+		"gpt-5.6-sol-medium": "gpt-5.6-sol",
+		"gpt-5.6-terra-high": "gpt-5.6-terra",
+		"gpt-5.6-luna-low":   "gpt-5.6-luna",
+		"gpt-5.6-sol":        "gpt-5.6-sol",
+		"gpt-5.5":            "gpt-5.5",
+		"custom-medium":      "custom-medium",
+	}
+	for input, want := range tests {
+		if got := NormalizeModelID(input); got != want {
+			t.Errorf("NormalizeModelID(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestListModelCatalogReturnsCuratedWithoutCredentials(t *testing.T) {
 	models := ListModelCatalog(context.Background(), ModelCatalogOptions{})
 	if len(models) != len(CuratedModels) {
@@ -26,6 +42,11 @@ func TestListModelCatalogReturnsCuratedWithoutCredentials(t *testing.T) {
 	for i, want := range CuratedModels {
 		if models[i] != want {
 			t.Fatalf("curated order changed at %d: want %q got %q", i, want, models[i])
+		}
+	}
+	for _, want := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
+		if !contains(models, want) {
+			t.Fatalf("verified OAuth model %q missing from curated catalog: %v", want, models)
 		}
 	}
 }
@@ -83,7 +104,12 @@ func TestListModelCatalogDoesNotDiscoverFromOAuthUsageEndpoint(t *testing.T) {
 	}
 	for _, blocked := range []string{"gpt-5.6-sol-medium", "gpt-5.6-terra-medium", "gpt-5.3-codex-spark", "Codex"} {
 		if contains(models, blocked) {
-			t.Fatalf("non-callable OAuth usage bucket %q must not appear, got %v", blocked, models)
+			t.Fatalf("unverified OAuth usage-bucket name %q must not appear, got %v", blocked, models)
+		}
+	}
+	for _, want := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
+		if !contains(models, want) {
+			t.Fatalf("verified OAuth model %q missing from catalog: %v", want, models)
 		}
 	}
 	if len(models) != len(CuratedModels) {

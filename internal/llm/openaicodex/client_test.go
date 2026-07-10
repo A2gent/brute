@@ -155,6 +155,37 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 	}
 }
 
+func TestChat_NormalizesLegacyReasoningSuffixInModelID(t *testing.T) {
+	var raw map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(`event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1}}}
+
+`))
+	}))
+	defer server.Close()
+
+	client := NewClientWithOptions("token", "gpt-5.6-sol-medium", server.URL, Options{ReasoningEffort: "high"})
+	client.httpClient = server.Client()
+
+	if _, err := client.Chat(t.Context(), &llm.ChatRequest{
+		Messages: []llm.Message{{Role: "user", Content: "hello"}},
+	}); err != nil {
+		t.Fatalf("Chat returned error: %v", err)
+	}
+	if got, want := raw["model"], "gpt-5.6-sol"; got != want {
+		t.Fatalf("request model = %q, want %q", got, want)
+	}
+	reasoning, _ := raw["reasoning"].(map[string]interface{})
+	if got, want := reasoning["effort"], "high"; got != want {
+		t.Fatalf("reasoning effort = %q, want %q", got, want)
+	}
+}
+
 func TestChat_OmitsUnsupportedAutoServiceTier(t *testing.T) {
 	var raw map[string]interface{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

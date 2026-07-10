@@ -219,7 +219,10 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 
 	// Run the agent with the job's task prompt
 	providerType := s.resolveJobProviderType(job)
-	model := s.resolveModelForProvider(providerType)
+	model := strings.TrimSpace(job.LLMModel)
+	if model == "" {
+		model = s.resolveModelForProvider(providerType)
+	}
 	sess.Metadata["provider"] = string(providerType)
 	sess.Metadata["model"] = model
 	if err := s.sessionManager.Save(sess); err != nil {

@@ -55,6 +55,7 @@ func applyCreateJobRunConfig(job *storage.RecurringJob, req CreateJobRequest) {
 		job.WorkflowName = strings.TrimSpace(req.WorkflowName)
 		job.WorkflowDefJSON = workflowDefinitionJSON(req.WorkflowDefinition)
 	}
+	job.LLMProvider = normalizeJobLLMProvider(req.LLMProvider)
 	job.LLMModel = strings.TrimSpace(req.LLMModel)
 }
 
@@ -66,6 +67,9 @@ func applyUpdateJobRunConfig(job *storage.RecurringJob, req UpdateJobRequest) {
 		job.RunTarget = jobs.NormalizeRunTarget(req.RunTarget)
 	}
 	if strings.TrimSpace(req.RunTarget) == "" {
+		if req.LLMProvider != nil {
+			job.LLMProvider = normalizeJobLLMProvider(*req.LLMProvider)
+		}
 		if req.LLMModel != "" {
 			job.LLMModel = strings.TrimSpace(req.LLMModel)
 		}
@@ -92,6 +96,9 @@ func applyUpdateJobRunConfig(job *storage.RecurringJob, req UpdateJobRequest) {
 		if req.WorkflowDefinition != nil {
 			job.WorkflowDefJSON = workflowDefinitionJSON(*req.WorkflowDefinition)
 		}
+	}
+	if req.LLMProvider != nil {
+		job.LLMProvider = normalizeJobLLMProvider(*req.LLMProvider)
 	}
 	job.LLMModel = strings.TrimSpace(req.LLMModel)
 }

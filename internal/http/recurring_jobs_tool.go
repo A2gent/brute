@@ -31,6 +31,15 @@ type recurringJobsParams struct {
 	TaskPromptSource string `json:"task_prompt_source,omitempty"` // "text" | "file"
 	TaskPromptFile   string `json:"task_prompt_file,omitempty"`
 	LLMProvider      string `json:"llm_provider,omitempty"`
+	LLMModel         string `json:"llm_model,omitempty"`
+	RunTarget        string `json:"run_target,omitempty"`
+	LaunchAgentID    string `json:"launch_agent_id,omitempty"`
+	LaunchAgentName  string `json:"launch_agent_name,omitempty"`
+	LaunchAgentRuntime string `json:"launch_agent_runtime,omitempty"`
+	UnifiedAgentID   string `json:"unified_agent_id,omitempty"`
+	DockerAgentID    string `json:"docker_agent_id,omitempty"`
+	WorkflowID       string `json:"workflow_id,omitempty"`
+	WorkflowName     string `json:"workflow_name,omitempty"`
 	Enabled          *bool  `json:"enabled,omitempty"`
 
 	// delete, run_now
@@ -218,11 +227,22 @@ func (t *recurringJobsTool) handleCreate(ctx context.Context, p recurringJobsPar
 		TaskPrompt:       taskPrompt,
 		TaskPromptSource: taskPromptSource,
 		TaskPromptFile:   taskPromptFile,
-		LLMProvider:      llmProvider,
 		Enabled:          enabled,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
+	applyCreateJobRunConfig(job, CreateJobRequest{
+		RunTarget:          p.RunTarget,
+		WorkflowID:         p.WorkflowID,
+		WorkflowName:       p.WorkflowName,
+		LaunchAgentID:      p.LaunchAgentID,
+		LaunchAgentName:    p.LaunchAgentName,
+		LaunchAgentRuntime: p.LaunchAgentRuntime,
+		UnifiedAgentID:     p.UnifiedAgentID,
+		DockerAgentID:      p.DockerAgentID,
+		LLMProvider:        p.LLMProvider,
+		LLMModel:           p.LLMModel,
+	})
 
 	if nextRun, err := t.server.calculateNextRun(cronExpr, now); err == nil {
 		job.NextRunAt = &nextRun

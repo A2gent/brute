@@ -664,7 +664,6 @@ func localDockerCreateRequestBaseFromDefinition(def *agentdef.Definition) create
 		SystemPrompt: strings.TrimSpace(def.Instructions.System),
 		HostPort:     def.Local.HostPort,
 		AgentKind:    strings.TrimSpace(def.Agent.Kind),
-		SystemPrompt: strings.TrimSpace(def.Instructions.System),
 		Labels: map[string]string{
 			// WHY: local Docker containers are what Caesar registers in Square,
 			// so portable definition metadata must ride along as Docker labels.

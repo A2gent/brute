@@ -70,13 +70,16 @@ func (m Model) showModelsSelection() (tea.Model, tea.Cmd) {
 }
 
 // fetchOpenAICodexModels loads the Codex model catalog using the same shared
-// discovery the web API uses, so the terminal and web stay in sync (curated list
-// for OAuth, plus live /models discovery in API-key mode).
+// discovery the web API uses: curated fallback plus live /models (API key) or
+// usage-bucket discovery (OAuth).
 func (m Model) fetchOpenAICodexModels() (tea.Model, tea.Cmd) {
 	opts := openaicodex.ModelCatalogOptions{}
 	if provider := m.appConfig.GetActiveProvider(); provider != nil {
 		opts.BaseURL = strings.TrimSpace(provider.BaseURL)
 		opts.APIKey = strings.TrimSpace(provider.APIKey)
+		if opts.APIKey == "" && provider.OAuth != nil {
+			opts.AccessToken = strings.TrimSpace(provider.OAuth.AccessToken)
+		}
 	}
 	if opts.BaseURL == "" {
 		if def := config.GetProviderDefinition(config.ProviderOpenAICodex); def != nil {

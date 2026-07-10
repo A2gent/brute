@@ -207,13 +207,13 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 	}
 	if useParentLLMProxy {
 		lmStudioBaseURL = fmt.Sprintf("http://host.docker.internal:%d/v1", s.port)
+	}
 	agentKind := strings.TrimSpace(req.AgentKind)
 	agentKindLabel := sanitizeDockerLabelValue(agentKind)
 	systemPrompt, err := resolveLocalDockerAgentSystemPrompt(req)
 	if err != nil {
 		return nil, http.StatusBadRequest, err
 	}
-	sessionID := strings.TrimSpace(req.SessionID)
 	sessionID := strings.TrimSpace(req.SessionID)
 	sessionIDLabel := sanitizeDockerLabelValue(sessionID)
 	projectID := strings.TrimSpace(req.ProjectID)

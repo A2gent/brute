@@ -49,9 +49,7 @@ func TestListModelCatalogReturnsCuratedWithoutCredentials(t *testing.T) {
 }
 
 func TestListModelCatalogIgnoresOAuthOnlyCredentials(t *testing.T) {
-	// A ChatGPT-account (OAuth) session provides no API key. Discovery must not
-	// run, and the catalog must be exactly the curated list — the usage endpoint
-	// surfaces quota buckets (e.g. gpt-5.3-codex-spark) that are NOT callable.
+	// Without an API key or OAuth token, discovery must not run.
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
@@ -64,13 +62,45 @@ func TestListModelCatalogIgnoresOAuthOnlyCredentials(t *testing.T) {
 		HTTPClient: server.Client(),
 	})
 	if called {
-		t.Fatalf("no discovery request should be made without an API key")
+		t.Fatalf("no discovery request should be made without credentials")
 	}
 	if len(models) != len(CuratedModels) {
-		t.Fatalf("OAuth mode must return curated list only, got %v", models)
+		t.Fatalf("offline mode must return curated list only, got %v", models)
 	}
 	if contains(models, "gpt-5.3-codex-spark") {
 		t.Fatalf("non-callable spark model must never appear, got %v", models)
+	}
+}
+
+func TestListModelCatalogDiscoversFromUsageEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/wham/usage") {
+			t.Errorf("unexpected usage path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"additional_rate_limits": []map[string]any{
+				{"limit_name": "gpt-5.6-sol-medium"},
+				{"limit_name": "gpt-5.3-codex-spark"},
+				{"limit_name": "Codex"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	models := ListModelCatalog(context.Background(), ModelCatalogOptions{
+		BaseURL:     server.URL + "/backend-api/codex",
+		AccessToken: "oauth-token",
+		HTTPClient:  server.Client(),
+	})
+
+	if !contains(models, "gpt-5.6-sol-medium") {
+		t.Fatalf("expected discovered oauth model, got %v", models)
+	}
+	if contains(models, "gpt-5.3-codex-spark") {
+		t.Fatalf("spark bucket must be filtered out, got %v", models)
+	}
+	if contains(models, "Codex") {
+		t.Fatalf("general Codex bucket must not appear as a model, got %v", models)
 	}
 }
 

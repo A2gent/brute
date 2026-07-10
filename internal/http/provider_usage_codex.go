@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -184,27 +183,7 @@ func openAICodexUsageBars(payload codexUsageRateLimitResponse) []ProviderUsageBa
 	}
 
 	appendLimitBars("Codex", payload.RateLimit)
-	for _, item := range codexCallableAdditionalLimits(payload.AdditionalRateLimits) {
-		appendLimitBars(codexAdditionalLimitLabel(item), item.RateLimit)
-	}
 	return bars
-}
-
-func codexCallableAdditionalLimits(items []codexUsageAdditionalLimit) []codexUsageAdditionalLimit {
-	additional := make([]codexUsageAdditionalLimit, 0, len(items))
-	for _, item := range items {
-		if item.RateLimit == nil {
-			continue
-		}
-		if openaicodex.IsNonCallableOAuthUsageLimit(item.LimitName, item.MeteredFeature) {
-			continue
-		}
-		additional = append(additional, item)
-	}
-	sort.SliceStable(additional, func(i, j int) bool {
-		return codexAdditionalLimitLabel(additional[i]) < codexAdditionalLimitLabel(additional[j])
-	})
-	return additional
 }
 
 func codexWindowUsageBar(label string, window *codexUsageWindow, status string) ProviderUsageBar {
@@ -243,10 +222,6 @@ func formatOpenAICodexUsage(payload codexUsageRateLimitResponse) string {
 	}
 	if payload.RateLimit != nil {
 		parts = append(parts, formatCodexUsageLimit("Codex", payload.RateLimit))
-	}
-
-	for _, item := range codexCallableAdditionalLimits(payload.AdditionalRateLimits) {
-		parts = append(parts, formatCodexUsageLimit(codexAdditionalLimitLabel(item), item.RateLimit))
 	}
 
 	if payload.Credits != nil {
@@ -315,16 +290,6 @@ func formatDurationApprox(d time.Duration) string {
 		return d.Round(time.Minute).String()
 	}
 	return d.Round(time.Hour).String()
-}
-
-func codexAdditionalLimitLabel(item codexUsageAdditionalLimit) string {
-	if label := strings.TrimSpace(item.LimitName); label != "" {
-		return label
-	}
-	if label := strings.TrimSpace(item.MeteredFeature); label != "" {
-		return label
-	}
-	return "Additional limit"
 }
 
 func formatCodexCredits(credits *codexUsageCredits) string {

@@ -827,3 +827,109 @@ func TestDelegateToAgentToolUnknownAgent(t *testing.T) {
 		t.Fatalf("unexpected error message: %s", result.Error)
 	}
 }
+
+func TestImportAgentDefinitionYAMLToolBindsCurrentProjectSession(t *testing.T) {
+	server, store := newUnifiedAgentsTestServer(t)
+	now := time.Now()
+	projectRoot := t.TempDir()
+	project := &storage.Project{ID: "proj-app", Name: "App", Folder: &projectRoot, CreatedAt: now, UpdatedAt: now}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatalf("failed to save project: %v", err)
+	}
+
+	sess, err := server.sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	sess.ProjectID = &project.ID
+	if err := server.sessionManager.Save(sess); err != nil {
+		t.Fatalf("failed to save session project: %v", err)
+	}
+
+	tool := newImportAgentDefinitionYAMLTool(server)
+	params, _ := json.Marshal(importAgentDefinitionYAMLParams{ConfigYAML: `
+version: "1"
+agent:
+  id: project-tool-agent
+  name: Project Tool Agent
+runtime:
+  type: docker
+workspace:
+  scope: current_project
+  mount: rw
+`})
+	ctx := context.WithValue(context.Background(), "session_id", sess.ID)
+	result, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected successful import, got error: %s", result.Error)
+	}
+	if result.Metadata["project_id"] != project.ID {
+		t.Fatalf("tool metadata project_id = %#v, want %q", result.Metadata["project_id"], project.ID)
+	}
+
+	record, err := store.GetAgentDefinition("project-tool-agent")
+	if err != nil {
+		t.Fatalf("failed to load imported definition: %v", err)
+	}
+	if record.ProjectID == nil || *record.ProjectID != project.ID {
+		t.Fatalf("stored definition project_id = %#v, want %q", record.ProjectID, project.ID)
+	}
+	def, err := agentdef.ParseYAML([]byte(record.DefinitionYAML))
+	if err != nil {
+		t.Fatalf("stored YAML does not parse: %v", err)
+	}
+	if def.Workspace.Scope != agentdef.WorkspaceScopeConfiguredProject {
+		t.Fatalf("workspace scope = %q, want configured_project", def.Workspace.Scope)
+	}
+	if def.Local.ProjectBindings[agentdef.WorkspaceScopeConfiguredProject] != project.ID {
+		t.Fatalf("configured project binding missing: %+v", def.Local.ProjectBindings)
+	}
+}
+
+func TestImportAgentDefinitionYAMLToolKeepsSystemSoulSessionGlobal(t *testing.T) {
+	server, store := newUnifiedAgentsTestServer(t)
+	sess, err := server.sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	projectID := storage.SystemProjectSoulID
+	sess.ProjectID = &projectID
+	if err := server.sessionManager.Save(sess); err != nil {
+		t.Fatalf("failed to save session project: %v", err)
+	}
+
+	tool := newImportAgentDefinitionYAMLTool(server)
+	params, _ := json.Marshal(importAgentDefinitionYAMLParams{ConfigYAML: `
+version: "1"
+agent:
+  id: global-tool-agent
+  name: Global Tool Agent
+runtime:
+  type: docker
+workspace:
+  scope: current_project
+  mount: rw
+`})
+	ctx := context.WithValue(context.Background(), "session_id", sess.ID)
+	result, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected successful import, got error: %s", result.Error)
+	}
+	if result.Metadata["project_id"] != "" {
+		t.Fatalf("system Soul import should stay global, got project_id %#v", result.Metadata["project_id"])
+	}
+
+	record, err := store.GetAgentDefinition("global-tool-agent")
+	if err != nil {
+		t.Fatalf("failed to load imported definition: %v", err)
+	}
+	if record.ProjectID != nil {
+		t.Fatalf("global definition should not be project-bound, got %#v", record.ProjectID)
+	}
+}

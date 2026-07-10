@@ -64,6 +64,7 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 	agents := []UnifiedAgentResponse{}
 	warnings := []string{}
 	projectFilter, filterHasProject := unifiedAgentsProjectFilter(r)
+	seenAgentIDs := make(map[string]struct{})
 
 	dockerAgents, err := listLocalBruteContainers(r.Context())
 	if err != nil {
@@ -79,6 +80,38 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	appSettings, settingsErr := s.store.GetSettings()
+	if settingsErr != nil {
+		warnings = append(warnings, "app settings unavailable: "+settingsErr.Error())
+		appSettings = map[string]string{}
+	}
+
+	var definitionsDirectory string
+	if filterHasProject {
+		project, projectErr := s.store.GetProject(projectFilter)
+		if projectErr != nil {
+			warnings = append(warnings, "project unavailable for agent definitions scan: "+projectErr.Error())
+		} else {
+			definitionsDirectory = s.resolveProjectAgentDefinitionsDirectory(project)
+		}
+	} else {
+		definitionsDirectory = s.resolveGlobalAgentDefinitionsDirectory(appSettings)
+	}
+
+	discoveredDefinitions, discoverWarnings := discoverAgentDefinitionsInDirectory(definitionsDirectory)
+	warnings = append(warnings, discoverWarnings...)
+	for _, item := range discoveredDefinitions {
+		if !matchesUnifiedAgentProjectFilter(item.ProjectID, projectFilter, filterHasProject) {
+			continue
+		}
+		entry := unifiedAgentResponseFromDiscoveredDefinition(item)
+		if containers := containersByDefID[item.ID]; len(containers) > 0 {
+			applyUnifiedAgentContainerStatus(&entry, containers)
+		}
+		agents = append(agents, entry)
+		seenAgentIDs[item.ID] = struct{}{}
+	}
+
 	subAgents, err := s.store.ListSubAgents()
 	if err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to list sub-agents: "+err.Error())
@@ -87,6 +120,9 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 	for _, sa := range subAgents {
 		agentProjectID := subAgentProjectID(sa)
 		if !matchesUnifiedAgentProjectFilter(agentProjectID, projectFilter, filterHasProject) {
+			continue
+		}
+		if _, exists := seenAgentIDs[sa.ID]; exists {
 			continue
 		}
 		entry := UnifiedAgentResponse{ID: sa.ID, Name: sa.Name, Runtime: agentdef.RuntimeDocker, ProjectID: agentProjectID, Managed: true, Status: agentDefinitionStatusNotCreated}
@@ -101,6 +137,7 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 			warnings = append(warnings, "sub-agent "+sa.ID+": "+defErr.Error())
 		}
 		agents = append(agents, entry)
+		seenAgentIDs[sa.ID] = struct{}{}
 	}
 
 	definitions, err := s.store.ListAgentDefinitions()
@@ -124,6 +161,9 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 		if !matchesUnifiedAgentProjectFilter(agentProjectID, projectFilter, filterHasProject) {
 			continue
 		}
+		if _, exists := seenAgentIDs[record.ID]; exists {
+			continue
+		}
 		entry := UnifiedAgentResponse{ID: record.ID, Name: record.Name, Runtime: record.Runtime, ProjectID: agentProjectID, Managed: true, Status: agentDefinitionStatusNotCreated}
 		if parsedDef != nil {
 			entry.Definition = parsedDef
@@ -132,6 +172,7 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 			applyUnifiedAgentContainerStatus(&entry, containers)
 		}
 		agents = append(agents, entry)
+		seenAgentIDs[record.ID] = struct{}{}
 	}
 
 	if !filterHasProject {

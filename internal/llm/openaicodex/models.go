@@ -2,7 +2,6 @@ package openaicodex
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,8 +19,6 @@ import (
 // the OpenAI /models endpoint.
 var CuratedModels = []string{
 	"gpt-5.6-codex",
-	"gpt-5.6-sol-medium",
-	"gpt-5.6-terra-medium",
 	"gpt-5.5",
 	"gpt-5.5-pro",
 	"gpt-5.4",
@@ -38,6 +35,19 @@ var CuratedModels = []string{
 
 const modelCatalogTimeout = 10 * time.Second
 
+const OAuthFallbackModel = "gpt-5.5"
+
+// NormalizeOAuthModel maps ChatGPT-plan usage buckets that the Codex responses
+// endpoint rejects to a known callable OAuth model. This protects existing
+// sessions/configs saved before the catalog stopped exposing Sol/Terra/Luna.
+func NormalizeOAuthModel(model string) string {
+	model = strings.TrimSpace(model)
+	if IsNonCallableOAuthUsageLimit(model, "") {
+		return OAuthFallbackModel
+	}
+	return model
+}
+
 // ModelCatalogOptions configures live discovery for ListModelCatalog. All
 // fields are optional; with none set, ListModelCatalog returns CuratedModels.
 type ModelCatalogOptions struct {
@@ -49,8 +59,8 @@ type ModelCatalogOptions struct {
 	// only models the API-key backend will actually accept.
 	APIKey string
 	// AccessToken is a ChatGPT-account Codex OAuth token. When set without an API
-	// key, ListModelCatalog discovers callable models from the usage endpoint's
-	// per-model rate-limit buckets (excluding non-callable spark buckets).
+	// key, ListModelCatalog may inspect the usage endpoint, but usage buckets are
+	// not authoritative for callability.
 	AccessToken string
 	// HTTPClient overrides the default client (used in tests). Optional.
 	HTTPClient *http.Client
@@ -59,9 +69,9 @@ type ModelCatalogOptions struct {
 // ListModelCatalog returns the Codex model catalog.
 //
 // For ChatGPT-account (OAuth) usage the OAuth backend exposes no /models
-// endpoint. When AccessToken is set, ListModelCatalog augments the curated list
-// with model ids from the usage endpoint's per-model buckets, omitting buckets
-// the account cannot call (e.g. gpt-5.3-codex-spark).
+// endpoint. Usage buckets can mention plan/rate-limit features such as Sol,
+// Terra, Luna, or Spark that the Codex responses endpoint rejects for ChatGPT
+// accounts. Therefore OAuth mode returns only the curated callable catalog.
 //
 // In API-key mode the OpenAI-compatible /models endpoint is authoritative — its
 // ids are genuinely callable — so those are merged in after the curated list.
@@ -99,9 +109,6 @@ func discoverModels(ctx context.Context, opts ModelCatalogOptions) []string {
 	}
 	if strings.TrimSpace(opts.APIKey) != "" {
 		return discoverModelsFromModelsEndpoint(ctx, client, opts)
-	}
-	if strings.TrimSpace(opts.AccessToken) != "" {
-		return discoverModelsFromUsageEndpoint(ctx, client, opts)
 	}
 	return nil
 }
@@ -161,98 +168,16 @@ func discoverModelsFromModelsEndpoint(ctx context.Context, client *http.Client, 
 	return models
 }
 
-type usageDiscoveryResponse struct {
-	AdditionalRateLimits []struct {
-		LimitName      string `json:"limit_name"`
-		MeteredFeature string `json:"metered_feature"`
-	} `json:"additional_rate_limits"`
-}
-
-// discoverModelsFromUsageEndpoint reads callable model ids from Codex OAuth usage
-// buckets. Spark and other non-callable buckets are filtered out.
-func discoverModelsFromUsageEndpoint(ctx context.Context, client *http.Client, opts ModelCatalogOptions) []string {
-	baseURL := strings.TrimSpace(opts.BaseURL)
-	if baseURL == "" {
-		baseURL = defaultBaseURL
-	}
-	usageURL, err := UsageURL(baseURL)
-	if err != nil {
-		return nil
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, usageURL, nil)
-	if err != nil {
-		return nil
-	}
-	accessToken := strings.TrimSpace(opts.AccessToken)
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Originator", "codex_cli_rs")
-	req.Header.Set("User-agent", "codex_cli_rs/0.143.0")
-	if accountID := codexAccountIDFromToken(accessToken); accountID != "" {
-		req.Header.Set("ChatGPT-Account-Id", accountID)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil
-	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil
-	}
-	var parsed usageDiscoveryResponse
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil
-	}
-
-	models := make([]string, 0, len(parsed.AdditionalRateLimits))
-	for _, item := range parsed.AdditionalRateLimits {
-		if IsNonCallableOAuthUsageLimit(item.LimitName, item.MeteredFeature) {
-			continue
-		}
-		if name := strings.TrimSpace(item.LimitName); looksLikeModelID(name) {
-			models = append(models, name)
-		}
-	}
-	return models
-}
-
-func codexAccountIDFromToken(accessToken string) string {
-	parts := strings.Split(strings.TrimSpace(accessToken), ".")
-	if len(parts) < 2 {
-		return ""
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return ""
-	}
-	var claims map[string]interface{}
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return ""
-	}
-	if id, ok := claims["chatgpt_account_id"].(string); ok && strings.TrimSpace(id) != "" {
-		return strings.TrimSpace(id)
-	}
-	if raw, ok := claims["https://api.openai.com/auth"].(map[string]interface{}); ok {
-		if id, ok := raw["chatgpt_account_id"].(string); ok {
-			return strings.TrimSpace(id)
-		}
-	}
-	return ""
-}
-
 // IsNonCallableOAuthUsageLimit reports whether a Codex OAuth usage bucket refers
-// to a model the account cannot invoke. The usage endpoint surfaces per-model
-// quota buckets (e.g. gpt-5.3-codex-spark) that ListModelCatalog already omits.
+// to a plan/rate-limit feature rather than a model accepted by the ChatGPT-account
+// Codex responses endpoint. The usage endpoint can surface buckets such as Sol,
+// Terra, Luna, and Spark even when POST /backend-api/codex/responses rejects them.
 func IsNonCallableOAuthUsageLimit(limitName, meteredFeature string) bool {
 	combined := strings.ToLower(strings.TrimSpace(limitName) + " " + strings.TrimSpace(meteredFeature))
-	return strings.Contains(combined, "spark")
+	return strings.Contains(combined, "spark") ||
+		strings.Contains(combined, "-sol") ||
+		strings.Contains(combined, "-terra") ||
+		strings.Contains(combined, "-luna")
 }
 
 // looksLikeModelID keeps discovery focused on Codex-family chat models and

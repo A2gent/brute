@@ -27,6 +27,25 @@ func TestAdaptProviderErrorMessageAddsCodexExpiredTokenHint(t *testing.T) {
 	}
 }
 
+func TestAdaptProviderErrorMessageAddsCodexUnsupportedChatGPTModelHint(t *testing.T) {
+	server := &Server{}
+	err := server.adaptProviderErrorMessage(
+		config.ProviderOpenAICodex,
+		errors.New(`Request failed: LLM error: OpenAI Codex error (400): {"detail":"The 'gpt-5.6-sol-medium' model is not supported when using Codex with a ChatGPT account."}`),
+	)
+
+	if err == nil {
+		t.Fatalf("adapted error = nil")
+	}
+	got := err.Error()
+	if !strings.Contains(got, "Select a Codex-compatible model") {
+		t.Fatalf("adapted error missing model selection hint: %s", got)
+	}
+	if !strings.Contains(got, "gpt-5.5") {
+		t.Fatalf("adapted error missing safe model example: %s", got)
+	}
+}
+
 func TestAdaptProviderErrorMessageDoesNotAddCodexHintForOtherProviders(t *testing.T) {
 	server := &Server{}
 	err := server.adaptProviderErrorMessage(

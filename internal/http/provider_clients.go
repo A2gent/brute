@@ -283,6 +283,9 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return lmstudio.NewClient(apiKey, modelName, baseURL), nil
 	case config.ProviderOpenAICodex:
+		if oauthBacked {
+			modelName = openaicodex.NormalizeOAuthModel(modelName)
+		}
 		options := openaicodex.Options{
 			PromptCacheKey:    provider.PromptCacheKey,
 			ReasoningEffort:   provider.ReasoningEffort,
@@ -607,6 +610,9 @@ func (s *Server) adaptProviderErrorMessage(providerType config.ProviderType, err
 	}
 	if providerType == config.ProviderOpenAICodex && strings.Contains(lowerMsg, "usage_not_included") {
 		return fmt.Errorf("%s. This ChatGPT account does not include Codex usage. Upgrade the ChatGPT plan for Codex access, then reconnect OAuth", msg)
+	}
+	if providerType == config.ProviderOpenAICodex && strings.Contains(lowerMsg, "model is not supported when using codex with a chatgpt account") {
+		return fmt.Errorf("%s. Select a Codex-compatible model such as gpt-5.5 or gpt-5.6-codex in /providers/openai_codex. ChatGPT OAuth usage buckets like Sol/Terra/Luna can appear in plan limits but are rejected by the Codex responses endpoint", msg)
 	}
 	return err
 }

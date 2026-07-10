@@ -570,6 +570,9 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle, config.ProviderOpenAI, config.ProviderOpenCodeZen, config.ProviderGrok:
 			return lmstudio.NewClient(apiKey, model, baseURL), model, nil
 		case config.ProviderOpenAICodex:
+			if oauthBacked {
+				model = openaicodex.NormalizeOAuthModel(model)
+			}
 			options := openaicodex.Options{
 				PromptCacheKey:    provider.PromptCacheKey,
 				ReasoningEffort:   provider.ReasoningEffort,

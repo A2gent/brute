@@ -209,6 +209,9 @@ func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model 
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return lmstudio.NewClient(apiKey, modelName, baseURL), nil
 	case config.ProviderOpenAICodex:
+		if oauthBacked {
+			modelName = openaicodex.NormalizeOAuthModel(modelName)
+		}
 		options := openaicodex.Options{
 			PromptCacheKey:    provider.PromptCacheKey,
 			ReasoningEffort:   provider.ReasoningEffort,

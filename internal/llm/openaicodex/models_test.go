@@ -18,7 +18,7 @@ func contains(models []string, target string) bool {
 	return false
 }
 
-func TestIsNonCallableOAuthUsageLimitDetectsSparkBuckets(t *testing.T) {
+func TestIsNonCallableOAuthUsageLimitDetectsNonCallableBuckets(t *testing.T) {
 	cases := []struct {
 		limitName      string
 		meteredFeature string
@@ -26,13 +26,26 @@ func TestIsNonCallableOAuthUsageLimitDetectsSparkBuckets(t *testing.T) {
 	}{
 		{"gpt-5.3-codex-spark", "", true},
 		{"", "codex-spark", true},
+		{"gpt-5.6-sol-medium", "", true},
+		{"gpt-5.6-terra-medium", "", true},
+		{"gpt-5.6-luna-high", "", true},
 		{"Codex", "", false},
+		{"gpt-5.6-codex", "", false},
 		{"gpt-5.3-codex", "", false},
 	}
 	for _, tc := range cases {
 		if got := IsNonCallableOAuthUsageLimit(tc.limitName, tc.meteredFeature); got != tc.want {
 			t.Fatalf("IsNonCallableOAuthUsageLimit(%q, %q) = %v, want %v", tc.limitName, tc.meteredFeature, got, tc.want)
 		}
+	}
+}
+
+func TestNormalizeOAuthModelFallsBackForChatGPTUsageBuckets(t *testing.T) {
+	if got := NormalizeOAuthModel("gpt-5.6-sol-medium"); got != OAuthFallbackModel {
+		t.Fatalf("NormalizeOAuthModel(sol) = %q, want %q", got, OAuthFallbackModel)
+	}
+	if got := NormalizeOAuthModel("gpt-5.6-codex"); got != "gpt-5.6-codex" {
+		t.Fatalf("NormalizeOAuthModel(codex) = %q", got)
 	}
 }
 
@@ -72,14 +85,17 @@ func TestListModelCatalogIgnoresOAuthOnlyCredentials(t *testing.T) {
 	}
 }
 
-func TestListModelCatalogDiscoversFromUsageEndpoint(t *testing.T) {
+func TestListModelCatalogDoesNotDiscoverFromOAuthUsageEndpoint(t *testing.T) {
+	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
 		if !strings.HasSuffix(r.URL.Path, "/wham/usage") {
 			t.Errorf("unexpected usage path: %s", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"additional_rate_limits": []map[string]any{
 				{"limit_name": "gpt-5.6-sol-medium"},
+				{"limit_name": "gpt-5.6-terra-medium"},
 				{"limit_name": "gpt-5.3-codex-spark"},
 				{"limit_name": "Codex"},
 			},
@@ -93,14 +109,16 @@ func TestListModelCatalogDiscoversFromUsageEndpoint(t *testing.T) {
 		HTTPClient:  server.Client(),
 	})
 
-	if !contains(models, "gpt-5.6-sol-medium") {
-		t.Fatalf("expected discovered oauth model, got %v", models)
+	if called {
+		t.Fatalf("OAuth usage buckets are not authoritative for callable models and should not be queried")
 	}
-	if contains(models, "gpt-5.3-codex-spark") {
-		t.Fatalf("spark bucket must be filtered out, got %v", models)
+	for _, blocked := range []string{"gpt-5.6-sol-medium", "gpt-5.6-terra-medium", "gpt-5.3-codex-spark", "Codex"} {
+		if contains(models, blocked) {
+			t.Fatalf("non-callable OAuth usage bucket %q must not appear, got %v", blocked, models)
+		}
 	}
-	if contains(models, "Codex") {
-		t.Fatalf("general Codex bucket must not appear as a model, got %v", models)
+	if len(models) != len(CuratedModels) {
+		t.Fatalf("OAuth mode should return curated callable catalog only, got %v", models)
 	}
 }
 

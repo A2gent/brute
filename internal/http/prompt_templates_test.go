@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/session"
 )
 
@@ -107,5 +108,39 @@ func TestDefaultPromptTemplateSettingsIncludesSessionSummary(t *testing.T) {
 	})
 	if custom.SessionSummaryPromptTemplate != "custom summary {{initial_user_message}}" {
 		t.Fatalf("unexpected session summary template: %q", custom.SessionSummaryPromptTemplate)
+	}
+}
+
+func TestResolvePromptLLMTargetUsesPerPromptProviderAndModel(t *testing.T) {
+	t.Parallel()
+
+	server := &Server{config: config.DefaultConfig()}
+	settings := map[string]string{
+		promptLLMSettingsSettingKey: `{
+			"git_pr_description": {"provider":"google", "model":"gemini-custom"},
+			"git_review_overlay": {"provider":"cursor"}
+		}`,
+	}
+
+	prTarget := server.resolvePromptLLMTarget(settings, promptLLMCaseGitPRDescription)
+	if prTarget.ProviderType != config.ProviderGoogle || prTarget.Model != "gemini-custom" {
+		t.Fatalf("unexpected PR target: %#v", prTarget)
+	}
+
+	reviewTarget := server.resolvePromptLLMTarget(settings, promptLLMCaseGitReviewOverlay)
+	if reviewTarget.ProviderType != config.ProviderCursor || reviewTarget.Model != "composer-2.5" {
+		t.Fatalf("unexpected review target: %#v", reviewTarget)
+	}
+}
+
+func TestResolvePromptLLMTargetFallsBackToLegacyGitCommitProvider(t *testing.T) {
+	t.Parallel()
+
+	server := &Server{config: config.DefaultConfig()}
+	settings := map[string]string{gitCommitProviderSettingKey: "openrouter"}
+
+	target := server.resolvePromptLLMTarget(settings, promptLLMCaseGitCommit)
+	if target.ProviderType != config.ProviderOpenRouter || target.Model != "openrouter/auto" {
+		t.Fatalf("unexpected legacy git commit target: %#v", target)
 	}
 }

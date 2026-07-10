@@ -169,20 +169,17 @@ func (s *Server) generateProjectGitReviewOverlayAnnotations(ctx context.Context,
 		strings.Join(diffContext.Sections, "\n\n"),
 	)
 
-	providerRef := strings.TrimSpace(settings[gitCommitProviderSettingKey])
-	if providerRef == "" {
-		providerRef = s.config.ActiveProvider
-	}
-	configuredProviderType := config.ProviderType(config.NormalizeProviderRef(providerRef))
+	configuredTarget := s.resolvePromptLLMTarget(settings, promptLLMCaseGitReviewOverlay)
 	activeProviderType := config.ProviderType(config.NormalizeProviderRef(s.config.ActiveProvider))
+	activeModel := s.resolveModelForProvider(activeProviderType)
 
 	generationCtx, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
 
-	response, err := s.generateGitReviewOverlayWithProvider(generationCtx, configuredProviderType, prompt)
-	if err != nil && configuredProviderType != activeProviderType {
-		logging.Warn("Review overlay generation failed with configured provider %s: %v. Retrying active provider %s", configuredProviderType, err, activeProviderType)
-		response, err = s.generateGitReviewOverlayWithProvider(generationCtx, activeProviderType, prompt)
+	response, err := s.generateGitReviewOverlayWithProvider(generationCtx, configuredTarget.ProviderType, configuredTarget.Model, prompt)
+	if err != nil && configuredTarget.ProviderType != activeProviderType {
+		logging.Warn("Review overlay generation failed with configured provider %s: %v. Retrying active provider %s", configuredTarget.ProviderType, err, activeProviderType)
+		response, err = s.generateGitReviewOverlayWithProvider(generationCtx, activeProviderType, activeModel, prompt)
 	}
 	if err != nil {
 		logging.Warn("Review overlay generation failed: %v", err)
@@ -203,8 +200,7 @@ func (s *Server) generateProjectGitReviewOverlayAnnotations(ctx context.Context,
 	return annotations
 }
 
-func (s *Server) generateGitReviewOverlayWithProvider(ctx context.Context, providerType config.ProviderType, prompt string) (*llm.ChatResponse, error) {
-	model := s.resolveModelForProvider(providerType)
+func (s *Server) generateGitReviewOverlayWithProvider(ctx context.Context, providerType config.ProviderType, model string, prompt string) (*llm.ChatResponse, error) {
 	target, err := s.resolveExecutionTarget(ctx, providerType, model, prompt, nil)
 	if err != nil {
 		return nil, err

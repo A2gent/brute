@@ -263,20 +263,17 @@ func (s *Server) generateProjectGitPRDescription(ctx context.Context, repoRoot s
 		truncateText(diff, 14000),
 	)
 
-	providerRef := strings.TrimSpace(settings[gitCommitProviderSettingKey])
-	if providerRef == "" {
-		providerRef = s.config.ActiveProvider
-	}
-	configuredProviderType := config.ProviderType(config.NormalizeProviderRef(providerRef))
+	configuredTarget := s.resolvePromptLLMTarget(settings, promptLLMCaseGitPRDescription)
 	activeProviderType := config.ProviderType(config.NormalizeProviderRef(s.config.ActiveProvider))
+	activeModel := s.resolveModelForProvider(activeProviderType)
 
 	generationCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
 	defer cancel()
 
-	response, err := s.generateGitPRDescriptionWithProvider(generationCtx, configuredProviderType, prompt)
-	if err != nil && configuredProviderType != activeProviderType {
-		logging.Warn("PR description generation failed with configured provider %s: %v. Retrying active provider %s", configuredProviderType, err, activeProviderType)
-		response, err = s.generateGitPRDescriptionWithProvider(generationCtx, activeProviderType, prompt)
+	response, err := s.generateGitPRDescriptionWithProvider(generationCtx, configuredTarget.ProviderType, configuredTarget.Model, prompt)
+	if err != nil && configuredTarget.ProviderType != activeProviderType {
+		logging.Warn("PR description generation failed with configured provider %s: %v. Retrying active provider %s", configuredTarget.ProviderType, err, activeProviderType)
+		response, err = s.generateGitPRDescriptionWithProvider(generationCtx, activeProviderType, activeModel, prompt)
 	}
 	if err != nil {
 		logging.Warn("PR description generation failed: %v", err)
@@ -290,8 +287,7 @@ func (s *Server) generateProjectGitPRDescription(ctx context.Context, repoRoot s
 	return description
 }
 
-func (s *Server) generateGitPRDescriptionWithProvider(ctx context.Context, providerType config.ProviderType, prompt string) (*llm.ChatResponse, error) {
-	model := s.resolveModelForProvider(providerType)
+func (s *Server) generateGitPRDescriptionWithProvider(ctx context.Context, providerType config.ProviderType, model string, prompt string) (*llm.ChatResponse, error) {
 	target, err := s.resolveExecutionTarget(ctx, providerType, model, prompt, nil)
 	if err != nil {
 		return nil, err

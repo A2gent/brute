@@ -316,6 +316,9 @@ func (s *Server) importAgentYAMLDefinition(ctx context.Context, req importAgentY
 	if strings.TrimSpace(def.Local.DefinitionDir) == "" {
 		def.Local.DefinitionDir = inferAgentDefinitionSourceDir(req.ConfigPath, resolvedConfigPath, def)
 	}
+	if _, err := resolveAgentDefinitionSystemPrompt(def); err != nil {
+		return nil, http.StatusBadRequest, err
+	}
 	projectID, err := s.normalizeAgentDefinitionProjectID(req.ProjectID)
 	if err != nil {
 		return nil, http.StatusBadRequest, err
@@ -658,7 +661,7 @@ func localDockerCreateRequestBaseFromDefinition(def *agentdef.Definition) create
 
 	req := createLocalDockerAgentRequest{
 		Name:         name,
-		Image:        strings.TrimSpace(def.Runtime.Image),
+		SystemPrompt: strings.TrimSpace(def.Instructions.System),
 		HostPort:     def.Local.HostPort,
 		AgentKind:    strings.TrimSpace(def.Agent.Kind),
 		SystemPrompt: strings.TrimSpace(def.Instructions.System),

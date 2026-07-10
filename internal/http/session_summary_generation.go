@@ -33,9 +33,15 @@ func (s *Server) refreshSessionSummaryWithPrompt(ctx context.Context, sess *sess
 	summaryCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
-	providerType := s.resolveSessionProviderType(sess)
-	model := s.resolveSessionModel(sess, providerType)
-	target, err := s.resolveExecutionTarget(summaryCtx, providerType, model, prompt, sess)
+	settings, settingsErr := s.store.GetSettings()
+	if settingsErr != nil {
+		logging.Warn("Failed to load settings for session summary provider: %v", settingsErr)
+		settings = map[string]string{}
+	}
+	sessionProviderType := s.resolveSessionProviderType(sess)
+	sessionModel := s.resolveSessionModel(sess, sessionProviderType)
+	targetConfig := s.resolvePromptLLMTargetWithFallback(settings, promptLLMCaseSessionSummary, sessionProviderType, sessionModel)
+	target, err := s.resolveExecutionTarget(summaryCtx, targetConfig.ProviderType, targetConfig.Model, prompt, sess)
 	if err != nil {
 		logging.Warn("Failed to resolve provider for session summary: %v", err)
 		if fallbackSummary != "" {

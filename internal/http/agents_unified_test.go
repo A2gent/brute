@@ -273,7 +273,10 @@ func TestComposeDockerAgentSystemPromptIncludesInstructionBlocks(t *testing.T) {
 		}},
 	}
 
-	prompt := server.composeDockerAgentSystemPrompt(def, "")
+	prompt, err := server.composeDockerAgentSystemPrompt(def, "")
+	if err != nil {
+		t.Fatalf("composeDockerAgentSystemPrompt failed: %v", err)
+	}
 	if !strings.Contains(prompt, `You are a sub-agent named "Docker Instructions"`) {
 		t.Fatalf("prompt missing delegated-agent identity:\n%s", prompt)
 	}
@@ -335,7 +338,10 @@ func TestComposeDockerAgentSystemPromptIncludesDefinitionFolderSkills(t *testing
 		Local:   agentdef.Local{DefinitionDir: definitionDir},
 	}
 
-	prompt := server.composeDockerAgentSystemPrompt(def, "")
+	prompt, err := server.composeDockerAgentSystemPrompt(def, "")
+	if err != nil {
+		t.Fatalf("composeDockerAgentSystemPrompt failed: %v", err)
+	}
 	if !strings.Contains(prompt, "Connected skills folder: "+skillsDir) || !strings.Contains(prompt, "- Deep Review [deep-review.md]") {
 		t.Fatalf("prompt missing definition folder skills listing:\n%s", prompt)
 	}
@@ -360,7 +366,10 @@ func TestComposeDockerAgentSystemPromptUsesContainerWorkspace(t *testing.T) {
 		Runtime: agentdef.Runtime{Type: agentdef.RuntimeDocker},
 	}
 
-	prompt := server.composeDockerAgentSystemPrompt(def, project.ID)
+	prompt, err := server.composeDockerAgentSystemPrompt(def, project.ID)
+	if err != nil {
+		t.Fatalf("composeDockerAgentSystemPrompt failed: %v", err)
+	}
 	if strings.Contains(prompt, projectRoot) {
 		t.Fatalf("prompt should not expose host project path to Docker child:\n%s", prompt)
 	}

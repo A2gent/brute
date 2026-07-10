@@ -98,6 +98,13 @@ func validateExpandedLocalDockerAgentYAMLSpec(spec localDockerAgentYAMLSpec) err
 	if strings.TrimSpace(spec.InitialPrompt) != "" && strings.TrimSpace(spec.Startup.Prompt) != "" && strings.TrimSpace(spec.InitialPrompt) != strings.TrimSpace(spec.Startup.Prompt) {
 		return fmt.Errorf("initial_prompt and startup.prompt disagree")
 	}
+	promptFile := strings.TrimSpace(spec.SystemPromptFile)
+	if promptFile != "" {
+		cleanPromptFile := filepath.Clean(promptFile)
+		if filepath.IsAbs(promptFile) || cleanPromptFile == "." || cleanPromptFile == ".." || strings.HasPrefix(cleanPromptFile, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("system_prompt_file must be a relative file path inside the YAML config directory")
+		}
+	}
 	return nil
 }
 

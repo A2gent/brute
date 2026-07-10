@@ -71,7 +71,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 func settingsResponse(settings map[string]string) SettingsResponse {
 	out := make(map[string]string, len(settings)+1)
 	for key, value := range settings {
-		if isBranchTaskDocAppSettingKey(key) {
+		if isBranchTaskDocAppSettingKey(key) || strings.TrimSpace(key) == gitCommitProviderSettingKey {
 			continue
 		}
 		out[key] = value
@@ -155,7 +155,7 @@ func syncSettingsToEnv(previous map[string]string, next map[string]string) {
 
 	for key, value := range next {
 		k := strings.TrimSpace(key)
-		if k == "" || isBranchTaskDocAppSettingKey(k) {
+		if k == "" || isBranchTaskDocAppSettingKey(k) || k == promptLLMSettingsSettingKey || k == gitCommitProviderSettingKey {
 			continue
 		}
 		if err := os.Setenv(k, value); err != nil {

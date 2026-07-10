@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/A2gent/brute/internal/agent"
-	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/jobs"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
@@ -34,7 +33,16 @@ Cron expression:`
 
 // parseScheduleToCron uses the LLM to convert natural language schedule to cron expression
 func (s *Server) parseScheduleToCron(ctx context.Context, scheduleText string) (string, error) {
-	templates := s.loadPromptTemplates()
+	settings := map[string]string{}
+	if s != nil && s.store != nil {
+		loaded, err := s.store.GetSettings()
+		if err != nil {
+			logging.Warn("Failed to load settings for schedule parser: %v", err)
+		} else if loaded != nil {
+			settings = loaded
+		}
+	}
+	templates := serverPromptTemplatesFromSettings(settings)
 	prompt := renderPromptTemplate(templates.ScheduleToCronPromptTemplate, map[string]string{
 		"schedule": scheduleText,
 	})
@@ -47,11 +55,10 @@ func (s *Server) parseScheduleToCron(ctx context.Context, scheduleText string) (
 
 	sess.AddUserMessage(prompt)
 
-	providerType := config.ProviderType(config.NormalizeProviderRef(s.config.ActiveProvider))
-	model := s.resolveModelForProvider(providerType)
-	target, err := s.resolveExecutionTarget(ctx, providerType, model, prompt, sess)
+	targetConfig := s.resolvePromptLLMTarget(settings, promptLLMCaseScheduleToCron)
+	target, err := s.resolveExecutionTarget(ctx, targetConfig.ProviderType, targetConfig.Model, prompt, sess)
 	if err != nil {
-		return "", fmt.Errorf("failed to initialize provider %s: %w", providerType, err)
+		return "", fmt.Errorf("failed to initialize provider %s: %w", targetConfig.ProviderType, err)
 	}
 
 	agentConfig := agent.Config{

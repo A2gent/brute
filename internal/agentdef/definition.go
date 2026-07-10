@@ -6,6 +6,7 @@ package agentdef
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -132,8 +133,9 @@ type LLM struct {
 
 // Instructions hold the system prompt and configurable instruction blocks.
 type Instructions struct {
-	System string             `yaml:"system,omitempty" json:"system,omitempty"`
-	Blocks []InstructionBlock `yaml:"blocks,omitempty" json:"blocks,omitempty"`
+	System     string             `yaml:"system,omitempty" json:"system,omitempty"`
+	SystemFile string             `yaml:"system_file,omitempty" json:"system_file,omitempty"`
+	Blocks     []InstructionBlock `yaml:"blocks,omitempty" json:"blocks,omitempty"`
 }
 
 // InstructionBlock mirrors the sub-agent instruction block JSON shape.
@@ -261,6 +263,7 @@ func (d *Definition) Normalize() {
 	}
 	d.LLM.Provider = strings.TrimSpace(d.LLM.Provider)
 	d.LLM.Model = strings.TrimSpace(d.LLM.Model)
+	d.Instructions.SystemFile = strings.TrimSpace(d.Instructions.SystemFile)
 	d.Metrics.Source = strings.TrimSpace(d.Metrics.Source)
 	d.Local.DefinitionDir = strings.TrimSpace(d.Local.DefinitionDir)
 	d.Publish.Square.Category = strings.ToLower(strings.TrimSpace(d.Publish.Square.Category))
@@ -292,6 +295,9 @@ func (d *Definition) Validate() error {
 	}
 	if d.Tools.Mode != "" && d.Tools.Mode != ToolsModeAll && d.Tools.Mode != ToolsModeAllow {
 		return fmt.Errorf("tools.mode must be all or allow (got %q)", d.Tools.Mode)
+	}
+	if filepath.IsAbs(d.Instructions.SystemFile) || d.Instructions.SystemFile == "." || d.Instructions.SystemFile == ".." || strings.HasPrefix(d.Instructions.SystemFile, "../") {
+		return fmt.Errorf("instructions.system_file must be a relative file path inside the agent definition folder")
 	}
 	if err := validateAgentMetrics(d.Metrics); err != nil {
 		return err

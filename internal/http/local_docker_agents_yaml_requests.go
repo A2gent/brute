@@ -23,6 +23,7 @@ func (spec localDockerAgentYAMLSpec) toCreateRequest() createLocalDockerAgentReq
 		LMStudioBaseURL:  lmStudioBaseURL,
 		AgentKind:        strings.TrimSpace(spec.AgentKind),
 		SystemPrompt:     strings.TrimSpace(spec.SystemPrompt),
+		SystemPromptFile: strings.TrimSpace(spec.SystemPromptFile),
 		InitialPrompt:    strings.TrimSpace(spec.InitialPrompt),
 		SessionID:        strings.TrimSpace(spec.SessionID),
 		ProjectID:        projectID,

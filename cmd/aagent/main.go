@@ -343,7 +343,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 func applySettingsToEnv(settings map[string]string) {
 	for key, value := range settings {
 		k := strings.TrimSpace(key)
-		if k == "" {
+		if k == "" || k == "A2GENT_PROMPT_LLM_SETTINGS" || k == "AAGENT_GIT_COMMIT_PROVIDER" {
 			continue
 		}
 		// Explicit environment from process/container should have precedence.

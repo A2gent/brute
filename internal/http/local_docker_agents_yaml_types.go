@@ -38,6 +38,7 @@ type localDockerAgentYAMLSpec struct {
 	LMStudioBaseURL  string                                `yaml:"lm_studio_base_url" json:"lm_studio_base_url,omitempty"`
 	AgentKind        string                                `yaml:"agent_kind" json:"agent_kind,omitempty"`
 	SystemPrompt     string                                `yaml:"system_prompt" json:"system_prompt,omitempty"`
+	SystemPromptFile string                                `yaml:"system_prompt_file" json:"system_prompt_file,omitempty"`
 	InitialPrompt    string                                `yaml:"initial_prompt" json:"initial_prompt,omitempty"`
 	SessionID        string                                `yaml:"session_id" json:"session_id,omitempty"`
 	ProjectID        string                                `yaml:"project_id" json:"project_id,omitempty"`

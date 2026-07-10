@@ -11,10 +11,10 @@ import (
 )
 
 const (
-	agentDefinitionsFolderSettingKey          = "AAGENT_AGENT_DEFINITIONS_FOLDER"
+	agentDefinitionsFolderSettingKey           = "AAGENT_AGENT_DEFINITIONS_FOLDER"
 	projectAgentDefinitionsDirectorySettingKey = "A2GENT_PROJECT_AGENT_DEFINITIONS_DIRECTORY"
-	defaultProjectAgentDefinitionsDirectory   = "agent"
-	defaultGlobalAgentDefinitionsFolder       = "agents"
+	defaultProjectAgentDefinitionsDirectory    = "agent"
+	defaultGlobalAgentDefinitionsFolder        = "agents"
 )
 
 type discoveredAgentDefinition struct {
@@ -177,6 +177,9 @@ func discoveredAgentDefinitionFromConfigPath(configPath string, definitionDir st
 
 	if strings.TrimSpace(def.Local.DefinitionDir) == "" {
 		def.Local.DefinitionDir = strings.TrimSpace(definitionDir)
+	}
+	if err := applyResolvedAgentDefinitionSystemPrompt(def); err != nil {
+		return nil, []string{fmt.Sprintf("invalid agent definition %s: %v", configPath, err)}
 	}
 
 	projectID := ""

@@ -412,8 +412,12 @@ func (m *dockerRuntimeManager) createAgentContainer(ctx context.Context, def *ag
 	req.Name = containerName
 	req.ProjectID = workspace.ProjectID
 	req.ProjectMountMode = ""
-	if prompt := strings.TrimSpace(m.server.composeDockerAgentSystemPrompt(def, workspace.ProjectID)); prompt != "" {
-		req.SystemPrompt = prompt
+	prompt, promptErr := m.server.composeDockerAgentSystemPrompt(def, workspace.ProjectID)
+	if promptErr != nil {
+		return nil, promptErr
+	}
+	if strings.TrimSpace(prompt) != "" {
+		req.SystemPrompt = strings.TrimSpace(prompt)
 	}
 	if workspace.ProjectID != "" {
 		req.ProjectMountMode = workspace.Mount
@@ -499,11 +503,14 @@ func removeDockerContainerByName(ctx context.Context, name string) {
 	}
 }
 
-func (s *Server) composeDockerAgentSystemPrompt(def *agentdef.Definition, projectID string) string {
+func (s *Server) composeDockerAgentSystemPrompt(def *agentdef.Definition, projectID string) (string, error) {
+	if err := applyResolvedAgentDefinitionSystemPrompt(def); err != nil {
+		return "", err
+	}
 	sa, err := agentdef.ToSubAgentConfig(def)
 	if err != nil {
 		logging.Warn("Docker runtime: failed to convert agent definition %s to rich prompt config: %v", def.Agent.ID, err)
-		return strings.TrimSpace(def.Instructions.System)
+		return strings.TrimSpace(def.Instructions.System), nil
 	}
 	promptSession := session.New("docker-agent")
 	projectID = strings.TrimSpace(projectID)
@@ -512,11 +519,11 @@ func (s *Server) composeDockerAgentSystemPrompt(def *agentdef.Definition, projec
 	}
 	snapshot := s.composeSubAgentSystemPromptSnapshot(sa, promptSession)
 	if snapshot == nil {
-		return strings.TrimSpace(def.Instructions.System)
+		return strings.TrimSpace(def.Instructions.System), nil
 	}
 	combined := strings.TrimSpace(snapshot.CombinedPrompt)
 	combined = s.appendAgentDefinitionSkillsSection(combined, def)
-	return strings.TrimSpace(s.rewriteDockerWorkspacePrompt(combined, projectID))
+	return strings.TrimSpace(s.rewriteDockerWorkspacePrompt(combined, projectID)), nil
 }
 
 func (s *Server) appendAgentDefinitionSkillsSection(prompt string, def *agentdef.Definition) string {

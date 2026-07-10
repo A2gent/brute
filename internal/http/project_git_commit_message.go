@@ -105,20 +105,17 @@ func (s *Server) handleProjectGitCommitMessageSuggestion(w http.ResponseWriter, 
 	}
 	prompt := buildGitCommitPrompt(template, strings.Join(fileList, "\n"), strings.Join(diffSections, "\n\n"))
 
-	providerRef := strings.TrimSpace(settings[gitCommitProviderSettingKey])
-	if providerRef == "" {
-		providerRef = s.config.ActiveProvider
-	}
-	configuredProviderType := config.ProviderType(config.NormalizeProviderRef(providerRef))
+	configuredTarget := s.resolvePromptLLMTarget(settings, promptLLMCaseGitCommit)
 	activeProviderType := config.ProviderType(config.NormalizeProviderRef(s.config.ActiveProvider))
+	activeModel := s.resolveModelForProvider(activeProviderType)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
 
-	response, err := s.generateGitCommitMessageWithProvider(ctx, configuredProviderType, prompt)
-	if err != nil && configuredProviderType != activeProviderType {
-		logging.Warn("Commit message generation failed with configured provider %s: %v. Retrying active provider %s", configuredProviderType, err, activeProviderType)
-		response, err = s.generateGitCommitMessageWithProvider(ctx, activeProviderType, prompt)
+	response, err := s.generateGitCommitMessageWithProvider(ctx, configuredTarget.ProviderType, configuredTarget.Model, prompt)
+	if err != nil && configuredTarget.ProviderType != activeProviderType {
+		logging.Warn("Commit message generation failed with configured provider %s: %v. Retrying active provider %s", configuredTarget.ProviderType, err, activeProviderType)
+		response, err = s.generateGitCommitMessageWithProvider(ctx, activeProviderType, activeModel, prompt)
 	}
 	if err != nil {
 		logging.Warn("Commit message generation failed: %v", err)
@@ -143,8 +140,7 @@ func (s *Server) handleProjectGitCommitMessageSuggestion(w http.ResponseWriter, 
 	s.jsonResponse(w, http.StatusOK, ProjectGitCommitMessageResponse{Message: message})
 }
 
-func (s *Server) generateGitCommitMessageWithProvider(ctx context.Context, providerType config.ProviderType, prompt string) (*llm.ChatResponse, error) {
-	model := s.resolveModelForProvider(providerType)
+func (s *Server) generateGitCommitMessageWithProvider(ctx context.Context, providerType config.ProviderType, model string, prompt string) (*llm.ChatResponse, error) {
 	target, err := s.resolveExecutionTarget(ctx, providerType, model, prompt, nil)
 	if err != nil {
 		return nil, err

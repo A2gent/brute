@@ -184,19 +184,27 @@ func openAICodexUsageBars(payload codexUsageRateLimitResponse) []ProviderUsageBa
 	}
 
 	appendLimitBars("Codex", payload.RateLimit)
-	additional := make([]codexUsageAdditionalLimit, 0, len(payload.AdditionalRateLimits))
-	for _, item := range payload.AdditionalRateLimits {
-		if item.RateLimit != nil {
-			additional = append(additional, item)
+	for _, item := range codexCallableAdditionalLimits(payload.AdditionalRateLimits) {
+		appendLimitBars(codexAdditionalLimitLabel(item), item.RateLimit)
+	}
+	return bars
+}
+
+func codexCallableAdditionalLimits(items []codexUsageAdditionalLimit) []codexUsageAdditionalLimit {
+	additional := make([]codexUsageAdditionalLimit, 0, len(items))
+	for _, item := range items {
+		if item.RateLimit == nil {
+			continue
 		}
+		if openaicodex.IsNonCallableOAuthUsageLimit(item.LimitName, item.MeteredFeature) {
+			continue
+		}
+		additional = append(additional, item)
 	}
 	sort.SliceStable(additional, func(i, j int) bool {
 		return codexAdditionalLimitLabel(additional[i]) < codexAdditionalLimitLabel(additional[j])
 	})
-	for _, item := range additional {
-		appendLimitBars(codexAdditionalLimitLabel(item), item.RateLimit)
-	}
-	return bars
+	return additional
 }
 
 func codexWindowUsageBar(label string, window *codexUsageWindow, status string) ProviderUsageBar {
@@ -237,16 +245,7 @@ func formatOpenAICodexUsage(payload codexUsageRateLimitResponse) string {
 		parts = append(parts, formatCodexUsageLimit("Codex", payload.RateLimit))
 	}
 
-	additional := make([]codexUsageAdditionalLimit, 0, len(payload.AdditionalRateLimits))
-	for _, item := range payload.AdditionalRateLimits {
-		if item.RateLimit != nil {
-			additional = append(additional, item)
-		}
-	}
-	sort.SliceStable(additional, func(i, j int) bool {
-		return codexAdditionalLimitLabel(additional[i]) < codexAdditionalLimitLabel(additional[j])
-	})
-	for _, item := range additional {
+	for _, item := range codexCallableAdditionalLimits(payload.AdditionalRateLimits) {
 		parts = append(parts, formatCodexUsageLimit(codexAdditionalLimitLabel(item), item.RateLimit))
 	}
 

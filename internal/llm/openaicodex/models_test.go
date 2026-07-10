@@ -18,6 +18,24 @@ func contains(models []string, target string) bool {
 	return false
 }
 
+func TestIsNonCallableOAuthUsageLimitDetectsSparkBuckets(t *testing.T) {
+	cases := []struct {
+		limitName      string
+		meteredFeature string
+		want           bool
+	}{
+		{"gpt-5.3-codex-spark", "", true},
+		{"", "codex-spark", true},
+		{"Codex", "", false},
+		{"gpt-5.3-codex", "", false},
+	}
+	for _, tc := range cases {
+		if got := IsNonCallableOAuthUsageLimit(tc.limitName, tc.meteredFeature); got != tc.want {
+			t.Fatalf("IsNonCallableOAuthUsageLimit(%q, %q) = %v, want %v", tc.limitName, tc.meteredFeature, got, tc.want)
+		}
+	}
+}
+
 func TestListModelCatalogReturnsCuratedWithoutCredentials(t *testing.T) {
 	models := ListModelCatalog(context.Background(), ModelCatalogOptions{})
 	if len(models) != len(CuratedModels) {

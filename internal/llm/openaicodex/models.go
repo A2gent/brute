@@ -152,6 +152,14 @@ func discoverModelsFromModelsEndpoint(ctx context.Context, client *http.Client, 
 	return models
 }
 
+// IsNonCallableOAuthUsageLimit reports whether a Codex OAuth usage bucket refers
+// to a model the account cannot invoke. The usage endpoint surfaces per-model
+// quota buckets (e.g. gpt-5.3-codex-spark) that ListModelCatalog already omits.
+func IsNonCallableOAuthUsageLimit(limitName, meteredFeature string) bool {
+	combined := strings.ToLower(strings.TrimSpace(limitName) + " " + strings.TrimSpace(meteredFeature))
+	return strings.Contains(combined, "spark")
+}
+
 // looksLikeModelID keeps discovery focused on Codex-family chat models and
 // filters out non-model rate-limit features and unrelated OpenAI endpoints.
 func looksLikeModelID(value string) bool {

@@ -26,6 +26,51 @@ func TestOpenAICodexUsageURLUsesChatGPTWhamUsageEndpoint(t *testing.T) {
 	}
 }
 
+func TestOpenAICodexUsageBarsOmitsNonCallableSparkLimits(t *testing.T) {
+	payload := codexUsageRateLimitResponse{
+		PlanType: "plus",
+		RateLimit: &codexUsageRateLimitDetails{
+			Allowed:       true,
+			PrimaryWindow: &codexUsageWindow{UsedPercent: 10},
+		},
+		AdditionalRateLimits: []codexUsageAdditionalLimit{
+			{
+				LimitName: "gpt-5.3-codex-spark",
+				RateLimit: &codexUsageRateLimitDetails{
+					Allowed:       true,
+					PrimaryWindow: &codexUsageWindow{UsedPercent: 80},
+				},
+			},
+			{
+				LimitName: "gpt-5.3-codex",
+				RateLimit: &codexUsageRateLimitDetails{
+					Allowed:       true,
+					PrimaryWindow: &codexUsageWindow{UsedPercent: 20},
+				},
+			},
+		},
+	}
+
+	bars := openAICodexUsageBars(payload)
+	if len(bars) != 2 {
+		t.Fatalf("usage bars length = %d, want 2 (spark omitted): %+v", len(bars), bars)
+	}
+	if bars[0].Label != "Codex 5h" {
+		t.Fatalf("unexpected first bar: %+v", bars[0])
+	}
+	if bars[1].Label != "gpt-5.3-codex 5h" {
+		t.Fatalf("unexpected second bar: %+v", bars[1])
+	}
+
+	text := formatOpenAICodexUsage(payload)
+	if strings.Contains(strings.ToLower(text), "spark") {
+		t.Fatalf("formatted usage should omit spark limits, got %q", text)
+	}
+	if !strings.Contains(text, "gpt-5.3-codex") {
+		t.Fatalf("formatted usage should keep callable limits, got %q", text)
+	}
+}
+
 func TestFetchOpenAICodexUsageSendsOAuthHeadersAndParsesPayload(t *testing.T) {
 	accessToken := codexTestJWT(t, "acc_123")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -23,6 +23,7 @@ import (
 	"github.com/A2gent/brute/internal/llm/lmstudio"
 	"github.com/A2gent/brute/internal/llm/openaicodex"
 	"github.com/A2gent/brute/internal/logging"
+	"github.com/A2gent/brute/internal/runtimeenv"
 	"github.com/A2gent/brute/internal/scheduler"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/speechcache"
@@ -129,11 +130,7 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize storage: %w", err)
 	}
 	defer store.Close()
-	if settings, err := store.GetSettings(); err == nil {
-		applySettingsToEnv(settings)
-	} else {
-		logging.Warn("Failed to load persisted settings: %v", err)
-	}
+	applyCustomEnvFromStore(store)
 	applyProviderEnvOverrides(cfg)
 
 	// Initialize LLM client based on config
@@ -279,11 +276,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize storage: %w", err)
 	}
 	defer store.Close()
-	if settings, err := store.GetSettings(); err == nil {
-		applySettingsToEnv(settings)
-	} else {
-		logging.Warn("Failed to load persisted settings: %v", err)
-	}
+	applyCustomEnvFromStore(store)
 	applyProviderEnvOverrides(cfg)
 
 	// Initialize LLM client. Do not fail server startup if credentials are not configured yet.
@@ -340,20 +333,17 @@ func runServer(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func applySettingsToEnv(settings map[string]string) {
-	for key, value := range settings {
-		k := strings.TrimSpace(key)
-		if k == "" || k == "A2GENT_PROMPT_LLM_SETTINGS" || k == "AAGENT_GIT_COMMIT_PROVIDER" {
-			continue
-		}
-		// Explicit environment from process/container should have precedence.
-		if existing := strings.TrimSpace(os.Getenv(k)); existing != "" {
-			continue
-		}
-		if err := os.Setenv(k, value); err != nil {
-			logging.Warn("Failed to set env var %q from settings: %v", k, err)
-		}
+func applyCustomEnvFromStore(store storage.Store) {
+	customStore, ok := store.(storage.CustomEnvStore)
+	if !ok {
+		return
 	}
+	customEnv, err := customStore.GetCustomEnv()
+	if err != nil {
+		logging.Warn("Failed to load persisted custom env: %v", err)
+		return
+	}
+	runtimeenv.MergeCustomEnv(customEnv)
 }
 
 func applyProviderEnvOverrides(cfg *config.Config) {

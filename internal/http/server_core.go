@@ -20,6 +20,7 @@ import (
 	"github.com/A2gent/brute/internal/filesearch"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/logging"
+	"github.com/A2gent/brute/internal/runtimeenv"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/speechcache"
 	"github.com/A2gent/brute/internal/storage"
@@ -103,6 +104,12 @@ func NewServer(
 	s.dockerRuntime = newDockerRuntimeManager(s)
 
 	integrationtools.Register(s.toolManager, store, speechClips, sessionManager)
+
+	if customStore, ok := store.(storage.CustomEnvStore); ok {
+		if customEnv, err := customStore.GetCustomEnv(); err == nil {
+			runtimeenv.MergeCustomEnv(customEnv)
+		}
+	}
 
 	if settings, err := store.GetSettings(); err == nil {
 		filesearch.SetIndexingEnabledFromSettings(settings)

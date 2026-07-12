@@ -86,12 +86,18 @@ func (s *SQLiteStore) migrate() error {
 		// Migration: Add job_id column to sessions
 		`ALTER TABLE sessions ADD COLUMN job_id TEXT`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_job_id ON sessions(job_id)`,
-		// App settings key/value table (secrets/tokens and other runtime settings)
+		// App settings key/value table for Brute-managed settings only. User
+		// environment variables live in custom_env and are applied explicitly.
 		`CREATE TABLE IF NOT EXISTS app_settings (
-			key TEXT PRIMARY KEY,
-			value TEXT NOT NULL,
-			updated_at TIMESTAMP NOT NULL
-		)`,
+				key TEXT PRIMARY KEY,
+				value TEXT NOT NULL,
+				updated_at TIMESTAMP NOT NULL
+			)`,
+		`CREATE TABLE IF NOT EXISTS custom_env (
+				key TEXT PRIMARY KEY,
+				value TEXT NOT NULL,
+				updated_at TIMESTAMP NOT NULL
+			)`,
 		// Channel integrations (Telegram/Slack/Discord/WhatsApp/Webhook)
 		`CREATE TABLE IF NOT EXISTS integrations (
 			id TEXT PRIMARY KEY,
@@ -288,6 +294,9 @@ func (s *SQLiteStore) migrate() error {
 			return fmt.Errorf("migration failed: %w", err)
 		}
 	}
+	if err := s.migrateLegacyCustomEnvFromAppSettings(); err != nil {
+		return fmt.Errorf("failed to migrate custom env settings: %w", err)
+	}
 	// Move legacy global project prompt options into project rows once the
 	// settings column exists. Branch task documentation settings are project
 	// scoped, so their old global env-style keys are removed after migration.
@@ -423,6 +432,74 @@ func cleanSQLiteIdentifier(identifier string) string {
 
 func quoteSQLiteIdentifier(identifier string) string {
 	return `"` + strings.ReplaceAll(identifier, `"`, `""`) + `"`
+}
+
+func (s *SQLiteStore) migrateLegacyCustomEnvFromAppSettings() error {
+	rows, err := s.db.Query(`SELECT key, value, updated_at FROM app_settings`)
+	if err != nil {
+		return err
+	}
+	type settingRow struct {
+		key       string
+		value     string
+		updatedAt string
+	}
+	legacyCustom := []settingRow{}
+	managedKeys := []string{}
+	for rows.Next() {
+		var row settingRow
+		if err := rows.Scan(&row.key, &row.value, &row.updatedAt); err != nil {
+			rows.Close()
+			return err
+		}
+		if isManagedAppSettingKey(row.key) {
+			managedKeys = append(managedKeys, strings.TrimSpace(row.key))
+			continue
+		}
+		legacyCustom = append(legacyCustom, row)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, row := range legacyCustom {
+		key := strings.TrimSpace(row.key)
+		if key == "" {
+			continue
+		}
+		if _, err := tx.Exec(`
+			INSERT INTO custom_env (key, value, updated_at)
+			VALUES (?, ?, ?)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+		`, key, row.value, row.updatedAt); err != nil {
+			return fmt.Errorf("failed to migrate legacy custom env %q: %w", key, err)
+		}
+		if _, err := tx.Exec(`DELETE FROM app_settings WHERE key = ?`, row.key); err != nil {
+			return fmt.Errorf("failed to remove legacy custom env %q from app_settings: %w", key, err)
+		}
+	}
+
+	// Remove duplicate blank/trim-variant rows from app_settings; SaveSettings
+	// will continue writing canonical keys only.
+	for _, key := range managedKeys {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		if _, err := tx.Exec(`DELETE FROM app_settings WHERE TRIM(key) = ? AND key <> ?`, key, key); err != nil {
+			return fmt.Errorf("failed to normalize managed setting %q: %w", key, err)
+		}
+	}
+	return tx.Commit()
 }
 
 func isSQLiteDuplicateColumnError(err error) bool {

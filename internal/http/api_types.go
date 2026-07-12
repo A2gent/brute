@@ -393,13 +393,15 @@ type JobExecutionResponse struct {
 
 type SettingsResponse struct {
 	Settings                               map[string]string `json:"settings"`
+	CustomEnv                              map[string]string `json:"custom_env,omitempty"`
 	DefaultSystemPrompt                    string            `json:"defaultSystemPrompt"`
 	DefaultSystemPromptWithoutBuiltInTools string            `json:"defaultSystemPromptWithoutBuiltInTools"`
 	DefaultPromptTemplates                 map[string]string `json:"defaultPromptTemplates"`
 }
 
 type UpdateSettingsRequest struct {
-	Settings map[string]string `json:"settings"`
+	Settings  map[string]string  `json:"settings"`
+	CustomEnv *map[string]string `json:"custom_env,omitempty"`
 }
 
 type ProviderConfigResponse struct {

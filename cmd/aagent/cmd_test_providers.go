@@ -135,11 +135,7 @@ func runProviderTestsLocal() error {
 	}
 	defer store.Close()
 
-	if settings, err := store.GetSettings(); err == nil {
-		applySettingsToEnv(settings)
-	} else {
-		fmt.Fprintf(os.Stderr, "Warning: failed to load persisted settings: %v\n", err)
-	}
+	applyCustomEnvFromStore(store)
 	applyProviderEnvOverrides(cfg)
 
 	llmClient, err := initLLMClient(cfg)

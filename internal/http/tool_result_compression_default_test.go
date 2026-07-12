@@ -50,7 +50,7 @@ func TestToolResultCompressionEnabled_SettingFalseDisablesFeature(t *testing.T) 
 }
 
 func TestSettingsResponseExposesCompressionEnabledByDefault(t *testing.T) {
-	resp := settingsResponse(map[string]string{})
+	resp := settingsResponse(map[string]string{}, nil)
 	if got := resp.Settings[toolResultCompressionSettingKey]; got != "true" {
 		t.Fatalf("settings response default = %q, want true", got)
 	}
@@ -63,7 +63,7 @@ func TestSettingsResponseHidesBranchTaskDocAppSettings(t *testing.T) {
 		projectBranchTaskDocDirectorySettingKey:                 "/tmp/global-docs",
 		projectBranchTaskDocModeSettingKey:                      "path",
 		"A2A_REGISTRY_URL":                                      "https://a2gent.net",
-	})
+	}, nil)
 
 	for key := range resp.Settings {
 		if isBranchTaskDocAppSettingKey(key) {
@@ -75,28 +75,19 @@ func TestSettingsResponseHidesBranchTaskDocAppSettings(t *testing.T) {
 	}
 }
 
-func TestSyncSettingsToEnvSkipsBranchTaskDocAppSettings(t *testing.T) {
-	legacyKey := legacyBranchTaskDocDirectorySettingPrefix + "project-1"
-	t.Setenv(legacyKey, "existing")
-	t.Setenv(projectBranchTaskDocModeSettingKey, "existing-mode")
+func TestSyncSettingsToEnvOnlyAppliesExplicitCustomEnv(t *testing.T) {
+	t.Setenv("A2GENT_MANAGED_APP_SETTING", "")
 	t.Setenv("A2GENT_TEST_VISIBLE_SETTING", "")
 
-	syncSettingsToEnv(
-		map[string]string{legacyKey: "existing"},
-		map[string]string{
-			legacyKey:                          "/tmp/docs",
-			projectBranchTaskDocModeSettingKey: "path",
-			"A2GENT_TEST_VISIBLE_SETTING":      "visible",
-		},
+	syncCustomEnvToEnv(
+		map[string]string{"A2GENT_REMOVED_CUSTOM_ENV": "old"},
+		map[string]string{"A2GENT_TEST_VISIBLE_SETTING": "visible"},
 	)
 
-	if got := os.Getenv(legacyKey); got != "existing" {
-		t.Fatalf("legacy branch task doc env changed to %q", got)
-	}
-	if got := os.Getenv(projectBranchTaskDocModeSettingKey); got != "existing-mode" {
-		t.Fatalf("project branch task doc env changed to %q", got)
-	}
 	if got := os.Getenv("A2GENT_TEST_VISIBLE_SETTING"); got != "visible" {
-		t.Fatalf("unrelated env setting = %q, want visible", got)
+		t.Fatalf("custom env setting = %q, want visible", got)
+	}
+	if got := os.Getenv("A2GENT_MANAGED_APP_SETTING"); got != "" {
+		t.Fatalf("managed app setting leaked to env: %q", got)
 	}
 }

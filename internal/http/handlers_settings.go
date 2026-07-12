@@ -3,13 +3,14 @@ package http
 
 import (
 	"encoding/json"
-	"github.com/A2gent/brute/internal/agent"
-	"github.com/A2gent/brute/internal/filesearch"
-	"github.com/A2gent/brute/internal/logging"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/A2gent/brute/internal/agent"
+	"github.com/A2gent/brute/internal/filesearch"
+	"github.com/A2gent/brute/internal/runtimeenv"
+	"github.com/A2gent/brute/internal/storage"
 )
 
 const agentNameSettingKey = "AAGENT_NAME"
@@ -34,7 +35,12 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to load settings: "+err.Error())
 		return
 	}
-	s.jsonResponse(w, http.StatusOK, settingsResponse(settings))
+	customEnv, err := loadCustomEnv(s.store)
+	if err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to load custom env: "+err.Error())
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, settingsResponse(settings, customEnv))
 }
 
 func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
@@ -47,28 +53,40 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		req.Settings = map[string]string{}
 	}
 
-	oldSettings, err := s.store.GetSettings()
+	oldCustomEnv, err := loadCustomEnv(s.store)
 	if err != nil {
-		s.errorResponse(w, http.StatusInternalServerError, "Failed to load existing settings: "+err.Error())
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to load existing custom env: "+err.Error())
 		return
 	}
 
-	if err := s.store.SaveSettings(req.Settings); err != nil {
-		s.errorResponse(w, http.StatusInternalServerError, "Failed to save settings: "+err.Error())
-		return
+	nextCustomEnv := map[string]string{}
+	if req.CustomEnv != nil {
+		nextCustomEnv = *req.CustomEnv
 	}
 
-	syncSettingsToEnv(oldSettings, req.Settings)
+	if customStore, ok := s.store.(storage.CustomEnvStore); ok {
+		if err := customStore.SaveSettingsAndCustomEnv(req.Settings, nextCustomEnv); err != nil {
+			s.errorResponse(w, http.StatusInternalServerError, "Failed to save settings: "+err.Error())
+			return
+		}
+	} else {
+		if err := s.store.SaveSettings(req.Settings); err != nil {
+			s.errorResponse(w, http.StatusInternalServerError, "Failed to save settings: "+err.Error())
+			return
+		}
+	}
+
+	syncCustomEnvToEnv(oldCustomEnv, nextCustomEnv)
 	filesearch.SetIndexingEnabledFromSettings(req.Settings)
 	folder := strings.TrimSpace(req.Settings[sessionsFolderSettingKey])
 	if folder == "" {
 		folder = filepath.Join(s.config.DataPath, "sessions")
 	}
 	s.sessionManager.SetJSONLFolder(folder)
-	s.jsonResponse(w, http.StatusOK, settingsResponse(req.Settings))
+	s.jsonResponse(w, http.StatusOK, settingsResponse(req.Settings, nextCustomEnv))
 }
 
-func settingsResponse(settings map[string]string) SettingsResponse {
+func settingsResponse(settings map[string]string, customEnv map[string]string) SettingsResponse {
 	out := make(map[string]string, len(settings)+1)
 	for key, value := range settings {
 		if isBranchTaskDocAppSettingKey(key) || strings.TrimSpace(key) == gitCommitProviderSettingKey {
@@ -86,6 +104,7 @@ func settingsResponse(settings map[string]string) SettingsResponse {
 	}
 	return SettingsResponse{
 		Settings:                               out,
+		CustomEnv:                              compactSettingsMap(customEnv),
 		DefaultSystemPrompt:                    agent.DefaultSystemPrompt(),
 		DefaultSystemPromptWithoutBuiltInTools: agent.DefaultSystemPromptWithoutBuiltInTools(),
 		DefaultPromptTemplates:                 defaultPromptTemplateSettings(),
@@ -139,27 +158,36 @@ func (s *Server) handleEstimateInstructionPrompt(w http.ResponseWriter, r *http.
 	})
 }
 
-func syncSettingsToEnv(previous map[string]string, next map[string]string) {
-	for key := range previous {
-		if _, ok := next[key]; ok {
-			continue
-		}
-		k := strings.TrimSpace(key)
-		if k == "" || isBranchTaskDocAppSettingKey(k) {
-			continue
-		}
-		if err := os.Unsetenv(k); err != nil {
-			logging.Warn("Failed to unset env var %q removed from settings: %v", k, err)
-		}
+func loadCustomEnv(store storage.Store) (map[string]string, error) {
+	customStore, ok := store.(storage.CustomEnvStore)
+	if !ok {
+		return map[string]string{}, nil
 	}
+	env, err := customStore.GetCustomEnv()
+	if err != nil {
+		return nil, err
+	}
+	return compactSettingsMap(env), nil
+}
 
-	for key, value := range next {
+func compactSettingsMap(values map[string]string) map[string]string {
+	out := make(map[string]string, len(values))
+	for key, value := range values {
 		k := strings.TrimSpace(key)
-		if k == "" || isBranchTaskDocAppSettingKey(k) || k == promptLLMSettingsSettingKey || k == gitCommitProviderSettingKey {
+		if k == "" {
 			continue
 		}
-		if err := os.Setenv(k, value); err != nil {
-			logging.Warn("Failed to set env var %q from settings: %v", k, err)
-		}
+		out[k] = value
 	}
+	return out
+}
+
+func syncCustomEnvToEnv(previous map[string]string, next map[string]string) {
+	runtimeenv.SyncCustomEnv(compactSettingsMap(previous), compactSettingsMap(next))
+}
+
+func syncSettingsToEnv(previous map[string]string, next map[string]string) {
+	// Compatibility shim for older tests/callers. App settings no longer sync to
+	// process env; only explicitly separated custom env does.
+	syncCustomEnvToEnv(previous, next)
 }

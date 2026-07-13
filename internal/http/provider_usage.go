@@ -84,6 +84,12 @@ func (s *Server) providerUsageStatus(ctx context.Context, providerType config.Pr
 		return usage
 	case config.ProviderAnthropic:
 		return s.anthropicUsageStatus()
+	case config.ProviderCursor:
+		usage, err := s.cursorUsageStatus(ctx)
+		if err != nil {
+			return usage
+		}
+		return usage
 	case config.ProviderOpenRouter:
 		return s.openRouterUsageStatus(ctx)
 	default:

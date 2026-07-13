@@ -133,6 +133,8 @@ Windows notes:
 
 Cursor Composer is launched through Cursor Agent CLI in headless `--print` mode. Because there is no interactive approval UI in this path, Brute passes `--force` by default so Cursor's native shell/edit tools can run; set `AAGENT_CURSOR_CLI_FORCE=false` to fall back to Cursor's allowlist prompts/config. Cursor API keys are passed through `CURSOR_API_KEY`, not command-line arguments.
 
+To display Cursor usage in Caesar, Brute calls Cursor's `GetCurrentPeriodUsage` dashboard RPC with the same OAuth access token Cursor Agent CLI stores after `agent login` (macOS keychain on Darwin, `auth.json` elsewhere). Usage bars show total, Auto + Composer, and API pools for the current billing cycle.
+
 ### 3.4 Session and Persistence
 
 - SQLite persistence for sessions, messages, jobs, integrations, and app settings
@@ -348,6 +350,10 @@ Common optional variables:
 | `AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE` | `true` | disable Claude CLI session persistence for isolated A2gent turns |
 | `AAGENT_CLAUDE_RATE_LIMITS_PATH` | `~/.a2gent/claude-rate-limits.json` | optional Claude Code statusLine cache file used to display last known Anthropic rate-limit usage |
 | `AAGENT_CLAUDE_RATE_LIMITS_MAX_AGE` | `12h` | maximum allowed age for the Claude Code rate-limit cache before Brute shows it as stale |
+| `AAGENT_CURSOR_CLI_PATH` | `agent` | Cursor Agent CLI executable used by the Cursor provider |
+| `AAGENT_CURSOR_ACCESS_TOKEN` | - | optional override for Cursor OAuth access token when displaying provider usage |
+| `AAGENT_CURSOR_USAGE_URL` | `https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage` | Cursor dashboard usage RPC URL override (mainly for tests) |
+| `AAGENT_CURSOR_SKIP_PLATFORM_AUTH` | `false` | skip macOS keychain lookup for Cursor OAuth tokens |
 | `KIMI_BASE_URL` | `https://api.kimi.com/coding/v1` | Kimi endpoint |
 | `GEMINI_BASE_URL` | `https://generativelanguage.googleapis.com` | Gemini endpoint |
 | `LM_STUDIO_BASE_URL` | `http://localhost:1234/v1` | LM Studio endpoint |

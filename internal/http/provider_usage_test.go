@@ -408,6 +408,79 @@ func TestAppendClaudeRateLimitCacheDockerArgsMountsExistingCache(t *testing.T) {
 	}
 }
 
+func TestProviderUsageStatusForCursorReturnsPlanUsage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/aiserver.v1.DashboardService/GetCurrentPeriodUsage" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"billingCycleEnd": 1786097901000,
+			"planUsage": {
+				"autoPercentUsed": 26.32,
+				"apiPercentUsed": 13.5,
+				"totalPercentUsed": 20.25
+			},
+			"displayMessage": "You've used 20% of your included usage"
+		}`))
+	}))
+	defer server.Close()
+
+	bruteServer := newCursorUsageTestServer(t)
+	t.Setenv("AAGENT_CURSOR_ACCESS_TOKEN", "test-cursor-token")
+	t.Setenv("AAGENT_CURSOR_USAGE_URL", server.URL+"/aiserver.v1.DashboardService/GetCurrentPeriodUsage")
+
+	usage := bruteServer.providerUsageStatus(context.Background(), config.ProviderCursor)
+	if usage.Status != providerUsageStatusAvailable {
+		t.Fatalf("status = %q, want %q: %+v", usage.Status, providerUsageStatusAvailable, usage)
+	}
+	if usage.Source != cursorUsageSource {
+		t.Fatalf("source = %q, want %q", usage.Source, cursorUsageSource)
+	}
+	if len(usage.UsageBars) != 3 {
+		t.Fatalf("usage bars length = %d, want 3: %+v", len(usage.UsageBars), usage.UsageBars)
+	}
+	if usage.UsageBars[0].Label != "Cursor total" || usage.UsageBars[0].UsedPercent != 20 || usage.UsageBars[0].LeftPercent != 80 {
+		t.Fatalf("unexpected total usage bar: %+v", usage.UsageBars[0])
+	}
+	if usage.UsageBars[1].Label != "Cursor Auto" || usage.UsageBars[1].UsedPercent != 26 || usage.UsageBars[1].LeftPercent != 74 {
+		t.Fatalf("unexpected auto usage bar: %+v", usage.UsageBars[1])
+	}
+	if usage.UsageBars[2].Label != "Cursor API" || usage.UsageBars[2].UsedPercent != 14 || usage.UsageBars[2].LeftPercent != 86 {
+		t.Fatalf("unexpected api usage bar: %+v", usage.UsageBars[2])
+	}
+	if usage.UsageBars[0].ResetText == "" {
+		t.Fatalf("expected reset text on usage bars: %+v", usage.UsageBars)
+	}
+	if !strings.Contains(usage.UsageLeftText, "You've used 20% of your included usage") {
+		t.Fatalf("expected usage summary in %q", usage.UsageLeftText)
+	}
+}
+
+func TestProviderUsageStatusForCursorReturnsUnavailableWithoutToken(t *testing.T) {
+	bruteServer := newCursorUsageTestServer(t)
+	t.Setenv("AAGENT_CURSOR_ACCESS_TOKEN", "")
+	t.Setenv("AAGENT_CURSOR_SKIP_PLATFORM_AUTH", "true")
+
+	usage := bruteServer.providerUsageStatus(context.Background(), config.ProviderCursor)
+	if usage.Status != providerUsageStatusUnavailable {
+		t.Fatalf("status = %q, want %q", usage.Status, providerUsageStatusUnavailable)
+	}
+	if !strings.Contains(usage.UsageLeftText, "access token not found") {
+		t.Fatalf("expected missing-token explanation, got %q", usage.UsageLeftText)
+	}
+}
+
+func newCursorUsageTestServer(t *testing.T) *Server {
+	t.Helper()
+	agentPath := filepath.Join(t.TempDir(), "agent")
+	if err := os.WriteFile(agentPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AAGENT_CURSOR_CLI_PATH", agentPath)
+	return &Server{config: config.DefaultConfig()}
+}
+
 func newAnthropicUsageTestServer(t *testing.T) *Server {
 	t.Helper()
 	claudePath := filepath.Join(t.TempDir(), "claude")

@@ -3,7 +3,9 @@ package http
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/A2gent/brute/internal/filesearch"
 )
@@ -74,6 +76,53 @@ func (s *Server) handleProjectSearch(w http.ResponseWriter, r *http.Request) {
 		Query:           query,
 		FileNameMatches: fileNameMatches,
 		ContentMatches:  contentMatches,
+	})
+}
+
+func (s *Server) handleListProjectRecentFiles(w http.ResponseWriter, r *http.Request) {
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+
+	limit := 5
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		parsedLimit, err := strconv.Atoi(rawLimit)
+		if err != nil || parsedLimit <= 0 {
+			s.errorResponse(w, http.StatusBadRequest, "limit must be a positive integer")
+			return
+		}
+		if parsedLimit > 20 {
+			parsedLimit = 20
+		}
+		limit = parsedLimit
+	}
+
+	resolvedRoot, err := s.resolveProjectRootFolder(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	recentFiles, err := filesearch.RecentFiles(r.Context(), resolvedRoot, limit, filesearch.Options{})
+	if err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to list recent project files: "+err.Error())
+		return
+	}
+
+	files := make([]ProjectRecentFile, 0, len(recentFiles))
+	for _, file := range recentFiles {
+		files = append(files, ProjectRecentFile{
+			Path:       file.Path,
+			Name:       file.Name,
+			ModifiedAt: file.ModifiedAt.UTC().Format(time.RFC3339),
+		})
+	}
+
+	s.jsonResponse(w, http.StatusOK, ProjectRecentFilesResponse{
+		RootFolder: resolvedRoot,
+		Files:      files,
 	})
 }
 

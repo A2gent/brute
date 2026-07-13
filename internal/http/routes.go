@@ -302,6 +302,7 @@ func (s *Server) registerProjectRoutes(r chi.Router) {
 		r.Get("/file", s.handleGetProjectFile)
 		r.Get("/file/raw", s.handleGetProjectFileRaw)
 		r.Get("/search", s.handleProjectSearch)
+		r.Get("/recent-files", s.handleListProjectRecentFiles)
 		r.Post("/file", s.handleUpsertProjectFile)
 		r.Put("/file", s.handleUpsertProjectFile)
 		r.Delete("/file", s.handleDeleteProjectFile)

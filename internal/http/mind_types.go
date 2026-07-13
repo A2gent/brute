@@ -267,3 +267,14 @@ type ProjectSearchResponse struct {
 	FileNameMatches []ProjectFileNameMatch `json:"filename_matches"`
 	ContentMatches  []ProjectContentMatch  `json:"content_matches"`
 }
+
+type ProjectRecentFile struct {
+	Path       string `json:"path"`
+	Name       string `json:"name"`
+	ModifiedAt string `json:"modified_at"`
+}
+
+type ProjectRecentFilesResponse struct {
+	RootFolder string              `json:"root_folder"`
+	Files      []ProjectRecentFile `json:"files"`
+}

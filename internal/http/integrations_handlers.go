@@ -79,6 +79,13 @@ func (s *Server) handleUpdateIntegration(w http.ResponseWriter, r *http.Request)
 		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
 		return
 	}
+	// Caesar receives masked secrets. Preserve their stored values when an edit leaves
+	// the mask untouched instead of replacing usable credentials with "***".
+	for key, value := range req.Config {
+		if value == "***" && isSensitiveIntegrationConfigKey(key) {
+			req.Config[key] = existing.Config[key]
+		}
+	}
 
 	next, err := newIntegrationFromRequest(req)
 	if err != nil {
@@ -151,6 +158,15 @@ func (s *Server) handleTestIntegration(w http.ResponseWriter, r *http.Request) {
 	}
 	if integration.Provider == "circleci" {
 		ok, message := s.testCircleCIIntegration(r.Context(), integration)
+		status := http.StatusOK
+		if !ok {
+			status = http.StatusBadGateway
+		}
+		s.jsonResponse(w, status, IntegrationTestResponse{Success: ok, Message: message})
+		return
+	}
+	if integration.Provider == "bitbucket" {
+		ok, message := s.testBitbucketIntegration(r.Context(), integration)
 		status := http.StatusOK
 		if !ok {
 			status = http.StatusBadGateway

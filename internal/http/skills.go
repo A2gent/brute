@@ -23,6 +23,7 @@ var integrationToolsByProvider = map[string][]string{
 	"google_calendar": {"google_calendar_query"},
 	"jira":            {"jira_query"},
 	"circleci":        {"circleci_query"},
+	"bitbucket":       {"code_review"},
 	"appsignal":       {"appsignal_query"},
 	"brave_search":    {"brave_search_query"},
 	"elevenlabs":      {"elevenlabs_tts"},

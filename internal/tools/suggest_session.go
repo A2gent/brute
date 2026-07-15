@@ -11,11 +11,12 @@ const sessionActionFenceLanguage = "a2gent-session"
 
 // SuggestSessionParams describes a UI action card that lets the user branch off into a new session.
 type SuggestSessionParams struct {
-	Title    string   `json:"title"`
-	Label    string   `json:"label,omitempty"`
-	Severity string   `json:"severity,omitempty"`
-	Files    []string `json:"files,omitempty"`
-	Prompt   string   `json:"prompt"`
+	Title     string   `json:"title"`
+	Label     string   `json:"label,omitempty"`
+	Severity  string   `json:"severity,omitempty"`
+	Files     []string `json:"files,omitempty"`
+	Prompt    string   `json:"prompt"`
+	Completed bool     `json:"completed,omitempty"`
 }
 
 // SuggestSessionTool formats a quick session branch-off card for the Caesar UI.
@@ -71,6 +72,10 @@ func (t *SuggestSessionTool) Schema() map[string]interface{} {
 				"type":        "string",
 				"description": "Self-contained prompt for the new session. Include the summary, files to inspect, expected behavior, and verification steps.",
 			},
+			"completed": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Set true when this follow-up is already finished in the current session. Hides the Add to TODO action in Caesar.",
+			},
 		},
 		"required": []string{"title", "prompt"},
 	}
@@ -111,10 +116,11 @@ func (t *SuggestSessionTool) Execute(ctx context.Context, params json.RawMessage
 
 func normalizeSuggestSessionParams(p SuggestSessionParams) (SuggestSessionParams, string) {
 	card := SuggestSessionParams{
-		Title:    strings.TrimSpace(p.Title),
-		Label:    strings.TrimSpace(p.Label),
-		Severity: strings.ToLower(strings.TrimSpace(p.Severity)),
-		Prompt:   strings.TrimSpace(p.Prompt),
+		Title:     strings.TrimSpace(p.Title),
+		Label:     strings.TrimSpace(p.Label),
+		Severity:  strings.ToLower(strings.TrimSpace(p.Severity)),
+		Prompt:    strings.TrimSpace(p.Prompt),
+		Completed: p.Completed,
 	}
 
 	if card.Title == "" {

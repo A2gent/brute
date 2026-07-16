@@ -8,6 +8,7 @@ import (
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/anthropic"
+	"github.com/A2gent/brute/internal/llm/cursorcli"
 	"github.com/A2gent/brute/internal/llm/gemini"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
 	"github.com/A2gent/brute/internal/llm/openaicodex"
@@ -546,12 +547,19 @@ func (s *Server) handleListGrokModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListCursorModels(w http.ResponseWriter, r *http.Request) {
+	provider := s.config.Providers[string(config.ProviderCursor)]
+	apiKey := strings.TrimSpace(provider.APIKey)
+	if apiKey == "" {
+		apiKey = s.apiKeyFromEnv(config.ProviderCursor)
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
 	s.jsonResponse(w, http.StatusOK, ListProviderModelsResponse{
-		Models: []string{
-			"composer-2.5",
-			"composer-latest",
-			"auto",
-		},
+		Models: cursorcli.ListModelCatalog(ctx, cursorcli.Options{
+			WorkDir: s.config.WorkDir,
+			APIKey:  apiKey,
+		}),
 	})
 }
 

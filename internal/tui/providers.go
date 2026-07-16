@@ -186,7 +186,19 @@ func (m Model) showStaticModels() (tea.Model, tea.Cmd) {
 			"meta-llama/llama-4-maverick",
 		}
 	case config.ProviderCursor:
-		m.availableModels = []string{"composer-2.5", "composer-latest", "auto"}
+		apiKey := ""
+		if provider := m.appConfig.GetActiveProvider(); provider != nil {
+			apiKey = strings.TrimSpace(provider.APIKey)
+		}
+		if apiKey == "" {
+			apiKey = providerAPIKeyFromEnv(config.ProviderCursor)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		m.availableModels = cursorcli.ListModelCatalog(ctx, cursorcli.Options{
+			WorkDir: m.appConfig.WorkDir,
+			APIKey:  apiKey,
+		})
 	case config.ProviderAnthropic:
 		// Pull the live catalog from the official Anthropic Models API when an
 		// API key is available (config or ANTHROPIC_API_KEY); otherwise fall

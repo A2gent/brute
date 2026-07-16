@@ -131,7 +131,7 @@ Windows notes:
 - Auto-router and fallback chain support for reliability
 - In-session provider/model switching support (web app flow)
 
-Cursor Composer is launched through Cursor Agent CLI in headless `--print` mode. Because there is no interactive approval UI in this path, Brute passes `--force` by default so Cursor's native shell/edit tools can run; set `AAGENT_CURSOR_CLI_FORCE=false` to fall back to Cursor's allowlist prompts/config. Cursor API keys are passed through `CURSOR_API_KEY`, not command-line arguments.
+Cursor Composer is launched through Cursor Agent CLI in headless `--print` mode. Because there is no interactive approval UI in this path, Brute passes `--force` by default so Cursor's native shell/edit tools can run; set `AAGENT_CURSOR_CLI_FORCE=false` to fall back to Cursor's allowlist prompts/config. Cursor API keys are passed through `CURSOR_API_KEY`, not command-line arguments. The provider model picker uses `agent --list-models` to show the models available to the configured Cursor account, including third-party models such as Grok when enabled; older, unavailable, or unauthenticated CLI installations fall back to known Composer aliases.
 
 To display Cursor usage in Caesar, Brute calls Cursor's `GetCurrentPeriodUsage` dashboard RPC with the same OAuth access token Cursor Agent CLI stores after `agent login` (macOS keychain on Darwin, `auth.json` elsewhere). Usage bars show total, Auto + Composer, and API pools for the current billing cycle.
 

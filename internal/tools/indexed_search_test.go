@@ -16,7 +16,7 @@ func TestFileSearchToolUsesIndexedFuzzySearch(t *testing.T) {
 	createTestFile(t, tempDir, "src/components/SearchBox.tsx", "export function SearchBox() { return null }\n")
 	createTestFile(t, tempDir, "node_modules/pkg/SearchBox.tsx", "dependency\n")
 
-	tool := NewFileSearchTool(tempDir)
+	tool := NewFileSearchTool(tempDir, true)
 	result := executeSearchTool(t, tool, map[string]interface{}{"query": "searchbox"})
 
 	assertSuccess(t, result)
@@ -31,7 +31,7 @@ func TestContentSearchToolUsesIndexedContentSearch(t *testing.T) {
 	tempDir := t.TempDir()
 	createTestFile(t, tempDir, "src/app.ts", "export const indexedNeedle = true\n")
 
-	tool := NewContentSearchTool(tempDir)
+	tool := NewContentSearchTool(tempDir, true)
 	result := executeSearchTool(t, tool, map[string]interface{}{"query": "indexedNeedle"})
 
 	assertSuccess(t, result)

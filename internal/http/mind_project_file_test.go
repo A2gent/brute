@@ -395,6 +395,7 @@ func newProjectFileTestServer(t *testing.T) (*Server, string, string) {
 		ID:        projectID,
 		Name:      "Project File Test",
 		Folder:    &folder,
+		Settings:  map[string]string{filesearch.ProjectIndexingEnabledSettingKey: "true"},
 		CreatedAt: now,
 		UpdatedAt: now,
 	}); err != nil {

@@ -64,8 +64,8 @@ func NewManager(opts ManagerOptions) *Manager {
 
 // Search returns a fast result from the cache. It only blocks for a rebuild when
 // a project has no usable index yet or was explicitly invalidated.
-func (m *Manager) Search(ctx context.Context, root string, req SearchRequest) (SearchResult, error) {
-	if !IndexingEnabled() {
+func (m *Manager) Search(ctx context.Context, root string, req SearchRequest, indexingEnabled bool) (SearchResult, error) {
+	if !indexingEnabled {
 		return SearchResult{}, ErrIndexingDisabled
 	}
 	if m == nil {
@@ -104,8 +104,8 @@ func (m *Manager) Invalidate(root string) {
 // Warm starts a non-blocking initial build for a project root. It intentionally
 // avoids replacing a usable index synchronously so opening a project does not
 // steal CPU from the UI thread.
-func (m *Manager) Warm(root string) {
-	if !IndexingEnabled() {
+func (m *Manager) Warm(root string, indexingEnabled bool) {
+	if !indexingEnabled {
 		return
 	}
 	if m == nil {
@@ -200,7 +200,7 @@ func (m *Manager) finishBuild(root string, idx *Index, err error) {
 	if entry.idx != nil {
 		m.cachedBytes -= entry.idx.stats.ApproxBytes
 	}
-	if err == nil && idx != nil && IndexingEnabled() {
+	if err == nil && idx != nil {
 		entry.idx = idx
 		entry.lastAccess = time.Now()
 		m.cachedBytes += idx.stats.ApproxBytes

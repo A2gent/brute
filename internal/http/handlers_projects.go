@@ -107,7 +107,9 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		project.Folder = normalizeFolder(req.Folder)
 	}
 	if req.Settings != nil {
+		previousSettings := copyProjectSettings(project.Settings)
 		project.Settings = normalizeProjectSettings(*req.Settings)
+		s.syncProjectSearchIndexAfterSettingsChange(project, previousSettings)
 	}
 	if req.URLPatterns != nil {
 		urlPatterns, err := normalizeProjectURLPatterns(*req.URLPatterns)

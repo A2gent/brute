@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/A2gent/brute/internal/filesearch"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/tools"
 	"github.com/A2gent/brute/internal/tools/integrationtools"
@@ -82,11 +83,14 @@ func (s *Server) buildSubAgentToolManager(sess *session.Session, enabledTools []
 		defaultDir = "."
 	}
 
+	indexingEnabled := s.resolveSessionFileIndexingEnabled(sess)
+	indexingDiffers := indexingEnabled != filesearch.IndexingEnabled()
+
 	var manager *tools.Manager
-	if workDir == defaultDir {
+	if workDir == defaultDir && !indexingDiffers {
 		manager = s.toolManager.Clone()
 	} else {
-		manager = tools.NewManager(workDir)
+		manager = tools.NewManagerWithOptions(workDir, &tools.ManagerOptions{FileIndexingEnabled: &indexingEnabled})
 		// WHY: project-scoped sub-agents get a fresh manager for their workdir; it
 		// must include integration-backed tools too, otherwise allowed tools like
 		// youtube_transcript fail at runtime with "tool not found".

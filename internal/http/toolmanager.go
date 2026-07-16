@@ -4,6 +4,7 @@ package http
 import (
 	"encoding/json"
 	"github.com/A2gent/brute/internal/contextcompress"
+	"github.com/A2gent/brute/internal/filesearch"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/tools"
@@ -88,15 +89,18 @@ func (s *Server) toolManagerForSession(sess *session.Session) *tools.Manager {
 	if defaultDir == "" {
 		defaultDir = "."
 	}
-	if workDir == defaultDir && len(disabledTools) == 0 && len(subAgentEnabledTools) == 0 {
+	indexingEnabled := s.resolveSessionFileIndexingEnabled(sess)
+	indexingDiffers := indexingEnabled != filesearch.IndexingEnabled()
+	if workDir == defaultDir && !indexingDiffers && len(disabledTools) == 0 && len(subAgentEnabledTools) == 0 {
 		return s.toolManager
 	}
 
 	var manager *tools.Manager
-	if workDir == defaultDir {
+	managerOpts := &tools.ManagerOptions{FileIndexingEnabled: &indexingEnabled}
+	if workDir == defaultDir && !indexingDiffers {
 		manager = s.toolManager.Clone()
 	} else {
-		manager = tools.NewManager(workDir)
+		manager = tools.NewManagerWithOptions(workDir, managerOpts)
 		integrationtools.Register(manager, s.store, s.speechClips, s.sessionManager)
 		s.registerServerBackedTools(manager)
 	}

@@ -53,7 +53,7 @@ func (s *Server) handleListProjectTree(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusBadRequest, "Project folder path is not a directory")
 		return
 	}
-	warmProjectSearchIndex(resolvedRoot)
+	s.warmProjectSearchIndex(project, resolvedRoot)
 
 	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
 	resolvedPath, normalizedRelPath, err := resolveProjectPath(resolvedRoot, relPath)

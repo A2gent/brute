@@ -27,6 +27,11 @@ func (s *Server) handleProjectSearch(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusNotFound, "Project not found")
+		return
+	}
 	if query == "" {
 		s.jsonResponse(w, http.StatusOK, ProjectSearchResponse{
 			RootFolder:      resolvedRoot,
@@ -44,10 +49,10 @@ func (s *Server) handleProjectSearch(w http.ResponseWriter, r *http.Request) {
 		FileLimit:      projectSearchMaxFileResults,
 		ContentLimit:   projectSearchMaxResults,
 		IncludeContent: includeContent,
-	})
+	}, s.resolveProjectFileIndexingEnabled(project))
 	if err != nil {
 		if errors.Is(err, filesearch.ErrIndexingDisabled) {
-			s.errorResponse(w, http.StatusConflict, "File indexing is disabled. Enable it in Caesar Tools settings to use indexed project search.")
+			s.errorResponse(w, http.StatusConflict, "File indexing is disabled for this project. Enable it in Project Settings to use indexed quick search.")
 			return
 		}
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to search project files: "+err.Error())
@@ -126,10 +131,3 @@ func (s *Server) handleListProjectRecentFiles(w http.ResponseWriter, r *http.Req
 	})
 }
 
-func warmProjectSearchIndex(resolvedRoot string) {
-	filesearch.DefaultManager().Warm(resolvedRoot)
-}
-
-func invalidateProjectSearchIndex(resolvedRoot string) {
-	filesearch.DefaultManager().Invalidate(resolvedRoot)
-}

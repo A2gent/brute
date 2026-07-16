@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/A2gent/brute/internal/filesearch"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/storage"
@@ -101,8 +102,23 @@ func (m *Manager) WorkDir() string {
 	return m.workDir
 }
 
+// ManagerOptions configures built-in tool behavior for a manager instance.
+type ManagerOptions struct {
+	FileIndexingEnabled *bool
+}
+
 // NewManager creates a new tool manager
 func NewManager(workDir string) *Manager {
+	return NewManagerWithOptions(workDir, nil)
+}
+
+// NewManagerWithOptions creates a tool manager with optional per-instance settings.
+func NewManagerWithOptions(workDir string, opts *ManagerOptions) *Manager {
+	fileIndexingEnabled := filesearch.IndexingEnabled()
+	if opts != nil && opts.FileIndexingEnabled != nil {
+		fileIndexingEnabled = *opts.FileIndexingEnabled
+	}
+
 	m := &Manager{
 		tools:   make(map[string]Tool),
 		workDir: workDir,
@@ -117,8 +133,8 @@ func NewManager(workDir string) *Manager {
 	m.Register(NewEditTool(workDir))
 	m.Register(NewReplaceLinesTool(workDir))
 	m.Register(NewInsertLinesTool(workDir))
-	m.Register(NewFileSearchTool(workDir))
-	m.Register(NewContentSearchTool(workDir))
+	m.Register(NewFileSearchTool(workDir, fileIndexingEnabled))
+	m.Register(NewContentSearchTool(workDir, fileIndexingEnabled))
 	m.Register(NewGlobTool(workDir))
 	m.Register(NewFindFilesTool(workDir))
 	m.Register(NewGrepTool(workDir))

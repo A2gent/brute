@@ -12,7 +12,8 @@ import (
 
 // FileSearchTool performs fast fuzzy file path/name search using the shared project index.
 type FileSearchTool struct {
-	workDir string
+	workDir         string
+	indexingEnabled bool
 }
 
 type FileSearchParams struct {
@@ -28,8 +29,8 @@ func invalidateIndexedSearch(workDir string) {
 	filesearch.DefaultManager().Invalidate(workDir)
 }
 
-func NewFileSearchTool(workDir string) *FileSearchTool {
-	return &FileSearchTool{workDir: workDir}
+func NewFileSearchTool(workDir string, indexingEnabled bool) *FileSearchTool {
+	return &FileSearchTool{workDir: workDir, indexingEnabled: indexingEnabled}
 }
 
 func (t *FileSearchTool) Name() string {
@@ -77,10 +78,10 @@ func (t *FileSearchTool) Execute(ctx context.Context, params json.RawMessage) (*
 		Query:          p.Query,
 		FileLimit:      p.MaxResults,
 		IncludeContent: false,
-	})
+	}, t.indexingEnabled)
 	if err != nil {
 		if errors.Is(err, filesearch.ErrIndexingDisabled) {
-			return &Result{Success: false, Error: "file indexing is disabled; enable A2GENT_FILE_INDEXING_ENABLED in Caesar Tools settings, or use find_files for low-RAM filename search"}, nil
+			return &Result{Success: false, Error: "file indexing is disabled for this project; enable it in Caesar Project Settings, or use find_files for low-RAM filename search"}, nil
 		}
 		return nil, err
 	}
@@ -106,7 +107,8 @@ func (t *FileSearchTool) Execute(ctx context.Context, params json.RawMessage) (*
 
 // ContentSearchTool performs fast literal content search using the shared project index.
 type ContentSearchTool struct {
-	workDir string
+	workDir         string
+	indexingEnabled bool
 }
 
 type ContentSearchParams struct {
@@ -115,8 +117,8 @@ type ContentSearchParams struct {
 	MaxResults int    `json:"max_results,omitempty"`
 }
 
-func NewContentSearchTool(workDir string) *ContentSearchTool {
-	return &ContentSearchTool{workDir: workDir}
+func NewContentSearchTool(workDir string, indexingEnabled bool) *ContentSearchTool {
+	return &ContentSearchTool{workDir: workDir, indexingEnabled: indexingEnabled}
 }
 
 func (t *ContentSearchTool) Name() string {
@@ -164,10 +166,10 @@ func (t *ContentSearchTool) Execute(ctx context.Context, params json.RawMessage)
 		Query:          p.Query,
 		ContentLimit:   p.MaxResults,
 		IncludeContent: true,
-	})
+	}, t.indexingEnabled)
 	if err != nil {
 		if errors.Is(err, filesearch.ErrIndexingDisabled) {
-			return &Result{Success: false, Error: "file indexing is disabled; enable A2GENT_FILE_INDEXING_ENABLED in Caesar Tools settings, or use grep for low-RAM content search"}, nil
+			return &Result{Success: false, Error: "file indexing is disabled for this project; enable it in Caesar Project Settings, or use grep for low-RAM content search"}, nil
 		}
 		return nil, err
 	}

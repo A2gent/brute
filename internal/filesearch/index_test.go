@@ -89,7 +89,7 @@ func TestManagerInvalidateRebuildsIndex(t *testing.T) {
 	writeTestFile(t, root, "src/old.ts", "export const oldValue = true\n")
 
 	manager := NewManager(ManagerOptions{IndexOptions: Options{MaxContentBytes: 4 << 20, MaxFileBytes: 512 << 10}})
-	first, err := manager.Search(context.Background(), root, SearchRequest{Query: "newValue", ContentLimit: 5, IncludeContent: true})
+	first, err := manager.Search(context.Background(), root, SearchRequest{Query: "newValue", ContentLimit: 5, IncludeContent: true}, true)
 	if err != nil {
 		t.Fatalf("initial Search returned error: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestManagerInvalidateRebuildsIndex(t *testing.T) {
 
 	writeTestFile(t, root, "src/new.ts", "export const newValue = true\n")
 	manager.Invalidate(root)
-	second, err := manager.Search(context.Background(), root, SearchRequest{Query: "newValue", ContentLimit: 5, IncludeContent: true})
+	second, err := manager.Search(context.Background(), root, SearchRequest{Query: "newValue", ContentLimit: 5, IncludeContent: true}, true)
 	if err != nil {
 		t.Fatalf("second Search returned error: %v", err)
 	}

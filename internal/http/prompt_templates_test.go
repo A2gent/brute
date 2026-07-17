@@ -96,18 +96,25 @@ func TestWorkflowDefinitionFromMetadataUsesCustomReviewLoopPrompts(t *testing.T)
 	}
 }
 
-func TestDefaultPromptTemplateSettingsIncludesSessionSummary(t *testing.T) {
+func TestDefaultPromptTemplateSettingsIncludesSessionAndMeetingSummary(t *testing.T) {
 	t.Parallel()
 
 	defaults := defaultPromptTemplateSettings()
 	if defaults[sessionSummaryPromptTemplateSettingKey] == "" {
 		t.Fatal("expected default session summary prompt template")
 	}
+	if defaults[meetingSummaryPromptTemplateSettingKey] == "" {
+		t.Fatal("expected default meeting summary prompt template")
+	}
 	custom := serverPromptTemplatesFromSettings(map[string]string{
 		sessionSummaryPromptTemplateSettingKey: "custom summary {{initial_user_message}}",
+		meetingSummaryPromptTemplateSettingKey: "meeting summary {{transcript}}",
 	})
 	if custom.SessionSummaryPromptTemplate != "custom summary {{initial_user_message}}" {
 		t.Fatalf("unexpected session summary template: %q", custom.SessionSummaryPromptTemplate)
+	}
+	if custom.MeetingSummaryPromptTemplate != "meeting summary {{transcript}}" {
+		t.Fatalf("unexpected meeting summary template: %q", custom.MeetingSummaryPromptTemplate)
 	}
 }
 

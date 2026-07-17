@@ -16,6 +16,7 @@ const workflowBareStatusRetryPromptSettingKey = "AAGENT_WORKFLOW_BARE_STATUS_RET
 const scheduleToCronPromptTemplateSettingKey = "AAGENT_SCHEDULE_TO_CRON_PROMPT_TEMPLATE"
 const scheduleToCronSystemPromptSettingKey = "AAGENT_SCHEDULE_TO_CRON_SYSTEM_PROMPT"
 const sessionSummaryPromptTemplateSettingKey = "AAGENT_SESSION_SUMMARY_PROMPT_TEMPLATE"
+const meetingSummaryPromptTemplateSettingKey = "AAGENT_MEETING_SUMMARY_PROMPT_TEMPLATE"
 
 type serverPromptTemplates struct {
 	GitCommitPromptTemplate               string
@@ -29,6 +30,7 @@ type serverPromptTemplates struct {
 	ScheduleToCronPromptTemplate          string
 	ScheduleToCronSystemPrompt            string
 	SessionSummaryPromptTemplate          string
+	MeetingSummaryPromptTemplate          string
 }
 
 func defaultServerPromptTemplates() serverPromptTemplates {
@@ -44,6 +46,7 @@ func defaultServerPromptTemplates() serverPromptTemplates {
 		ScheduleToCronPromptTemplate:          defaultScheduleToCronPromptTemplate,
 		ScheduleToCronSystemPrompt:            defaultScheduleToCronSystemPrompt,
 		SessionSummaryPromptTemplate:          defaultSessionSummaryPromptTemplate,
+		MeetingSummaryPromptTemplate:          defaultMeetingSummaryPromptTemplate,
 	}
 }
 
@@ -61,6 +64,7 @@ func serverPromptTemplatesFromSettings(settings map[string]string) serverPromptT
 		ScheduleToCronPromptTemplate:          promptTemplateValue(settings, scheduleToCronPromptTemplateSettingKey, defaults.ScheduleToCronPromptTemplate),
 		ScheduleToCronSystemPrompt:            promptTemplateValue(settings, scheduleToCronSystemPromptSettingKey, defaults.ScheduleToCronSystemPrompt),
 		SessionSummaryPromptTemplate:          promptTemplateValue(settings, sessionSummaryPromptTemplateSettingKey, defaults.SessionSummaryPromptTemplate),
+		MeetingSummaryPromptTemplate:          promptTemplateValue(settings, meetingSummaryPromptTemplateSettingKey, defaults.MeetingSummaryPromptTemplate),
 	}
 }
 
@@ -99,6 +103,7 @@ func defaultPromptTemplateSettings() map[string]string {
 		scheduleToCronPromptTemplateSettingKey:           defaults.ScheduleToCronPromptTemplate,
 		scheduleToCronSystemPromptSettingKey:             defaults.ScheduleToCronSystemPrompt,
 		sessionSummaryPromptTemplateSettingKey:           defaults.SessionSummaryPromptTemplate,
+		meetingSummaryPromptTemplateSettingKey:           defaults.MeetingSummaryPromptTemplate,
 	}
 }
 

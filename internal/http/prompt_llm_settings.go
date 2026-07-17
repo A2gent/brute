@@ -15,6 +15,7 @@ const (
 	promptLLMCaseGitReviewOverlay = "git_review_overlay"
 	promptLLMCaseScheduleToCron   = "schedule_to_cron"
 	promptLLMCaseSessionSummary   = "session_summary"
+	promptLLMCaseMeetingSummary   = "meeting_summary"
 )
 
 type promptLLMSetting struct {

@@ -101,6 +101,14 @@ func TestUpdateMeetingTitleInMarkdownRejectsInvalidNote(t *testing.T) {
 	}
 }
 
+func TestIsGeneratedMeetingMarkdownAcceptsEmptyNotesPath(t *testing.T) {
+	original := sampleMeetingMarkdown("Weekly sync")
+	withoutNotesPath := strings.Replace(original, "notes_path: '/tmp/notes/2026-07-17_10-00-00-old-title.md'", "notes_path: ''", 1)
+	if !isGeneratedMeetingMarkdown(withoutNotesPath) {
+		t.Fatalf("expected empty notes_path to remain listable:\n%s", withoutNotesPath)
+	}
+}
+
 func TestIsGeneratedMeetingMarkdownAcceptsFrontmatterAudio(t *testing.T) {
 	original := sampleMeetingMarkdown("Weekly sync")
 	withoutBodyAudioLinks := strings.Replace(

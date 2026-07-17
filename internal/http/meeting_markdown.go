@@ -449,7 +449,7 @@ func isGeneratedMeetingMarkdown(content string) bool {
 		return false
 	}
 
-	requiredNonEmpty := []string{"meeting_id", "started_at", "ended_at", "notes_path"}
+	requiredNonEmpty := []string{"meeting_id", "started_at", "ended_at"}
 	for _, key := range requiredNonEmpty {
 		if strings.TrimSpace(frontmatter[key]) == "" {
 			return false

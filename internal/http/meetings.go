@@ -223,7 +223,16 @@ func (s *Server) handleListMeetingArtifacts(w http.ResponseWriter, r *http.Reque
 		if item.Title == "" {
 			item.Title = baseName
 		}
+		needsPathRepair := strings.TrimSpace(item.NotesPath) == ""
 		item.NotesPath = notesPath
+		if needsPathRepair {
+			_, body := parseMeetingFrontmatter(content)
+			if len(item.AudioPaths) == 0 {
+				item.AudioPaths = extractAllAudioLinksFromBody(body)
+			}
+			repaired := enrichMeetingMarkdown(body, item)
+			_ = os.WriteFile(notesPath, []byte(strings.TrimSpace(repaired)+"\n"), 0o644)
+		}
 		if len(item.AudioPaths) == 0 {
 			_, body := parseMeetingFrontmatter(content)
 			item.AudioPaths = extractAudioLinksFromAudioSection(body)

@@ -205,6 +205,8 @@ func (s *Server) registerMeetingRoutes(r chi.Router) {
 		r.Get("/audio", s.handleGetMeetingAudio)
 		r.Post("/delete", s.handleDeleteMeetingArtifacts)
 		r.Post("/rename", s.handleRenameMeetingArtifacts)
+		r.Post("/retranscribe", s.handleRetranscribeMeeting)
+		r.Post("/summarize", s.handleSummarizeMeeting)
 	})
 }
 
@@ -236,6 +238,8 @@ func (s *Server) registerSessionRoutes(r chi.Router) {
 	r.Route("/sessions", func(r chi.Router) {
 		r.Get("/", s.handleListSessions)
 		r.Post("/", s.handleCreateSession)
+		r.Post("/queue/pause", s.handlePauseQueuedSessions)
+		r.Post("/queue/resume", s.handleResumeQueuedSessions)
 		r.Get("/{sessionID}/log", s.handleDownloadSessionLog)
 		r.Get("/{sessionID}/events", s.handleSessionEvents)
 		r.Get("/{sessionID}", s.handleGetSession)
@@ -322,9 +326,9 @@ func (s *Server) registerProjectRoutes(r chi.Router) {
 		r.Put("/{projectID}/databases/{dbID}", s.handleUpdateProjectDatabase)
 		r.Delete("/{projectID}/databases/{dbID}", s.handleDeleteProjectDatabase)
 		r.Get("/{projectID}/databases/{dbID}/tables", s.handleProjectDatabaseListTables)
+		r.Get("/{projectID}/databases/{dbID}/tables/{tableName}/columns/{columnName}/analytics", s.handleProjectDatabaseColumnAnalytics)
 		r.Post("/{projectID}/databases/{dbID}/query", s.handleProjectDatabaseQuery)
 	})
-			r.Get("/{projectID}/databases/{dbID}/tables/{tableName}/columns/{columnName}/analytics", s.handleProjectDatabaseColumnAnalytics)
 }
 
 func (s *Server) registerJobRoutes(r chi.Router) {

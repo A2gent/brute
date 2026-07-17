@@ -370,6 +370,14 @@ func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if sessionIsQueuePaused(sess) {
+		setSessionQueuePaused(sess, false)
+		if err := s.sessionManager.Save(sess); err != nil {
+			s.errorResponse(w, http.StatusInternalServerError, "Failed to start session: "+err.Error())
+			return
+		}
+	}
+
 	if sessionIsSerialQueuedAutoRun(sess) {
 		if sess.Metadata == nil {
 			sess.Metadata = map[string]interface{}{}

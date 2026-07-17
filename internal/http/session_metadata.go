@@ -18,6 +18,7 @@ const (
 	sessionQueueModeSerial      = "serial"
 	sessionQueueModeMetadataKey = "queue_mode"
 	sessionQueueAutoStartKey    = "queue_auto_start"
+	sessionQueuePausedKey       = "queue_paused"
 )
 
 func normalizeSessionQueueMode(raw string) (string, error) {
@@ -118,6 +119,38 @@ func sessionQueueAutoStart(sess *session.Session) bool {
 
 func sessionIsSerialQueuedAutoRun(sess *session.Session) bool {
 	return sessionQueueMode(sess) == sessionQueueModeSerial && sessionQueueAutoStart(sess)
+}
+
+func sessionIsQueuePaused(sess *session.Session) bool {
+	if sess == nil || sess.Metadata == nil {
+		return false
+	}
+	raw, ok := sess.Metadata[sessionQueuePausedKey]
+	if !ok {
+		return false
+	}
+	switch v := raw.(type) {
+	case bool:
+		return v
+	case string:
+		return strings.EqualFold(strings.TrimSpace(v), "true")
+	default:
+		return false
+	}
+}
+
+func setSessionQueuePaused(sess *session.Session, paused bool) {
+	if sess == nil {
+		return
+	}
+	if sess.Metadata == nil {
+		sess.Metadata = map[string]interface{}{}
+	}
+	if paused {
+		sess.Metadata[sessionQueuePausedKey] = true
+		return
+	}
+	delete(sess.Metadata, sessionQueuePausedKey)
 }
 
 func (s *Server) applyProviderTraceToSession(sess *session.Session, targetProvider config.ProviderType, trace *agent.ProviderTraceEvent) {

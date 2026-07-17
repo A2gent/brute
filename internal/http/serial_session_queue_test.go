@@ -203,6 +203,109 @@ func TestStartSessionManuallyOverridesSerialQueueAutoStart(t *testing.T) {
 	}
 }
 
+func TestSerialQueueSkipsPausedQueuedSessions(t *testing.T) {
+	var mu sync.Mutex
+	totalRequests := 0
+
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		totalRequests++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2}}\n\n")
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer provider.Close()
+
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	project := &storage.Project{
+		ID:        "project-paused-queue",
+		Name:      "Paused Queue",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatalf("failed to save project: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.DataPath = t.TempDir()
+	cfg.WorkDir = t.TempDir()
+	cfg.ActiveProvider = string(config.ProviderOpenAI)
+	cfg.DefaultModel = "test-model"
+	cfg.LLMRetries = 1
+	cfg.Providers[string(config.ProviderOpenAI)] = config.Provider{
+		APIKey:  "test-key",
+		BaseURL: provider.URL + "/v1",
+		Model:   "test-model",
+	}
+
+	sessionManager := session.NewManager(store)
+	server := NewServer(cfg, nil, tools.NewManager(cfg.WorkDir), sessionManager, store, speechcache.New(0), 0)
+
+	saveQueued := func(task string, paused bool) string {
+		t.Helper()
+		sess, err := sessionManager.CreateQueued("build")
+		if err != nil {
+			t.Fatalf("create queued session: %v", err)
+		}
+		projectID := project.ID
+		sess.ProjectID = &projectID
+		sess.Metadata = map[string]interface{}{
+			sessionQueueModeMetadataKey: sessionQueueModeSerial,
+			sessionQueueAutoStartKey:    true,
+		}
+		if paused {
+			setSessionQueuePaused(sess, true)
+		}
+		sess.AddUserMessage(task)
+		if err := sessionManager.Save(sess); err != nil {
+			t.Fatalf("save queued session: %v", err)
+		}
+		return sess.ID
+	}
+
+	pausedID := saveQueued("paused queued task", true)
+	activeID := saveQueued("active queued task", false)
+	server.triggerSerialSessionQueue(project.ID)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		paused, pausedErr := sessionManager.Get(pausedID)
+		active, activeErr := sessionManager.Get(activeID)
+		if pausedErr == nil && activeErr == nil && paused.Status == session.StatusQueued && active.Status == session.StatusCompleted {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	paused, err := sessionManager.Get(pausedID)
+	if err != nil {
+		t.Fatalf("load paused session: %v", err)
+	}
+	active, err := sessionManager.Get(activeID)
+	if err != nil {
+		t.Fatalf("load active session: %v", err)
+	}
+	if paused.Status != session.StatusQueued {
+		t.Fatalf("paused session status = %s, want %s", paused.Status, session.StatusQueued)
+	}
+	if active.Status != session.StatusCompleted {
+		t.Fatalf("active session status = %s, want %s", active.Status, session.StatusCompleted)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if totalRequests != 1 {
+		t.Fatalf("provider requests = %d, want 1", totalRequests)
+	}
+}
+
 func TestSerialQueueCanAdvanceAfterInactiveStatuses(t *testing.T) {
 	advanceStatuses := []session.Status{
 		session.StatusCompleted,

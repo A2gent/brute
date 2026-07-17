@@ -233,9 +233,12 @@ func (s *Server) handleListMeetingArtifacts(w http.ResponseWriter, r *http.Reque
 			repaired := enrichMeetingMarkdown(body, item)
 			_ = os.WriteFile(notesPath, []byte(strings.TrimSpace(repaired)+"\n"), 0o644)
 		}
+		// WHY: project meetings may store audio paths relative to Brute workdir while the
+		// list request uses project-resolved folders; drop stale paths and rediscover files.
+		item.AudioPaths = filterExistingMeetingAudioPaths(s, item.AudioPaths)
 		if len(item.AudioPaths) == 0 {
 			_, body := parseMeetingFrontmatter(content)
-			item.AudioPaths = extractAudioLinksFromAudioSection(body)
+			item.AudioPaths = filterExistingMeetingAudioPaths(s, extractAudioLinksFromAudioSection(body))
 		}
 		if len(item.AudioPaths) == 0 {
 			item.AudioPaths = discoverMeetingAudioByBaseName(audioFolder, baseName)
@@ -269,9 +272,9 @@ func (s *Server) handleGetMeetingAudio(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	absPath, err := filepath.Abs(rawPath)
+	absPath, err := s.resolveMeetingAudioPath(rawPath)
 	if err != nil {
-		s.errorResponse(w, http.StatusBadRequest, "invalid audio path")
+		s.errorResponse(w, http.StatusNotFound, "audio file not found")
 		return
 	}
 
@@ -486,6 +489,60 @@ func (s *Server) handleDeleteMeetingArtifacts(w http.ResponseWriter, r *http.Req
 		DeletedNotesPath: absNotesPath,
 		DeletedAudioPath: deletedAudio,
 	})
+}
+
+func meetingAudioFileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func filterExistingMeetingAudioPaths(s *Server, paths []string) []string {
+	result := make([]string, 0, len(paths))
+	seen := make(map[string]struct{})
+	for _, path := range paths {
+		resolved, err := s.resolveMeetingAudioPath(path)
+		if err != nil {
+			continue
+		}
+		if _, ok := seen[resolved]; ok {
+			continue
+		}
+		seen[resolved] = struct{}{}
+		result = append(result, resolved)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func (s *Server) resolveMeetingAudioPath(rawPath string) (string, error) {
+	trimmed := strings.TrimSpace(rawPath)
+	if trimmed == "" {
+		return "", fmt.Errorf("audio path is required")
+	}
+
+	candidates := make([]string, 0, 2)
+	if abs, err := filepath.Abs(trimmed); err == nil {
+		candidates = append(candidates, filepath.Clean(abs))
+	}
+	if resolved, err := s.resolveMeetingStorageFolder(trimmed); err == nil {
+		candidates = append(candidates, resolved)
+	}
+
+	seen := make(map[string]struct{})
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		if meetingAudioFileExists(candidate) {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("audio file not found")
 }
 
 func (s *Server) resolveMeetingStorageFolder(raw string) (string, error) {

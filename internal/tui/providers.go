@@ -15,6 +15,7 @@ import (
 	"github.com/A2gent/brute/internal/llm/autorouter"
 	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/llm/cursorcli"
+	"github.com/A2gent/brute/internal/llm/kimicli"
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/llm/gemini"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
@@ -185,6 +186,10 @@ func (m Model) showStaticModels() (tea.Model, tea.Cmd) {
 			"google/gemini-2.5-pro",
 			"meta-llama/llama-4-maverick",
 		}
+	case config.ProviderKimiCLI:
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		m.availableModels = kimicli.ListModelCatalog(ctx, m.appConfig.WorkDir)
 	case config.ProviderCursor:
 		apiKey := ""
 		if provider := m.appConfig.GetActiveProvider(); provider != nil {
@@ -396,6 +401,8 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 			return cursorcli.NewClientWithOptions(model, cursorcli.Options{WorkDir: m.appConfig.WorkDir, APIKey: apiKey}), model, nil
 		case config.ProviderAnthropic:
 			return claudecli.NewClient(model, m.appConfig.WorkDir), model, nil
+		case config.ProviderKimiCLI:
+			return kimicli.NewClient(model, m.appConfig.WorkDir), model, nil
 		default:
 			return anthropic.NewClientWithBaseURL(apiKey, model, baseURL), model, nil
 		}
@@ -650,6 +657,11 @@ func (m Model) providerUsageHint(providerType config.ProviderType) string {
 			return "usage left: Claude CLI unavailable"
 		}
 		return "usage left: unavailable (Claude CLI reports per-run usage only)"
+	case config.ProviderKimiCLI:
+		if !kimicli.IsAvailable() {
+			return "usage left: Kimi CLI unavailable"
+		}
+		return "usage left: unavailable (Kimi CLI reports per-run usage only)"
 	default:
 		return ""
 	}

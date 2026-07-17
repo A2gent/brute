@@ -78,6 +78,7 @@ type ProviderType string
 
 const (
 	ProviderKimi        ProviderType = "kimi"
+	ProviderKimiCLI     ProviderType = "kimi_cli"
 	ProviderOpenRouter  ProviderType = "openrouter"
 	ProviderOpenCodeZen ProviderType = "opencode_zen"
 	ProviderLMStudio    ProviderType = "lmstudio"
@@ -127,6 +128,14 @@ func SupportedProviders() []ProviderDefinition {
 			RequiresKey:   true,
 			DefaultModel:  "kimi-k2.5",
 			ContextWindow: 131072,
+		},
+		{
+			Type:          ProviderKimiCLI,
+			DisplayName:   "Kimi (Kimi Code CLI)",
+			DefaultURL:    "",
+			RequiresKey:   false,
+			DefaultModel:  "kimi-code/kimi-for-coding",
+			ContextWindow: 262144,
 		},
 		{
 			Type:          ProviderOpenRouter,

@@ -343,11 +343,13 @@ Common optional variables:
 
 | Variable | Default | Description |
 |---|---|---|
-| `AAGENT_PROVIDER` | `auto` | active provider (`anthropic`, `kimi`, `gemini`, `lmstudio`, `auto-router`) |
+| `AAGENT_PROVIDER` | `auto` | active provider (`anthropic`, `kimi`, `kimi_cli`, `gemini`, `lmstudio`, `auto-router`) |
 | `AAGENT_MODEL` | provider-specific | model override |
 | `AAGENT_CLAUDE_CLI_PATH` | `claude` | Claude Code CLI executable used by the Anthropic provider |
 | `AAGENT_CLAUDE_CLI_PERMISSION_MODE` | `acceptEdits` | Claude CLI permission mode for non-interactive runs; set to `default`, `auto`, or `bypassPermissions` if needed |
 | `AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE` | `true` | disable Claude CLI session persistence for isolated A2gent turns |
+| `AAGENT_KIMI_CLI_PATH` | `kimi` | Kimi Code CLI executable used by the `kimi_cli` provider |
+| `AAGENT_KIMI_CLI_YOLO` | `true` | auto-approve Kimi CLI tool calls in non-interactive print mode |
 | `AAGENT_CLAUDE_RATE_LIMITS_PATH` | `~/.a2gent/claude-rate-limits.json` | optional Claude Code statusLine cache file used to display last known Anthropic rate-limit usage |
 | `AAGENT_CLAUDE_RATE_LIMITS_MAX_AGE` | `12h` | maximum allowed age for the Claude Code rate-limit cache before Brute shows it as stale |
 | `AAGENT_CURSOR_CLI_PATH` | `agent` | Cursor Agent CLI executable used by the Cursor provider |

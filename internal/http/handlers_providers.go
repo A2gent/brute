@@ -9,6 +9,7 @@ import (
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/anthropic"
 	"github.com/A2gent/brute/internal/llm/cursorcli"
+	"github.com/A2gent/brute/internal/llm/kimicli"
 	"github.com/A2gent/brute/internal/llm/gemini"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
 	"github.com/A2gent/brute/internal/llm/openaicodex"
@@ -95,6 +96,12 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 		hasOAuth := s.providerSupportsOAuth(def.Type) && existing.OAuth != nil && existing.OAuth.AccessToken != ""
 
 		if def.Type == config.ProviderAnthropic {
+			baseURL = ""
+			configured = s.providerConfiguredForUse(def.Type)
+			hasAPIKey = false
+			hasOAuth = false
+		}
+		if def.Type == config.ProviderKimiCLI {
 			baseURL = ""
 			configured = s.providerConfiguredForUse(def.Type)
 			hasAPIKey = false
@@ -255,7 +262,7 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		provider.Model = ""
 		provider.FallbackChain = nil
 		provider.FallbackChainNodes = nil
-	} else if providerType == config.ProviderAnthropic {
+	} else if providerType == config.ProviderAnthropic || providerType == config.ProviderKimiCLI {
 		if req.Model != nil {
 			provider.Model = strings.TrimSpace(*req.Model)
 		}
@@ -546,6 +553,14 @@ func (s *Server) handleListGrokModels(w http.ResponseWriter, r *http.Request) {
 	s.handleListOpenAICompatibleModels(w, r, config.ProviderGrok, "Grok")
 }
 
+func (s *Server) handleListKimiCLIModels(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	s.jsonResponse(w, http.StatusOK, ListProviderModelsResponse{
+		Models: kimicli.ListModelCatalog(ctx, s.config.WorkDir),
+	})
+}
+
 func (s *Server) handleListCursorModels(w http.ResponseWriter, r *http.Request) {
 	provider := s.config.Providers[string(config.ProviderCursor)]
 	apiKey := strings.TrimSpace(provider.APIKey)
@@ -650,6 +665,13 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 			s.jsonResponse(w, http.StatusBadRequest, ProviderTestResponse{
 				Success: false,
 				Message: "Claude CLI executable was not found. Install Claude Code or set AAGENT_CLAUDE_CLI_PATH.",
+			})
+			return
+		}
+		if providerType == config.ProviderKimiCLI {
+			s.jsonResponse(w, http.StatusBadRequest, ProviderTestResponse{
+				Success: false,
+				Message: "Kimi CLI executable was not found. Install Kimi Code CLI or set AAGENT_KIMI_CLI_PATH.",
 			})
 			return
 		}

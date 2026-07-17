@@ -11,6 +11,7 @@ import (
 	"github.com/A2gent/brute/internal/llm/anthropic"
 	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/llm/cursorcli"
+	"github.com/A2gent/brute/internal/llm/kimicli"
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/llm/gemini"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
@@ -163,6 +164,9 @@ func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model 
 
 	if providerType == config.ProviderAnthropic {
 		return claudecli.NewClient(modelName, workDir), nil
+	}
+	if providerType == config.ProviderKimiCLI {
+		return kimicli.NewClient(modelName, workDir), nil
 	}
 	if providerType == config.ProviderCursor {
 		return cursorcli.NewClientWithOptions(modelName, cursorcli.Options{
@@ -403,6 +407,9 @@ func (s *Scheduler) providerConfiguredForUse(providerType config.ProviderType) b
 	}
 	if providerType == config.ProviderAnthropic {
 		return claudecli.IsAvailable()
+	}
+	if providerType == config.ProviderKimiCLI {
+		return kimicli.IsAvailable()
 	}
 	if providerType == config.ProviderCursor {
 		return cursorcli.IsAvailable()

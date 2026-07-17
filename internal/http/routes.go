@@ -124,6 +124,7 @@ func (s *Server) registerProviderRoutes(r chi.Router) {
 		r.Post("/fallback-aggregates", s.handleCreateFallbackAggregate)
 		r.Get("/lmstudio/models", s.handleListLMStudioModels)
 		r.Get("/kimi/models", s.handleListKimiModels)
+		r.Get("/kimi_cli/models", s.handleListKimiCLIModels)
 		r.Get("/google/models", s.handleListGoogleModels)
 		r.Get("/openai/models", s.handleListOpenAIModels)
 		r.Get("/openai_codex/models", s.handleListOpenAICodexModels)

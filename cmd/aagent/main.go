@@ -19,6 +19,7 @@ import (
 	"github.com/A2gent/brute/internal/llm/autorouter"
 	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/llm/cursorcli"
+	"github.com/A2gent/brute/internal/llm/kimicli"
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
 	"github.com/A2gent/brute/internal/llm/openaicodex"
@@ -555,6 +556,8 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 		switch providerType {
 		case config.ProviderAnthropic:
 			return claudecli.NewClient(model, cfg.WorkDir), model, nil
+		case config.ProviderKimiCLI:
+			return kimicli.NewClient(model, cfg.WorkDir), model, nil
 		case config.ProviderCursor:
 			return cursorcli.NewClientWithOptions(model, cursorcli.Options{WorkDir: cfg.WorkDir, APIKey: apiKey}), model, nil
 		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle, config.ProviderOpenAI, config.ProviderOpenCodeZen, config.ProviderGrok:

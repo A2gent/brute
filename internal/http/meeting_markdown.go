@@ -315,6 +315,34 @@ func isGeneratedMeetingMarkdown(content string) bool {
 	return len(extractAudioLinksFromAudioSection(body)) > 0
 }
 
+func updateMeetingTitleInMarkdown(content, newTitle string) (string, error) {
+	trimmedTitle := strings.TrimSpace(newTitle)
+	if trimmedTitle == "" {
+		trimmedTitle = "Meeting"
+	}
+	if !isGeneratedMeetingMarkdown(content) {
+		return "", fmt.Errorf("not a generated meeting note")
+	}
+
+	item := parseMeetingHistoryFromMarkdown(content)
+	_, body := parseMeetingFrontmatter(content)
+	item.Title = trimmedTitle
+	body = replaceMeetingHeadingTitle(body, trimmedTitle)
+	return enrichMeetingMarkdown(body, item), nil
+}
+
+func replaceMeetingHeadingTitle(body, newTitle string) string {
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "# Meeting:") {
+			lines[i] = fmt.Sprintf("# Meeting: %s", newTitle)
+			return strings.Join(lines, "\n")
+		}
+	}
+	return body
+}
+
 func extractAudioLinksFromAudioSection(body string) []string {
 	lines := strings.Split(body, "\n")
 	start := -1

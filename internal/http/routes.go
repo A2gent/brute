@@ -204,6 +204,7 @@ func (s *Server) registerMeetingRoutes(r chi.Router) {
 		r.Get("/list", s.handleListMeetingArtifacts)
 		r.Get("/audio", s.handleGetMeetingAudio)
 		r.Post("/delete", s.handleDeleteMeetingArtifacts)
+		r.Post("/rename", s.handleRenameMeetingArtifacts)
 	})
 }
 

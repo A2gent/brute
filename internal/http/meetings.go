@@ -50,6 +50,15 @@ type deleteMeetingArtifactsResponse struct {
 	DeletedAudioPath []string `json:"deleted_audio_paths"`
 }
 
+type renameMeetingArtifactsRequest struct {
+	NotesPath string `json:"notes_path"`
+	Title     string `json:"title"`
+}
+
+type renameMeetingArtifactsResponse struct {
+	Meeting meetingHistoryItem `json:"meeting"`
+}
+
 func (s *Server) handleSaveMeetingArtifacts(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(maxMeetingMultipartMemory); err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Invalid multipart request: "+err.Error())
@@ -279,6 +288,63 @@ func (s *Server) handleGetMeetingAudio(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "no-store")
 	http.ServeContent(w, r, filepath.Base(absPath), info.ModTime(), audioFile)
+}
+
+func (s *Server) handleRenameMeetingArtifacts(w http.ResponseWriter, r *http.Request) {
+	var req renameMeetingArtifactsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	notesPath := strings.TrimSpace(req.NotesPath)
+	if notesPath == "" {
+		s.errorResponse(w, http.StatusBadRequest, "notes_path is required")
+		return
+	}
+
+	absNotesPath, err := filepath.Abs(notesPath)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "invalid notes_path")
+		return
+	}
+
+	notesInfo, err := os.Stat(absNotesPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			s.errorResponse(w, http.StatusNotFound, "meeting note not found")
+			return
+		}
+		s.errorResponse(w, http.StatusInternalServerError, "failed to access meeting note")
+		return
+	}
+	if notesInfo.IsDir() {
+		s.errorResponse(w, http.StatusBadRequest, "notes_path points to a directory")
+		return
+	}
+
+	noteContentBytes, readErr := os.ReadFile(absNotesPath)
+	if readErr != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "failed to read meeting note")
+		return
+	}
+
+	updatedMarkdown, updateErr := updateMeetingTitleInMarkdown(string(noteContentBytes), req.Title)
+	if updateErr != nil {
+		s.errorResponse(w, http.StatusBadRequest, updateErr.Error())
+		return
+	}
+
+	if err := os.WriteFile(absNotesPath, []byte(strings.TrimSpace(updatedMarkdown)+"\n"), 0o644); err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "failed to update meeting note")
+		return
+	}
+
+	item := parseMeetingHistoryFromMarkdown(updatedMarkdown)
+	item.NotesPath = absNotesPath
+	item.UpdatedAt = time.Now().Format(time.RFC3339)
+
+	s.jsonResponse(w, http.StatusOK, renameMeetingArtifactsResponse{Meeting: item})
 }
 
 func (s *Server) handleDeleteMeetingArtifacts(w http.ResponseWriter, r *http.Request) {

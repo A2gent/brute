@@ -347,7 +347,7 @@ func (s *Server) handleRenameMeetingArtifacts(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	updatedMarkdown, updateErr := updateMeetingTitleInMarkdown(string(noteContentBytes), req.Title)
+	updatedMarkdown, updateErr := updateMeetingTitleInMarkdown(string(noteContentBytes), req.Title, absNotesPath)
 	if updateErr != nil {
 		s.errorResponse(w, http.StatusBadRequest, updateErr.Error())
 		return

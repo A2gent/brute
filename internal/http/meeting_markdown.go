@@ -97,7 +97,9 @@ func stripMeetingFrontmatter(content string) string {
 }
 
 func injectMeetingAudioSection(content string, audioPaths []string) string {
-	content = strings.TrimSpace(content)
+	// Replace any existing audio section so repeated renames do not stack stale sections
+	// ahead of the canonical links isGeneratedMeetingMarkdown expects to find first.
+	content = strings.TrimSpace(stripMeetingAudioSection(content))
 	audioLines := []string{"## Audio Recordings", ""}
 	if len(audioPaths) == 0 {
 		audioLines = append(audioLines, "- No audio files saved.")
@@ -122,6 +124,36 @@ func injectMeetingAudioSection(content string, audioPaths []string) string {
 		return audioSection + "\n\n" + suffix
 	}
 	return prefix + "\n\n" + audioSection + "\n\n" + suffix
+}
+
+func stripMeetingAudioSection(content string) string {
+	lines := strings.Split(content, "\n")
+	start := -1
+	end := len(lines)
+	for i, line := range lines {
+		if strings.EqualFold(strings.TrimSpace(line), "## Audio Recordings") {
+			start = i
+			for j := i + 1; j < len(lines); j++ {
+				if strings.HasPrefix(strings.TrimSpace(lines[j]), "## ") {
+					end = j
+					break
+				}
+			}
+			break
+		}
+	}
+	if start < 0 {
+		return content
+	}
+
+	parts := make([]string, 0, 2)
+	if before := strings.TrimSpace(strings.Join(lines[:start], "\n")); before != "" {
+		parts = append(parts, before)
+	}
+	if after := strings.TrimSpace(strings.Join(lines[end:], "\n")); after != "" {
+		parts = append(parts, after)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func toYAMLScalar(value string) string {
@@ -432,10 +464,17 @@ func isGeneratedMeetingMarkdown(content string) bool {
 	if !strings.Contains(body, "## Audio Recordings") {
 		return false
 	}
-	return len(extractAudioLinksFromAudioSection(body)) > 0
+	return meetingHasAudioReferences(frontmatter, body)
 }
 
-func updateMeetingTitleInMarkdown(content, newTitle string) (string, error) {
+func meetingHasAudioReferences(frontmatter map[string]string, body string) bool {
+	if len(parseFrontmatterList(frontmatter, "audio_files")) > 0 {
+		return true
+	}
+	return len(extractAllAudioLinksFromBody(body)) > 0
+}
+
+func updateMeetingTitleInMarkdown(content, newTitle, notesPath string) (string, error) {
 	trimmedTitle := strings.TrimSpace(newTitle)
 	if trimmedTitle == "" {
 		trimmedTitle = "Meeting"
@@ -449,7 +488,10 @@ func updateMeetingTitleInMarkdown(content, newTitle string) (string, error) {
 	if len(item.AudioPaths) == 0 {
 		// Keep audio links from the note body when frontmatter audio_files is empty so
 		// rename does not replace real recordings with "No audio files saved.".
-		item.AudioPaths = extractAudioLinksFromAudioSection(body)
+		item.AudioPaths = extractAllAudioLinksFromBody(body)
+	}
+	if strings.TrimSpace(notesPath) != "" {
+		item.NotesPath = strings.TrimSpace(notesPath)
 	}
 	item.Title = trimmedTitle
 	body = replaceMeetingHeadingTitle(body, trimmedTitle)
@@ -469,18 +511,43 @@ func replaceMeetingHeadingTitle(body, newTitle string) string {
 }
 
 func extractAudioLinksFromAudioSection(body string) []string {
+	return extractAudioLinksFromSectionStartingAt(body, findMeetingAudioSectionStart(body))
+}
+
+func extractAllAudioLinksFromBody(body string) []string {
 	lines := strings.Split(body, "\n")
-	start := -1
+	links := make([]string, 0)
+	seen := make(map[string]struct{})
 	for i, line := range lines {
-		if strings.EqualFold(strings.TrimSpace(line), "## Audio Recordings") {
-			start = i + 1
-			break
+		if !strings.EqualFold(strings.TrimSpace(line), "## Audio Recordings") {
+			continue
+		}
+		for _, link := range extractAudioLinksFromSectionStartingAt(body, i+1) {
+			if _, exists := seen[link]; exists {
+				continue
+			}
+			seen[link] = struct{}{}
+			links = append(links, link)
 		}
 	}
+	return links
+}
+
+func findMeetingAudioSectionStart(body string) int {
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		if strings.EqualFold(strings.TrimSpace(line), "## Audio Recordings") {
+			return i + 1
+		}
+	}
+	return -1
+}
+
+func extractAudioLinksFromSectionStartingAt(body string, start int) []string {
 	if start < 0 {
 		return nil
 	}
-
+	lines := strings.Split(body, "\n")
 	links := make([]string, 0)
 	for i := start; i < len(lines); i++ {
 		trimmed := strings.TrimSpace(lines[i])

@@ -35,7 +35,7 @@ func sampleMeetingMarkdown(title string) string {
 
 func TestUpdateMeetingTitleInMarkdown(t *testing.T) {
 	original := sampleMeetingMarkdown("Weekly sync")
-	updated, err := updateMeetingTitleInMarkdown(original, "Product review")
+	updated, err := updateMeetingTitleInMarkdown(original, "Product review", "")
 	if err != nil {
 		t.Fatalf("updateMeetingTitleInMarkdown() error = %v", err)
 	}
@@ -62,7 +62,7 @@ func TestUpdateMeetingTitleInMarkdownPreservesBodyAudioLinks(t *testing.T) {
 		1,
 	)
 
-	updated, err := updateMeetingTitleInMarkdown(withoutFrontmatterAudio, "Product review")
+	updated, err := updateMeetingTitleInMarkdown(withoutFrontmatterAudio, "Product review", "")
 	if err != nil {
 		t.Fatalf("updateMeetingTitleInMarkdown() error = %v", err)
 	}
@@ -95,9 +95,48 @@ func TestDiscoverMeetingMarkdownFilesIncludesNestedNotes(t *testing.T) {
 }
 
 func TestUpdateMeetingTitleInMarkdownRejectsInvalidNote(t *testing.T) {
-	_, err := updateMeetingTitleInMarkdown("# Plain note\n\nNo frontmatter.", "New title")
+	_, err := updateMeetingTitleInMarkdown("# Plain note\n\nNo frontmatter.", "New title", "")
 	if err == nil {
 		t.Fatal("expected error for non-generated meeting markdown")
+	}
+}
+
+func TestIsGeneratedMeetingMarkdownAcceptsFrontmatterAudio(t *testing.T) {
+	original := sampleMeetingMarkdown("Weekly sync")
+	withoutBodyAudioLinks := strings.Replace(
+		original,
+		"- [2026-07-17_10-00-00-old-title-me.webm](/tmp/audio/2026-07-17_10-00-00-old-title-me.webm)",
+		"- No audio files saved.",
+		1,
+	)
+	if !isGeneratedMeetingMarkdown(withoutBodyAudioLinks) {
+		t.Fatalf("expected frontmatter audio_files to keep note listable:\n%s", withoutBodyAudioLinks)
+	}
+}
+
+func TestUpdateMeetingTitleInMarkdownSyncsNotesPath(t *testing.T) {
+	original := sampleMeetingMarkdown("Weekly sync")
+	newPath := "/tmp/notes/03-diary/2026-07-17_09-12-34-11-meeting.md"
+	updated, err := updateMeetingTitleInMarkdown(original, "Дневник Совещания", newPath)
+	if err != nil {
+		t.Fatalf("updateMeetingTitleInMarkdown() error = %v", err)
+	}
+	if !strings.Contains(updated, "notes_path: '/tmp/notes/03-diary/2026-07-17_09-12-34-11-meeting.md'") {
+		t.Fatalf("notes_path should be synced to the current file path, got:\n%s", updated)
+	}
+}
+
+func TestUpdateMeetingTitleInMarkdownDoesNotDuplicateAudioSections(t *testing.T) {
+	current := sampleMeetingMarkdown("Weekly sync")
+	for _, title := range []string{"Product review", "Дневник Совещания"} {
+		updated, err := updateMeetingTitleInMarkdown(current, title, "")
+		if err != nil {
+			t.Fatalf("updateMeetingTitleInMarkdown(%q) error = %v", title, err)
+		}
+		if strings.Count(updated, "## Audio Recordings") != 1 {
+			t.Fatalf("expected a single audio section after rename to %q, got:\n%s", title, updated)
+		}
+		current = updated
 	}
 }
 

@@ -170,6 +170,58 @@ func (s *Server) handleProjectDatabaseListTables(w http.ResponseWriter, r *http.
 	s.jsonResponse(w, http.StatusOK, resp)
 }
 
+func (s *Server) handleProjectDatabaseColumnAnalytics(w http.ResponseWriter, r *http.Request) {
+	dbID := chi.URLParam(r, "dbID")
+	tableName := chi.URLParam(r, "tableName")
+	columnName := chi.URLParam(r, "columnName")
+	if tableName == "" || columnName == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Table and column are required")
+		return
+	}
+
+	dbRecord, err := s.store.GetProjectDatabase(dbID)
+	if err != nil {
+		s.errorResponse(w, http.StatusNotFound, "Project database not found")
+		return
+	}
+	if dbRecord.Engine == "redis" {
+		s.errorResponse(w, http.StatusBadRequest, "Column analytics is not available for Redis connections")
+		return
+	}
+
+	analytics, err := dbtool.GetColumnAnalytics(r.Context(), dbtool.Config{
+		Engine:     dbRecord.Engine,
+		DSN:        dbRecord.DSN,
+		IsReadOnly: dbRecord.IsReadOnly,
+	}, tableName, columnName, 20)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to analyze column: "+err.Error())
+		return
+	}
+
+	response := ProjectDatabaseColumnAnalyticsResponse{
+		Table:              analytics.Table,
+		Column:             analytics.Column,
+		TotalRowCount:      analytics.TotalRowCount,
+		DistinctCount:      analytics.DistinctCount,
+		NullCount:          analytics.NullCount,
+		TopValuesTruncated: analytics.TopValuesTruncated,
+		TopValues:          make([]ProjectDatabaseColumnAnalyticsValue, len(analytics.TopValues)),
+		ForeignKeys:        make([]ProjectDatabaseColumnAnalyticsForeignKey, len(analytics.ForeignKeys)),
+	}
+	for index, value := range analytics.TopValues {
+		response.TopValues[index] = ProjectDatabaseColumnAnalyticsValue{Value: value.Value, Count: value.Count}
+	}
+	for index, foreignKey := range analytics.ForeignKeys {
+		response.ForeignKeys[index] = ProjectDatabaseColumnAnalyticsForeignKey{
+			ConstraintName:   foreignKey.ConstraintName,
+			ReferencedTable:  foreignKey.ReferencedTable,
+			ReferencedColumn: foreignKey.ReferencedColumn,
+		}
+	}
+	s.jsonResponse(w, http.StatusOK, response)
+}
+
 func (s *Server) handleProjectDatabaseQuery(w http.ResponseWriter, r *http.Request) {
 	dbID := chi.URLParam(r, "dbID")
 

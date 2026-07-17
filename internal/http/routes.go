@@ -324,6 +324,7 @@ func (s *Server) registerProjectRoutes(r chi.Router) {
 		r.Get("/{projectID}/databases/{dbID}/tables", s.handleProjectDatabaseListTables)
 		r.Post("/{projectID}/databases/{dbID}/query", s.handleProjectDatabaseQuery)
 	})
+			r.Get("/{projectID}/databases/{dbID}/tables/{tableName}/columns/{columnName}/analytics", s.handleProjectDatabaseColumnAnalytics)
 }
 
 func (s *Server) registerJobRoutes(r chi.Router) {

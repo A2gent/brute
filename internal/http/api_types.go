@@ -553,6 +553,28 @@ type ProjectDatabaseDataRequest struct {
 	Offset int    `json:"offset,omitempty"`
 }
 
+type ProjectDatabaseColumnAnalyticsResponse struct {
+	Table              string                                     `json:"table"`
+	Column             string                                     `json:"column"`
+	TotalRowCount      int64                                      `json:"total_row_count"`
+	DistinctCount      int64                                      `json:"distinct_count"`
+	NullCount          int64                                      `json:"null_count"`
+	TopValues          []ProjectDatabaseColumnAnalyticsValue      `json:"top_values"`
+	TopValuesTruncated bool                                       `json:"top_values_truncated"`
+	ForeignKeys        []ProjectDatabaseColumnAnalyticsForeignKey `json:"foreign_keys"`
+}
+
+type ProjectDatabaseColumnAnalyticsValue struct {
+	Value string `json:"value"`
+	Count int64  `json:"count"`
+}
+
+type ProjectDatabaseColumnAnalyticsForeignKey struct {
+	ConstraintName   string `json:"constraint_name,omitempty"`
+	ReferencedTable  string `json:"referenced_table"`
+	ReferencedColumn string `json:"referenced_column"`
+}
+
 // ProviderTestResponse represents the response from testing a provider
 type ProviderTestResponse struct {
 	Success bool   `json:"success"`

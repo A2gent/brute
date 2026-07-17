@@ -108,9 +108,9 @@ func injectMeetingAudioSection(content string, audioPaths []string) string {
 	}
 	audioSection := strings.Join(audioLines, "\n")
 
-	transcriptMarker := "## Transcript"
-	idx := strings.Index(content, transcriptMarker)
-	if idx < 0 {
+	sectionMarker := firstMeetingSectionMarker(content, "## Summary", "## Transcript")
+	idx := strings.Index(content, sectionMarker)
+	if sectionMarker == "" || idx < 0 {
 		if content == "" {
 			return audioSection
 		}
@@ -140,6 +140,7 @@ func parseMeetingHistoryFromMarkdown(content string) meetingHistoryItem {
 		item.Title = frontmatter["title"]
 		item.StartedAt = frontmatter["started_at"]
 		item.EndedAt = frontmatter["ended_at"]
+		item.NotesPath = frontmatter["notes_path"]
 		item.AudioPaths = parseFrontmatterList(frontmatter, "audio_files")
 	}
 
@@ -152,7 +153,8 @@ func parseMeetingHistoryFromMarkdown(content string) meetingHistoryItem {
 	if item.EndedAt == "" {
 		item.EndedAt = parseMeetingLineValue(body, "- Ended:")
 	}
-	item.TranscriptMarkdown = parseTranscriptSection(body)
+	item.SummaryMarkdown = parseMeetingSection(body, "Summary")
+	item.TranscriptMarkdown = parseMeetingSection(body, "Transcript")
 	return item
 }
 
@@ -231,10 +233,15 @@ func parseMeetingLineValue(content, prefix string) string {
 }
 
 func parseTranscriptSection(content string) string {
+	return parseMeetingSection(content, "Transcript")
+}
+
+func parseMeetingSection(content, heading string) string {
 	lines := strings.Split(content, "\n")
+	marker := "## " + strings.TrimSpace(heading)
 	start := -1
 	for i, line := range lines {
-		if strings.EqualFold(strings.TrimSpace(line), "## Transcript") {
+		if strings.EqualFold(strings.TrimSpace(line), marker) {
 			start = i + 1
 			break
 		}
@@ -242,7 +249,120 @@ func parseTranscriptSection(content string) string {
 	if start < 0 || start >= len(lines) {
 		return ""
 	}
-	return strings.TrimSpace(strings.Join(lines[start:], "\n"))
+	end := len(lines)
+	for i := start; i < len(lines); i++ {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "## ") {
+			end = i
+			break
+		}
+	}
+	return strings.TrimSpace(strings.Join(lines[start:end], "\n"))
+}
+
+func firstMeetingSectionMarker(content string, markers ...string) string {
+	selected := ""
+	selectedIndex := len(content) + 1
+	for _, marker := range markers {
+		if index := strings.Index(content, marker); index >= 0 && index < selectedIndex {
+			selected = marker
+			selectedIndex = index
+		}
+	}
+	return selected
+}
+
+func replaceMeetingSection(content, heading, value string) string {
+	lines := strings.Split(strings.TrimSpace(content), "\n")
+	marker := "## " + strings.TrimSpace(heading)
+	start := -1
+	end := len(lines)
+	for i, line := range lines {
+		if strings.EqualFold(strings.TrimSpace(line), marker) {
+			start = i
+			for j := i + 1; j < len(lines); j++ {
+				if strings.HasPrefix(strings.TrimSpace(lines[j]), "## ") {
+					end = j
+					break
+				}
+			}
+			break
+		}
+	}
+
+	section := []string{marker}
+	if trimmed := strings.TrimSpace(value); trimmed != "" {
+		section = append(section, "", trimmed)
+	}
+	if start < 0 {
+		if len(lines) == 1 && strings.TrimSpace(lines[0]) == "" {
+			return strings.Join(section, "\n")
+		}
+		return strings.TrimSpace(content) + "\n\n" + strings.Join(section, "\n")
+	}
+
+	before := strings.TrimSpace(strings.Join(lines[:start], "\n"))
+	after := strings.TrimSpace(strings.Join(lines[end:], "\n"))
+	parts := make([]string, 0, 3)
+	if before != "" {
+		parts = append(parts, before)
+	}
+	parts = append(parts, strings.Join(section, "\n"))
+	if after != "" {
+		parts = append(parts, after)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func updateMeetingSummaryInMarkdown(content, summary string) (string, error) {
+	if !isGeneratedMeetingMarkdown(content) {
+		return "", fmt.Errorf("not a generated meeting note")
+	}
+	item := parseMeetingHistoryFromMarkdown(content)
+	_, body := parseMeetingFrontmatter(content)
+	body = replaceMeetingSection(body, "Summary", summary)
+	return enrichMeetingMarkdown(body, item), nil
+}
+
+func updateMeetingTranscriptInMarkdown(content, transcript string) (string, error) {
+	if !isGeneratedMeetingMarkdown(content) {
+		return "", fmt.Errorf("not a generated meeting note")
+	}
+	item := parseMeetingHistoryFromMarkdown(content)
+	_, body := parseMeetingFrontmatter(content)
+	body = replaceMeetingSection(body, "Transcript", transcript)
+	return enrichMeetingMarkdown(body, item), nil
+}
+
+// discoverMeetingMarkdownFiles returns generated meeting note paths under notesFolder,
+// including nested subfolders so notes organized by topic still appear in history.
+func discoverMeetingMarkdownFiles(notesFolder string) ([]string, error) {
+	trimmed := strings.TrimSpace(notesFolder)
+	if trimmed == "" {
+		return nil, nil
+	}
+
+	paths := make([]string, 0)
+	err := filepath.WalkDir(trimmed, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if !strings.EqualFold(filepath.Ext(entry.Name()), ".md") {
+			return nil
+		}
+		paths = append(paths, path)
+		return nil
+	})
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	sort.Strings(paths)
+	return paths, nil
 }
 
 func discoverMeetingAudioByBaseName(audioFolder, baseName string) []string {
@@ -326,6 +446,11 @@ func updateMeetingTitleInMarkdown(content, newTitle string) (string, error) {
 
 	item := parseMeetingHistoryFromMarkdown(content)
 	_, body := parseMeetingFrontmatter(content)
+	if len(item.AudioPaths) == 0 {
+		// Keep audio links from the note body when frontmatter audio_files is empty so
+		// rename does not replace real recordings with "No audio files saved.".
+		item.AudioPaths = extractAudioLinksFromAudioSection(body)
+	}
 	item.Title = trimmedTitle
 	body = replaceMeetingHeadingTitle(body, trimmedTitle)
 	return enrichMeetingMarkdown(body, item), nil

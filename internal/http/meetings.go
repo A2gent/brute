@@ -1,7 +1,9 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/A2gent/brute/internal/logging"
 	"github.com/google/uuid"
 )
 
@@ -36,6 +39,7 @@ type meetingHistoryItem struct {
 	EndedAt            string   `json:"ended_at,omitempty"`
 	NotesPath          string   `json:"notes_path"`
 	AudioPaths         []string `json:"audio_paths"`
+	SummaryMarkdown    string   `json:"summary_markdown"`
 	TranscriptMarkdown string   `json:"transcript_markdown"`
 	UpdatedAt          string   `json:"updated_at,omitempty"`
 }
@@ -56,6 +60,14 @@ type renameMeetingArtifactsRequest struct {
 }
 
 type renameMeetingArtifactsResponse struct {
+	Meeting meetingHistoryItem `json:"meeting"`
+}
+
+type processMeetingRequest struct {
+	NotesPath string `json:"notes_path"`
+}
+
+type processMeetingResponse struct {
 	Meeting meetingHistoryItem `json:"meeting"`
 }
 
@@ -161,6 +173,15 @@ func (s *Server) handleSaveMeetingArtifacts(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Summary generation is best-effort so provider errors never discard the saved
+	// recording, but completing it before the response lets the immediate history
+	// refresh include the generated summary.
+	summaryCtx, summaryCancel := context.WithTimeout(r.Context(), defaultMeetingProcessingTimeout)
+	if _, err := s.summarizeMeetingNote(summaryCtx, notesPath); err != nil {
+		logging.Warn("Failed to automatically summarize meeting %s: %v", notesPath, err)
+	}
+	summaryCancel()
+
 	s.jsonResponse(w, http.StatusOK, saveMeetingArtifactsResponse{
 		MeetingID: meetingID,
 		NotesPath: notesPath,
@@ -180,22 +201,14 @@ func (s *Server) handleListMeetingArtifacts(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	entries, err := os.ReadDir(notesFolder)
+	notePaths, err := discoverMeetingMarkdownFiles(notesFolder)
 	if err != nil {
-		if os.IsNotExist(err) {
-			s.jsonResponse(w, http.StatusOK, listMeetingsResponse{Meetings: []meetingHistoryItem{}})
-			return
-		}
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to read notes folder: "+err.Error())
 		return
 	}
 
 	meetings := make([]meetingHistoryItem, 0)
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".md") {
-			continue
-		}
-		notesPath := filepath.Join(notesFolder, entry.Name())
+	for _, notesPath := range notePaths {
 		contentBytes, readErr := os.ReadFile(notesPath)
 		if readErr != nil {
 			continue
@@ -205,20 +218,25 @@ func (s *Server) handleListMeetingArtifacts(w http.ResponseWriter, r *http.Reque
 			continue
 		}
 
+		baseName := strings.TrimSuffix(filepath.Base(notesPath), filepath.Ext(notesPath))
 		item := parseMeetingHistoryFromMarkdown(content)
 		if item.Title == "" {
-			item.Title = strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+			item.Title = baseName
 		}
 		item.NotesPath = notesPath
 		if len(item.AudioPaths) == 0 {
-			item.AudioPaths = discoverMeetingAudioByBaseName(audioFolder, strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name())))
+			_, body := parseMeetingFrontmatter(content)
+			item.AudioPaths = extractAudioLinksFromAudioSection(body)
+		}
+		if len(item.AudioPaths) == 0 {
+			item.AudioPaths = discoverMeetingAudioByBaseName(audioFolder, baseName)
 		}
 
-		info, infoErr := entry.Info()
+		info, infoErr := os.Stat(notesPath)
 		if infoErr == nil {
 			item.UpdatedAt = info.ModTime().Format(time.RFC3339)
 			if item.StartedAt == "" {
-				if startedAt := parseStartedAtFromBaseName(strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name())), info); startedAt != "" {
+				if startedAt := parseStartedAtFromBaseName(baseName, info); startedAt != "" {
 					item.StartedAt = startedAt
 				}
 			}
@@ -476,4 +494,138 @@ func (s *Server) resolveMeetingStorageFolder(raw string) (string, error) {
 		cleaned = filepath.Clean(filepath.Join(base, cleaned))
 	}
 	return cleaned, nil
+}
+
+func (s *Server) handleSummarizeMeeting(w http.ResponseWriter, r *http.Request) {
+	var req processMeetingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), defaultMeetingProcessingTimeout)
+	defer cancel()
+	meeting, err := s.summarizeMeetingNote(ctx, req.NotesPath)
+	if err != nil {
+		s.errorResponse(w, meetingProcessingStatus(err), err.Error())
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, processMeetingResponse{Meeting: meeting})
+}
+
+func (s *Server) handleRetranscribeMeeting(w http.ResponseWriter, r *http.Request) {
+	var req processMeetingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), defaultMeetingProcessingTimeout)
+	defer cancel()
+	meeting, err := s.retranscribeMeetingNote(ctx, req.NotesPath)
+	if err != nil {
+		s.errorResponse(w, meetingProcessingStatus(err), err.Error())
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, processMeetingResponse{Meeting: meeting})
+}
+
+func (s *Server) summarizeMeetingNote(ctx context.Context, notesPath string) (meetingHistoryItem, error) {
+	absPath, content, meeting, err := readGeneratedMeetingNote(notesPath)
+	if err != nil {
+		return meetingHistoryItem{}, err
+	}
+	summary, err := s.generateMeetingSummary(ctx, meeting)
+	if err != nil {
+		return meetingHistoryItem{}, err
+	}
+	updated, err := updateMeetingSummaryInMarkdown(content, summary)
+	if err != nil {
+		return meetingHistoryItem{}, err
+	}
+	return writeProcessedMeetingNote(absPath, updated)
+}
+
+func (s *Server) retranscribeMeetingNote(ctx context.Context, notesPath string) (meetingHistoryItem, error) {
+	absPath, content, meeting, err := readGeneratedMeetingNote(notesPath)
+	if err != nil {
+		return meetingHistoryItem{}, err
+	}
+	transcript, err := s.transcribeMeetingAudio(ctx, meeting)
+	if err != nil {
+		return meetingHistoryItem{}, err
+	}
+	updated, err := updateMeetingTranscriptInMarkdown(content, transcript)
+	if err != nil {
+		return meetingHistoryItem{}, err
+	}
+	meeting = parseMeetingHistoryFromMarkdown(updated)
+	summary, err := s.generateMeetingSummary(ctx, meeting)
+	if err != nil {
+		return meetingHistoryItem{}, err
+	}
+	updated, err = updateMeetingSummaryInMarkdown(updated, summary)
+	if err != nil {
+		return meetingHistoryItem{}, err
+	}
+	return writeProcessedMeetingNote(absPath, updated)
+}
+
+func readGeneratedMeetingNote(notesPath string) (string, string, meetingHistoryItem, error) {
+	trimmed := strings.TrimSpace(notesPath)
+	if trimmed == "" {
+		return "", "", meetingHistoryItem{}, fmt.Errorf("notes_path is required")
+	}
+	absPath, err := filepath.Abs(trimmed)
+	if err != nil {
+		return "", "", meetingHistoryItem{}, fmt.Errorf("invalid notes_path")
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", "", meetingHistoryItem{}, fmt.Errorf("meeting note not found")
+		}
+		return "", "", meetingHistoryItem{}, fmt.Errorf("failed to access meeting note")
+	}
+	if info.IsDir() {
+		return "", "", meetingHistoryItem{}, fmt.Errorf("notes_path points to a directory")
+	}
+	payload, err := os.ReadFile(absPath)
+	if err != nil {
+		return "", "", meetingHistoryItem{}, fmt.Errorf("failed to read meeting note")
+	}
+	content := string(payload)
+	if !isGeneratedMeetingMarkdown(content) {
+		return "", "", meetingHistoryItem{}, fmt.Errorf("not a generated meeting note")
+	}
+	meeting := parseMeetingHistoryFromMarkdown(content)
+	meeting.NotesPath = absPath
+	return absPath, content, meeting, nil
+}
+
+func writeProcessedMeetingNote(notesPath, content string) (meetingHistoryItem, error) {
+	if err := os.WriteFile(notesPath, []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
+		return meetingHistoryItem{}, fmt.Errorf("failed to update meeting note")
+	}
+	meeting := parseMeetingHistoryFromMarkdown(content)
+	meeting.NotesPath = notesPath
+	meeting.UpdatedAt = time.Now().Format(time.RFC3339)
+	return meeting, nil
+}
+
+func meetingProcessingStatus(err error) int {
+	if err == nil {
+		return http.StatusOK
+	}
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "not found"):
+		return http.StatusNotFound
+	case strings.Contains(message, "required"), strings.Contains(message, "invalid"), strings.Contains(message, "empty"), strings.Contains(message, "no audio"), strings.Contains(message, "not a generated"):
+		return http.StatusBadRequest
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return http.StatusGatewayTimeout
+	default:
+		return http.StatusBadGateway
+	}
 }

@@ -23,7 +23,7 @@ type Options struct {
 	Yolo       bool
 }
 
-// Client implements llm.Client by shelling out to Kimi Code CLI print mode.
+// Client implements llm.Client by shelling out to Kimi Code CLI prompt mode.
 type Client struct {
 	model   string
 	options Options
@@ -173,10 +173,9 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 }
 
 func (c *Client) buildArgs(request *llm.ChatRequest, model, prompt string) []string {
-	// WHY: print mode runs non-interactively and auto-approves Kimi's native tools,
+	// WHY: -p/--prompt runs non-interactively; --yolo auto-approves Kimi's native tools,
 	// which matches how A2gent delegates file/bash work to the CLI provider.
 	args := []string{
-		"--print",
 		"-p", prompt,
 		"--output-format", "stream-json",
 		"-m", model,
@@ -184,9 +183,7 @@ func (c *Client) buildArgs(request *llm.ChatRequest, model, prompt string) []str
 	if sessionID := strings.TrimSpace(request.SessionID); isKimiSessionID(sessionID) {
 		args = append(args, "-S", sessionID)
 	}
-	if c.options.Yolo {
-		args = append(args, "--yolo")
-	}
+	// Prompt mode is already non-interactive; newer Kimi CLI rejects --yolo/--auto here.
 	return args
 }
 

@@ -3,7 +3,42 @@ package kimicli
 import (
 	"strings"
 	"testing"
+
+	"github.com/A2gent/brute/internal/llm"
 )
+
+func TestBuildArgsUsesPromptModeWithoutDeprecatedPrintFlag(t *testing.T) {
+	t.Parallel()
+
+	client := NewClientWithOptions("kimi-code/kimi-for-coding", Options{WorkDir: t.TempDir(), Yolo: true})
+	args := strings.Join(client.buildArgs(&llm.ChatRequest{}, "kimi-code/kimi-for-coding", "hello"), "\n")
+
+	for _, forbidden := range []string{"--print", "--yolo"} {
+		if strings.Contains(args, forbidden) {
+			t.Fatalf("expected args to omit %q: %s", forbidden, args)
+		}
+	}
+	for _, required := range []string{"-p", "hello", "--output-format", "stream-json", "-m", "kimi-code/kimi-for-coding"} {
+		if !strings.Contains(args, required) {
+			t.Fatalf("expected args to include %q: %s", required, args)
+		}
+	}
+}
+
+func TestBuildArgsResumesKimiSession(t *testing.T) {
+	t.Parallel()
+
+	client := NewClientWithOptions("kimi-code/kimi-for-coding", Options{WorkDir: t.TempDir()})
+	args := client.buildArgs(
+		&llm.ChatRequest{SessionID: "session_5683e072-9217-4208-90b8-7d66b3d12f51"},
+		"kimi-code/kimi-for-coding",
+		"hello",
+	)
+
+	if len(args) < 2 || args[len(args)-2] != "-S" || args[len(args)-1] != "session_5683e072-9217-4208-90b8-7d66b3d12f51" {
+		t.Fatalf("expected session resume args, got %v", args)
+	}
+}
 
 func TestNormalizeKimiCLIErrorMessageAddsTargetedHints(t *testing.T) {
 	t.Parallel()

@@ -246,17 +246,6 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		} else {
 			sess.AddUserMessageWithImages(req.Task, images)
 		}
-
-		if req.ParentID == "" && req.Task != "" && len(images) == 0 && len(req.Task) < 600 {
-			settings, err := s.store.GetSettings()
-			if err == nil {
-				repeatEnabled := strings.TrimSpace(settings[repeatInitialPromptSettingKey])
-				if repeatEnabled != "false" {
-
-					sess.AddUserMessage(req.Task)
-				}
-			}
-		}
 		if err := s.sessionManager.Save(sess); err != nil {
 			logging.Error("Failed to save session with initial task: %v", err)
 		}

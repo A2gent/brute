@@ -21,7 +21,6 @@ func isManagedAppSettingKey(key string) bool {
 		"AAGENT_LLM_RETRIES":                                 {},
 		"AAGENT_MY_MIND_ROOT_FOLDER":                         {},
 		"AAGENT_NAME":                                        {},
-		"AAGENT_REPEAT_INITIAL_PROMPT":                       {},
 		"AAGENT_SCHEDULE_TO_CRON_PROMPT_TEMPLATE":            {},
 		"AAGENT_SCHEDULE_TO_CRON_SYSTEM_PROMPT":              {},
 		"AAGENT_SESSIONS_FOLDER":                             {},

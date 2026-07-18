@@ -17,8 +17,6 @@ const agentNameSettingKey = "AAGENT_NAME"
 
 const sessionsFolderSettingKey = "AAGENT_SESSIONS_FOLDER"
 
-const repeatInitialPromptSettingKey = "AAGENT_REPEAT_INITIAL_PROMPT"
-
 const defaultAgentName = "A2gent"
 
 func isBranchTaskDocAppSettingKey(key string) bool {

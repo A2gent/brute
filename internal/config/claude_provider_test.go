@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -109,18 +111,52 @@ func TestBuildClaudeCLIEnvironmentMergesWithoutDuplicates(t *testing.T) {
 func TestBuildClaudeCLIEnvironmentNeverSetsHOMEOnDarwin(t *testing.T) {
 	t.Setenv("HOME", "/Users/real")
 
-	provider := Provider{HomePath: "/should/not/set", ClaudeConfigDir: "/cfg"}
+	provider := Provider{HomePath: "~/isolated", ClaudeConfigDir: "~/.config/claude"}
 	env := BuildClaudeCLIEnvironment(provider, "darwin")
 	got := envMap(env)
 
 	if got["HOME"] != "/Users/real" {
 		t.Fatalf("darwin HOME = %q, want preserved os value", got["HOME"])
 	}
-	if got["CLAUDE_CONFIG_DIR"] != "/cfg" {
+	if got["CLAUDE_CONFIG_DIR"] != "/Users/real/.config/claude" {
 		t.Fatalf("CLAUDE_CONFIG_DIR = %q", got["CLAUDE_CONFIG_DIR"])
 	}
 }
 
+func TestResolveClaudeProviderPathsExpandsAndMakesPathsAbsolute(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	paths := ResolveClaudeProviderPaths(Provider{
+		BinaryPath:      "~/bin/claude",
+		ClaudeConfigDir: ".claude-work",
+		HomePath:        "~/claude-home",
+	})
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	if paths.BinaryPath != filepath.Join(home, "bin", "claude") {
+		t.Fatalf("binary path = %q", paths.BinaryPath)
+	}
+	if paths.ConfigDir != filepath.Join(cwd, ".claude-work") {
+		t.Fatalf("config dir = %q", paths.ConfigDir)
+	}
+	if paths.HomePath != filepath.Join(home, "claude-home") {
+		t.Fatalf("home path = %q", paths.HomePath)
+	}
+}
+
+func TestResolveClaudeProviderPathsExpandsBareHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	paths := ResolveClaudeProviderPaths(Provider{ClaudeConfigDir: "~"})
+	if paths.ConfigDir != home {
+		t.Fatalf("config dir = %q, want home %q", paths.ConfigDir, home)
+	}
+}
 func TestValidateClaudeProviderEnvMapsRejectsDangerousKeys(t *testing.T) {
 	t.Parallel()
 
@@ -247,6 +283,36 @@ func TestClaudeProviderSessionIdentity(t *testing.T) {
 	customOther := ClaudeProviderSessionIdentity("anthropic:personal", Provider{})
 	if customOther == "" || customOther == customNoDir {
 		t.Fatalf("custom identities should differ: work=%q personal=%q", customNoDir, customOther)
+	}
+}
+
+func TestClaudeProviderSessionIdentityUsesResolvedConfigDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	fromTilde := ClaudeProviderSessionIdentity("anthropic:work", Provider{ClaudeConfigDir: "~/.claude-work"})
+	fromAbsolute := ClaudeProviderSessionIdentity("anthropic:work", Provider{ClaudeConfigDir: filepath.Join(home, ".claude-work")})
+	if fromTilde != fromAbsolute {
+		t.Fatalf("equivalent config dirs produced different identities: tilde=%q absolute=%q", fromTilde, fromAbsolute)
+	}
+}
+
+func TestClaudeProviderConfigFingerprintUsesResolvedPaths(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	fromTilde := ClaudeProviderConfigFingerprint(Provider{
+		BinaryPath:      "~/bin/claude",
+		ClaudeConfigDir: "~/.claude-work",
+		HomePath:        "~/claude-home",
+	})
+	fromAbsolute := ClaudeProviderConfigFingerprint(Provider{
+		BinaryPath:      filepath.Join(home, "bin", "claude"),
+		ClaudeConfigDir: filepath.Join(home, ".claude-work"),
+		HomePath:        filepath.Join(home, "claude-home"),
+	})
+	if fromTilde != fromAbsolute {
+		t.Fatalf("equivalent paths produced different fingerprints: tilde=%q absolute=%q", fromTilde, fromAbsolute)
 	}
 }
 

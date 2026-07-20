@@ -97,6 +97,44 @@ func ValidateClaudeProviderEnvMaps(provider Provider) error {
 	return nil
 }
 
+// ClaudeProviderPaths contains effective paths used only at runtime. Provider keeps the
+// original user-entered values so config and API responses remain understandable.
+type ClaudeProviderPaths struct {
+	BinaryPath string
+	ConfigDir  string
+	HomePath   string
+}
+
+// ResolveClaudeProviderPaths expands home-relative paths and makes all configured
+// Claude paths absolute before they cross into process environment or filesystem APIs.
+func ResolveClaudeProviderPaths(provider Provider) ClaudeProviderPaths {
+	return ClaudeProviderPaths{
+		BinaryPath: resolveClaudeProviderPath(provider.BinaryPath),
+		ConfigDir:  resolveClaudeProviderPath(provider.ClaudeConfigDir),
+		HomePath:   resolveClaudeProviderPath(provider.HomePath),
+	}
+}
+
+func resolveClaudeProviderPath(raw string) string {
+	path := strings.TrimSpace(raw)
+	if path == "" {
+		return ""
+	}
+	if path == "~" || strings.HasPrefix(path, "~"+string(os.PathSeparator)) {
+		if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+			if path == "~" {
+				path = home
+			} else {
+				path = filepath.Join(home, strings.TrimPrefix(path, "~"+string(os.PathSeparator)))
+			}
+		}
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		return filepath.Clean(abs)
+	}
+	return filepath.Clean(path)
+}
+
 // BuildClaudeCLIEnvironment merges os.Environ with provider overrides and secrets.
 // On darwin, home_path never sets HOME; on other platforms it may.
 // CLAUDE_CONFIG_DIR always comes from the dedicated config dir field.
@@ -128,11 +166,12 @@ func BuildClaudeCLIEnvironment(provider Provider, goos string) []string {
 	for key, value := range provider.SensitiveSecrets {
 		add(key, value)
 	}
-	if dir := strings.TrimSpace(provider.ClaudeConfigDir); dir != "" {
-		add("CLAUDE_CONFIG_DIR", dir)
+	paths := ResolveClaudeProviderPaths(provider)
+	if paths.ConfigDir != "" {
+		add("CLAUDE_CONFIG_DIR", paths.ConfigDir)
 	}
-	if home := strings.TrimSpace(provider.HomePath); home != "" && strings.ToLower(strings.TrimSpace(goos)) != "darwin" {
-		add("HOME", home)
+	if paths.HomePath != "" && strings.ToLower(strings.TrimSpace(goos)) != "darwin" {
+		add("HOME", paths.HomePath)
 	}
 
 	out := make([]string, 0, len(order))
@@ -185,7 +224,7 @@ func ClaudeProviderSessionIdentity(ref string, provider Provider) string {
 	if !IsClaudeProviderRef(normalized) {
 		return ""
 	}
-	configDir := strings.TrimSpace(provider.ClaudeConfigDir)
+	configDir := ResolveClaudeProviderPaths(provider).ConfigDir
 	if configDir == "" {
 		if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
 			configDir = filepath.Join(home, ".claude")
@@ -200,6 +239,7 @@ func ClaudeProviderSessionIdentity(ref string, provider Provider) string {
 
 // ClaudeProviderConfigFingerprint returns a stable fingerprint for cache invalidation.
 func ClaudeProviderConfigFingerprint(provider Provider) string {
+	paths := ResolveClaudeProviderPaths(provider)
 	payload := struct {
 		BinaryPath       string            `json:"binary_path"`
 		ClaudeConfigDir  string            `json:"claude_config_dir"`
@@ -207,9 +247,9 @@ func ClaudeProviderConfigFingerprint(provider Provider) string {
 		EnvOverrides     map[string]string `json:"env_overrides"`
 		SensitiveSecrets map[string]string `json:"sensitive_secrets"`
 	}{
-		BinaryPath:       strings.TrimSpace(provider.BinaryPath),
-		ClaudeConfigDir:  strings.TrimSpace(provider.ClaudeConfigDir),
-		HomePath:         strings.TrimSpace(provider.HomePath),
+		BinaryPath:       paths.BinaryPath,
+		ClaudeConfigDir:  paths.ConfigDir,
+		HomePath:         paths.HomePath,
 		EnvOverrides:     provider.EnvOverrides,
 		SensitiveSecrets: hashSecretValues(provider.SensitiveSecrets),
 	}

@@ -686,14 +686,15 @@ func claudecliOptionsFromConfig(ref string, cfg *config.Config) claudecli.Option
 		normalized = string(config.ProviderAnthropic)
 	}
 	provider := cfg.Providers[normalized]
+	paths := config.ResolveClaudeProviderPaths(provider)
 	env := config.BuildClaudeCLIEnvironment(provider, runtime.GOOS)
 	sessionSettings := config.ResolveProviderSessionSettings(normalized, provider)
 	noSessionPersistence := envBoolDefaultMain("AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE", false) || !sessionSettings.UseProviderSession
 	return claudecli.Options{
-		Executable:           strings.TrimSpace(provider.BinaryPath),
+		Executable:           paths.BinaryPath,
 		WorkDir:              cfg.WorkDir,
-		ConfigDir:            strings.TrimSpace(provider.ClaudeConfigDir),
-		HomePath:             strings.TrimSpace(provider.HomePath),
+		ConfigDir:            paths.ConfigDir,
+		HomePath:             paths.HomePath,
 		Environment:          env,
 		Identity:             sessionSettings.ProviderSessionIdentity,
 		NoSessionPersistence: noSessionPersistence,

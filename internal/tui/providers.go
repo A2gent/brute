@@ -405,11 +405,12 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 			return cursorcli.NewClientWithOptions(model, cursorcli.Options{WorkDir: m.appConfig.WorkDir, APIKey: apiKey}), model, nil
 		case config.ProviderAnthropic:
 			sessionSettings := config.ResolveProviderSessionSettings(string(targetType), provider)
+			paths := config.ResolveClaudeProviderPaths(provider)
 			return claudecli.NewClientWithOptions(model, claudecli.Options{
-				Executable:           strings.TrimSpace(provider.BinaryPath),
+				Executable:           paths.BinaryPath,
 				WorkDir:              m.appConfig.WorkDir,
-				ConfigDir:            strings.TrimSpace(provider.ClaudeConfigDir),
-				HomePath:             strings.TrimSpace(provider.HomePath),
+				ConfigDir:            paths.ConfigDir,
+				HomePath:             paths.HomePath,
 				Environment:          config.BuildClaudeCLIEnvironment(provider, runtime.GOOS),
 				Identity:             sessionSettings.ProviderSessionIdentity,
 				NoSessionPersistence: !sessionSettings.UseProviderSession || tuiEnvBool("AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE", false),

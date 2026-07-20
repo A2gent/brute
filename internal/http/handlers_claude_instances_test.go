@@ -112,6 +112,49 @@ func TestClaudeHealthCacheInvalidatePrefix(t *testing.T) {
 	}
 }
 
+func TestClaudeHealthCacheKeyUsesResolvedConfigDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	server := &Server{}
+
+	fromTilde := server.claudeHealthCacheKey("anthropic:work", config.Provider{ClaudeConfigDir: "~/.claude-work"})
+	fromAbsolute := server.claudeHealthCacheKey("anthropic:work", config.Provider{ClaudeConfigDir: filepath.Join(home, ".claude-work")})
+	if fromTilde != fromAbsolute {
+		t.Fatalf("equivalent config dirs produced different health cache keys: tilde=%q absolute=%q", fromTilde, fromAbsolute)
+	}
+}
+
+func TestClaudeCLIOptionsUseResolvedPathsWithoutMutatingUserConfig(t *testing.T) {
+	home := t.TempDir()
+	work := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(work)
+
+	provider := config.Provider{
+		BinaryPath:      "~/bin/claude",
+		ClaudeConfigDir: "relative-config",
+		HomePath:        "~/claude-home",
+	}
+	cfg := config.DefaultConfig()
+	cfg.Providers["anthropic:work"] = provider
+	server := &Server{config: cfg}
+
+	opts := server.claudecliOptionsForRef("anthropic:work")
+	if opts.Executable != filepath.Join(home, "bin", "claude") {
+		t.Fatalf("executable = %q", opts.Executable)
+	}
+	if opts.ConfigDir != filepath.Join(work, "relative-config") {
+		t.Fatalf("config dir = %q", opts.ConfigDir)
+	}
+	if opts.HomePath != filepath.Join(home, "claude-home") {
+		t.Fatalf("home path = %q", opts.HomePath)
+	}
+	stored := cfg.Providers["anthropic:work"]
+	if stored.BinaryPath != provider.BinaryPath || stored.ClaudeConfigDir != provider.ClaudeConfigDir || stored.HomePath != provider.HomePath {
+		t.Fatalf("stored user paths were mutated: %+v", stored)
+	}
+}
+
 func TestCreateClaudeInstanceAndHealthEndpoint(t *testing.T) {
 	tmp := t.TempDir()
 	binary := writeFakeClaudeCLI(t, tmp)

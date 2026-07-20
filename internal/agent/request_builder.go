@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/A2gent/brute/internal/llm"
+	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/session"
 )
 
@@ -26,8 +27,8 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 		storedCursor := lastProviderSessionCursorForRequest(sess)
 		configIdentity := strings.TrimSpace(a.config.ProviderSessionIdentity)
 		if storedCursor != "" && storedIdentity == configIdentity {
-			providerSessionCursor = storedCursor
-			activeMessages = messagesAfterProviderSessionCursor(activeMessages, providerSessionCursor)
+			providerSessionCursor = claudecli.BindProviderSessionCursor(configIdentity, storedCursor)
+			activeMessages = messagesAfterProviderSessionCursor(activeMessages, storedCursor)
 		}
 	}
 	messages := make([]llm.Message, 0, len(activeMessages))

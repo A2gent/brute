@@ -168,6 +168,13 @@ func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, 
 		})
 	}
 
+	// A provider-side session still contains the pre-compaction transcript. Start a
+	// fresh session so the summary and kept messages become its only history.
+	// Empty tombstones keep a concurrent state merge from restoring the pre-compaction
+	// provider session if persisting this reset fails.
+	metadataSetString(sess, metadataProviderSessionCursor, "")
+	metadataSetString(sess, metadataProviderSessionIdentity, "")
+
 	if err := a.sessionManager.Save(sess); err != nil {
 		logging.Warn("Failed to save compacted session state: %v", err)
 	}

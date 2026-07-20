@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -15,9 +16,9 @@ import (
 	"github.com/A2gent/brute/internal/llm/autorouter"
 	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/llm/cursorcli"
-	"github.com/A2gent/brute/internal/llm/kimicli"
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/llm/gemini"
+	"github.com/A2gent/brute/internal/llm/kimicli"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
 	"github.com/A2gent/brute/internal/llm/openaicodex"
 	"github.com/A2gent/brute/internal/llm/retry"
@@ -291,6 +292,9 @@ func (m Model) activateProvider(providerType config.ProviderType) (tea.Model, te
 	m.contextWindow = config.ResolveContextWindow(providerType, provider, providerDef.DefaultModel)
 	m.agentConfig.Model = providerDef.DefaultModel
 	m.agentConfig.ContextWindow = m.contextWindow
+	sessionSettings := config.ResolveProviderSessionSettings(string(providerType), provider)
+	m.agentConfig.UseProviderSession = sessionSettings.UseProviderSession && !tuiEnvBool("AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE", false)
+	m.agentConfig.ProviderSessionIdentity = sessionSettings.ProviderSessionIdentity
 
 	// Save config
 	if err := m.appConfig.Save(config.GetConfigPath()); err != nil {
@@ -400,7 +404,18 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 		case config.ProviderCursor:
 			return cursorcli.NewClientWithOptions(model, cursorcli.Options{WorkDir: m.appConfig.WorkDir, APIKey: apiKey}), model, nil
 		case config.ProviderAnthropic:
-			return claudecli.NewClient(model, m.appConfig.WorkDir), model, nil
+			sessionSettings := config.ResolveProviderSessionSettings(string(targetType), provider)
+			return claudecli.NewClientWithOptions(model, claudecli.Options{
+				Executable:           strings.TrimSpace(provider.BinaryPath),
+				WorkDir:              m.appConfig.WorkDir,
+				ConfigDir:            strings.TrimSpace(provider.ClaudeConfigDir),
+				HomePath:             strings.TrimSpace(provider.HomePath),
+				Environment:          config.BuildClaudeCLIEnvironment(provider, runtime.GOOS),
+				Identity:             sessionSettings.ProviderSessionIdentity,
+				NoSessionPersistence: !sessionSettings.UseProviderSession || tuiEnvBool("AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE", false),
+				PermissionMode:       strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_PERMISSION_MODE")),
+				MaxBudgetUSD:         strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_MAX_BUDGET_USD")),
+			}), model, nil
 		case config.ProviderKimiCLI:
 			return kimicli.NewClient(model, m.appConfig.WorkDir), model, nil
 		default:
@@ -509,6 +524,16 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 	return client
 }
 
+func tuiEnvBool(key string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
+}
 func (m Model) validateActiveProviderConfig() error {
 	if m.appConfig == nil {
 		return nil

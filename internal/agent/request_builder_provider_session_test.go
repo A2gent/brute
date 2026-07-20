@@ -75,8 +75,8 @@ func TestBuildRequestUsesProviderSessionCursorWhenIdentityMatches(t *testing.T) 
 	ag := New(Config{UseProviderSession: true, ProviderSessionIdentity: "identity-a"}, nil, tools.NewManager(t.TempDir()), nil)
 	request := ag.buildRequest(sess)
 
-	if request.ProviderSessionCursor != "cursor-1" {
-		t.Fatalf("ProviderSessionCursor = %q, want cursor-1", request.ProviderSessionCursor)
+	if request.ProviderSessionCursor != "identity-a|cursor-1" {
+		t.Fatalf("ProviderSessionCursor = %q, want identity-bound cursor", request.ProviderSessionCursor)
 	}
 	if len(request.Messages) != 1 || request.Messages[0].Content != "follow up" {
 		t.Fatalf("unexpected trimmed message set: %+v", request.Messages)

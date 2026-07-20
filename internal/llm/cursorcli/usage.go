@@ -1,6 +1,7 @@
 package cursorcli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -42,6 +44,60 @@ type PeriodUsage struct {
 	BillingCycleEnd   int64     `json:"billingCycleEnd"`
 	PlanUsage         PlanUsage `json:"planUsage"`
 	DisplayMessage    string    `json:"displayMessage"`
+}
+
+type periodUsageWire struct {
+	BillingCycleStart flexInt64 `json:"billingCycleStart"`
+	BillingCycleEnd   flexInt64 `json:"billingCycleEnd"`
+	PlanUsage         PlanUsage `json:"planUsage"`
+	DisplayMessage    string    `json:"displayMessage"`
+}
+
+// flexInt64 accepts JSON numbers or numeric strings. Cursor's GetCurrentPeriodUsage
+// historically returned billingCycle* as numbers; current Connect RPC responses use strings.
+type flexInt64 int64
+
+func (v *flexInt64) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || string(data) == "null" {
+		*v = 0
+		return nil
+	}
+	if data[0] == '"' {
+		var raw string
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return err
+		}
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			*v = 0
+			return nil
+		}
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid numeric string %q: %w", raw, err)
+		}
+		*v = flexInt64(parsed)
+		return nil
+	}
+	var parsed int64
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	*v = flexInt64(parsed)
+	return nil
+}
+
+func (p *PeriodUsage) UnmarshalJSON(data []byte) error {
+	var wire periodUsageWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	p.BillingCycleStart = int64(wire.BillingCycleStart)
+	p.BillingCycleEnd = int64(wire.BillingCycleEnd)
+	p.PlanUsage = wire.PlanUsage
+	p.DisplayMessage = wire.DisplayMessage
+	return nil
 }
 
 type cursorAuthFile struct {

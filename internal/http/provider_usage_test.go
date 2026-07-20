@@ -415,7 +415,7 @@ func TestProviderUsageStatusForCursorReturnsPlanUsage(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-			"billingCycleEnd": 1786097901000,
+			"billingCycleEnd": "1786097901000",
 			"planUsage": {
 				"autoPercentUsed": 26.32,
 				"apiPercentUsed": 13.5,

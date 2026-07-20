@@ -143,6 +143,11 @@ func (s *Server) registerProviderRoutes(r chi.Router) {
 		r.Post("/openai_codex/oauth/import", s.handleOpenAICodexOAuthImport)
 		r.Get("/openai_codex/oauth/status", s.handleOpenAICodexOAuthStatus)
 		r.Delete("/openai_codex/oauth", s.handleOpenAICodexOAuthDisconnect)
+
+		// Cursor OAuth (import from Cursor Agent CLI login session)
+		r.Post("/cursor/oauth/import", s.handleCursorOAuthImport)
+		r.Get("/cursor/oauth/status", s.handleCursorOAuthStatus)
+		r.Delete("/cursor/oauth", s.handleCursorOAuthDisconnect)
 	})
 }
 

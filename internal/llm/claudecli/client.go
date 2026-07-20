@@ -189,13 +189,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		return llm.UnsafeForRetry(err)
 	}
 
-	var content strings.Builder
-	var assistantContent string
-	var usage llm.TokenUsage
-	var providerSessionCursor string
-	var stopReason string
-	var finalResult cliResult
-	var sawResult bool
+	processor := newStreamProcessor(onEvent)
 
 	scanner := bufio.NewScanner(stdoutPipe)
 	scanner.Buffer(make([]byte, 0, 64*1024), defaultMaxOutputBytes)
@@ -212,61 +206,10 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 			_ = cmd.Wait()
 			return nil, unsafeAfterStart(err)
 		}
-		if event.SessionID != "" {
-			providerSessionCursor = event.SessionID
-		}
-		switch event.Type {
-		case "stream_event":
-			if event.Event.Message.Usage != nil {
-				usage = mergeUsage(usage, usageFromRaw(event.Event.Message.Usage))
-			}
-			if event.Event.Usage != nil {
-				usage = mergeUsage(usage, usageFromRaw(event.Event.Usage))
-			}
-			if event.Event.Delta.StopReason != "" {
-				stopReason = event.Event.Delta.StopReason
-			}
-			if event.Event.Type == "content_block_delta" &&
-				event.Event.Delta.Type == "text_delta" &&
-				event.Event.Delta.Text != "" {
-				content.WriteString(event.Event.Delta.Text)
-				if onEvent != nil {
-					if err := onEvent(llm.StreamEvent{Type: llm.StreamEventContentDelta, ContentDelta: event.Event.Delta.Text}); err != nil {
-						_ = cmd.Process.Kill()
-						_ = cmd.Wait()
-						return nil, unsafeAfterStart(err)
-					}
-				}
-			}
-		case "assistant":
-			assistantContent = streamMessageText(event.Message)
-			if event.Message.Usage != nil {
-				usage = mergeUsage(usage, usageFromRaw(event.Message.Usage))
-			}
-			if event.Message.StopReason != "" {
-				stopReason = event.Message.StopReason
-			}
-		case "result":
-			sawResult = true
-			finalResult = cliResult{
-				Type:       event.Type,
-				Subtype:    event.Subtype,
-				IsError:    event.IsError,
-				Result:     event.Result,
-				Error:      event.Error,
-				SessionID:  event.SessionID,
-				StopReason: event.StopReason,
-				Usage:      event.Usage,
-			}
-			if event.Usage != nil {
-				usage = mergeUsage(usage, usageFromRaw(event.Usage))
-			}
-			if event.StopReason != "" {
-				stopReason = event.StopReason
-			}
-			if event.SessionID != "" {
-				providerSessionCursor = event.SessionID
-			}
+		if err := processor.handleEnvelope(event); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return nil, unsafeAfterStart(err)
 		}
 	}
 	if scanErr := scanner.Err(); scanErr != nil {
@@ -281,35 +224,33 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		return nil, unsafeAfterStart(fmt.Errorf("Claude CLI failed: %s", normalizeClaudeCLIErrorMessage(cliErrorMessage(err, stdout.String(), stderr.String()))))
 	}
 
-	finalContent := strings.TrimSpace(finalResult.Result)
+	finalContent := strings.TrimSpace(processor.finalResult.Result)
 	if finalContent == "" {
-		finalContent = strings.TrimSpace(content.String())
+		finalContent = strings.TrimSpace(processor.content.String())
 	}
 	if finalContent == "" {
-		finalContent = strings.TrimSpace(assistantContent)
+		finalContent = strings.TrimSpace(processor.assistantContent)
 	}
 	if finalContent == "" {
-		finalContent = strings.TrimSpace(finalResult.Message)
+		finalContent = strings.TrimSpace(processor.finalResult.Message)
 	}
-	if finalContent == "" && !sawResult {
+	if finalContent == "" && !processor.sawResult {
 		finalContent = strings.TrimSpace(stdout.String())
 	}
-	if finalResult.IsError || strings.Contains(strings.ToLower(finalResult.Subtype), "error") {
-		msg := firstNonEmpty(finalContent, finalResult.Error, "Claude CLI returned an error result")
+	if processor.finalResult.IsError || strings.Contains(strings.ToLower(processor.finalResult.Subtype), "error") {
+		msg := firstNonEmpty(finalContent, processor.finalResult.Error, "Claude CLI returned an error result")
 		return nil, unsafeAfterStart(fmt.Errorf("%s", normalizeClaudeCLIErrorMessage(msg)))
 	}
 
-	if onEvent != nil {
-		if err := onEvent(llm.StreamEvent{Type: llm.StreamEventUsage, Usage: usage}); err != nil {
-			return nil, unsafeAfterStart(err)
-		}
+	if err := processor.finalize(onEvent); err != nil {
+		return nil, unsafeAfterStart(err)
 	}
-	logging.LogResponseWithContent(usage.InputTokens, usage.OutputTokens, 0, finalContent, nil)
+	logging.LogResponseWithContent(processor.usage.InputTokens, processor.usage.OutputTokens, 0, finalContent, nil)
 	return &llm.ChatResponse{
 		Content:               finalContent,
-		Usage:                 usage,
-		StopReason:            firstNonEmpty(stopReason, finalResult.StopReason, finalResult.Subtype),
-		ProviderSessionCursor: c.providerSessionCursor(firstNonEmpty(providerSessionCursor, finalResult.SessionID)),
+		Usage:                 processor.usage,
+		StopReason:            firstNonEmpty(processor.stopReason, processor.finalResult.StopReason, processor.finalResult.Subtype),
+		ProviderSessionCursor: c.providerSessionCursor(firstNonEmpty(processor.providerSessionCursor, processor.finalResult.SessionID)),
 	}, nil
 }
 

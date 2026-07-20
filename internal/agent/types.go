@@ -1,5 +1,7 @@
 package agent
 
+import "github.com/A2gent/brute/internal/llm"
+
 // Config holds agent configuration
 type Config struct {
 	Name                     string
@@ -27,6 +29,7 @@ const (
 	EventToolProgress   EventType = "tool_progress"
 	EventToolCompleted  EventType = "tool_completed"
 	EventProviderTrace  EventType = "provider_trace"
+	EventLLMRuntime     EventType = "llm_runtime"
 )
 
 const (
@@ -96,6 +99,7 @@ type Event struct {
 	ToolProgress *ToolProgressEvent
 	ToolResult   *ToolResultEvent // Populated for EventToolCompleted (single result)
 	Provider     *ProviderTraceEvent
+	Runtime      *llm.StreamEvent // Populated for EventLLMRuntime
 }
 
 // ToolCallEvent represents a tool call being executed.

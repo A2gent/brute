@@ -566,6 +566,29 @@ func (a *Agent) callLLM(ctx context.Context, request *llm.ChatRequest, step int,
 				},
 			})
 		}
+		if isLLMRuntimeForwardEvent(ev) {
+			runtime := ev
+			onEvent(Event{
+				Type:    EventLLMRuntime,
+				Step:    step,
+				Runtime: &runtime,
+			})
+		}
 		return nil
 	})
+}
+
+func isLLMRuntimeForwardEvent(ev llm.StreamEvent) bool {
+	switch ev.Type {
+	case llm.StreamEventReasoningDelta,
+		llm.StreamEventToolStarted,
+		llm.StreamEventToolUpdated,
+		llm.StreamEventToolCompleted,
+		llm.StreamEventToolOutput,
+		llm.StreamEventCost,
+		llm.StreamEventRuntimeWarning:
+		return true
+	default:
+		return false
+	}
 }

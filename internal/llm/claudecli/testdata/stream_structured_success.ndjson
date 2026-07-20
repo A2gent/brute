@@ -1,0 +1,17 @@
+{"type":"system","subtype":"init","cwd":"/workspace/brute","session_id":"018b187a-7b35-444c-8d6f-92b90e8d7b64","tools":["Bash","Read"],"model":"claude-sonnet-4-6"}
+{"type":"system","subtype":"status","status":"rate_limited","message":"Retrying after rate limit"}
+{"type":"stream_event","session_id":"018b187a-7b35-444c-8d6f-92b90e8d7b64","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}}
+{"type":"stream_event","session_id":"018b187a-7b35-444c-8d6f-92b90e8d7b64","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Checking"}}}
+{"type":"stream_event","session_id":"018b187a-7b35-444c-8d6f-92b90e8d7b64","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the file."}}}
+{"type":"stream_event","session_id":"018b187a-7b35-444c-8d6f-92b90e8d7b64","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","session_id":"018b187a-7b35-444c-8d6f-92b90e8d7b64","event":{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}}
+{"type":"stream_event","session_id":"018b187a-7b35-444c-8d6f-92b90e8d7b64","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"I'll read it."}}}
+{"type":"stream_event","session_id":"018b187a-7b35-444c-8d6f-92b90e8d7b64","event":{"type":"content_block_stop","index":1}}
+{"type":"stream_event","session_id":"018b187a-7b35-444c-8d6f-92b90e8d7b64","event":{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_read_01","name":"Read","input":{}}}}
+{"type":"stream_event","session_id":"018b187a-7b35-444c-8d6f-92b90e8d7b64","event":{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"file_path\":"}}}
+{"type":"stream_event","session_id":"018b187a-7b35-444c-8d6f-92b90e8d7b64","event":{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\"foo.go\"}"}}}
+{"type":"stream_event","session_id":"018b187a-7b35-444c-8d6f-92b90e8d7b64","event":{"type":"content_block_stop","index":2}}
+{"type":"assistant","session_id":"018b187a-7b35-444c-8d6f-92b90e8d7b64","message":{"model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"I'll read it."},{"type":"tool_use","id":"toolu_read_01","name":"Read","input":{"file_path":"foo.go"}}]}}
+{"type":"assistant","session_id":"018b187a-7b35-444c-8d6f-92b90e8d7b64","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_read_01","content":"package main\n","is_error":false}]}}
+{"type":"system","subtype":"compact_boundary","compact_metadata":{"tokens_before":1200}}
+{"type":"result","subtype":"success","result":"Read foo.go successfully.","session_id":"018b187a-7b35-444c-8d6f-92b90e8d7b64","total_cost_usd":0.0123,"duration_ms":4500,"duration_api_ms":4100,"num_turns":1,"usage":{"input_tokens":1200,"output_tokens":85}}

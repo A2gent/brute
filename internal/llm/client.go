@@ -89,23 +89,41 @@ type ChatResponse struct {
 type StreamEventType string
 
 const (
-	StreamEventContentDelta  StreamEventType = "content_delta"
-	StreamEventToolCallDelta StreamEventType = "tool_call_delta"
-	StreamEventUsage         StreamEventType = "usage"
-	StreamEventProviderTrace StreamEventType = "provider_trace"
+	StreamEventContentDelta   StreamEventType = "content_delta"
+	StreamEventReasoningDelta StreamEventType = "reasoning_delta"
+	StreamEventToolCallDelta  StreamEventType = "tool_call_delta"
+	StreamEventToolStarted    StreamEventType = "tool_started"
+	StreamEventToolUpdated    StreamEventType = "tool_updated"
+	StreamEventToolCompleted  StreamEventType = "tool_completed"
+	StreamEventToolOutput     StreamEventType = "tool_output"
+	StreamEventCost           StreamEventType = "cost"
+	StreamEventRuntimeWarning StreamEventType = "runtime_warning"
+	StreamEventUsage          StreamEventType = "usage"
+	StreamEventProviderTrace  StreamEventType = "provider_trace"
 )
 
 // StreamEvent is emitted during a streaming LLM response.
 type StreamEvent struct {
 	Type StreamEventType
 
-	ContentDelta string
+	ContentDelta   string
+	ReasoningDelta string
 
 	ToolCallIndex            int
 	ToolCallID               string
 	ToolCallName             string
 	ToolInputDelta           string
 	ToolCallThoughtSignature string
+	ToolOutput               string
+	ToolIsError              bool
+
+	TotalCostUSD  float64
+	DurationMS    int64
+	DurationAPIMS int64
+	NumTurns      int
+
+	RuntimeStatus  string
+	RuntimeWarning string
 
 	Usage TokenUsage
 

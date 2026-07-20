@@ -105,7 +105,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		wrappedOnEvent := onEvent
 		if onEvent != nil {
 			wrappedOnEvent = func(ev llm.StreamEvent) error {
-				if ev.Type == llm.StreamEventContentDelta || ev.Type == llm.StreamEventToolCallDelta {
+				if llm.IsResponseProgressEvent(ev) {
 					emitted = true
 				}
 				return onEvent(ev)

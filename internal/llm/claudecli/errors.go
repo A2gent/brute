@@ -59,7 +59,7 @@ func cliResultMessage(parsed cliResult) string {
 }
 
 func cliStreamEnvelopeMessage(event cliStreamEnvelope) string {
-	return firstNonEmpty(event.Error, event.Result, streamMessageText(event.Message))
+	return firstNonEmpty(event.Error, event.Result, event.MessageText, streamMessageText(event.Message))
 }
 
 func normalizeClaudeCLIErrorMessage(raw string) string {

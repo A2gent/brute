@@ -170,28 +170,31 @@ type ChatResponse struct {
 }
 
 type ChatStreamEvent struct {
-	Type                    string                   `json:"type"`
-	Delta                   string                   `json:"delta,omitempty"`
-	Content                 string                   `json:"content,omitempty"`
-	Message                 *MessageResponse         `json:"message,omitempty"`
-	Messages                []MessageResponse        `json:"messages,omitempty"`
-	Status                  string                   `json:"status,omitempty"`
-	Usage                   *UsageResponse           `json:"usage,omitempty"`
-	Error                   string                   `json:"error,omitempty"`
-	Question                *session.QuestionData    `json:"question,omitempty"`
-	ToolCalls               []StreamToolCallEvent    `json:"tool_calls,omitempty"`
-	ToolProgress            *StreamToolProgressEvent `json:"tool_progress,omitempty"`
-	ToolResult              *StreamToolResultEvent   `json:"tool_result,omitempty"`
-	Provider                *StreamProviderEvent     `json:"provider,omitempty"`
-	Workflow                interface{}              `json:"workflow,omitempty"`
-	WorkflowTranscriptEntry interface{}              `json:"workflow_transcript_entry,omitempty"`
-	RoutedProvider          string                   `json:"routed_provider,omitempty"`
-	RoutedModel             string                   `json:"routed_model,omitempty"`
-	RoutedRule              string                   `json:"routed_rule,omitempty"`
-	RoutedReason            string                   `json:"routed_reason,omitempty"`
-	FallbackActiveProvider  string                   `json:"fallback_active_provider,omitempty"`
-	FallbackActiveModel     string                   `json:"fallback_active_model,omitempty"`
-	Step                    int                      `json:"step,omitempty"`
+	Type                    string                       `json:"type"`
+	Delta                   string                       `json:"delta,omitempty"`
+	Content                 string                       `json:"content,omitempty"`
+	Message                 *MessageResponse             `json:"message,omitempty"`
+	Messages                []MessageResponse            `json:"messages,omitempty"`
+	Status                  string                       `json:"status,omitempty"`
+	Usage                   *UsageResponse               `json:"usage,omitempty"`
+	Error                   string                       `json:"error,omitempty"`
+	Question                *session.QuestionData        `json:"question,omitempty"`
+	ToolCalls               []StreamToolCallEvent        `json:"tool_calls,omitempty"`
+	ToolProgress            *StreamToolProgressEvent     `json:"tool_progress,omitempty"`
+	ToolResult              *StreamToolResultEvent       `json:"tool_result,omitempty"`
+	Provider                *StreamProviderEvent         `json:"provider,omitempty"`
+	Workflow                interface{}                  `json:"workflow,omitempty"`
+	WorkflowTranscriptEntry interface{}                  `json:"workflow_transcript_entry,omitempty"`
+	RoutedProvider          string                       `json:"routed_provider,omitempty"`
+	RoutedModel             string                       `json:"routed_model,omitempty"`
+	RoutedRule              string                       `json:"routed_rule,omitempty"`
+	RoutedReason            string                       `json:"routed_reason,omitempty"`
+	FallbackActiveProvider  string                       `json:"fallback_active_provider,omitempty"`
+	FallbackActiveModel     string                       `json:"fallback_active_model,omitempty"`
+	Step                    int                          `json:"step,omitempty"`
+	RuntimeTool             *StreamRuntimeToolEvent      `json:"runtime_tool,omitempty"`
+	Cost                    *StreamRuntimeCostEvent      `json:"cost,omitempty"`
+	RuntimeWarning          *StreamRuntimeWarningPayload `json:"runtime_warning,omitempty"`
 }
 
 // StreamToolCallEvent represents a tool call in a stream event.
@@ -230,6 +233,28 @@ type StreamProviderEvent struct {
 	FallbackTo    string `json:"fallback_to,omitempty"`
 	FallbackModel string `json:"fallback_model,omitempty"`
 	Recovered     bool   `json:"recovered,omitempty"`
+}
+
+// StreamRuntimeToolEvent describes Claude/native runtime tool lifecycle progress.
+type StreamRuntimeToolEvent struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Index     int    `json:"index"`
+	InputJSON string `json:"input_json"`
+}
+
+// StreamRuntimeCostEvent describes provider runtime cost metadata.
+type StreamRuntimeCostEvent struct {
+	TotalCostUSD  float64 `json:"total_cost_usd"`
+	DurationMS    int64   `json:"duration_ms"`
+	DurationAPIMS int64   `json:"duration_api_ms"`
+	NumTurns      int     `json:"num_turns"`
+}
+
+// StreamRuntimeWarningPayload describes non-fatal runtime status updates.
+type StreamRuntimeWarningPayload struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
 }
 
 // UsageResponse represents token usage

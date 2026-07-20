@@ -5,6 +5,7 @@ import (
 
 	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/config"
+	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/session"
 )
 
@@ -84,6 +85,67 @@ func (s *Server) agentEventToStreamEvent(sess *session.Session, providerType con
 				FallbackTo:    ev.Provider.FallbackTo,
 				FallbackModel: ev.Provider.FallbackModel,
 				Recovered:     ev.Provider.Recovered,
+			},
+		}, true
+	case agent.EventLLMRuntime:
+		return runtimeAgentEventToStreamEvent(ev)
+	default:
+		return ChatStreamEvent{}, false
+	}
+}
+
+func runtimeAgentEventToStreamEvent(ev agent.Event) (ChatStreamEvent, bool) {
+	if ev.Runtime == nil {
+		return ChatStreamEvent{}, false
+	}
+	runtime := ev.Runtime
+	switch runtime.Type {
+	case llm.StreamEventReasoningDelta:
+		return ChatStreamEvent{
+			Type:  "reasoning_delta",
+			Step:  ev.Step,
+			Delta: runtime.ReasoningDelta,
+		}, true
+	case llm.StreamEventToolStarted, llm.StreamEventToolUpdated, llm.StreamEventToolCompleted:
+		return ChatStreamEvent{
+			Type: string(runtime.Type),
+			Step: ev.Step,
+			RuntimeTool: &StreamRuntimeToolEvent{
+				ID:        runtime.ToolCallID,
+				Name:      runtime.ToolCallName,
+				Index:     runtime.ToolCallIndex,
+				InputJSON: runtime.ToolInputDelta,
+			},
+		}, true
+	case llm.StreamEventToolOutput:
+		return ChatStreamEvent{
+			Type: "tool_output",
+			Step: ev.Step,
+			ToolResult: &StreamToolResultEvent{
+				ToolCallID: runtime.ToolCallID,
+				Name:       runtime.ToolCallName,
+				Content:    runtime.ToolOutput,
+				IsError:    runtime.ToolIsError,
+			},
+		}, true
+	case llm.StreamEventCost:
+		return ChatStreamEvent{
+			Type: "cost",
+			Step: ev.Step,
+			Cost: &StreamRuntimeCostEvent{
+				TotalCostUSD:  runtime.TotalCostUSD,
+				DurationMS:    runtime.DurationMS,
+				DurationAPIMS: runtime.DurationAPIMS,
+				NumTurns:      runtime.NumTurns,
+			},
+		}, true
+	case llm.StreamEventRuntimeWarning:
+		return ChatStreamEvent{
+			Type: "runtime_warning",
+			Step: ev.Step,
+			RuntimeWarning: &StreamRuntimeWarningPayload{
+				Status:  runtime.RuntimeStatus,
+				Message: runtime.RuntimeWarning,
 			},
 		}, true
 	default:

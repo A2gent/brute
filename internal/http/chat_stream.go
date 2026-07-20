@@ -229,17 +229,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		_ = writeEvent(*event)
 	}
 
-	agentConfig := agent.Config{
-		Name:                sess.AgentID,
-		Provider:            string(target.ProviderType),
-		Model:               target.Model,
-		SystemPrompt:        s.buildSystemPromptForSession(sess),
-		MaxSteps:            s.config.MaxSteps,
-		Temperature:         s.config.Temperature,
-		ContextWindow:       target.ContextWindow,
-		UsePreviousResponse: target.StatefulResponses,
-		UseProviderSession:  target.ProviderSessions,
-	}
+	agentConfig := s.agentConfigFromTarget(sess, target, s.buildSystemPromptForSession(sess), s.config.MaxSteps, s.config.Temperature)
 	ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 
 	content, usage, err := ag.RunWithEvents(runCtx, sess, req.Message, func(ev agent.Event) {

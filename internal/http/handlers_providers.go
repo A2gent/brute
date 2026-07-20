@@ -8,6 +8,7 @@ import (
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/anthropic"
+	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/llm/cursorcli"
 	"github.com/A2gent/brute/internal/llm/gemini"
 	"github.com/A2gent/brute/internal/llm/kimicli"
@@ -97,7 +98,7 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 
 		if def.Type == config.ProviderAnthropic {
 			baseURL = ""
-			configured = s.providerConfiguredForUse(def.Type)
+			configured = s.providerConfiguredForRef(string(def.Type))
 			hasAPIKey = false
 			hasOAuth = false
 		}
@@ -142,6 +143,11 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	for _, ref := range s.config.ListConfiguredClaudeInstanceRefs() {
+		provider := s.config.Providers[ref]
+		resp = append(resp, s.claudeInstanceResponse(ref, provider))
+	}
+
 	for _, aggregate := range s.config.FallbackAggregates {
 		providerRef := config.FallbackAggregateRefFromID(aggregate.ID)
 		chain := normalizeFallbackChainNodes(aggregate.Chain)
@@ -172,7 +178,13 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	providerType := config.ProviderType(config.NormalizeProviderRef(chi.URLParam(r, "providerType")))
+	providerRef := config.NormalizeProviderRef(chi.URLParam(r, "providerType"))
+	if config.IsCustomClaudeInstanceRef(providerRef) {
+		s.handleUpdateClaudeInstance(w, r)
+		return
+	}
+
+	providerType := config.ProviderType(providerRef)
 
 	var req UpdateProviderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -432,6 +444,10 @@ func (s *Server) handleDeleteProvider(w http.ResponseWriter, r *http.Request) {
 	}
 
 	providerRef := config.NormalizeProviderRef(chi.URLParam(r, "providerType"))
+	if config.IsCustomClaudeInstanceRef(providerRef) {
+		s.handleDeleteClaudeInstance(w, r)
+		return
+	}
 	if providerRef != string(config.ProviderFallback) && !config.IsFallbackAggregateRef(providerRef) {
 		s.errorResponse(w, http.StatusBadRequest, "Only fallback aggregates can be deleted")
 		return
@@ -592,6 +608,46 @@ func (s *Server) handleListAnthropicModels(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+func (s *Server) handleTestClaudeProvider(w http.ResponseWriter, r *http.Request, providerRef string) {
+	if !s.providerConfiguredForRef(providerRef) {
+		s.jsonResponse(w, http.StatusBadRequest, ProviderTestResponse{
+			Success: false,
+			Message: "Claude CLI executable was not found. Install Claude Code or configure binary_path.",
+		})
+		return
+	}
+
+	s.ensureClaudeHealthCache()
+	provider, _ := s.config.GetClaudeProvider(providerRef)
+	cacheKey := s.claudeHealthCacheKey(providerRef, provider)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	report := claudecli.ProbeHealth(ctx, s.claudecliOptionsForRef(providerRef), nil)
+	report = s.claudeHealthCache.Set(cacheKey, report)
+
+	switch report.Status {
+	case claudecli.HealthHealthy:
+		msg := "Claude CLI is healthy"
+		if report.Version != "" {
+			msg = fmt.Sprintf("Claude CLI is healthy (%s)", report.Version)
+		}
+		s.jsonResponse(w, http.StatusOK, ProviderTestResponse{Success: true, Message: msg})
+	case claudecli.HealthDegraded:
+		msg := "Claude CLI is installed but not authenticated"
+		if report.Error != "" {
+			msg = report.Error
+		}
+		s.jsonResponse(w, http.StatusBadGateway, ProviderTestResponse{Success: false, Message: msg})
+	default:
+		msg := "Claude CLI is unavailable"
+		if report.Error != "" {
+			msg = report.Error
+		}
+		s.jsonResponse(w, http.StatusBadGateway, ProviderTestResponse{Success: false, Message: msg})
+	}
+}
+
 func (s *Server) handleListOpenAICompatibleModels(w http.ResponseWriter, r *http.Request, providerType config.ProviderType, providerName string) {
 	def := config.GetProviderDefinition(providerType)
 	baseURL := normalizeOpenAIBaseURL(r.URL.Query().Get("base_url"))
@@ -647,7 +703,13 @@ func (s *Server) handleListOpenAICompatibleModels(w http.ResponseWriter, r *http
 
 // handleTestProvider tests a provider by sending a simple "hello" message
 func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
-	providerType := config.ProviderType(chi.URLParam(r, "providerType"))
+	providerRef := config.NormalizeProviderRef(chi.URLParam(r, "providerType"))
+	if config.IsClaudeProviderRef(providerRef) {
+		s.handleTestClaudeProvider(w, r, providerRef)
+		return
+	}
+
+	providerType := config.ProviderType(providerRef)
 
 	def := config.GetProviderDefinition(providerType)
 	if def == nil {

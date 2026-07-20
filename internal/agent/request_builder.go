@@ -22,8 +22,11 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 	}
 	providerSessionCursor := ""
 	if a.config.UseProviderSession {
-		providerSessionCursor = lastProviderSessionCursorForRequest(sess)
-		if providerSessionCursor != "" {
+		storedIdentity := lastProviderSessionIdentityForRequest(sess)
+		storedCursor := lastProviderSessionCursorForRequest(sess)
+		configIdentity := strings.TrimSpace(a.config.ProviderSessionIdentity)
+		if storedCursor != "" && storedIdentity == configIdentity {
+			providerSessionCursor = storedCursor
 			activeMessages = messagesAfterProviderSessionCursor(activeMessages, providerSessionCursor)
 		}
 	}

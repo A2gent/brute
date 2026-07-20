@@ -4,7 +4,6 @@ package http
 import (
 	"context"
 	"fmt"
-	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/jobs"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
@@ -61,17 +60,7 @@ func (s *Server) parseScheduleToCron(ctx context.Context, scheduleText string) (
 		return "", fmt.Errorf("failed to initialize provider %s: %w", targetConfig.ProviderType, err)
 	}
 
-	agentConfig := agent.Config{
-		Name:                "scheduler",
-		Provider:            string(target.ProviderType),
-		Model:               target.Model,
-		SystemPrompt:        templates.ScheduleToCronSystemPrompt,
-		MaxSteps:            1,
-		Temperature:         0,
-		ContextWindow:       target.ContextWindow,
-		UsePreviousResponse: target.StatefulResponses,
-		UseProviderSession:  target.ProviderSessions,
-	}
+	agentConfig := s.agentConfigFromTarget(sess, target, templates.ScheduleToCronSystemPrompt, 1, 0)
 
 	ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 	cronExpr, _, err := ag.Run(ctx, sess, prompt)

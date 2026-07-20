@@ -42,6 +42,13 @@ type Provider struct {
 	RouterRules        []RouterRule        `json:"router_rules,omitempty"`
 	ContextWindow      int                 `json:"context_window,omitempty"` // in tokens
 
+	// Claude CLI instance fields (anthropic and anthropic:<id> providers).
+	BinaryPath       string            `json:"binary_path,omitempty"`
+	ClaudeConfigDir  string            `json:"claude_config_dir,omitempty"`
+	HomePath         string            `json:"home_path,omitempty"`
+	EnvOverrides     map[string]string `json:"env_overrides,omitempty"`
+	SensitiveSecrets map[string]string `json:"sensitive_secrets,omitempty"`
+
 	// OAuth support
 	OAuth *OAuthConfig `json:"oauth,omitempty"`
 }
@@ -408,5 +415,16 @@ func (c *Config) Save(path string) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0644)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0600)
 }

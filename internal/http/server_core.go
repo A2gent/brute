@@ -55,6 +55,7 @@ type Server struct {
 	httpAccessLogSeq      uint64
 	dockerRuntime         *dockerRuntimeManager
 	contextCompressor     *contextcompress.Compressor
+	claudeHealthCache     *claudeHealthCache
 
 	// A2A gRPC tunnel (managed by a2a_tunnel.go)
 	tunnelMu     sync.Mutex
@@ -100,6 +101,7 @@ func NewServer(
 		serialQueueWorkers:    make(map[string]struct{}),
 		chromeExtensionBridge: newChromeExtensionBridge(),
 		contextCompressor:     contextcompress.NewCompressorWithSessionStore(contextcompress.Config{Enabled: true}, sessionManager),
+		claudeHealthCache:     newClaudeHealthCache(),
 	}
 	s.dockerRuntime = newDockerRuntimeManager(s)
 

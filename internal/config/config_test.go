@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -173,6 +174,19 @@ func TestResolveContextWindowUsesModelSpecificOpenRouterLimits(t *testing.T) {
 				t.Fatalf("ResolveContextWindow(openrouter, %#v, %q) = %d, want %d", tt.provider, tt.model, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestResolveContextWindowForRefUsesBaseAnthropicDefinition(t *testing.T) {
+	t.Parallel()
+
+	got := ResolveContextWindowForRef("anthropic:work", Provider{}, "")
+	if got <= 0 {
+		t.Fatalf("ResolveContextWindowForRef(anthropic:work) = %d, want anthropic default > 0", got)
+	}
+	def := GetProviderDefinition(ProviderAnthropic)
+	if def == nil || got != def.ContextWindow {
+		t.Fatalf("custom ref window = %d, want base anthropic default %d", got, def.ContextWindow)
 	}
 }
 
@@ -374,6 +388,24 @@ func TestSaveCreatesParentDirectoryAndWritesJSON(t *testing.T) {
 	}
 	if decoded.DefaultModel != cfg.DefaultModel || decoded.ActiveProvider != cfg.ActiveProvider || decoded.Providers[string(ProviderOpenAI)].Model != "gpt-test" {
 		t.Fatalf("decoded config mismatch: %#v", decoded)
+	}
+}
+
+func TestSaveUsesPrivateFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file mode checks are unix-specific")
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := DefaultConfig()
+	if err := cfg.Save(path); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("mode = %o, want 0600", info.Mode().Perm())
 	}
 }
 

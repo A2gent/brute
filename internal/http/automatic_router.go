@@ -14,14 +14,15 @@ import (
 )
 
 type executionTarget struct {
-	ProviderType      config.ProviderType
-	Model             string
-	RoutingRule       string
-	RoutingReason     string
-	ContextWindow     int
-	StatefulResponses bool
-	ProviderSessions  bool
-	Client            llm.Client
+	ProviderType            config.ProviderType
+	Model                   string
+	RoutingRule             string
+	RoutingReason           string
+	ContextWindow           int
+	StatefulResponses       bool
+	ProviderSessions        bool
+	ProviderSessionIdentity string
+	Client                  llm.Client
 }
 
 func routerDecisionStreamEvent(requestedProvider config.ProviderType, target *executionTarget) *ChatStreamEvent {
@@ -149,12 +150,13 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, providerType config
 			return nil, err
 		}
 		return &executionTarget{
-			ProviderType:      providerType,
-			Model:             requestedModel,
-			ContextWindow:     s.resolveContextWindowForProvider(providerType, requestedModel),
-			StatefulResponses: s.providerStatefulResponses(providerType),
-			ProviderSessions:  s.providerSessionPersistence(providerType),
-			Client:            client,
+			ProviderType:            providerType,
+			Model:                   requestedModel,
+			ContextWindow:           s.resolveContextWindowForProvider(providerType, requestedModel),
+			StatefulResponses:       s.providerStatefulResponses(providerType),
+			ProviderSessions:        s.providerSessionPersistence(providerType),
+			ProviderSessionIdentity: s.claudeProviderSessionIdentity(string(providerType)),
+			Client:                  client,
 		}, nil
 	}
 
@@ -183,14 +185,15 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, providerType config
 	}
 	logging.Info("Automatic router selected target provider=%s model=%s rule=%q reason=%s", targetProvider, targetModel, chosen.Match, reason)
 	return &executionTarget{
-		ProviderType:      targetProvider,
-		Model:             targetModel,
-		RoutingRule:       strings.TrimSpace(chosen.Match),
-		RoutingReason:     strings.TrimSpace(reason),
-		ContextWindow:     s.resolveContextWindowForProvider(targetProvider, targetModel),
-		StatefulResponses: s.providerStatefulResponses(targetProvider),
-		ProviderSessions:  s.providerSessionPersistence(targetProvider),
-		Client:            client,
+		ProviderType:            targetProvider,
+		Model:                   targetModel,
+		RoutingRule:             strings.TrimSpace(chosen.Match),
+		RoutingReason:           strings.TrimSpace(reason),
+		ContextWindow:           s.resolveContextWindowForProvider(targetProvider, targetModel),
+		StatefulResponses:       s.providerStatefulResponses(targetProvider),
+		ProviderSessions:        s.providerSessionPersistence(targetProvider),
+		ProviderSessionIdentity: s.claudeProviderSessionIdentity(string(targetProvider)),
+		Client:                  client,
 	}, nil
 }
 

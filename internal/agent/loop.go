@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/A2gent/brute/internal/llm"
+	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/tools"
@@ -99,8 +100,16 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		}
 		if a.config.UseProviderSession && strings.TrimSpace(response.ProviderSessionCursor) != "" {
 			cursor := strings.TrimSpace(response.ProviderSessionCursor)
-			assistantMetadata[messageMetadataProviderSessionCursor] = cursor
-			metadataSetString(sess, metadataProviderSessionCursor, cursor)
+			rawCursor := cursor
+			if identity := strings.TrimSpace(a.config.ProviderSessionIdentity); identity != "" {
+				rawCursor = claudecli.UnbindProviderSessionCursor(identity, cursor)
+			}
+			assistantMetadata[messageMetadataProviderSessionCursor] = rawCursor
+			metadataSetString(sess, metadataProviderSessionCursor, rawCursor)
+			if identity := strings.TrimSpace(a.config.ProviderSessionIdentity); identity != "" {
+				assistantMetadata[messageMetadataProviderSessionIdentity] = identity
+				metadataSetString(sess, metadataProviderSessionIdentity, identity)
+			}
 		}
 
 		// Accumulate token usage
@@ -326,8 +335,16 @@ func (a *Agent) finalizeAfterStepLimit(ctx context.Context, sess *session.Sessio
 	}
 	if a.config.UseProviderSession && strings.TrimSpace(response.ProviderSessionCursor) != "" {
 		cursor := strings.TrimSpace(response.ProviderSessionCursor)
-		metadata[messageMetadataProviderSessionCursor] = cursor
-		metadataSetString(sess, metadataProviderSessionCursor, cursor)
+		rawCursor := cursor
+		if identity := strings.TrimSpace(a.config.ProviderSessionIdentity); identity != "" {
+			rawCursor = claudecli.UnbindProviderSessionCursor(identity, cursor)
+		}
+		metadata[messageMetadataProviderSessionCursor] = rawCursor
+		metadataSetString(sess, metadataProviderSessionCursor, rawCursor)
+		if identity := strings.TrimSpace(a.config.ProviderSessionIdentity); identity != "" {
+			metadata[messageMetadataProviderSessionIdentity] = identity
+			metadataSetString(sess, metadataProviderSessionIdentity, identity)
+		}
 	}
 
 	if len(response.ToolCalls) > 0 {

@@ -242,13 +242,22 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 		logging.Warn("Failed to persist job session prompt: %v", err)
 	}
 
+	ref := config.NormalizeProviderRef(string(providerType))
+	provider := s.config.Providers[ref]
+	sessionSettings := config.ResolveProviderSessionSettings(ref, provider)
+	if envBoolDefault("AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE", false) {
+		sessionSettings.UseProviderSession = false
+	}
+
 	agentConfig := agent.Config{
-		Name:          "job-runner",
-		Provider:      string(providerType),
-		Model:         model,
-		MaxSteps:      s.config.MaxSteps,
-		Temperature:   s.config.Temperature,
-		ContextWindow: contextWindow,
+		Name:                    "job-runner",
+		Provider:                string(providerType),
+		Model:                   model,
+		MaxSteps:                s.config.MaxSteps,
+		Temperature:             s.config.Temperature,
+		ContextWindow:           contextWindow,
+		UseProviderSession:      sessionSettings.UseProviderSession,
+		ProviderSessionIdentity: sessionSettings.ProviderSessionIdentity,
 	}
 
 	client, err := s.createLLMClient(providerType, model, jobWorkDir)

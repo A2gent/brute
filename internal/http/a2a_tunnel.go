@@ -219,16 +219,8 @@ func (s *Server) makeA2AAgentFactory() a2atunnel.AgentRunnerBuilder {
 			s.publishSessionEvent(sess.ID, *event)
 		}
 
-		cfg := agent.Config{
-			Name:                "brute-a2a",
-			Model:               target.Model,
-			SystemPrompt:        s.buildSystemPromptForA2ASession(sess),
-			MaxSteps:            s.config.MaxSteps,
-			Temperature:         s.config.Temperature,
-			ContextWindow:       target.ContextWindow,
-			UsePreviousResponse: target.StatefulResponses,
-			UseProviderSession:  target.ProviderSessions,
-		}
+		cfg := s.agentConfigFromTarget(sess, target, s.buildSystemPromptForA2ASession(sess), s.config.MaxSteps, s.config.Temperature)
+		cfg.Name = "brute-a2a"
 		return s.newAgentFromConfig(cfg, target.Client, toolManager), nil
 	}
 }
@@ -602,17 +594,7 @@ func (s *Server) resumeSessionAfterExternalToolResult(sessionID string) {
 			s.publishSessionEvent(sess.ID, *event)
 		}
 
-		agentConfig := agent.Config{
-			Name:                sess.AgentID,
-			Provider:            string(target.ProviderType),
-			Model:               target.Model,
-			SystemPrompt:        s.buildSystemPromptForSession(sess),
-			MaxSteps:            s.config.MaxSteps,
-			Temperature:         s.config.Temperature,
-			ContextWindow:       target.ContextWindow,
-			UsePreviousResponse: target.StatefulResponses,
-			UseProviderSession:  target.ProviderSessions,
-		}
+		agentConfig := s.agentConfigFromTarget(sess, target, s.buildSystemPromptForSession(sess), s.config.MaxSteps, s.config.Temperature)
 		ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 		_, _, err = ag.RunWithEvents(runCtx, sess, "", func(ev agent.Event) {
 			if ev.Type == agent.EventProviderTrace && ev.Provider != nil {

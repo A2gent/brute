@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
@@ -370,17 +369,7 @@ func (s *Server) handleTelegramInboundMessage(
 		s.publishSessionEvent(sess.ID, *event)
 	}
 
-	agentConfig := agent.Config{
-		Name:                sess.AgentID,
-		Provider:            string(target.ProviderType),
-		Model:               target.Model,
-		SystemPrompt:        s.buildSystemPromptForSession(sess),
-		MaxSteps:            s.config.MaxSteps,
-		Temperature:         s.config.Temperature,
-		ContextWindow:       target.ContextWindow,
-		UsePreviousResponse: target.StatefulResponses,
-		UseProviderSession:  target.ProviderSessions,
-	}
+	agentConfig := s.agentConfigFromTarget(sess, target, s.buildSystemPromptForSession(sess), s.config.MaxSteps, s.config.Temperature)
 	ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 
 	response, _, err := ag.Run(ctx, sess, llmUserMessage)

@@ -3,6 +3,7 @@ package scheduler
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/A2gent/brute/internal/codexauth"
@@ -11,9 +12,9 @@ import (
 	"github.com/A2gent/brute/internal/llm/anthropic"
 	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/llm/cursorcli"
-	"github.com/A2gent/brute/internal/llm/kimicli"
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/llm/gemini"
+	"github.com/A2gent/brute/internal/llm/kimicli"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
 	"github.com/A2gent/brute/internal/llm/openaicodex"
 	"github.com/A2gent/brute/internal/llm/retry"
@@ -47,18 +48,20 @@ func (s *Scheduler) resolveModelForProvider(providerType config.ProviderType) st
 	if config.IsFallbackAggregateRef(string(providerType)) || providerType == config.ProviderFallback || providerType == config.ProviderAutoRouter {
 		return ""
 	}
-	provider := s.config.Providers[string(providerType)]
+	ref := config.NormalizeProviderRef(string(providerType))
+	provider := s.config.Providers[ref]
 	if strings.TrimSpace(provider.Model) != "" {
 		return strings.TrimSpace(provider.Model)
 	}
-	if def := config.GetProviderDefinition(providerType); def != nil && strings.TrimSpace(def.DefaultModel) != "" {
+	if def := config.GetProviderDefinitionForRef(ref); def != nil && strings.TrimSpace(def.DefaultModel) != "" {
 		return strings.TrimSpace(def.DefaultModel)
 	}
 	return strings.TrimSpace(s.config.DefaultModel)
 }
 
 func (s *Scheduler) resolveContextWindowForProvider(providerType config.ProviderType, model string) int {
-	provider := s.config.Providers[string(providerType)]
+	ref := config.NormalizeProviderRef(string(providerType))
+	provider := s.config.Providers[ref]
 	if config.IsFallbackAggregateRef(string(providerType)) || providerType == config.ProviderFallback {
 		chain, err := s.fallbackNodesForProvider(providerType)
 		if err != nil {
@@ -66,11 +69,11 @@ func (s *Scheduler) resolveContextWindowForProvider(providerType config.Provider
 		}
 		minContext := 0
 		for _, node := range chain {
-			nodeType := config.ProviderType(node.Provider)
-			if config.GetProviderDefinition(nodeType) == nil {
+			nodeRef := config.NormalizeProviderRef(node.Provider)
+			if config.GetProviderDefinitionForRef(nodeRef) == nil {
 				continue
 			}
-			window := config.ResolveContextWindow(nodeType, s.config.Providers[string(nodeType)], node.Model)
+			window := config.ResolveContextWindowForRef(nodeRef, s.config.Providers[nodeRef], node.Model)
 			if window <= 0 {
 				continue
 			}
@@ -80,7 +83,7 @@ func (s *Scheduler) resolveContextWindowForProvider(providerType config.Provider
 		}
 		return minContext
 	}
-	return config.ResolveContextWindow(providerType, provider, model)
+	return config.ResolveContextWindowForRef(ref, provider, model)
 }
 
 func (s *Scheduler) syncOpenAICodexOAuthFromCache() bool {
@@ -124,8 +127,42 @@ func (s *Scheduler) createLLMClient(providerType config.ProviderType, model stri
 	return retry.Wrap(client, retry.WithMaxRetries(retries)), nil
 }
 
+func (s *Scheduler) claudecliOptionsForRef(ref string, workDir string) claudecli.Options {
+	normalized := config.NormalizeProviderRef(ref)
+	if normalized == "" {
+		normalized = string(config.ProviderAnthropic)
+	}
+	provider := s.config.Providers[normalized]
+	env := config.BuildClaudeCLIEnvironment(provider, runtime.GOOS)
+	sessionSettings := config.ResolveProviderSessionSettings(normalized, provider)
+	noSessionPersistence := envBoolDefault("AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE", false) || !sessionSettings.UseProviderSession
+	return claudecli.Options{
+		Executable:           strings.TrimSpace(provider.BinaryPath),
+		WorkDir:              workDir,
+		ConfigDir:            strings.TrimSpace(provider.ClaudeConfigDir),
+		HomePath:             strings.TrimSpace(provider.HomePath),
+		Environment:          env,
+		Identity:             sessionSettings.ProviderSessionIdentity,
+		NoSessionPersistence: noSessionPersistence,
+		PermissionMode:       strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_PERMISSION_MODE")),
+		MaxBudgetUSD:         strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_MAX_BUDGET_USD")),
+	}
+}
+
+func envBoolDefault(key string, fallback bool) bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch raw {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
+}
+
 func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model string, workDir string) (llm.Client, error) {
-	def := config.GetProviderDefinition(providerType)
+	def := config.GetProviderDefinitionForRef(string(providerType))
 	if def == nil {
 		return nil, fmt.Errorf("unknown provider: %s", providerType)
 	}
@@ -133,7 +170,7 @@ func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model 
 		return nil, fmt.Errorf("fallback aggregate is not a direct provider")
 	}
 
-	provider := s.config.Providers[string(providerType)]
+	provider := s.config.Providers[config.NormalizeProviderRef(string(providerType))]
 	baseURL := strings.TrimSpace(provider.BaseURL)
 	if baseURL == "" {
 		baseURL = strings.TrimSpace(def.DefaultURL)
@@ -162,8 +199,9 @@ func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model 
 		modelName = s.resolveModelForProvider(providerType)
 	}
 
-	if providerType == config.ProviderAnthropic {
-		return claudecli.NewClient(modelName, workDir), nil
+	if config.IsClaudeProviderRef(string(providerType)) {
+		opts := s.claudecliOptionsForRef(string(providerType), workDir)
+		return claudecli.NewClientWithOptions(modelName, opts), nil
 	}
 	if providerType == config.ProviderKimiCLI {
 		return kimicli.NewClient(modelName, workDir), nil
@@ -368,7 +406,7 @@ func (s *Scheduler) normalizeAndValidateFallbackChain(raw []config.FallbackChain
 		if ptype == config.ProviderFallback {
 			return nil, fmt.Errorf("fallback chain cannot include fallback_chain itself")
 		}
-		def := config.GetProviderDefinition(ptype)
+		def := config.GetProviderDefinitionForRef(node.Provider)
 		if def == nil {
 			return nil, fmt.Errorf("unsupported provider in fallback chain: %s", node.Provider)
 		}
@@ -401,12 +439,15 @@ func (s *Scheduler) fallbackNodesForProvider(providerRef config.ProviderType) ([
 }
 
 func (s *Scheduler) providerConfiguredForUse(providerType config.ProviderType) bool {
-	def := config.GetProviderDefinition(providerType)
+	ref := config.NormalizeProviderRef(string(providerType))
+	if config.IsClaudeProviderRef(ref) {
+		opts := s.claudecliOptionsForRef(ref, s.config.WorkDir)
+		_, err := claudecli.ResolveExecutable(opts.Executable)
+		return err == nil
+	}
+	def := config.GetProviderDefinitionForRef(ref)
 	if def == nil || providerType == config.ProviderFallback || providerType == config.ProviderAutoRouter {
 		return false
-	}
-	if providerType == config.ProviderAnthropic {
-		return claudecli.IsAvailable()
 	}
 	if providerType == config.ProviderKimiCLI {
 		return kimicli.IsAvailable()
@@ -414,7 +455,7 @@ func (s *Scheduler) providerConfiguredForUse(providerType config.ProviderType) b
 	if providerType == config.ProviderCursor {
 		return cursorcli.IsAvailable()
 	}
-	provider := s.config.Providers[string(providerType)]
+	provider := s.config.Providers[ref]
 	baseURL := strings.TrimSpace(provider.BaseURL)
 	if baseURL == "" {
 		baseURL = strings.TrimSpace(def.DefaultURL)

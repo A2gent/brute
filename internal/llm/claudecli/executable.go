@@ -8,11 +8,11 @@ import (
 )
 
 func normalizeExecutable(raw string) string {
-	if path := strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_PATH")); path != "" {
-		return path
-	}
 	if raw = strings.TrimSpace(raw); raw != "" {
 		return raw
+	}
+	if path := strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_PATH")); path != "" {
+		return path
 	}
 	return defaultExecutable
 }

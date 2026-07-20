@@ -58,12 +58,13 @@ func (s *Server) resolveModelForProvider(providerType config.ProviderType) strin
 	if config.IsFallbackAggregateRef(string(providerType)) || providerType == config.ProviderFallback || providerType == config.ProviderAutoRouter {
 		return ""
 	}
-	provider := s.config.Providers[string(providerType)]
+	ref := config.NormalizeProviderRef(string(providerType))
+	provider := s.config.Providers[ref]
 	if strings.TrimSpace(provider.Model) != "" {
 		return normalizeModelForProvider(providerType, provider.Model)
 	}
 
-	if def := config.GetProviderDefinition(providerType); def != nil && strings.TrimSpace(def.DefaultModel) != "" {
+	if def := config.GetProviderDefinitionForRef(ref); def != nil && strings.TrimSpace(def.DefaultModel) != "" {
 		return normalizeModelForProvider(providerType, def.DefaultModel)
 	}
 
@@ -114,7 +115,8 @@ func (s *Server) resolveContextWindowForProvider(providerType config.ProviderTyp
 	if providerType == config.ProviderAutoRouter {
 		return 0
 	}
-	provider := s.config.Providers[string(providerType)]
+	ref := config.NormalizeProviderRef(string(providerType))
+	provider := s.config.Providers[ref]
 	if config.IsFallbackAggregateRef(string(providerType)) || providerType == config.ProviderFallback {
 		chain, err := s.fallbackNodesForProvider(providerType)
 		if err != nil {
@@ -154,7 +156,7 @@ func (s *Server) providerSessionPersistence(providerType config.ProviderType) bo
 }
 
 func (s *Server) providerSessionPersistenceForConfig(providerType config.ProviderType, configured *bool) bool {
-	if providerType != config.ProviderAnthropic {
+	if !config.IsClaudeProviderRef(string(providerType)) {
 		return false
 	}
 	if configured != nil {
@@ -211,8 +213,10 @@ func (s *Server) createBaseLLMClientForSession(providerType config.ProviderType,
 	if client, ok := s.createParentProxyLLMClient(providerType, modelName); ok {
 		return client, nil
 	}
-	if providerType == config.ProviderAnthropic {
-		return claudecli.NewClient(modelName, s.resolveSessionWorkDir(sess)), nil
+	if config.IsClaudeProviderRef(string(providerType)) {
+		opts := s.claudecliOptionsForRef(string(providerType))
+		opts.WorkDir = s.resolveSessionWorkDir(sess)
+		return claudecli.NewClientWithOptions(modelName, opts), nil
 	}
 	if providerType == config.ProviderKimiCLI {
 		return kimicli.NewClient(modelName, s.resolveSessionWorkDir(sess)), nil
@@ -228,7 +232,7 @@ func (s *Server) createBaseLLMClientForSession(providerType config.ProviderType,
 }
 
 func (s *Server) createBaseLLMClient(providerType config.ProviderType, model string) (llm.Client, error) {
-	def := config.GetProviderDefinition(providerType)
+	def := config.GetProviderDefinitionForRef(string(providerType))
 	if def == nil {
 		return nil, fmt.Errorf("unknown provider: %s", providerType)
 	}
@@ -268,8 +272,10 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 	if client, ok := s.createParentProxyLLMClient(providerType, modelName); ok {
 		return client, nil
 	}
-	if providerType == config.ProviderAnthropic {
-		return claudecli.NewClient(modelName, s.resolveSessionWorkDir(nil)), nil
+	if config.IsClaudeProviderRef(string(providerType)) {
+		opts := s.claudecliOptionsForRef(string(providerType))
+		opts.WorkDir = s.resolveSessionWorkDir(nil)
+		return claudecli.NewClientWithOptions(modelName, opts), nil
 	}
 	if providerType == config.ProviderKimiCLI {
 		return kimicli.NewClient(modelName, s.resolveSessionWorkDir(nil)), nil
@@ -481,7 +487,7 @@ func (s *Server) normalizeAndValidateFallbackChain(raw []config.FallbackChainNod
 		if ptype == config.ProviderFallback {
 			return nil, fmt.Errorf("fallback chain cannot include fallback_chain itself")
 		}
-		def := config.GetProviderDefinition(ptype)
+		def := config.GetProviderDefinitionForRef(node.Provider)
 		if def == nil {
 			return nil, fmt.Errorf("unsupported provider in fallback chain: %s", node.Provider)
 		}
@@ -544,6 +550,13 @@ func (s *Server) findFallbackAggregateByRef(ref string) (*config.FallbackAggrega
 
 func (s *Server) providerRefExists(ref string) bool {
 	normalized := config.NormalizeProviderRef(ref)
+	if config.IsClaudeProviderRef(normalized) {
+		if normalized == string(config.ProviderAnthropic) {
+			return true
+		}
+		_, ok := s.config.Providers[normalized]
+		return ok
+	}
 	if config.GetProviderDefinition(config.ProviderType(normalized)) != nil {
 		return true
 	}
@@ -560,7 +573,7 @@ func (s *Server) validateProviderRefForExecution(ref string) error {
 		return fmt.Errorf("provider is empty")
 	}
 	ptype := config.ProviderType(normalized)
-	if def := config.GetProviderDefinition(ptype); def != nil {
+	if def := config.GetProviderDefinitionForRef(normalized); def != nil {
 		if ptype == config.ProviderFallback {
 			_, err := s.fallbackNodesForProvider(ptype)
 			return err
@@ -582,15 +595,22 @@ func (s *Server) validateProviderRefForExecution(ref string) error {
 }
 
 func (s *Server) providerConfiguredForUse(providerType config.ProviderType) bool {
+	ref := string(providerType)
+	if config.IsClaudeProviderRef(ref) {
+		if s.parentProxyAvailable() {
+			return true
+		}
+		opts := s.claudecliOptionsForRef(ref)
+		_, err := claudecli.ResolveExecutable(opts.Executable)
+		return err == nil
+	}
+
 	def := config.GetProviderDefinition(providerType)
 	if def == nil || providerType == config.ProviderFallback || providerType == config.ProviderAutoRouter {
 		return false
 	}
 	if s.parentProxyAvailable() {
 		return true
-	}
-	if providerType == config.ProviderAnthropic {
-		return claudecli.IsAvailable()
 	}
 	if providerType == config.ProviderKimiCLI {
 		return kimicli.IsAvailable()

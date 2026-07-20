@@ -124,6 +124,14 @@ func lastResponseIDForStatefulRequest(sess *session.Session) string {
 	return strings.TrimSpace(raw)
 }
 
+func lastProviderSessionIdentityForRequest(sess *session.Session) string {
+	if sess == nil || sess.Metadata == nil {
+		return ""
+	}
+	raw, _ := sess.Metadata[metadataProviderSessionIdentity].(string)
+	return strings.TrimSpace(raw)
+}
+
 func lastProviderSessionCursorForRequest(sess *session.Session) string {
 	if sess == nil || sess.Metadata == nil {
 		return ""

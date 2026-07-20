@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -209,15 +210,21 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create agent config
-	providerType := config.ProviderType(config.NormalizeProviderRef(cfg.ActiveProvider))
-	provider := cfg.Providers[string(providerType)]
-	contextWindow := config.ResolveContextWindow(providerType, provider, cfg.DefaultModel)
+	ref := config.NormalizeProviderRef(cfg.ActiveProvider)
+	provider := cfg.Providers[ref]
+	contextWindow := config.ResolveContextWindowForRef(ref, provider, cfg.DefaultModel)
+	sessionSettings := config.ResolveProviderSessionSettings(ref, provider)
+	if envBoolDefaultMain("AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE", false) {
+		sessionSettings.UseProviderSession = false
+	}
 	agentConfig := agent.Config{
-		Name:          agentFlag,
-		Model:         cfg.DefaultModel,
-		MaxSteps:      cfg.MaxSteps,
-		Temperature:   cfg.Temperature,
-		ContextWindow: contextWindow,
+		Name:                    agentFlag,
+		Model:                   cfg.DefaultModel,
+		MaxSteps:                cfg.MaxSteps,
+		Temperature:             cfg.Temperature,
+		ContextWindow:           contextWindow,
+		UseProviderSession:      sessionSettings.UseProviderSession,
+		ProviderSessionIdentity: sessionSettings.ProviderSessionIdentity,
 	}
 
 	sessionEvents, unsubscribeSessionEvents := server.SubscribeSessionEvents(sess.ID)
@@ -481,12 +488,13 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 	}
 
 	createDirectClient := func(providerType config.ProviderType, modelOverride string) (llm.Client, string, error) {
-		providerDef := config.GetProviderDefinition(providerType)
+		ref := config.NormalizeProviderRef(string(providerType))
+		providerDef := config.GetProviderDefinitionForRef(ref)
 		if providerDef == nil || providerType == config.ProviderFallback || providerType == config.ProviderAutoRouter {
 			return nil, "", fmt.Errorf("unsupported provider: %s", providerType)
 		}
 
-		provider := cfg.Providers[string(providerType)]
+		provider := cfg.Providers[ref]
 		apiKey := strings.TrimSpace(provider.APIKey)
 		oauthBacked := false
 		if apiKey == "" && providerType == config.ProviderOpenAICodex {
@@ -553,9 +561,10 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 		}
 
 		logging.Info("Using LLM provider: %s API: %s model=%s", providerType, baseURL, model)
+		if config.IsClaudeProviderRef(ref) {
+			return claudecli.NewClientWithOptions(model, claudecliOptionsFromConfig(ref, cfg)), model, nil
+		}
 		switch providerType {
-		case config.ProviderAnthropic:
-			return claudecli.NewClient(model, cfg.WorkDir), model, nil
 		case config.ProviderKimiCLI:
 			return kimicli.NewClient(model, cfg.WorkDir), model, nil
 		case config.ProviderCursor:
@@ -669,4 +678,38 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 	}
 	client, _, err := createClientForProvider(providerRef, "")
 	return client, err
+}
+
+func claudecliOptionsFromConfig(ref string, cfg *config.Config) claudecli.Options {
+	normalized := config.NormalizeProviderRef(ref)
+	if normalized == "" {
+		normalized = string(config.ProviderAnthropic)
+	}
+	provider := cfg.Providers[normalized]
+	env := config.BuildClaudeCLIEnvironment(provider, runtime.GOOS)
+	sessionSettings := config.ResolveProviderSessionSettings(normalized, provider)
+	noSessionPersistence := envBoolDefaultMain("AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE", false) || !sessionSettings.UseProviderSession
+	return claudecli.Options{
+		Executable:           strings.TrimSpace(provider.BinaryPath),
+		WorkDir:              cfg.WorkDir,
+		ConfigDir:            strings.TrimSpace(provider.ClaudeConfigDir),
+		HomePath:             strings.TrimSpace(provider.HomePath),
+		Environment:          env,
+		Identity:             sessionSettings.ProviderSessionIdentity,
+		NoSessionPersistence: noSessionPersistence,
+		PermissionMode:       strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_PERMISSION_MODE")),
+		MaxBudgetUSD:         strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_MAX_BUDGET_USD")),
+	}
+}
+
+func envBoolDefaultMain(key string, fallback bool) bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch raw {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
 }

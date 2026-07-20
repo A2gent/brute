@@ -182,17 +182,7 @@ func (s *Server) resumeSessionAfterQuestionAnswer(sessionID string, userAnswer s
 			s.publishSessionEvent(sess.ID, *event)
 		}
 
-		agentConfig := agent.Config{
-			Name:                sess.AgentID,
-			Provider:            string(target.ProviderType),
-			Model:               target.Model,
-			SystemPrompt:        s.buildSystemPromptForSession(sess),
-			MaxSteps:            s.config.MaxSteps,
-			Temperature:         s.config.Temperature,
-			ContextWindow:       target.ContextWindow,
-			UsePreviousResponse: target.StatefulResponses,
-			UseProviderSession:  target.ProviderSessions,
-		}
+		agentConfig := s.agentConfigFromTarget(sess, target, s.buildSystemPromptForSession(sess), s.config.MaxSteps, s.config.Temperature)
 		ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 		_, _, err = ag.RunWithEvents(runCtx, sess, userAnswer, func(ev agent.Event) {
 			if ev.Type == agent.EventProviderTrace && ev.Provider != nil {

@@ -53,6 +53,34 @@ func TestClientChatFirstDurableRequestDoesNotForceSessionID(t *testing.T) {
 	}
 }
 
+func TestClientChatMismatchedBoundCursorNoResume(t *testing.T) {
+	t.Setenv("AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE", "")
+	t.Setenv("AAGENT_CLAUDE_CLI_PATH", "")
+
+	tmp := t.TempDir()
+	argsFile := filepath.Join(tmp, "args.txt")
+	writeFakeClaudeScript(t, tmp, argsFile, `{"type":"result","subtype":"success","result":"ok","session_id":"cursor-new","usage":{"input_tokens":1,"output_tokens":1}}`)
+
+	client := NewClientWithOptions("claude-sonnet-4-6", Options{
+		WorkDir:  tmp,
+		Identity: "claude:expected",
+	})
+	if _, err := client.Chat(t.Context(), &llm.ChatRequest{
+		ProviderSessionCursor: "claude:other|cursor-old",
+		Messages: []llm.Message{
+			{Role: "user", Content: "earlier"},
+			{Role: "user", Content: "latest only"},
+		},
+	}); err != nil {
+		t.Fatalf("Chat returned error: %v", err)
+	}
+
+	joined := readCapturedArgs(t, argsFile)
+	if strings.Contains(joined, "--resume") {
+		t.Fatalf("mismatched bound cursor must not resume, got:\n%s", joined)
+	}
+}
+
 func TestClientChatWithProviderSessionCursorUsesResumeNotSessionID(t *testing.T) {
 	t.Setenv("AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE", "")
 	t.Setenv("AAGENT_CLAUDE_CLI_PATH", "")

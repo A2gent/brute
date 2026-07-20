@@ -35,6 +35,54 @@ func TestBuildRequestSetsProviderSessionCursorWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestBuildRequestOmitsProviderSessionCursorWhenIdentityMismatches(t *testing.T) {
+	sess := session.New("test-agent")
+	sess.Metadata = map[string]interface{}{
+		metadataProviderSessionCursor:   "cursor-1",
+		metadataProviderSessionIdentity: "identity-a",
+	}
+	sess.AddUserMessage("hello")
+	sess.AddAssistantMessageWithMetadata("hi", nil, map[string]interface{}{
+		messageMetadataProviderSessionCursor:   "cursor-1",
+		messageMetadataProviderSessionIdentity: "identity-a",
+	})
+	sess.AddUserMessage("follow up")
+
+	ag := New(Config{UseProviderSession: true, ProviderSessionIdentity: "identity-b"}, nil, tools.NewManager(t.TempDir()), nil)
+	request := ag.buildRequest(sess)
+
+	if request.ProviderSessionCursor != "" {
+		t.Fatalf("ProviderSessionCursor = %q, want empty on identity mismatch", request.ProviderSessionCursor)
+	}
+	if len(request.Messages) != 3 {
+		t.Fatalf("expected full history on identity mismatch, got %d messages", len(request.Messages))
+	}
+}
+
+func TestBuildRequestUsesProviderSessionCursorWhenIdentityMatches(t *testing.T) {
+	sess := session.New("test-agent")
+	sess.Metadata = map[string]interface{}{
+		metadataProviderSessionCursor:   "cursor-1",
+		metadataProviderSessionIdentity: "identity-a",
+	}
+	sess.AddUserMessage("hello")
+	sess.AddAssistantMessageWithMetadata("hi", nil, map[string]interface{}{
+		messageMetadataProviderSessionCursor:   "cursor-1",
+		messageMetadataProviderSessionIdentity: "identity-a",
+	})
+	sess.AddUserMessage("follow up")
+
+	ag := New(Config{UseProviderSession: true, ProviderSessionIdentity: "identity-a"}, nil, tools.NewManager(t.TempDir()), nil)
+	request := ag.buildRequest(sess)
+
+	if request.ProviderSessionCursor != "cursor-1" {
+		t.Fatalf("ProviderSessionCursor = %q, want cursor-1", request.ProviderSessionCursor)
+	}
+	if len(request.Messages) != 1 || request.Messages[0].Content != "follow up" {
+		t.Fatalf("unexpected trimmed message set: %+v", request.Messages)
+	}
+}
+
 func TestBuildRequestOmitsProviderSessionCursorWhenDisabled(t *testing.T) {
 	sess := session.New("test-agent")
 	sess.Metadata = map[string]interface{}{

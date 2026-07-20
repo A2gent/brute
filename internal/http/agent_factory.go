@@ -6,10 +6,30 @@ import (
 
 	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/llm"
+	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/tools"
 )
 
 const toolResultCompressionSettingKey = "A2GENT_TOOL_RESULT_COMPRESSION_ENABLED"
+
+func (s *Server) agentConfigFromTarget(sess *session.Session, target *executionTarget, systemPrompt string, maxSteps int, temperature float64) agent.Config {
+	name := ""
+	if sess != nil {
+		name = sess.AgentID
+	}
+	return agent.Config{
+		Name:                    name,
+		Provider:                string(target.ProviderType),
+		Model:                   target.Model,
+		SystemPrompt:            systemPrompt,
+		MaxSteps:                maxSteps,
+		Temperature:             temperature,
+		ContextWindow:           target.ContextWindow,
+		UsePreviousResponse:     target.StatefulResponses,
+		UseProviderSession:      target.ProviderSessions,
+		ProviderSessionIdentity: target.ProviderSessionIdentity,
+	}
+}
 
 func (s *Server) newAgentFromConfig(cfg agent.Config, client llm.Client, manager *tools.Manager) *agent.Agent {
 	cfg.CompressToolResults = s.toolResultCompressionEnabled()

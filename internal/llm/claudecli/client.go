@@ -23,6 +23,10 @@ const (
 type Options struct {
 	Executable           string
 	WorkDir              string
+	ConfigDir            string
+	HomePath             string
+	Environment          []string
+	Identity             string
 	PermissionMode       string
 	MaxBudgetUSD         string
 	NoSessionPersistence bool
@@ -88,6 +92,7 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 
 	cmd := exec.CommandContext(ctx, claudePath, args...)
 	cmd.Dir = c.options.WorkDir
+	cmd.Env = c.commandEnv()
 
 	var stdout limitedBuffer
 	var stderr limitedBuffer
@@ -167,6 +172,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 
 	cmd := exec.CommandContext(ctx, claudePath, args...)
 	cmd.Dir = c.options.WorkDir
+	cmd.Env = c.commandEnv()
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -258,7 +264,7 @@ func (c *Client) providerSessionCursor(raw string) string {
 	if c.options.NoSessionPersistence {
 		return ""
 	}
-	return strings.TrimSpace(raw)
+	return BindProviderSessionCursor(c.options.Identity, raw)
 }
 
 func (c *Client) buildArgs(request *llm.ChatRequest, model, prompt string) []string {
@@ -282,8 +288,8 @@ func (c *Client) appendCommonArgs(args []string, request *llm.ChatRequest) []str
 	}
 	if c.options.NoSessionPersistence {
 		args = append(args, "--no-session-persistence")
-	} else if cursor := strings.TrimSpace(request.ProviderSessionCursor); cursor != "" {
-		args = append(args, "--resume", cursor)
+	} else if raw, ok := ResolveProviderSessionCursor(c.options.Identity, request.ProviderSessionCursor); ok && raw != "" {
+		args = append(args, "--resume", raw)
 	}
 	// WHY: Claude CLI is itself the tool-running agent for Anthropic. A2gent
 	// function schemas are not sent to the CLI, so expose Claude Code's native
@@ -308,6 +314,13 @@ func (c *Client) appendCommonArgs(args []string, request *llm.ChatRequest) []str
 		args = append(args, "--max-budget-usd", c.options.MaxBudgetUSD)
 	}
 	return args
+}
+
+func (c *Client) commandEnv() []string {
+	if len(c.options.Environment) > 0 {
+		return c.options.Environment
+	}
+	return os.Environ()
 }
 
 var _ llm.Client = (*Client)(nil)

@@ -3,6 +3,7 @@ package claudecli
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/A2gent/brute/internal/llm"
@@ -51,13 +52,122 @@ func TestToolResultContentMixedNonTextArray(t *testing.T) {
 	}
 }
 
-func TestStreamProcessorUnsupportedToolResultShapeEmitsOutput(t *testing.T) {
+func TestStreamProcessorContentBlockStopEmitsToolInputCompleted(t *testing.T) {
 	p := newStreamProcessor(nil)
-	p.toolsByID["toolu_1"] = &toolBlockState{id: "toolu_1", name: "Read"}
+	p.blocksByIndex[2] = &toolBlockState{
+		index: 2, id: "toolu_1", name: "Read", started: true,
+	}
+	p.blocksByIndex[2].input.WriteString(`{"file_path":"foo.go"}`)
+	p.toolsByID["toolu_1"] = p.blocksByIndex[2]
 
 	var out llm.StreamEvent
 	p.onEvent = func(ev llm.StreamEvent) error {
 		out = ev
+		return nil
+	}
+
+	if err := p.handleContentBlockStop(cliStreamEvent{Index: 2}); err != nil {
+		t.Fatalf("handleContentBlockStop: %v", err)
+	}
+	if out.Type != llm.StreamEventToolInputCompleted || out.ToolCallName != "Read" {
+		t.Fatalf("got %+v, want tool_input_completed Read", out)
+	}
+	if out.ToolInputDelta != `{"file_path":"foo.go"}` {
+		t.Fatalf("input = %q, want final JSON", out.ToolInputDelta)
+	}
+}
+
+func TestStreamProcessorValidToolResultEmitsOutputThenCompleted(t *testing.T) {
+	p := newStreamProcessor(nil)
+	p.toolsByID["toolu_1"] = &toolBlockState{
+		id: "toolu_1", name: "Read", index: 2,
+	}
+	p.toolsByID["toolu_1"].input.WriteString(`{"file_path":"foo.go"}`)
+
+	var got []llm.StreamEvent
+	p.onEvent = func(ev llm.StreamEvent) error {
+		got = append(got, ev)
+		return nil
+	}
+
+	if err := p.handleEnvelope(cliStreamEnvelope{
+		Type: "user",
+		Message: cliStreamMessage{
+			Content: []cliStreamContent{{
+				Type:      "tool_result",
+				ToolUseID: "toolu_1",
+				Content:   json.RawMessage(`"done"`),
+			}},
+		},
+	}); err != nil {
+		t.Fatalf("handleEnvelope: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d events, want tool_output then tool_completed: %+v", len(got), got)
+	}
+	if got[0].Type != llm.StreamEventToolOutput || got[0].ToolOutput != "done" {
+		t.Fatalf("first event = %+v, want tool_output", got[0])
+	}
+	if got[1].Type != llm.StreamEventToolCompleted || got[1].ToolCallName != "Read" ||
+		got[1].ToolInputDelta != `{"file_path":"foo.go"}` {
+		t.Fatalf("second event = %+v, want tool_completed with correlated input", got[1])
+	}
+}
+
+func TestStreamProcessorMissingToolUseIDEmitsRuntimeWarning(t *testing.T) {
+	var out llm.StreamEvent
+	p := newStreamProcessor(func(ev llm.StreamEvent) error {
+		out = ev
+		return nil
+	})
+
+	if err := p.handleEnvelope(cliStreamEnvelope{
+		Type: "user",
+		Message: cliStreamMessage{
+			Content: []cliStreamContent{{
+				Type:    "tool_result",
+				Content: json.RawMessage(`"orphan"`),
+			}},
+		},
+	}); err != nil {
+		t.Fatalf("handleEnvelope: %v", err)
+	}
+	if out.Type != llm.StreamEventRuntimeWarning || out.RuntimeStatus != "missing_tool_use_id" {
+		t.Fatalf("got %+v, want runtime_warning missing_tool_use_id", out)
+	}
+}
+
+func TestStreamProcessorInvalidToolResultContentEmitsRuntimeWarning(t *testing.T) {
+	var out llm.StreamEvent
+	p := newStreamProcessor(func(ev llm.StreamEvent) error {
+		out = ev
+		return nil
+	})
+
+	if err := p.handleEnvelope(cliStreamEnvelope{
+		Type: "user",
+		Message: cliStreamMessage{
+			Content: []cliStreamContent{{
+				Type:      "tool_result",
+				ToolUseID: "toolu_1",
+				Content:   json.RawMessage(`not-json`),
+			}},
+		},
+	}); err != nil {
+		t.Fatalf("handleEnvelope: %v", err)
+	}
+	if out.Type != llm.StreamEventRuntimeWarning || out.RuntimeStatus != "invalid_tool_result_content" {
+		t.Fatalf("got %+v, want runtime_warning invalid_tool_result_content", out)
+	}
+}
+
+func TestStreamProcessorUnsupportedToolResultShapeEmitsOutput(t *testing.T) {
+	p := newStreamProcessor(nil)
+	p.toolsByID["toolu_1"] = &toolBlockState{id: "toolu_1", name: "Read"}
+
+	var got []llm.StreamEvent
+	p.onEvent = func(ev llm.StreamEvent) error {
+		got = append(got, ev)
 		return nil
 	}
 
@@ -74,11 +184,72 @@ func TestStreamProcessorUnsupportedToolResultShapeEmitsOutput(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("handleEnvelope: %v", err)
 	}
-	if out.Type != llm.StreamEventToolOutput || out.ToolCallName != "Read" {
-		t.Fatalf("got %+v, want tool_output Read", out)
+	if len(got) != 2 || got[0].Type != llm.StreamEventToolOutput || got[1].Type != llm.StreamEventToolCompleted {
+		t.Fatalf("got %+v, want tool_output then tool_completed", got)
 	}
-	if out.ToolOutput != `{"unexpected":"shape"}` || !out.ToolIsError {
-		t.Fatalf("got output=%q isError=%v, want compact JSON with provider is_error", out.ToolOutput, out.ToolIsError)
+	if got[0].ToolCallName != "Read" {
+		t.Fatalf("tool_output name = %q, want Read", got[0].ToolCallName)
+	}
+	if got[0].ToolOutput != `{"unexpected":"shape"}` || !got[0].ToolIsError {
+		t.Fatalf("got output=%q isError=%v, want compact JSON with provider is_error", got[0].ToolOutput, got[0].ToolIsError)
+	}
+
+}
+func TestStreamProcessorNativeToolLifecycleOrder(t *testing.T) {
+	var got []llm.StreamEvent
+	p := newStreamProcessor(func(ev llm.StreamEvent) error {
+		got = append(got, ev)
+		return nil
+	})
+
+	steps := []cliStreamEnvelope{
+		{
+			Type: "stream_event",
+			Event: cliStreamEvent{
+				Type: "content_block_start", Index: 2,
+				ContentBlock: cliStreamContentBlock{Type: "tool_use", ID: "toolu_1", Name: "Read"},
+			},
+		},
+		{
+			Type: "stream_event",
+			Event: cliStreamEvent{
+				Type: "content_block_delta", Index: 2,
+				Delta: cliStreamDelta{Type: "input_json_delta", PartialJSON: `{"file_path":"foo.go"}`},
+			},
+		},
+		{Type: "stream_event", Event: cliStreamEvent{Type: "content_block_stop", Index: 2}},
+		{
+			Type: "user",
+			Message: cliStreamMessage{Content: []cliStreamContent{{
+				Type: "tool_result", ToolUseID: "toolu_1", Content: json.RawMessage(`"package main"`),
+			}}},
+		},
+	}
+	for _, step := range steps {
+		if err := p.handleEnvelope(step); err != nil {
+			t.Fatalf("handleEnvelope: %v", err)
+		}
+	}
+
+	want := []llm.StreamEventType{
+		llm.StreamEventToolStarted,
+		llm.StreamEventToolUpdated,
+		llm.StreamEventToolInputCompleted,
+		llm.StreamEventToolOutput,
+		llm.StreamEventToolCompleted,
+	}
+	gotTypes := make([]llm.StreamEventType, len(got))
+	for i, ev := range got {
+		gotTypes[i] = ev.Type
+	}
+	if !slices.Equal(gotTypes, want) {
+		t.Fatalf("events = %v, want %v", gotTypes, want)
+	}
+	if got[3].ToolOutput != "package main" || got[3].ToolIsError {
+		t.Fatalf("tool_output = %+v, want successful package main output", got[3])
+	}
+	if got[4].ToolCallID != "toolu_1" || got[4].ToolCallName != "Read" || got[4].ToolInputDelta != `{"file_path":"foo.go"}` {
+		t.Fatalf("tool_completed = %+v, want correlated id/name/input", got[4])
 	}
 }
 
@@ -190,9 +361,9 @@ func TestStreamProcessorUserToolResultCorrelatesToolName(t *testing.T) {
 	p := newStreamProcessor(nil)
 	p.toolsByID["toolu_1"] = &toolBlockState{id: "toolu_1", name: "Read"}
 
-	var out llm.StreamEvent
+	var got []llm.StreamEvent
 	p.onEvent = func(ev llm.StreamEvent) error {
-		out = ev
+		got = append(got, ev)
 		return nil
 	}
 
@@ -208,8 +379,11 @@ func TestStreamProcessorUserToolResultCorrelatesToolName(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("handleEnvelope: %v", err)
 	}
-	if out.Type != llm.StreamEventToolOutput || out.ToolCallName != "Read" || out.ToolOutput != "done" {
-		t.Fatalf("got %+v, want tool_output Read/done", out)
+	if len(got) != 2 || got[0].Type != llm.StreamEventToolOutput || got[1].Type != llm.StreamEventToolCompleted {
+		t.Fatalf("got %+v, want tool_output then tool_completed", got)
+	}
+	if got[0].ToolCallName != "Read" || got[0].ToolOutput != "done" {
+		t.Fatalf("tool_output = %+v, want Read/done", got[0])
 	}
 }
 
@@ -217,9 +391,9 @@ func TestStreamProcessorAssistantShapedUserToolResult(t *testing.T) {
 	p := newStreamProcessor(nil)
 	p.toolsByID["toolu_1"] = &toolBlockState{id: "toolu_1", name: "Bash"}
 
-	var out llm.StreamEvent
+	var got []llm.StreamEvent
 	p.onEvent = func(ev llm.StreamEvent) error {
-		out = ev
+		got = append(got, ev)
 		return nil
 	}
 
@@ -237,15 +411,18 @@ func TestStreamProcessorAssistantShapedUserToolResult(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("handleEnvelope: %v", err)
 	}
-	if out.Type != llm.StreamEventToolOutput || out.ToolCallName != "Bash" || out.ToolOutput != "ok" || !out.ToolIsError {
-		t.Fatalf("got %+v, want tool_output Bash/ok error", out)
+	if len(got) != 2 || got[0].Type != llm.StreamEventToolOutput || got[1].Type != llm.StreamEventToolCompleted {
+		t.Fatalf("got %+v, want tool_output then tool_completed", got)
+	}
+	if got[0].ToolCallName != "Bash" || got[0].ToolOutput != "ok" || !got[0].ToolIsError {
+		t.Fatalf("tool_output = %+v, want Bash/ok error", got[0])
 	}
 }
 
 func TestStreamProcessorAssistantToolUseFallbackDoesNotDuplicateLifecycle(t *testing.T) {
 	p := newStreamProcessor(nil)
-	p.emittedToolCompleted["toolu_1"] = true
-	p.toolsByID["toolu_1"] = &toolBlockState{id: "toolu_1", name: "Read", completed: true}
+	p.emittedToolInputCompleted["toolu_1"] = true
+	p.toolsByID["toolu_1"] = &toolBlockState{id: "toolu_1", name: "Read", inputCompleted: true}
 
 	events := 0
 	p.onEvent = func(ev llm.StreamEvent) error {
@@ -312,6 +489,78 @@ func TestStreamProcessorUserToolResultPropagatesEmitError(t *testing.T) {
 	})
 	if !errors.Is(err, emitErr) {
 		t.Fatalf("error = %v, want %v", err, emitErr)
+	}
+}
+
+func TestStreamProcessorUserToolResultRetriesOutputAfterEmitError(t *testing.T) {
+	emitErr := errors.New("callback failed")
+	failOutput := true
+	var got []llm.StreamEventType
+	p := newStreamProcessor(func(ev llm.StreamEvent) error {
+		got = append(got, ev.Type)
+		if ev.Type == llm.StreamEventToolOutput && failOutput {
+			failOutput = false
+			return emitErr
+		}
+		return nil
+	})
+	p.toolsByID["toolu_1"] = &toolBlockState{id: "toolu_1", name: "Read"}
+	event := cliStreamEnvelope{
+		Type: "user",
+		Message: cliStreamMessage{Content: []cliStreamContent{{
+			Type: "tool_result", ToolUseID: "toolu_1", Content: json.RawMessage(`"done"`),
+		}}},
+	}
+
+	if err := p.handleEnvelope(event); !errors.Is(err, emitErr) {
+		t.Fatalf("first error = %v, want %v", err, emitErr)
+	}
+	if err := p.handleEnvelope(event); err != nil {
+		t.Fatalf("retry handleEnvelope: %v", err)
+	}
+	want := []llm.StreamEventType{
+		llm.StreamEventToolOutput,
+		llm.StreamEventToolOutput,
+		llm.StreamEventToolCompleted,
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("events = %v, want %v", got, want)
+	}
+}
+
+func TestStreamProcessorUserToolResultRetriesCompletionAfterEmitError(t *testing.T) {
+	emitErr := errors.New("callback failed")
+	failCompleted := true
+	var got []llm.StreamEventType
+	p := newStreamProcessor(func(ev llm.StreamEvent) error {
+		got = append(got, ev.Type)
+		if ev.Type == llm.StreamEventToolCompleted && failCompleted {
+			failCompleted = false
+			return emitErr
+		}
+		return nil
+	})
+	p.toolsByID["toolu_1"] = &toolBlockState{id: "toolu_1", name: "Read"}
+	event := cliStreamEnvelope{
+		Type: "user",
+		Message: cliStreamMessage{Content: []cliStreamContent{{
+			Type: "tool_result", ToolUseID: "toolu_1", Content: json.RawMessage(`"done"`),
+		}}},
+	}
+
+	if err := p.handleEnvelope(event); !errors.Is(err, emitErr) {
+		t.Fatalf("first error = %v, want %v", err, emitErr)
+	}
+	if err := p.handleEnvelope(event); err != nil {
+		t.Fatalf("retry handleEnvelope: %v", err)
+	}
+	want := []llm.StreamEventType{
+		llm.StreamEventToolOutput,
+		llm.StreamEventToolCompleted,
+		llm.StreamEventToolCompleted,
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("events = %v, want %v", got, want)
 	}
 }
 

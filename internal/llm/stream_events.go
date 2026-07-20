@@ -9,6 +9,7 @@ func IsResponseProgressEvent(ev StreamEvent) bool {
 		StreamEventToolCallDelta,
 		StreamEventToolStarted,
 		StreamEventToolUpdated,
+		StreamEventToolInputCompleted,
 		StreamEventToolCompleted,
 		StreamEventToolOutput,
 		StreamEventCost,

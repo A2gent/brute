@@ -68,7 +68,7 @@ func TestClientChatStreamStructuredRuntimeEventsFromFixture(t *testing.T) {
 		{Type: "tool_started", ToolCallID: "toolu_read_01", ToolCallName: "Read", ToolIndex: 2},
 		{Type: "tool_updated", ToolCallID: "toolu_read_01", ToolInput: `{"file_path":`},
 		{Type: "tool_updated", ToolCallID: "toolu_read_01", ToolInput: `{"file_path":"foo.go"}`},
-		{Type: "tool_completed", ToolCallID: "toolu_read_01", ToolCallName: "Read", ToolInput: `{"file_path":"foo.go"}`},
+		{Type: "tool_input_completed", ToolCallID: "toolu_read_01", ToolCallName: "Read", ToolInput: `{"file_path":"foo.go"}`},
 		{
 			Type:              "tool_output",
 			ToolCallID:        "toolu_read_01",
@@ -76,6 +76,7 @@ func TestClientChatStreamStructuredRuntimeEventsFromFixture(t *testing.T) {
 			ToolOutputContent: "package main\n",
 			ToolOutputIsError: false,
 		},
+		{Type: "tool_completed", ToolCallID: "toolu_read_01", ToolCallName: "Read", ToolInput: `{"file_path":"foo.go"}`},
 		{Type: "runtime_warning", WarningStatus: "compact_boundary"},
 		{Type: "cost", TotalCostUSD: 0.0123, DurationMS: 4500, DurationAPIMS: 4100, NumTurns: 1},
 		{Type: "usage"},
@@ -280,12 +281,12 @@ func matchRuntimeContractEvent(got llm.StreamEvent, want runtimeContractEvent) e
 			return fmt.Errorf("tool_started = id:%q name:%q index:%d, want id:%q name:%q index:%d",
 				got.ToolCallID, got.ToolCallName, got.ToolCallIndex, want.ToolCallID, want.ToolCallName, want.ToolIndex)
 		}
-	case "tool_updated", "tool_completed":
+	case "tool_updated", "tool_input_completed", "tool_completed":
 		if got.ToolCallID != want.ToolCallID {
 			return fmt.Errorf("%s tool id %q != %q", want.Type, got.ToolCallID, want.ToolCallID)
 		}
-		if want.Type == "tool_completed" && got.ToolCallName != want.ToolCallName {
-			return fmt.Errorf("tool_completed name %q != %q", got.ToolCallName, want.ToolCallName)
+		if (want.Type == "tool_input_completed" || want.Type == "tool_completed") && got.ToolCallName != want.ToolCallName {
+			return fmt.Errorf("%s name %q != %q", want.Type, got.ToolCallName, want.ToolCallName)
 		}
 		if got.ToolInputDelta != want.ToolInput {
 			return fmt.Errorf("%s input %q != %q", want.Type, got.ToolInputDelta, want.ToolInput)

@@ -9,6 +9,7 @@ func TestIsResponseProgressEvent(t *testing.T) {
 		StreamEventToolCallDelta,
 		StreamEventToolStarted,
 		StreamEventToolUpdated,
+		StreamEventToolInputCompleted,
 		StreamEventToolCompleted,
 		StreamEventToolOutput,
 		StreamEventCost,

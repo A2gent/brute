@@ -41,8 +41,9 @@ func TestCallLLMForwardsStructuredRuntimeEventsUnchanged(t *testing.T) {
 		{Type: llm.StreamEventReasoningDelta, ReasoningDelta: "thinking"},
 		{Type: llm.StreamEventToolStarted, ToolCallID: "toolu_1", ToolCallName: "Read", ToolCallIndex: 2},
 		{Type: llm.StreamEventToolUpdated, ToolCallID: "toolu_1", ToolInputDelta: `{"file_path":"foo.go"}`},
-		{Type: llm.StreamEventToolCompleted, ToolCallID: "toolu_1", ToolCallName: "Read", ToolInputDelta: `{"file_path":"foo.go"}`},
+		{Type: llm.StreamEventToolInputCompleted, ToolCallID: "toolu_1", ToolCallName: "Read", ToolInputDelta: `{"file_path":"foo.go"}`},
 		{Type: llm.StreamEventToolOutput, ToolCallID: "toolu_1", ToolCallName: "Read", ToolOutput: "package main\n"},
+		{Type: llm.StreamEventToolCompleted, ToolCallID: "toolu_1", ToolCallName: "Read", ToolInputDelta: `{"file_path":"foo.go"}`},
 		{Type: llm.StreamEventCost, TotalCostUSD: 0.01, DurationMS: 100, DurationAPIMS: 90, NumTurns: 1},
 		{Type: llm.StreamEventRuntimeWarning, RuntimeStatus: "compacting", RuntimeWarning: "compacting"},
 		{Type: llm.StreamEventUsage, Usage: llm.TokenUsage{InputTokens: 10, OutputTokens: 5}},
@@ -67,8 +68,9 @@ func TestCallLLMForwardsStructuredRuntimeEventsUnchanged(t *testing.T) {
 		llm.StreamEventReasoningDelta,
 		llm.StreamEventToolStarted,
 		llm.StreamEventToolUpdated,
-		llm.StreamEventToolCompleted,
+		llm.StreamEventToolInputCompleted,
 		llm.StreamEventToolOutput,
+		llm.StreamEventToolCompleted,
 		llm.StreamEventCost,
 		llm.StreamEventRuntimeWarning,
 	}
@@ -114,7 +116,7 @@ func assertRuntimePayloadMatches(want, got llm.StreamEvent) error {
 		if want.ReasoningDelta != got.ReasoningDelta {
 			return errors.New("reasoning delta mismatch")
 		}
-	case llm.StreamEventToolStarted, llm.StreamEventToolUpdated, llm.StreamEventToolCompleted:
+	case llm.StreamEventToolStarted, llm.StreamEventToolUpdated, llm.StreamEventToolInputCompleted, llm.StreamEventToolCompleted:
 		if want.ToolCallID != got.ToolCallID || want.ToolCallName != got.ToolCallName ||
 			want.ToolCallIndex != got.ToolCallIndex || want.ToolInputDelta != got.ToolInputDelta {
 			return errors.New("tool lifecycle mismatch")
@@ -154,8 +156,9 @@ func TestRunWithEventsDoesNotExecuteNativeRuntimeTools(t *testing.T) {
 	mock := &mockStreamingLLM{
 		streamEvents: []llm.StreamEvent{
 			{Type: llm.StreamEventToolStarted, ToolCallID: "toolu_1", ToolCallName: "Read"},
-			{Type: llm.StreamEventToolCompleted, ToolCallID: "toolu_1", ToolCallName: "Read", ToolInputDelta: `{"file_path":"foo.go"}`},
+			{Type: llm.StreamEventToolInputCompleted, ToolCallID: "toolu_1", ToolCallName: "Read", ToolInputDelta: `{"file_path":"foo.go"}`},
 			{Type: llm.StreamEventToolOutput, ToolCallID: "toolu_1", ToolCallName: "Read", ToolOutput: "package main\n"},
+			{Type: llm.StreamEventToolCompleted, ToolCallID: "toolu_1", ToolCallName: "Read", ToolInputDelta: `{"file_path":"foo.go"}`},
 			{Type: llm.StreamEventContentDelta, ContentDelta: "Read foo.go successfully."},
 		},
 		response: &llm.ChatResponse{

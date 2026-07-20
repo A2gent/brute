@@ -71,6 +71,26 @@ func TestAgentEventToStreamEventMapsRuntimeEvents(t *testing.T) {
 			},
 		},
 		{
+			name: "tool_input_completed",
+			ev: agent.Event{
+				Type: EventLLMRuntimeAlias(),
+				Step: 2,
+				Runtime: &llm.StreamEvent{
+					Type:           llm.StreamEventToolInputCompleted,
+					ToolCallID:     "toolu_1",
+					ToolCallName:   "Read",
+					ToolInputDelta: `{"file_path":"foo.go"}`,
+				},
+			},
+			want: ChatStreamEvent{
+				Type: "tool_input_completed",
+				Step: 2,
+				RuntimeTool: &StreamRuntimeToolEvent{
+					ID: "toolu_1", Name: "Read", InputJSON: `{"file_path":"foo.go"}`,
+				},
+			},
+		},
+		{
 			name: "tool_completed",
 			ev: agent.Event{
 				Type: EventLLMRuntimeAlias(),

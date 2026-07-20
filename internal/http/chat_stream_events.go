@@ -106,7 +106,7 @@ func runtimeAgentEventToStreamEvent(ev agent.Event) (ChatStreamEvent, bool) {
 			Step:  ev.Step,
 			Delta: runtime.ReasoningDelta,
 		}, true
-	case llm.StreamEventToolStarted, llm.StreamEventToolUpdated, llm.StreamEventToolCompleted:
+	case llm.StreamEventToolStarted, llm.StreamEventToolUpdated, llm.StreamEventToolInputCompleted, llm.StreamEventToolCompleted:
 		return ChatStreamEvent{
 			Type: string(runtime.Type),
 			Step: ev.Step,

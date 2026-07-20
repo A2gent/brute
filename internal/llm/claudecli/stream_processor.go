@@ -2,18 +2,19 @@ package claudecli
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/A2gent/brute/internal/llm"
 )
 
 type toolBlockState struct {
-	index     int
-	id        string
-	name      string
-	input     strings.Builder
-	started   bool
-	completed bool
+	index          int
+	id             string
+	name           string
+	input          strings.Builder
+	started        bool
+	inputCompleted bool
 }
 
 type streamProcessor struct {
@@ -26,19 +27,21 @@ type streamProcessor struct {
 	sawResult             bool
 	assistantContent      string
 
-	blocksByIndex        map[int]*toolBlockState
-	toolsByID            map[string]*toolBlockState
-	emittedToolOutput    map[string]bool
-	emittedToolCompleted map[string]bool
+	blocksByIndex             map[int]*toolBlockState
+	toolsByID                 map[string]*toolBlockState
+	emittedToolInputCompleted map[string]bool
+	emittedToolOutput         map[string]bool
+	emittedToolCompleted      map[string]bool
 }
 
 func newStreamProcessor(onEvent func(llm.StreamEvent) error) *streamProcessor {
 	return &streamProcessor{
-		onEvent:              onEvent,
-		blocksByIndex:        make(map[int]*toolBlockState),
-		toolsByID:            make(map[string]*toolBlockState),
-		emittedToolOutput:    make(map[string]bool),
-		emittedToolCompleted: make(map[string]bool),
+		onEvent:                   onEvent,
+		blocksByIndex:             make(map[int]*toolBlockState),
+		toolsByID:                 make(map[string]*toolBlockState),
+		emittedToolInputCompleted: make(map[string]bool),
+		emittedToolOutput:         make(map[string]bool),
+		emittedToolCompleted:      make(map[string]bool),
 	}
 }
 
@@ -193,18 +196,21 @@ func (p *streamProcessor) handleContentBlockDelta(stream cliStreamEvent) error {
 
 func (p *streamProcessor) handleContentBlockStop(stream cliStreamEvent) error {
 	state := p.blocksByIndex[stream.Index]
-	if state == nil || state.completed || state.id == "" {
+	if state == nil || state.inputCompleted || state.id == "" {
 		return nil
 	}
-	state.completed = true
-	p.emittedToolCompleted[state.id] = true
-	return p.emit(llm.StreamEvent{
-		Type:           llm.StreamEventToolCompleted,
+	if err := p.emit(llm.StreamEvent{
+		Type:           llm.StreamEventToolInputCompleted,
 		ToolCallIndex:  state.index,
 		ToolCallID:     state.id,
 		ToolCallName:   state.name,
 		ToolInputDelta: state.input.String(),
-	})
+	}); err != nil {
+		return err
+	}
+	state.inputCompleted = true
+	p.emittedToolInputCompleted[state.id] = true
+	return nil
 }
 
 func (p *streamProcessor) handleAssistant(event cliStreamEnvelope) error {
@@ -253,7 +259,7 @@ func (p *streamProcessor) fallbackToolUse(item cliStreamContent, index int) erro
 	if id == "" {
 		return nil
 	}
-	if p.emittedToolCompleted[id] {
+	if p.emittedToolInputCompleted[id] {
 		return nil
 	}
 	name := strings.TrimSpace(item.Name)
@@ -292,11 +298,9 @@ func (p *streamProcessor) fallbackToolUse(item cliStreamContent, index int) erro
 			return err
 		}
 	}
-	if !state.completed {
-		state.completed = true
-		p.emittedToolCompleted[id] = true
+	if !state.inputCompleted {
 		if err := p.emit(llm.StreamEvent{
-			Type:           llm.StreamEventToolCompleted,
+			Type:           llm.StreamEventToolInputCompleted,
 			ToolCallIndex:  state.index,
 			ToolCallID:     state.id,
 			ToolCallName:   state.name,
@@ -304,31 +308,72 @@ func (p *streamProcessor) fallbackToolUse(item cliStreamContent, index int) erro
 		}); err != nil {
 			return err
 		}
+		state.inputCompleted = true
+		p.emittedToolInputCompleted[id] = true
 	}
 	return nil
 }
 
 func (p *streamProcessor) emitToolOutput(toolUseID, fallbackName string, contentRaw json.RawMessage, isError bool) error {
 	id := strings.TrimSpace(toolUseID)
-	if id == "" || p.emittedToolOutput[id] {
+	if id == "" {
+		return p.emit(llm.StreamEvent{
+			Type:           llm.StreamEventRuntimeWarning,
+			RuntimeStatus:  "missing_tool_use_id",
+			RuntimeWarning: "tool_result missing tool_use_id",
+		})
+	}
+	if p.emittedToolOutput[id] && p.emittedToolCompleted[id] {
 		return nil
 	}
+
 	content, invalid := toolResultContent(contentRaw)
 	if invalid {
+		return p.emit(llm.StreamEvent{
+			Type:           llm.StreamEventRuntimeWarning,
+			RuntimeStatus:  "invalid_tool_result_content",
+			RuntimeWarning: fmt.Sprintf("tool_result %s has invalid JSON content", id),
+		})
+	}
+
+	name := fallbackName
+	input := ""
+	index := 0
+	if state, ok := p.toolsByID[id]; ok {
+		if state.name != "" {
+			name = state.name
+		}
+		input = state.input.String()
+		index = state.index
+	}
+
+	if !p.emittedToolOutput[id] {
+		if err := p.emit(llm.StreamEvent{
+			Type:         llm.StreamEventToolOutput,
+			ToolCallID:   id,
+			ToolCallName: name,
+			ToolOutput:   content,
+			ToolIsError:  isError,
+		}); err != nil {
+			return err
+		}
+		p.emittedToolOutput[id] = true
+	}
+
+	if p.emittedToolCompleted[id] {
 		return nil
 	}
-	name := fallbackName
-	if state, ok := p.toolsByID[id]; ok && state.name != "" {
-		name = state.name
+	if err := p.emit(llm.StreamEvent{
+		Type:           llm.StreamEventToolCompleted,
+		ToolCallIndex:  index,
+		ToolCallID:     id,
+		ToolCallName:   name,
+		ToolInputDelta: input,
+	}); err != nil {
+		return err
 	}
-	p.emittedToolOutput[id] = true
-	return p.emit(llm.StreamEvent{
-		Type:         llm.StreamEventToolOutput,
-		ToolCallID:   id,
-		ToolCallName: name,
-		ToolOutput:   content,
-		ToolIsError:  isError,
-	})
+	p.emittedToolCompleted[id] = true
+	return nil
 }
 
 func (p *streamProcessor) handleResult(event cliStreamEnvelope) error {

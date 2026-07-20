@@ -600,6 +600,7 @@ func isLLMRuntimeForwardEvent(ev llm.StreamEvent) bool {
 	case llm.StreamEventReasoningDelta,
 		llm.StreamEventToolStarted,
 		llm.StreamEventToolUpdated,
+		llm.StreamEventToolInputCompleted,
 		llm.StreamEventToolCompleted,
 		llm.StreamEventToolOutput,
 		llm.StreamEventCost,

@@ -124,6 +124,31 @@ func lastResponseIDForStatefulRequest(sess *session.Session) string {
 	return strings.TrimSpace(raw)
 }
 
+func lastProviderSessionCursorForRequest(sess *session.Session) string {
+	if sess == nil || sess.Metadata == nil {
+		return ""
+	}
+	raw, _ := sess.Metadata[metadataProviderSessionCursor].(string)
+	return strings.TrimSpace(raw)
+}
+
+func messagesAfterProviderSessionCursor(messages []session.Message, cursor string) []session.Message {
+	cursor = strings.TrimSpace(cursor)
+	if cursor == "" {
+		return messages
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		raw, _ := messages[i].Metadata[messageMetadataProviderSessionCursor].(string)
+		if strings.TrimSpace(raw) == cursor {
+			if i+1 >= len(messages) {
+				return nil
+			}
+			return messages[i+1:]
+		}
+	}
+	return messages
+}
+
 func messagesAfterResponseID(messages []session.Message, responseID string) []session.Message {
 	responseID = strings.TrimSpace(responseID)
 	if responseID == "" {

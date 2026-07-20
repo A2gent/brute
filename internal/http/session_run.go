@@ -90,6 +90,7 @@ func (s *Server) runSessionWithoutStreaming(ctx context.Context, sess *session.S
 		Temperature:         s.config.Temperature,
 		ContextWindow:       target.ContextWindow,
 		UsePreviousResponse: target.StatefulResponses,
+		UseProviderSession:  target.ProviderSessions,
 	}
 
 	ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))

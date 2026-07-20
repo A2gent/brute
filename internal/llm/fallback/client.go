@@ -432,6 +432,9 @@ func isRetryableError(ctx context.Context, err error) bool {
 	if err == nil {
 		return false
 	}
+	if llm.IsUnsafeForRetry(err) {
+		return false
+	}
 	if ctx != nil && ctx.Err() != nil {
 		return false
 	}
@@ -481,6 +484,9 @@ func isRetryableError(ctx context.Context, err error) bool {
 // Auth errors should fallback to next provider, but context cancellation should not.
 func isFallbackableError(ctx context.Context, err error) bool {
 	if err == nil {
+		return false
+	}
+	if llm.IsUnsafeForRetry(err) {
 		return false
 	}
 	if ctx != nil && ctx.Err() != nil {

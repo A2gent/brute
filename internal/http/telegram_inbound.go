@@ -379,6 +379,7 @@ func (s *Server) handleTelegramInboundMessage(
 		Temperature:         s.config.Temperature,
 		ContextWindow:       target.ContextWindow,
 		UsePreviousResponse: target.StatefulResponses,
+		UseProviderSession:  target.ProviderSessions,
 	}
 	ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 

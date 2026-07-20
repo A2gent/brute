@@ -16,19 +16,20 @@ type StreamingClient interface {
 
 // ChatRequest represents a chat completion request
 type ChatRequest struct {
-	Model              string
-	Messages           []Message
-	Tools              []ToolDefinition
-	Temperature        float64
-	MaxTokens          int
-	SystemPrompt       string
-	SessionID          string
-	PromptCacheKey     string
-	PreviousResponseID string
-	Store              bool
-	ReasoningEffort    string
-	TextVerbosity      string
-	ServiceTier        string
+	Model                 string
+	Messages              []Message
+	Tools                 []ToolDefinition
+	Temperature           float64
+	MaxTokens             int
+	SystemPrompt          string
+	SessionID             string
+	PromptCacheKey        string
+	PreviousResponseID    string
+	ProviderSessionCursor string
+	Store                 bool
+	ReasoningEffort       string
+	TextVerbosity         string
+	ServiceTier           string
 }
 
 // Message represents a chat message
@@ -75,12 +76,13 @@ type ToolDefinition struct {
 
 // ChatResponse represents a chat completion response
 type ChatResponse struct {
-	Content    string
-	Images     []Image
-	ToolCalls  []ToolCall
-	Usage      TokenUsage
-	StopReason string
-	ResponseID string
+	Content               string
+	Images                []Image
+	ToolCalls             []ToolCall
+	Usage                 TokenUsage
+	StopReason            string
+	ResponseID            string
+	ProviderSessionCursor string
 }
 
 // StreamEventType is the type of a streaming event.

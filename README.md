@@ -347,7 +347,7 @@ Common optional variables:
 | `AAGENT_MODEL` | provider-specific | model override |
 | `AAGENT_CLAUDE_CLI_PATH` | `claude` | Claude Code CLI executable used by the Anthropic provider |
 | `AAGENT_CLAUDE_CLI_PERMISSION_MODE` | `acceptEdits` | Claude CLI permission mode for non-interactive runs; set to `default`, `auto`, or `bypassPermissions` if needed |
-| `AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE` | `true` | disable Claude CLI session persistence for isolated A2gent turns |
+| `AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE` | `false` | disable durable Claude CLI session persistence; stateful Claude sessions resume by default |
 | `AAGENT_KIMI_CLI_PATH` | `kimi` | Kimi Code CLI executable used by the `kimi_cli` provider |
 | `AAGENT_KIMI_CLI_YOLO` | `true` | legacy flag; prompt mode no longer accepts `--yolo` |
 | `AAGENT_CLAUDE_RATE_LIMITS_PATH` | `~/.a2gent/claude-rate-limits.json` | optional Claude Code statusLine cache file used to display last known Anthropic rate-limit usage |

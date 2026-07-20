@@ -227,6 +227,7 @@ func (s *Server) makeA2AAgentFactory() a2atunnel.AgentRunnerBuilder {
 			Temperature:         s.config.Temperature,
 			ContextWindow:       target.ContextWindow,
 			UsePreviousResponse: target.StatefulResponses,
+			UseProviderSession:  target.ProviderSessions,
 		}
 		return s.newAgentFromConfig(cfg, target.Client, toolManager), nil
 	}
@@ -610,6 +611,7 @@ func (s *Server) resumeSessionAfterExternalToolResult(sessionID string) {
 			Temperature:         s.config.Temperature,
 			ContextWindow:       target.ContextWindow,
 			UsePreviousResponse: target.StatefulResponses,
+			UseProviderSession:  target.ProviderSessions,
 		}
 		ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 		_, _, err = ag.RunWithEvents(runCtx, sess, "", func(ev agent.Event) {

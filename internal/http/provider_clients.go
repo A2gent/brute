@@ -12,9 +12,9 @@ import (
 	"github.com/A2gent/brute/internal/llm/anthropic"
 	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/llm/cursorcli"
-	"github.com/A2gent/brute/internal/llm/kimicli"
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/llm/gemini"
+	"github.com/A2gent/brute/internal/llm/kimicli"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
 	"github.com/A2gent/brute/internal/llm/openaicodex"
 	"github.com/A2gent/brute/internal/llm/retry"
@@ -145,8 +145,22 @@ func (s *Server) providerStatefulResponses(providerType config.ProviderType) boo
 }
 
 func (s *Server) providerStatefulResponsesForConfig(providerType config.ProviderType, configured *bool) bool {
-
 	return false
+}
+
+func (s *Server) providerSessionPersistence(providerType config.ProviderType) bool {
+	provider := s.config.Providers[string(providerType)]
+	return s.providerSessionPersistenceForConfig(providerType, provider.StatefulResponses)
+}
+
+func (s *Server) providerSessionPersistenceForConfig(providerType config.ProviderType, configured *bool) bool {
+	if providerType != config.ProviderAnthropic {
+		return false
+	}
+	if configured != nil {
+		return *configured
+	}
+	return true
 }
 
 func (s *Server) syncOpenAICodexOAuthFromCache() bool {

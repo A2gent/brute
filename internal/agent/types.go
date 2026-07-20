@@ -13,6 +13,7 @@ type Config struct {
 	CompactionTriggerPercent float64
 	CompactionPrompt         string
 	UsePreviousResponse      bool
+	UseProviderSession       bool
 	CompressToolResults      bool
 }
 
@@ -37,21 +38,23 @@ const (
 )
 
 const (
-	metadataTotalInputTokens      = "total_input_tokens"
-	metadataTotalOutputTokens     = "total_output_tokens"
-	metadataTotalCachedTokens     = "total_cached_input_tokens"
-	metadataTotalReasoningTokens  = "total_reasoning_tokens"
-	metadataCurrentContextTokens  = "current_context_tokens"
-	metadataContextWindow         = "context_window"
-	metadataCompactionCount       = "compaction_count"
-	metadataLastCompactionAt      = "last_compaction_at"
-	metadataLastResponseID        = "last_response_id"
-	messageMetadataCompaction     = "context_compaction"
-	messageMetadataResponseID     = "response_id"
-	toolMetadataExternalWait      = "external_wait"
-	defaultCompactionTriggerPct   = 80.0
-	emptyFinalResponseMaxRetries  = 1
-	emptyFinalResponseRetryPrompt = `The previous model response was empty and contained no tool calls. Produce a concise final response for the user now.
+	metadataTotalInputTokens             = "total_input_tokens"
+	metadataTotalOutputTokens            = "total_output_tokens"
+	metadataTotalCachedTokens            = "total_cached_input_tokens"
+	metadataTotalReasoningTokens         = "total_reasoning_tokens"
+	metadataCurrentContextTokens         = "current_context_tokens"
+	metadataContextWindow                = "context_window"
+	metadataCompactionCount              = "compaction_count"
+	metadataLastCompactionAt             = "last_compaction_at"
+	metadataLastResponseID               = "last_response_id"
+	metadataProviderSessionCursor        = "provider_session_cursor"
+	messageMetadataCompaction            = "context_compaction"
+	messageMetadataResponseID            = "response_id"
+	messageMetadataProviderSessionCursor = "provider_session_cursor"
+	toolMetadataExternalWait             = "external_wait"
+	defaultCompactionTriggerPct          = 80.0
+	emptyFinalResponseMaxRetries         = 1
+	emptyFinalResponseRetryPrompt        = `The previous model response was empty and contained no tool calls. Produce a concise final response for the user now.
 
 Summarize what was done, mention verification or blockers, and do not paste raw tool output. Call another tool only if it is truly required to complete the answer.`
 	stepLimitWarningThreshold = 3

@@ -191,6 +191,7 @@ func (s *Server) resumeSessionAfterQuestionAnswer(sessionID string, userAnswer s
 			Temperature:         s.config.Temperature,
 			ContextWindow:       target.ContextWindow,
 			UsePreviousResponse: target.StatefulResponses,
+			UseProviderSession:  target.ProviderSessions,
 		}
 		ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 		_, _, err = ag.RunWithEvents(runCtx, sess, userAnswer, func(ev agent.Event) {

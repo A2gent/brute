@@ -20,6 +20,7 @@ type executionTarget struct {
 	RoutingReason     string
 	ContextWindow     int
 	StatefulResponses bool
+	ProviderSessions  bool
 	Client            llm.Client
 }
 
@@ -152,6 +153,7 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, providerType config
 			Model:             requestedModel,
 			ContextWindow:     s.resolveContextWindowForProvider(providerType, requestedModel),
 			StatefulResponses: s.providerStatefulResponses(providerType),
+			ProviderSessions:  s.providerSessionPersistence(providerType),
 			Client:            client,
 		}, nil
 	}
@@ -187,6 +189,7 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, providerType config
 		RoutingReason:     strings.TrimSpace(reason),
 		ContextWindow:     s.resolveContextWindowForProvider(targetProvider, targetModel),
 		StatefulResponses: s.providerStatefulResponses(targetProvider),
+		ProviderSessions:  s.providerSessionPersistence(targetProvider),
 		Client:            client,
 	}, nil
 }

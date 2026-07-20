@@ -37,7 +37,7 @@ type Client struct {
 func NewClient(model, workDir string) *Client {
 	return NewClientWithOptions(model, Options{
 		WorkDir:              workDir,
-		NoSessionPersistence: envBoolDefault("AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE", true),
+		NoSessionPersistence: envBoolDefault("AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE", false),
 		PermissionMode:       strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_PERMISSION_MODE")),
 		MaxBudgetUSD:         strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_MAX_BUDGET_USD")),
 	})
@@ -96,16 +96,19 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start Claude CLI: %w", err)
+	}
+	if err := cmd.Wait(); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
-		return nil, fmt.Errorf("Claude CLI failed: %s", normalizeClaudeCLIErrorMessage(cliErrorMessage(err, stdout.String(), stderr.String())))
+		return nil, llm.UnsafeForRetry(fmt.Errorf("Claude CLI failed: %s", normalizeClaudeCLIErrorMessage(cliErrorMessage(err, stdout.String(), stderr.String()))))
 	}
 
 	parsed, raw, err := parseCLIResult(stdout.String())
 	if err != nil {
-		return nil, err
+		return nil, llm.UnsafeForRetry(err)
 	}
 	content := strings.TrimSpace(parsed.Result)
 	if content == "" {
@@ -122,16 +125,16 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 		if msg == "" {
 			msg = "Claude CLI returned an error result"
 		}
-		return nil, fmt.Errorf("%s", normalizeClaudeCLIErrorMessage(msg))
+		return nil, llm.UnsafeForRetry(fmt.Errorf("%s", normalizeClaudeCLIErrorMessage(msg)))
 	}
 
 	usage := usageFromRaw(parsed.Usage)
 	logging.LogResponseWithContent(usage.InputTokens, usage.OutputTokens, 0, content, nil)
 	return &llm.ChatResponse{
-		Content:    content,
-		Usage:      usage,
-		StopReason: firstNonEmpty(parsed.StopReason, parsed.Subtype),
-		ResponseID: strings.TrimSpace(parsed.SessionID),
+		Content:               content,
+		Usage:                 usage,
+		StopReason:            firstNonEmpty(parsed.StopReason, parsed.Subtype),
+		ProviderSessionCursor: c.providerSessionCursor(parsed.SessionID),
 	}, nil
 }
 
@@ -178,11 +181,18 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start Claude CLI: %w", err)
 	}
+	started := true
+	unsafeAfterStart := func(err error) error {
+		if err == nil || !started {
+			return err
+		}
+		return llm.UnsafeForRetry(err)
+	}
 
 	var content strings.Builder
 	var assistantContent string
 	var usage llm.TokenUsage
-	var responseID string
+	var providerSessionCursor string
 	var stopReason string
 	var finalResult cliResult
 	var sawResult bool
@@ -200,16 +210,13 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		if err != nil {
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
-			return nil, err
+			return nil, unsafeAfterStart(err)
 		}
 		if event.SessionID != "" {
-			responseID = event.SessionID
+			providerSessionCursor = event.SessionID
 		}
 		switch event.Type {
 		case "stream_event":
-			if event.Event.Message.ID != "" && responseID == "" {
-				responseID = event.Event.Message.ID
-			}
 			if event.Event.Message.Usage != nil {
 				usage = mergeUsage(usage, usageFromRaw(event.Event.Message.Usage))
 			}
@@ -227,15 +234,12 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 					if err := onEvent(llm.StreamEvent{Type: llm.StreamEventContentDelta, ContentDelta: event.Event.Delta.Text}); err != nil {
 						_ = cmd.Process.Kill()
 						_ = cmd.Wait()
-						return nil, err
+						return nil, unsafeAfterStart(err)
 					}
 				}
 			}
 		case "assistant":
 			assistantContent = streamMessageText(event.Message)
-			if event.Message.ID != "" && responseID == "" {
-				responseID = event.Message.ID
-			}
 			if event.Message.Usage != nil {
 				usage = mergeUsage(usage, usageFromRaw(event.Message.Usage))
 			}
@@ -261,20 +265,20 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 				stopReason = event.StopReason
 			}
 			if event.SessionID != "" {
-				responseID = event.SessionID
+				providerSessionCursor = event.SessionID
 			}
 		}
 	}
 	if scanErr := scanner.Err(); scanErr != nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-		return nil, fmt.Errorf("failed to read Claude CLI stream: %w", scanErr)
+		return nil, unsafeAfterStart(fmt.Errorf("failed to read Claude CLI stream: %w", scanErr))
 	}
 	if err := cmd.Wait(); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
-		return nil, fmt.Errorf("Claude CLI failed: %s", normalizeClaudeCLIErrorMessage(cliErrorMessage(err, stdout.String(), stderr.String())))
+		return nil, unsafeAfterStart(fmt.Errorf("Claude CLI failed: %s", normalizeClaudeCLIErrorMessage(cliErrorMessage(err, stdout.String(), stderr.String()))))
 	}
 
 	finalContent := strings.TrimSpace(finalResult.Result)
@@ -292,21 +296,28 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	}
 	if finalResult.IsError || strings.Contains(strings.ToLower(finalResult.Subtype), "error") {
 		msg := firstNonEmpty(finalContent, finalResult.Error, "Claude CLI returned an error result")
-		return nil, fmt.Errorf("%s", normalizeClaudeCLIErrorMessage(msg))
+		return nil, unsafeAfterStart(fmt.Errorf("%s", normalizeClaudeCLIErrorMessage(msg)))
 	}
 
 	if onEvent != nil {
 		if err := onEvent(llm.StreamEvent{Type: llm.StreamEventUsage, Usage: usage}); err != nil {
-			return nil, err
+			return nil, unsafeAfterStart(err)
 		}
 	}
 	logging.LogResponseWithContent(usage.InputTokens, usage.OutputTokens, 0, finalContent, nil)
 	return &llm.ChatResponse{
-		Content:    finalContent,
-		Usage:      usage,
-		StopReason: firstNonEmpty(stopReason, finalResult.StopReason, finalResult.Subtype),
-		ResponseID: firstNonEmpty(responseID, finalResult.SessionID),
+		Content:               finalContent,
+		Usage:                 usage,
+		StopReason:            firstNonEmpty(stopReason, finalResult.StopReason, finalResult.Subtype),
+		ProviderSessionCursor: c.providerSessionCursor(firstNonEmpty(providerSessionCursor, finalResult.SessionID)),
 	}, nil
+}
+
+func (c *Client) providerSessionCursor(raw string) string {
+	if c.options.NoSessionPersistence {
+		return ""
+	}
+	return strings.TrimSpace(raw)
 }
 
 func (c *Client) buildArgs(request *llm.ChatRequest, model, prompt string) []string {
@@ -330,8 +341,8 @@ func (c *Client) appendCommonArgs(args []string, request *llm.ChatRequest) []str
 	}
 	if c.options.NoSessionPersistence {
 		args = append(args, "--no-session-persistence")
-	} else if sessionID := strings.TrimSpace(request.SessionID); isUUIDLike(sessionID) {
-		args = append(args, "--session-id", sessionID)
+	} else if cursor := strings.TrimSpace(request.ProviderSessionCursor); cursor != "" {
+		args = append(args, "--resume", cursor)
 	}
 	// WHY: Claude CLI is itself the tool-running agent for Anthropic. A2gent
 	// function schemas are not sent to the CLI, so expose Claude Code's native

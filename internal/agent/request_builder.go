@@ -20,6 +20,13 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 	if previousResponseID != "" {
 		activeMessages = messagesAfterResponseID(activeMessages, previousResponseID)
 	}
+	providerSessionCursor := ""
+	if a.config.UseProviderSession {
+		providerSessionCursor = lastProviderSessionCursorForRequest(sess)
+		if providerSessionCursor != "" {
+			activeMessages = messagesAfterProviderSessionCursor(activeMessages, providerSessionCursor)
+		}
+	}
 	messages := make([]llm.Message, 0, len(activeMessages))
 
 	for _, m := range activeMessages {
@@ -61,13 +68,14 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 	}
 
 	request := &llm.ChatRequest{
-		Model:              a.config.Model,
-		Messages:           messages,
-		Tools:              a.toolManager.GetDefinitions(),
-		Temperature:        a.config.Temperature,
-		SystemPrompt:       a.config.SystemPrompt,
-		SessionID:          sess.ID,
-		PreviousResponseID: previousResponseID,
+		Model:                 a.config.Model,
+		Messages:              messages,
+		Tools:                 a.toolManager.GetDefinitions(),
+		Temperature:           a.config.Temperature,
+		SystemPrompt:          a.config.SystemPrompt,
+		SessionID:             sess.ID,
+		PreviousResponseID:    previousResponseID,
+		ProviderSessionCursor: providerSessionCursor,
 	}
 	if a.config.CompressToolResults && a.compressor != nil {
 		compressed, _ := a.compressor.CompressRequest(context.Background(), sess.ID, request)

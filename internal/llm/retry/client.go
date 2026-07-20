@@ -175,6 +175,9 @@ func IsRetryableError(ctx context.Context, err error) bool {
 	if err == nil {
 		return false
 	}
+	if llm.IsUnsafeForRetry(err) {
+		return false
+	}
 	if ctx != nil && ctx.Err() != nil {
 		return false
 	}

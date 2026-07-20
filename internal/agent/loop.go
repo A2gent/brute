@@ -97,6 +97,11 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			assistantMetadata[messageMetadataResponseID] = strings.TrimSpace(response.ResponseID)
 			metadataSetString(sess, metadataLastResponseID, strings.TrimSpace(response.ResponseID))
 		}
+		if a.config.UseProviderSession && strings.TrimSpace(response.ProviderSessionCursor) != "" {
+			cursor := strings.TrimSpace(response.ProviderSessionCursor)
+			assistantMetadata[messageMetadataProviderSessionCursor] = cursor
+			metadataSetString(sess, metadataProviderSessionCursor, cursor)
+		}
 
 		// Accumulate token usage
 		totalUsage.InputTokens += response.Usage.InputTokens
@@ -318,6 +323,11 @@ func (a *Agent) finalizeAfterStepLimit(ctx context.Context, sess *session.Sessio
 	if a.config.UsePreviousResponse && strings.TrimSpace(response.ResponseID) != "" {
 		metadata[messageMetadataResponseID] = strings.TrimSpace(response.ResponseID)
 		metadataSetString(sess, metadataLastResponseID, strings.TrimSpace(response.ResponseID))
+	}
+	if a.config.UseProviderSession && strings.TrimSpace(response.ProviderSessionCursor) != "" {
+		cursor := strings.TrimSpace(response.ProviderSessionCursor)
+		metadata[messageMetadataProviderSessionCursor] = cursor
+		metadataSetString(sess, metadataProviderSessionCursor, cursor)
 	}
 
 	if len(response.ToolCalls) > 0 {

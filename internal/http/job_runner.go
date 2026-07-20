@@ -70,6 +70,7 @@ func (s *Server) parseScheduleToCron(ctx context.Context, scheduleText string) (
 		Temperature:         0,
 		ContextWindow:       target.ContextWindow,
 		UsePreviousResponse: target.StatefulResponses,
+		UseProviderSession:  target.ProviderSessions,
 	}
 
 	ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))

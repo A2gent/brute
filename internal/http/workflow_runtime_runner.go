@@ -427,6 +427,7 @@ func (s *Server) executeWorkflowNode(
 		Temperature:         s.config.Temperature,
 		ContextWindow:       target.ContextWindow,
 		UsePreviousResponse: target.StatefulResponses,
+		UseProviderSession:  target.ProviderSessions,
 	}
 	ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForWorkflowNode(child, node))
 	content, _, runErr := ag.RunWithEvents(ctx, child, nodePrompt, func(ev agent.Event) {

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/A2gent/brute/internal/a2atunnel"
+	"github.com/A2gent/brute/internal/approval"
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/contextcompress"
 	"github.com/A2gent/brute/internal/filesearch"
@@ -31,31 +32,35 @@ import (
 
 // Server represents the HTTP API server
 type Server struct {
-	config                *config.Config
-	llmClient             llm.Client
-	toolManager           *tools.Manager
-	sessionManager        *session.Manager
-	store                 storage.Store
-	router                chi.Router
-	port                  int
-	portMu                sync.RWMutex
-	portReady             chan int
-	speechClips           *speechcache.Store
-	runParentCtx          context.Context
-	activeRunsMu          sync.Mutex
-	activeRuns            map[string]map[string]context.CancelFunc
-	sessionEventsMu       sync.Mutex
-	sessionEventSubs      map[string]map[chan ChatStreamEvent]struct{}
-	serialQueueMu         sync.Mutex
-	serialQueueWorkers    map[string]struct{}
-	chromeExtensionBridge *chromeExtensionBridge
-	httpAccessLogMu       sync.RWMutex
-	httpAccessLogWriter   io.Writer
-	httpAccessLogEnabled  bool
-	httpAccessLogSeq      uint64
-	dockerRuntime         *dockerRuntimeManager
-	contextCompressor     *contextcompress.Compressor
-	claudeHealthCache     *claudeHealthCache
+	config                   *config.Config
+	llmClient                llm.Client
+	toolManager              *tools.Manager
+	sessionManager           *session.Manager
+	store                    storage.Store
+	router                   chi.Router
+	port                     int
+	portMu                   sync.RWMutex
+	portReady                chan int
+	speechClips              *speechcache.Store
+	runParentCtx             context.Context
+	activeRunsMu             sync.Mutex
+	activeRuns               map[string]map[string]context.CancelFunc
+	sessionEventsMu          sync.Mutex
+	sessionEventSubs         map[string]map[chan ChatStreamEvent]struct{}
+	serialQueueMu            sync.Mutex
+	serialQueueWorkers       map[string]struct{}
+	chromeExtensionBridge    *chromeExtensionBridge
+	httpAccessLogMu          sync.RWMutex
+	httpAccessLogWriter      io.Writer
+	httpAccessLogEnabled     bool
+	httpAccessLogSeq         uint64
+	dockerRuntime            *dockerRuntimeManager
+	contextCompressor        *contextcompress.Compressor
+	claudeHealthCache        *claudeHealthCache
+	approvalBroker           *approval.Broker
+	approvalAuditMu          sync.Mutex
+	approvalResolvePayloadMu sync.Mutex
+	approvalResolvePayload   map[string]approvalResolvePayload
 
 	// A2A gRPC tunnel (managed by a2a_tunnel.go)
 	tunnelMu     sync.Mutex
@@ -87,22 +92,24 @@ func NewServer(
 		}
 	}
 	s := &Server{
-		config:                cfg,
-		llmClient:             llmClient,
-		toolManager:           toolManager,
-		sessionManager:        sessionManager,
-		store:                 store,
-		port:                  port,
-		portReady:             make(chan int, 1),
-		speechClips:           speechClips,
-		runParentCtx:          context.Background(),
-		activeRuns:            make(map[string]map[string]context.CancelFunc),
-		sessionEventSubs:      make(map[string]map[chan ChatStreamEvent]struct{}),
-		serialQueueWorkers:    make(map[string]struct{}),
-		chromeExtensionBridge: newChromeExtensionBridge(),
-		contextCompressor:     contextcompress.NewCompressorWithSessionStore(contextcompress.Config{Enabled: true}, sessionManager),
-		claudeHealthCache:     newClaudeHealthCache(),
+		config:                 cfg,
+		llmClient:              llmClient,
+		toolManager:            toolManager,
+		sessionManager:         sessionManager,
+		store:                  store,
+		port:                   port,
+		portReady:              make(chan int, 1),
+		speechClips:            speechClips,
+		runParentCtx:           context.Background(),
+		activeRuns:             make(map[string]map[string]context.CancelFunc),
+		sessionEventSubs:       make(map[string]map[chan ChatStreamEvent]struct{}),
+		serialQueueWorkers:     make(map[string]struct{}),
+		chromeExtensionBridge:  newChromeExtensionBridge(),
+		contextCompressor:      contextcompress.NewCompressorWithSessionStore(contextcompress.Config{Enabled: true}, sessionManager),
+		claudeHealthCache:      newClaudeHealthCache(),
+		approvalResolvePayload: make(map[string]approvalResolvePayload),
 	}
+	s.initApprovalBroker()
 	s.dockerRuntime = newDockerRuntimeManager(s)
 
 	integrationtools.Register(s.toolManager, store, speechClips, sessionManager)

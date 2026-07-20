@@ -51,6 +51,17 @@ func (s *Server) claudecliOptionsForRef(ref string) claudecli.Options {
 		PermissionMode:       strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_PERMISSION_MODE")),
 		MaxBudgetUSD:         strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_MAX_BUDGET_USD")),
 	}
+	if strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_AGENT_SDK_SIDECAR_PATH")) != "" && s.approvalBroker != nil {
+		opts.SidecarPath = strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_AGENT_SDK_SIDECAR_PATH"))
+		opts.NodePath = strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_AGENT_SDK_NODE_PATH"))
+		opts.Broker = s.approvalBroker
+		opts.TakeApprovalResponse = s.TakeApprovalResponse
+		if raw := strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_AGENT_SDK_APPROVAL_TIMEOUT")); raw != "" {
+			if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+				opts.ApprovalTimeout = d
+			}
+		}
+	}
 	return opts
 }
 

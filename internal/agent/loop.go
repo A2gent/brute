@@ -471,8 +471,12 @@ func (a *Agent) mergeFreshSessionState(sess *session.Session) bool {
 		}
 		// Preserve metadata produced by the in-flight turn (for example token
 		// estimates) because it may not have been saved when we reload DB-only
-		// injected messages.
+		// injected messages. Approval audit is written by the HTTP server while
+		// the agent turn is in flight, so the fresh DB copy must win.
 		for key, value := range sess.Metadata {
+			if key == "approval_audit" {
+				continue
+			}
 			merged[key] = value
 		}
 		sess.Metadata = merged

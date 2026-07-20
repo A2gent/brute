@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
+	"github.com/A2gent/brute/internal/approval"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/logging"
 )
@@ -30,6 +32,20 @@ type Options struct {
 	PermissionMode       string
 	MaxBudgetUSD         string
 	NoSessionPersistence bool
+
+	// Optional Claude Agent SDK sidecar transport (enabled only when
+	// AAGENT_CLAUDE_AGENT_SDK_SIDECAR_PATH is set and Broker is non-nil).
+	Broker               *approval.Broker
+	SidecarPath          string
+	NodePath             string
+	ApprovalTimeout      time.Duration
+	TakeApprovalResponse func(requestID string) (ApprovalResolvePayload, bool)
+}
+
+// ApprovalResolvePayload carries user answers submitted via HTTP approval resolve.
+type ApprovalResolvePayload struct {
+	Answers map[string]string
+	Message string
 }
 
 // Client implements llm.Client by shelling out to Claude Code CLI.
@@ -81,6 +97,10 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 		lastMsg = request.Messages[len(request.Messages)-1].Content
 	}
 	logging.LogRequestWithContent(model, len(request.Messages), len(request.Tools) > 0, lastMsg)
+
+	if SidecarEnabled(c.options) {
+		return c.chatViaSidecar(ctx, request, model, nil)
+	}
 
 	prompt := buildPrompt(request)
 	args := c.buildArgs(request, model, prompt)
@@ -161,6 +181,10 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		lastMsg = request.Messages[len(request.Messages)-1].Content
 	}
 	logging.LogRequestWithContent(model, len(request.Messages), len(request.Tools) > 0, lastMsg)
+
+	if SidecarEnabled(c.options) {
+		return c.chatViaSidecar(ctx, request, model, onEvent)
+	}
 
 	prompt := buildPrompt(request)
 	args := c.buildStreamArgs(request, model, prompt)
@@ -317,8 +341,12 @@ func (c *Client) appendCommonArgs(args []string, request *llm.ChatRequest) []str
 }
 
 func (c *Client) commandEnv() []string {
-	if len(c.options.Environment) > 0 {
-		return c.options.Environment
+	return optionsCommandEnv(c.options)
+}
+
+func optionsCommandEnv(opts Options) []string {
+	if len(opts.Environment) > 0 {
+		return opts.Environment
 	}
 	return os.Environ()
 }

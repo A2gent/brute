@@ -195,6 +195,35 @@ type ChatStreamEvent struct {
 	RuntimeTool             *StreamRuntimeToolEvent      `json:"runtime_tool,omitempty"`
 	Cost                    *StreamRuntimeCostEvent      `json:"cost,omitempty"`
 	RuntimeWarning          *StreamRuntimeWarningPayload `json:"runtime_warning,omitempty"`
+	Approval                *NativeToolApprovalResponse  `json:"approval,omitempty"`
+}
+
+// NativeToolApprovalResponse matches Caesar's pending approval DTO.
+type NativeToolApprovalResponse struct {
+	RequestID string                       `json:"request_id"`
+	SessionID string                       `json:"session_id"`
+	ToolUseID string                       `json:"tool_use_id,omitempty"`
+	ToolName  string                       `json:"tool_name"`
+	Input     map[string]interface{}       `json:"input"`
+	Reason    string                       `json:"reason,omitempty"`
+	Kind      string                       `json:"kind"`
+	Questions []NativeToolApprovalQuestion `json:"questions,omitempty"`
+	CreatedAt string                       `json:"created_at"`
+	ExpiresAt string                       `json:"expires_at,omitempty"`
+	Status    string                       `json:"status,omitempty"`
+}
+
+type NativeToolApprovalQuestion struct {
+	Question string                             `json:"question"`
+	Header   string                             `json:"header"`
+	Options  []NativeToolApprovalQuestionOption `json:"options"`
+	Multiple bool                               `json:"multiple"`
+	Custom   bool                               `json:"custom"`
+}
+
+type NativeToolApprovalQuestionOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description"`
 }
 
 // StreamToolCallEvent represents a tool call in a stream event.

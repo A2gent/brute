@@ -166,9 +166,16 @@ func (s *Server) applyProviderTraceToSession(sess *session.Session, targetProvid
 
 	if config.IsFallbackAggregateRef(string(targetProvider)) || targetProvider == config.ProviderFallback {
 		switch strings.TrimSpace(trace.Phase) {
+		case "provider_selected":
+			if setSessionFallbackActiveNode(sess, trace) {
+				changed = true
+			}
 		case "completed":
 			if trace.NodeIndex > 0 {
 				setSessionFallbackStartIndex(sess, targetProvider, trace.NodeIndex-1)
+				changed = true
+			}
+			if setSessionFallbackActiveNode(sess, trace) {
 				changed = true
 			}
 		case "switching_provider":
@@ -234,6 +241,27 @@ func sessionLinkType(sess *session.Session) string {
 		return ""
 	}
 	return normalized
+}
+
+func sessionFallbackActiveProviderAndModel(sess *session.Session) (string, string) {
+	if sess == nil || sess.Metadata == nil {
+		return "", ""
+	}
+
+	provider := ""
+	model := ""
+	if rawProvider, ok := sess.Metadata[fallbackActiveProviderMetadataKey]; ok {
+		if v, ok := rawProvider.(string); ok {
+			provider = strings.TrimSpace(v)
+		}
+	}
+	if rawModel, ok := sess.Metadata[fallbackActiveModelMetadataKey]; ok {
+		if v, ok := rawModel.(string); ok {
+			model = strings.TrimSpace(v)
+		}
+	}
+
+	return provider, model
 }
 
 func sessionRoutedProviderAndModel(sess *session.Session) (string, string) {
@@ -432,6 +460,10 @@ const providerFailuresMetadataKey = "provider_failures"
 
 const fallbackProgressMetadataKey = "fallback_progress"
 
+const fallbackActiveProviderMetadataKey = "fallback_active_provider"
+
+const fallbackActiveModelMetadataKey = "fallback_active_model"
+
 func shouldPersistProviderFailure(phase string) bool {
 	switch strings.TrimSpace(phase) {
 	case "attempt_failed", "attempt_failed_partial", "retry_layer_failed", "switching_provider":
@@ -524,6 +556,32 @@ func setSessionFallbackStartIndex(sess *session.Session, providerRef config.Prov
 	}
 	raw[key] = idx
 	sess.Metadata[fallbackProgressMetadataKey] = raw
+}
+
+// setSessionFallbackActiveNode records which fallback chain node last served the session so the
+// UI can keep showing it after the request ends. Reports whether metadata changed.
+func setSessionFallbackActiveNode(sess *session.Session, trace *agent.ProviderTraceEvent) bool {
+	if sess == nil || trace == nil {
+		return false
+	}
+	provider := strings.TrimSpace(trace.Provider)
+	if provider == "" {
+		return false
+	}
+	model := strings.TrimSpace(trace.Model)
+	if sess.Metadata == nil {
+		sess.Metadata = map[string]interface{}{}
+	}
+	changed := false
+	if current, _ := sess.Metadata[fallbackActiveProviderMetadataKey].(string); strings.TrimSpace(current) != provider {
+		sess.Metadata[fallbackActiveProviderMetadataKey] = provider
+		changed = true
+	}
+	if current, _ := sess.Metadata[fallbackActiveModelMetadataKey].(string); strings.TrimSpace(current) != model {
+		sess.Metadata[fallbackActiveModelMetadataKey] = model
+		changed = true
+	}
+	return changed
 }
 
 func sessionProviderFailures(metadata map[string]interface{}) []ProviderFailurePayload {

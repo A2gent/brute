@@ -43,37 +43,39 @@ type CreateSessionResponse struct {
 
 // SessionResponse represents a session with its messages
 type SessionResponse struct {
-	ID                   string                       `json:"id"`
-	AgentID              string                       `json:"agent_id"`
-	ParentID             string                       `json:"parent_id,omitempty"`
-	LinkType             string                       `json:"link_type,omitempty"`
-	JobID                string                       `json:"job_id,omitempty"`
-	ProjectID            string                       `json:"project_id,omitempty"`
-	Provider             string                       `json:"provider,omitempty"`
-	Model                string                       `json:"model,omitempty"`
-	RoutedProvider       string                       `json:"routed_provider,omitempty"`
-	RoutedModel          string                       `json:"routed_model,omitempty"`
-	RoutedRule           string                       `json:"routed_rule,omitempty"`
-	RoutedReason         string                       `json:"routed_reason,omitempty"`
-	Title                string                       `json:"title"`
-	Summary              string                       `json:"summary,omitempty"`
-	Status               string                       `json:"status"`
-	ActiveRuns           int                          `json:"active_runs"`
-	TotalTokens          int                          `json:"total_tokens"`
-	InputTokens          int                          `json:"input_tokens"`
-	OutputTokens         int                          `json:"output_tokens"`
-	CachedInputTokens    int                          `json:"cached_input_tokens,omitempty"`
-	ReasoningTokens      int                          `json:"reasoning_tokens,omitempty"`
-	CurrentContextTokens int                          `json:"current_context_tokens"`
-	ModelContextWindow   int                          `json:"model_context_window"`
-	RunDurationSeconds   int64                        `json:"run_duration_seconds"`
-	TaskProgress         string                       `json:"task_progress,omitempty"`
-	ProviderFailures     []ProviderFailurePayload     `json:"provider_failures,omitempty"`
-	CreatedAt            time.Time                    `json:"created_at"`
-	UpdatedAt            time.Time                    `json:"updated_at"`
-	Messages             []MessageResponse            `json:"messages"`
-	SystemPromptSnapshot *SystemPromptSnapshotPayload `json:"system_prompt_snapshot,omitempty"`
-	Metadata             map[string]interface{}       `json:"metadata,omitempty"`
+	ID                     string                       `json:"id"`
+	AgentID                string                       `json:"agent_id"`
+	ParentID               string                       `json:"parent_id,omitempty"`
+	LinkType               string                       `json:"link_type,omitempty"`
+	JobID                  string                       `json:"job_id,omitempty"`
+	ProjectID              string                       `json:"project_id,omitempty"`
+	Provider               string                       `json:"provider,omitempty"`
+	Model                  string                       `json:"model,omitempty"`
+	RoutedProvider         string                       `json:"routed_provider,omitempty"`
+	RoutedModel            string                       `json:"routed_model,omitempty"`
+	RoutedRule             string                       `json:"routed_rule,omitempty"`
+	RoutedReason           string                       `json:"routed_reason,omitempty"`
+	FallbackActiveProvider string                       `json:"fallback_active_provider,omitempty"`
+	FallbackActiveModel    string                       `json:"fallback_active_model,omitempty"`
+	Title                  string                       `json:"title"`
+	Summary                string                       `json:"summary,omitempty"`
+	Status                 string                       `json:"status"`
+	ActiveRuns             int                          `json:"active_runs"`
+	TotalTokens            int                          `json:"total_tokens"`
+	InputTokens            int                          `json:"input_tokens"`
+	OutputTokens           int                          `json:"output_tokens"`
+	CachedInputTokens      int                          `json:"cached_input_tokens,omitempty"`
+	ReasoningTokens        int                          `json:"reasoning_tokens,omitempty"`
+	CurrentContextTokens   int                          `json:"current_context_tokens"`
+	ModelContextWindow     int                          `json:"model_context_window"`
+	RunDurationSeconds     int64                        `json:"run_duration_seconds"`
+	TaskProgress           string                       `json:"task_progress,omitempty"`
+	ProviderFailures       []ProviderFailurePayload     `json:"provider_failures,omitempty"`
+	CreatedAt              time.Time                    `json:"created_at"`
+	UpdatedAt              time.Time                    `json:"updated_at"`
+	Messages               []MessageResponse            `json:"messages"`
+	SystemPromptSnapshot   *SystemPromptSnapshotPayload `json:"system_prompt_snapshot,omitempty"`
+	Metadata               map[string]interface{}       `json:"metadata,omitempty"`
 	// A2A outbound fields — set for sessions used to contact remote agents.
 	A2AOutbound        bool   `json:"a2a_outbound,omitempty"`
 	A2ATargetAgentID   string `json:"a2a_target_agent_id,omitempty"`
@@ -187,6 +189,8 @@ type ChatStreamEvent struct {
 	RoutedModel             string                   `json:"routed_model,omitempty"`
 	RoutedRule              string                   `json:"routed_rule,omitempty"`
 	RoutedReason            string                   `json:"routed_reason,omitempty"`
+	FallbackActiveProvider  string                   `json:"fallback_active_provider,omitempty"`
+	FallbackActiveModel     string                   `json:"fallback_active_model,omitempty"`
 	Step                    int                      `json:"step,omitempty"`
 }
 

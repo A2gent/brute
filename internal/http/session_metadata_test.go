@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/session"
 )
@@ -216,5 +217,97 @@ func TestSetSessionRoutedProviderAndModelClearsDecisionForDirectProvider(t *test
 		if _, exists := sess.Metadata[key]; exists {
 			t.Fatalf("metadata %q was not cleared", key)
 		}
+	}
+}
+
+func TestApplyProviderTraceToSessionPersistsFallbackActiveNode(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+	sess := session.New("build")
+
+	server.applyProviderTraceToSession(sess, config.ProviderFallback, &agent.ProviderTraceEvent{
+		Phase:      "provider_selected",
+		Provider:   "kimi",
+		Model:      "kimi-k2.5",
+		NodeIndex:  0,
+		TotalNodes: 2,
+	})
+
+	provider, model := sessionFallbackActiveProviderAndModel(sess)
+	if provider != "kimi" || model != "kimi-k2.5" {
+		t.Fatalf("fallback active node after provider_selected = %q/%q, want kimi/kimi-k2.5", provider, model)
+	}
+
+	server.applyProviderTraceToSession(sess, config.ProviderFallback, &agent.ProviderTraceEvent{
+		Phase:      "completed",
+		Provider:   "openai",
+		Model:      "gpt-5.5",
+		NodeIndex:  1,
+		TotalNodes: 2,
+	})
+
+	provider, model = sessionFallbackActiveProviderAndModel(sess)
+	if provider != "openai" || model != "gpt-5.5" {
+		t.Fatalf("fallback active node after completed = %q/%q, want openai/gpt-5.5", provider, model)
+	}
+}
+
+// The automatic router resolves a rule targeting a fallback chain into an aggregate ref
+// (fallback:<id>), so the active node must still be tracked for that target provider.
+func TestApplyProviderTraceToSessionPersistsFallbackActiveNodeForAggregateRef(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+	sess := session.New("build")
+	sess.Metadata["provider"] = string(config.ProviderAutoRouter)
+
+	server.applyProviderTraceToSession(sess, config.ProviderType(config.FallbackAggregateRefFromID("coding")), &agent.ProviderTraceEvent{
+		Phase:      "provider_selected",
+		Provider:   "cursor",
+		Model:      "composer-2.5",
+		NodeIndex:  0,
+		TotalNodes: 2,
+	})
+
+	provider, model := sessionFallbackActiveProviderAndModel(sess)
+	if provider != "cursor" || model != "composer-2.5" {
+		t.Fatalf("fallback active node = %q/%q, want cursor/composer-2.5", provider, model)
+	}
+}
+
+func TestApplyProviderTraceToSessionIgnoresNonFallbackTargetProvider(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+	sess := session.New("build")
+
+	server.applyProviderTraceToSession(sess, config.ProviderKimi, &agent.ProviderTraceEvent{
+		Phase:    "provider_selected",
+		Provider: "kimi",
+		Model:    "kimi-k2.5",
+	})
+	server.applyProviderTraceToSession(sess, config.ProviderKimi, &agent.ProviderTraceEvent{
+		Phase:    "completed",
+		Provider: "kimi",
+		Model:    "kimi-k2.5",
+	})
+
+	for _, key := range []string{fallbackActiveProviderMetadataKey, fallbackActiveModelMetadataKey} {
+		if _, exists := sess.Metadata[key]; exists {
+			t.Fatalf("metadata %q must not be set for non-fallback provider", key)
+		}
+	}
+}
+
+func TestSessionToResponseIncludesFallbackActiveNode(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+	sess := session.New("build")
+	sess.Metadata["provider"] = string(config.ProviderFallback)
+	sess.Metadata[fallbackActiveProviderMetadataKey] = "kimi"
+	sess.Metadata[fallbackActiveModelMetadataKey] = "kimi-k2.5"
+
+	resp := server.sessionToResponse(sess)
+	if resp.FallbackActiveProvider != "kimi" || resp.FallbackActiveModel != "kimi-k2.5" {
+		t.Fatalf("fallback active node = %q/%q, want kimi/kimi-k2.5", resp.FallbackActiveProvider, resp.FallbackActiveModel)
+	}
+
+	snapshot := server.sessionSnapshotStreamEvent(sess)
+	if snapshot.FallbackActiveProvider != "kimi" || snapshot.FallbackActiveModel != "kimi-k2.5" {
+		t.Fatalf("snapshot fallback active node = %q/%q, want kimi/kimi-k2.5", snapshot.FallbackActiveProvider, snapshot.FallbackActiveModel)
 	}
 }

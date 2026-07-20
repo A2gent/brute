@@ -84,13 +84,16 @@ func (s *Server) sessionSnapshotStreamEvent(sess *session.Session) ChatStreamEve
 	}
 	routedProvider, routedModel := sessionRoutedProviderAndModel(sess)
 	routedRule, routedReason := sessionRoutingRuleAndReason(sess)
+	fallbackActiveProvider, fallbackActiveModel := sessionFallbackActiveProviderAndModel(sess)
 	return ChatStreamEvent{
-		Type:           "session_snapshot",
-		Status:         string(sess.Status),
-		Messages:       s.messagesToResponse(sess.Messages),
-		RoutedProvider: routedProvider,
-		RoutedModel:    routedModel,
-		RoutedRule:     routedRule,
-		RoutedReason:   routedReason,
+		Type:                   "session_snapshot",
+		Status:                 string(sess.Status),
+		Messages:               s.messagesToResponse(sess.Messages),
+		RoutedProvider:         routedProvider,
+		RoutedModel:            routedModel,
+		RoutedRule:             routedRule,
+		RoutedReason:           routedReason,
+		FallbackActiveProvider: fallbackActiveProvider,
+		FallbackActiveModel:    fallbackActiveModel,
 	}
 }

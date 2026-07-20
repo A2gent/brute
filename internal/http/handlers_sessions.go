@@ -472,6 +472,12 @@ func (s *Server) handleUpdateSessionProvider(w http.ResponseWriter, r *http.Requ
 	delete(sess.Metadata, "routed_provider")
 	delete(sess.Metadata, "routed_model")
 
+	// A previously recorded active fallback node is stale once the session no longer targets a fallback provider.
+	if !config.IsFallbackAggregateRef(provider) && providerType != config.ProviderFallback {
+		delete(sess.Metadata, fallbackActiveProviderMetadataKey)
+		delete(sess.Metadata, fallbackActiveModelMetadataKey)
+	}
+
 	if err := s.sessionManager.Save(sess); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to update session provider: "+err.Error())
 		return

@@ -346,6 +346,9 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
+	s.queuedSessionMutationMu.Lock()
+	defer s.queuedSessionMutationMu.Unlock()
+
 	sessionID := chi.URLParam(r, "sessionID")
 
 	sess, err := s.sessionManager.Get(sessionID)
@@ -421,6 +424,46 @@ func (s *Server) handleUpdateSessionProject(w http.ResponseWriter, r *http.Reque
 
 	if err := s.sessionManager.Save(sess); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to update session project: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, s.sessionToResponse(sess))
+}
+
+func (s *Server) handleUpdateQueuedSessionMessage(w http.ResponseWriter, r *http.Request) {
+	s.queuedSessionMutationMu.Lock()
+	defer s.queuedSessionMutationMu.Unlock()
+
+	sessionID := chi.URLParam(r, "sessionID")
+	messageID := strings.TrimSpace(chi.URLParam(r, "messageID"))
+
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(req.Content) == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Message content is required")
+		return
+	}
+
+	sess, err := s.sessionManager.Get(sessionID)
+	if err != nil {
+		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
+		return
+	}
+	if sess.Status != session.StatusQueued || !sessionIsQueuePaused(sess) || s.activeSessionRunCount(sess.ID) > 0 {
+		s.errorResponse(w, http.StatusConflict, "Message can only be edited while the session is paused in queue")
+		return
+	}
+	if !sess.UpdateInitialUserMessage(messageID, req.Content) {
+		s.errorResponse(w, http.StatusConflict, "Only the unprocessed initial message can be edited")
+		return
+	}
+	if err := s.sessionManager.Save(sess); err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to update session message: "+err.Error())
 		return
 	}
 

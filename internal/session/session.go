@@ -164,6 +164,23 @@ func (s *Session) AddUserMessageWithImagesAndMetadata(content string, images []I
 	})
 }
 
+// UpdateInitialUserMessage replaces the sole initial prompt before it is processed.
+// The strict shape check keeps callers from rewriting conversation history.
+func (s *Session) UpdateInitialUserMessage(messageID, content string) bool {
+	if s == nil || len(s.Messages) != 1 || s.Messages[0].Role != "user" || s.Messages[0].ID != messageID {
+		return false
+	}
+	s.Messages[0].Content = content
+	s.Title = titleFromFirstPrompt(content)
+	s.Summary = SummaryFromContent(content)
+	if strings.TrimSpace(content) == "" && len(s.Messages[0].Images) > 0 {
+		s.Title = "Image request"
+		s.Summary = "Image request"
+	}
+	s.UpdatedAt = time.Now()
+	return true
+}
+
 func titleFromFirstPrompt(prompt string) string {
 	normalized := strings.Join(strings.Fields(strings.TrimSpace(prompt)), " ")
 	if normalized == "" {

@@ -137,12 +137,15 @@ func serialQueueScopeForSession(sess *session.Session) string {
 }
 
 func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) bool {
+	s.queuedSessionMutationMu.Lock()
 	sess, err := s.sessionManager.Get(sessionID)
 	if err != nil {
+		s.queuedSessionMutationMu.Unlock()
 		logging.Warn("Serial session queue could not load session %s: %v", sessionID, err)
 		return true
 	}
 	if sess.Status != session.StatusQueued || !sessionIsSerialQueuedAutoRun(sess) || sessionIsQueuePaused(sess) {
+		s.queuedSessionMutationMu.Unlock()
 		return true
 	}
 
@@ -151,14 +154,17 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 		sess.AddAssistantMessage("Queued serial session could not start because it has no initial user message.", nil)
 		sess.SetStatus(session.StatusFailed)
 		_ = s.sessionManager.Save(sess)
+		s.queuedSessionMutationMu.Unlock()
 		return true
 	}
 
 	sess.SetStatus(session.StatusRunning)
 	if err := s.sessionManager.Save(sess); err != nil {
+		s.queuedSessionMutationMu.Unlock()
 		logging.Warn("Serial session queue failed to mark session %s running: %v", sess.ID, err)
 		return true
 	}
+	s.queuedSessionMutationMu.Unlock()
 	defer s.queueTelegramSessionMessageSync(sess.ID)
 
 	runCtx, cancelRun := context.WithCancel(ctx)

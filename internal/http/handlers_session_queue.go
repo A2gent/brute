@@ -51,6 +51,9 @@ func (s *Server) mutateQueuedSessions(w http.ResponseWriter, r *http.Request, pa
 		return
 	}
 
+	s.queuedSessionMutationMu.Lock()
+	defer s.queuedSessionMutationMu.Unlock()
+
 	resp := QueueSessionsMutationResponse{
 		Updated: make([]string, 0, len(ids)),
 		Skipped: make([]string, 0),

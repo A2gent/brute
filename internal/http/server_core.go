@@ -45,6 +45,7 @@ type Server struct {
 	runParentCtx             context.Context
 	activeRunsMu             sync.Mutex
 	activeRuns               map[string]map[string]context.CancelFunc
+	queuedSessionMutationMu  sync.Mutex
 	sessionEventsMu          sync.Mutex
 	sessionEventSubs         map[string]map[chan ChatStreamEvent]struct{}
 	serialQueueMu            sync.Mutex

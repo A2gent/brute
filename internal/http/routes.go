@@ -255,6 +255,7 @@ func (s *Server) registerSessionRoutes(r chi.Router) {
 		r.Post("/{sessionID}/cancel", s.handleCancelSession)
 		r.Put("/{sessionID}/project", s.handleUpdateSessionProject)
 		r.Put("/{sessionID}/provider", s.handleUpdateSessionProvider)
+		r.Put("/{sessionID}/messages/{messageID}", s.handleUpdateQueuedSessionMessage)
 		r.Post("/{sessionID}/chat", s.handleChat)
 		r.Post("/{sessionID}/chat/stream", s.handleChatStream)
 		r.Post("/{sessionID}/inject", s.handleInjectSessionMessage)

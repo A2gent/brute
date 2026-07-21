@@ -617,7 +617,7 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 						}
 						model := strings.TrimSpace(cfg.Providers[string(nodeType)].Model)
 						if model == "" {
-							if def := config.GetProviderDefinition(nodeType); def != nil {
+							if def := config.GetProviderDefinitionForRef(string(nodeType)); def != nil {
 								model = strings.TrimSpace(def.DefaultModel)
 							}
 						}

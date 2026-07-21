@@ -328,12 +328,13 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 	}
 
 	createDirectClient := func(targetType config.ProviderType, modelOverride string) (llm.Client, string, error) {
-		providerDef := config.GetProviderDefinition(targetType)
+		ref := config.NormalizeProviderRef(string(targetType))
+		providerDef := config.GetProviderDefinitionForRef(ref)
 		if providerDef == nil || targetType == config.ProviderFallback || targetType == config.ProviderAutoRouter {
 			return nil, "", fmt.Errorf("unsupported provider: %s", targetType)
 		}
 
-		provider := m.appConfig.Providers[string(targetType)]
+		provider := m.appConfig.Providers[ref]
 		apiKey := strings.TrimSpace(provider.APIKey)
 		if apiKey == "" && providerSupportsOAuth(targetType) && provider.OAuth != nil {
 			apiKey = strings.TrimSpace(provider.OAuth.AccessToken)
@@ -385,6 +386,21 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 			model = strings.TrimSpace(m.appConfig.DefaultModel)
 		}
 
+		if config.IsClaudeProviderRef(ref) {
+			sessionSettings := config.ResolveProviderSessionSettings(ref, provider)
+			paths := config.ResolveClaudeProviderPaths(provider)
+			return claudecli.NewClientWithOptions(model, claudecli.Options{
+				Executable:           paths.BinaryPath,
+				WorkDir:              m.appConfig.WorkDir,
+				ConfigDir:            paths.ConfigDir,
+				HomePath:             paths.HomePath,
+				Environment:          config.BuildClaudeCLIEnvironment(provider, runtime.GOOS),
+				Identity:             sessionSettings.ProviderSessionIdentity,
+				NoSessionPersistence: !sessionSettings.UseProviderSession || tuiEnvBool("AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE", false),
+				PermissionMode:       strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_PERMISSION_MODE")),
+				MaxBudgetUSD:         strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_MAX_BUDGET_USD")),
+			}), model, nil
+		}
 		switch targetType {
 		case config.ProviderGoogle:
 			// Google Gemini uses a dedicated client with OpenAI-compatible API + Gemini extensions
@@ -403,20 +419,6 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 			}), model, nil
 		case config.ProviderCursor:
 			return cursorcli.NewClientWithOptions(model, cursorcli.Options{WorkDir: m.appConfig.WorkDir, APIKey: apiKey}), model, nil
-		case config.ProviderAnthropic:
-			sessionSettings := config.ResolveProviderSessionSettings(string(targetType), provider)
-			paths := config.ResolveClaudeProviderPaths(provider)
-			return claudecli.NewClientWithOptions(model, claudecli.Options{
-				Executable:           paths.BinaryPath,
-				WorkDir:              m.appConfig.WorkDir,
-				ConfigDir:            paths.ConfigDir,
-				HomePath:             paths.HomePath,
-				Environment:          config.BuildClaudeCLIEnvironment(provider, runtime.GOOS),
-				Identity:             sessionSettings.ProviderSessionIdentity,
-				NoSessionPersistence: !sessionSettings.UseProviderSession || tuiEnvBool("AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE", false),
-				PermissionMode:       strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_PERMISSION_MODE")),
-				MaxBudgetUSD:         strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_MAX_BUDGET_USD")),
-			}), model, nil
 		case config.ProviderKimiCLI:
 			return kimicli.NewClient(model, m.appConfig.WorkDir), model, nil
 		default:
@@ -446,7 +448,7 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 						}
 						model := strings.TrimSpace(m.appConfig.Providers[string(nodeType)].Model)
 						if model == "" {
-							if nodeDef := config.GetProviderDefinition(nodeType); nodeDef != nil {
+							if nodeDef := config.GetProviderDefinitionForRef(string(nodeType)); nodeDef != nil {
 								model = strings.TrimSpace(nodeDef.DefaultModel)
 							}
 						}
@@ -539,8 +541,9 @@ func (m Model) validateActiveProviderConfig() error {
 	if m.appConfig == nil {
 		return nil
 	}
-	providerType := config.ProviderType(strings.TrimSpace(m.appConfig.ActiveProvider))
-	def := config.GetProviderDefinition(providerType)
+	providerRef := config.NormalizeProviderRef(m.appConfig.ActiveProvider)
+	providerType := config.ProviderType(providerRef)
+	def := config.GetProviderDefinitionForRef(providerRef)
 	if def == nil {
 		return fmt.Errorf("unknown active provider: %s", providerType)
 	}

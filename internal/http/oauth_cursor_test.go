@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -78,6 +79,9 @@ func TestProviderUsageStatusForCursorUsesStoredOAuth(t *testing.T) {
 }
 
 func TestHandleCursorOAuthImportStoresToken(t *testing.T) {
+	// The import handler persists through config.GetConfigPath(), so this test
+	// must never fall through to a developer's real user configuration.
+	t.Setenv("AAGENT_CONFIG_PATH", filepath.Join(t.TempDir(), "config.json"))
 	bruteServer := newCursorUsageTestServer(t)
 	t.Setenv("AAGENT_CURSOR_ACCESS_TOKEN", "imported-cursor-token")
 	t.Setenv("AAGENT_CURSOR_SKIP_PLATFORM_AUTH", "true")

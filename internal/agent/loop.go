@@ -14,6 +14,7 @@ import (
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/tools"
+	"github.com/google/uuid"
 )
 
 // loop implements the main agentic loop
@@ -86,14 +87,23 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 
 		// Call LLM (streaming when supported)
 		llmStart := time.Now()
-		response, err := a.callLLM(ctx, request, step, onEvent)
+		response, runtimeAcc, err := a.callLLM(ctx, request, step, onEvent)
 		llmCompleted := time.Now()
 		if err != nil {
+			if runtimeAcc != nil && runtimeAcc.hasDurablePayload() {
+				sess.AddAssistantMessageWithMetadata("", nil, mergeRuntimeMetadata(
+					llmTimingMetadata(llmStart, llmCompleted, a.config.Provider, a.config.Model),
+					runtimeAcc,
+				))
+			}
 			sess.SetStatus(session.StatusFailed)
 			a.sessionManager.Save(sess)
 			return "", totalUsage, fmt.Errorf("LLM error: %w", err)
 		}
-		assistantMetadata := llmTimingMetadata(llmStart, llmCompleted, a.config.Provider, a.config.Model)
+		assistantMetadata := mergeRuntimeMetadata(
+			llmTimingMetadata(llmStart, llmCompleted, a.config.Provider, a.config.Model),
+			runtimeAcc,
+		)
 		if a.config.UsePreviousResponse && strings.TrimSpace(response.ResponseID) != "" {
 			assistantMetadata[messageMetadataResponseID] = strings.TrimSpace(response.ResponseID)
 			metadataSetString(sess, metadataLastResponseID, strings.TrimSpace(response.ResponseID))
@@ -130,6 +140,7 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 				if emptyFinalResponseRetries < emptyFinalResponseMaxRetries {
 					emptyFinalResponseRetries++
 					transientUserPrompt = emptyFinalResponseRetryPrompt
+					sess.AddAssistantMessageWithMetadata("", nil, assistantMetadata)
 					logging.Warn("Model returned empty final response; retrying once for session=%s step=%d", sess.ID, step)
 					continue
 				}
@@ -312,13 +323,16 @@ func (a *Agent) finalizeAfterStepLimit(ctx context.Context, sess *session.Sessio
 	})
 
 	llmStart := time.Now()
-	response, err := a.callLLM(ctx, request, step+1, onEvent)
+	response, runtimeAcc, err := a.callLLM(ctx, request, step+1, onEvent)
 	llmCompleted := time.Now()
 	if err != nil {
 		message := fmt.Sprintf("Agent stopped after reaching maximum step limit (%d), and the finalization request failed: %v", a.config.MaxSteps, err)
-		sess.AddAssistantMessageWithMetadata(message, nil, stepLimitFailureMetadata(a.config.MaxSteps, llmStart, llmCompleted, a.config.Provider, a.config.Model, map[string]interface{}{
-			"finalization_error": err.Error(),
-		}))
+		sess.AddAssistantMessageWithMetadata(message, nil, mergeRuntimeMetadata(
+			stepLimitFailureMetadata(a.config.MaxSteps, llmStart, llmCompleted, a.config.Provider, a.config.Model, map[string]interface{}{
+				"finalization_error": err.Error(),
+			}),
+			runtimeAcc,
+		))
 		sess.SetStatus(session.StatusFailed)
 		a.sessionManager.Save(sess)
 		return "", llm.TokenUsage{}, errors.New(message)
@@ -326,9 +340,12 @@ func (a *Agent) finalizeAfterStepLimit(ctx context.Context, sess *session.Sessio
 
 	usage := response.Usage
 	a.addTokenUsageMetadata(sess, usage)
-	metadata := stepLimitFailureMetadata(a.config.MaxSteps, llmStart, llmCompleted, a.config.Provider, a.config.Model, map[string]interface{}{
-		"finalized_after_step_limit": true,
-	})
+	metadata := mergeRuntimeMetadata(
+		stepLimitFailureMetadata(a.config.MaxSteps, llmStart, llmCompleted, a.config.Provider, a.config.Model, map[string]interface{}{
+			"finalized_after_step_limit": true,
+		}),
+		runtimeAcc,
+	)
 	if a.config.UsePreviousResponse && strings.TrimSpace(response.ResponseID) != "" {
 		metadata[messageMetadataResponseID] = strings.TrimSpace(response.ResponseID)
 		metadataSetString(sess, metadataLastResponseID, strings.TrimSpace(response.ResponseID))
@@ -544,28 +561,29 @@ func hasExternalWaitResult(results []session.ToolResult) bool {
 	return false
 }
 
-func (a *Agent) callLLM(ctx context.Context, request *llm.ChatRequest, step int, onEvent func(Event)) (*llm.ChatResponse, error) {
-	// When no event sink is provided, use non-streaming Chat.
-	// This avoids "partial stream emitted" fallback lock-in and lets fallback chains
-	// seamlessly move to the next provider on retryable failures.
-	if onEvent == nil {
-		return a.llmClient.Chat(ctx, request)
-	}
+func (a *Agent) callLLM(ctx context.Context, request *llm.ChatRequest, step int, onEvent func(Event)) (*llm.ChatResponse, *runtimeObservabilityAccumulator, error) {
+	turnID := uuid.NewString()
+	acc := newRuntimeObservabilityAccumulator(turnID, a.config.PersistRuntimeReasoning)
 
 	streamClient, ok := a.llmClient.(llm.StreamingClient)
 	if !ok {
-		return a.llmClient.Chat(ctx, request)
+		response, err := a.llmClient.Chat(ctx, request)
+		return response, acc, err
 	}
 
-	return streamClient.ChatStream(ctx, request, func(ev llm.StreamEvent) error {
+	response, err := streamClient.ChatStream(ctx, request, func(ev llm.StreamEvent) error {
+		if isLLMRuntimeForwardEvent(ev) {
+			acc.observe(ev)
+		}
 		if onEvent == nil {
 			return nil
 		}
 		if ev.Type == llm.StreamEventContentDelta && ev.ContentDelta != "" {
 			onEvent(Event{
-				Type:  EventAssistantDelta,
-				Step:  step,
-				Delta: ev.ContentDelta,
+				Type:   EventAssistantDelta,
+				TurnID: turnID,
+				Step:   step,
+				Delta:  ev.ContentDelta,
 			})
 		}
 		if ev.Type == llm.StreamEventProviderTrace {
@@ -591,12 +609,14 @@ func (a *Agent) callLLM(ctx context.Context, request *llm.ChatRequest, step int,
 			runtime := ev
 			onEvent(Event{
 				Type:    EventLLMRuntime,
+				TurnID:  turnID,
 				Step:    step,
 				Runtime: &runtime,
 			})
 		}
 		return nil
 	})
+	return response, acc, err
 }
 
 func isLLMRuntimeForwardEvent(ev llm.StreamEvent) bool {

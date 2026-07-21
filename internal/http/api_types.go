@@ -192,6 +192,7 @@ type ChatStreamEvent struct {
 	FallbackActiveProvider  string                       `json:"fallback_active_provider,omitempty"`
 	FallbackActiveModel     string                       `json:"fallback_active_model,omitempty"`
 	Step                    int                          `json:"step,omitempty"`
+	TurnID                  string                       `json:"turn_id,omitempty"`
 	RuntimeTool             *StreamRuntimeToolEvent      `json:"runtime_tool,omitempty"`
 	Cost                    *StreamRuntimeCostEvent      `json:"cost,omitempty"`
 	RuntimeWarning          *StreamRuntimeWarningPayload `json:"runtime_warning,omitempty"`

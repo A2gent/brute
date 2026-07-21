@@ -13,6 +13,7 @@ import (
 func TestAgentEventToStreamEventMapsRuntimeEvents(t *testing.T) {
 	server := &Server{}
 	sess := &session.Session{}
+	const turnID = "turn-runtime-1"
 
 	tests := []struct {
 		name string
@@ -22,20 +23,22 @@ func TestAgentEventToStreamEventMapsRuntimeEvents(t *testing.T) {
 		{
 			name: "reasoning_delta",
 			ev: agent.Event{
-				Type: EventLLMRuntimeAlias(),
-				Step: 2,
+				Type:   EventLLMRuntimeAlias(),
+				TurnID: turnID,
+				Step:   2,
 				Runtime: &llm.StreamEvent{
 					Type:           llm.StreamEventReasoningDelta,
 					ReasoningDelta: "Checking",
 				},
 			},
-			want: ChatStreamEvent{Type: "reasoning_delta", Step: 2, Delta: "Checking"},
+			want: ChatStreamEvent{Type: "reasoning_delta", TurnID: turnID, Step: 2, Delta: "Checking"},
 		},
 		{
 			name: "tool_started",
 			ev: agent.Event{
-				Type: EventLLMRuntimeAlias(),
-				Step: 2,
+				Type:   EventLLMRuntimeAlias(),
+				TurnID: turnID,
+				Step:   2,
 				Runtime: &llm.StreamEvent{
 					Type:          llm.StreamEventToolStarted,
 					ToolCallID:    "toolu_1",
@@ -44,8 +47,9 @@ func TestAgentEventToStreamEventMapsRuntimeEvents(t *testing.T) {
 				},
 			},
 			want: ChatStreamEvent{
-				Type: "tool_started",
-				Step: 2,
+				Type:   "tool_started",
+				TurnID: turnID,
+				Step:   2,
 				RuntimeTool: &StreamRuntimeToolEvent{
 					ID: "toolu_1", Name: "Read", Index: 2,
 				},
@@ -54,8 +58,9 @@ func TestAgentEventToStreamEventMapsRuntimeEvents(t *testing.T) {
 		{
 			name: "tool_updated",
 			ev: agent.Event{
-				Type: EventLLMRuntimeAlias(),
-				Step: 2,
+				Type:   EventLLMRuntimeAlias(),
+				TurnID: turnID,
+				Step:   2,
 				Runtime: &llm.StreamEvent{
 					Type:           llm.StreamEventToolUpdated,
 					ToolCallID:     "toolu_1",
@@ -63,8 +68,9 @@ func TestAgentEventToStreamEventMapsRuntimeEvents(t *testing.T) {
 				},
 			},
 			want: ChatStreamEvent{
-				Type: "tool_updated",
-				Step: 2,
+				Type:   "tool_updated",
+				TurnID: turnID,
+				Step:   2,
 				RuntimeTool: &StreamRuntimeToolEvent{
 					ID: "toolu_1", InputJSON: `{"file_path":"foo.go"}`,
 				},
@@ -73,8 +79,9 @@ func TestAgentEventToStreamEventMapsRuntimeEvents(t *testing.T) {
 		{
 			name: "tool_input_completed",
 			ev: agent.Event{
-				Type: EventLLMRuntimeAlias(),
-				Step: 2,
+				Type:   EventLLMRuntimeAlias(),
+				TurnID: turnID,
+				Step:   2,
 				Runtime: &llm.StreamEvent{
 					Type:           llm.StreamEventToolInputCompleted,
 					ToolCallID:     "toolu_1",
@@ -83,8 +90,9 @@ func TestAgentEventToStreamEventMapsRuntimeEvents(t *testing.T) {
 				},
 			},
 			want: ChatStreamEvent{
-				Type: "tool_input_completed",
-				Step: 2,
+				Type:   "tool_input_completed",
+				TurnID: turnID,
+				Step:   2,
 				RuntimeTool: &StreamRuntimeToolEvent{
 					ID: "toolu_1", Name: "Read", InputJSON: `{"file_path":"foo.go"}`,
 				},
@@ -93,8 +101,9 @@ func TestAgentEventToStreamEventMapsRuntimeEvents(t *testing.T) {
 		{
 			name: "tool_completed",
 			ev: agent.Event{
-				Type: EventLLMRuntimeAlias(),
-				Step: 2,
+				Type:   EventLLMRuntimeAlias(),
+				TurnID: turnID,
+				Step:   2,
 				Runtime: &llm.StreamEvent{
 					Type:           llm.StreamEventToolCompleted,
 					ToolCallID:     "toolu_1",
@@ -103,8 +112,9 @@ func TestAgentEventToStreamEventMapsRuntimeEvents(t *testing.T) {
 				},
 			},
 			want: ChatStreamEvent{
-				Type: "tool_completed",
-				Step: 2,
+				Type:   "tool_completed",
+				TurnID: turnID,
+				Step:   2,
 				RuntimeTool: &StreamRuntimeToolEvent{
 					ID: "toolu_1", Name: "Read", InputJSON: `{"file_path":"foo.go"}`,
 				},
@@ -113,8 +123,9 @@ func TestAgentEventToStreamEventMapsRuntimeEvents(t *testing.T) {
 		{
 			name: "tool_output",
 			ev: agent.Event{
-				Type: EventLLMRuntimeAlias(),
-				Step: 2,
+				Type:   EventLLMRuntimeAlias(),
+				TurnID: turnID,
+				Step:   2,
 				Runtime: &llm.StreamEvent{
 					Type:         llm.StreamEventToolOutput,
 					ToolCallID:   "toolu_1",
@@ -123,8 +134,9 @@ func TestAgentEventToStreamEventMapsRuntimeEvents(t *testing.T) {
 				},
 			},
 			want: ChatStreamEvent{
-				Type: "tool_output",
-				Step: 2,
+				Type:   "tool_output",
+				TurnID: turnID,
+				Step:   2,
 				ToolResult: &StreamToolResultEvent{
 					ToolCallID: "toolu_1",
 					Name:       "Read",
@@ -135,8 +147,9 @@ func TestAgentEventToStreamEventMapsRuntimeEvents(t *testing.T) {
 		{
 			name: "cost",
 			ev: agent.Event{
-				Type: EventLLMRuntimeAlias(),
-				Step: 2,
+				Type:   EventLLMRuntimeAlias(),
+				TurnID: turnID,
+				Step:   2,
 				Runtime: &llm.StreamEvent{
 					Type:          llm.StreamEventCost,
 					TotalCostUSD:  0.0123,
@@ -146,8 +159,9 @@ func TestAgentEventToStreamEventMapsRuntimeEvents(t *testing.T) {
 				},
 			},
 			want: ChatStreamEvent{
-				Type: "cost",
-				Step: 2,
+				Type:   "cost",
+				TurnID: turnID,
+				Step:   2,
 				Cost: &StreamRuntimeCostEvent{
 					TotalCostUSD: 0.0123, DurationMS: 4500, DurationAPIMS: 4100, NumTurns: 1,
 				},
@@ -156,8 +170,9 @@ func TestAgentEventToStreamEventMapsRuntimeEvents(t *testing.T) {
 		{
 			name: "runtime_warning",
 			ev: agent.Event{
-				Type: EventLLMRuntimeAlias(),
-				Step: 2,
+				Type:   EventLLMRuntimeAlias(),
+				TurnID: turnID,
+				Step:   2,
 				Runtime: &llm.StreamEvent{
 					Type:           llm.StreamEventRuntimeWarning,
 					RuntimeStatus:  "compacting",
@@ -165,8 +180,9 @@ func TestAgentEventToStreamEventMapsRuntimeEvents(t *testing.T) {
 				},
 			},
 			want: ChatStreamEvent{
-				Type: "runtime_warning",
-				Step: 2,
+				Type:   "runtime_warning",
+				TurnID: turnID,
+				Step:   2,
 				RuntimeWarning: &StreamRuntimeWarningPayload{
 					Status: "compacting", Message: "compacting",
 				},
@@ -180,7 +196,7 @@ func TestAgentEventToStreamEventMapsRuntimeEvents(t *testing.T) {
 			if !ok {
 				t.Fatal("expected mapped stream event")
 			}
-			if got.Type != tc.want.Type || got.Step != tc.want.Step || got.Delta != tc.want.Delta {
+			if got.Type != tc.want.Type || got.Step != tc.want.Step || got.Delta != tc.want.Delta || got.TurnID != tc.want.TurnID {
 				t.Fatalf("base fields = %#v, want %#v", got, tc.want)
 			}
 			if tc.want.RuntimeTool != nil {
@@ -217,6 +233,11 @@ func TestAgentEventToStreamEventMapsRuntimeEvents(t *testing.T) {
 			}
 			if _, ok := payload["type"]; !ok {
 				t.Fatalf("missing type in JSON: %s", string(raw))
+			}
+			if tc.want.TurnID != "" {
+				if _, ok := payload["turn_id"]; !ok {
+					t.Fatalf("missing turn_id in JSON: %s", string(raw))
+				}
 			}
 			if tc.want.RuntimeTool != nil {
 				if _, ok := payload["runtime_tool"]; !ok {
@@ -320,10 +341,11 @@ func TestAgentEventToStreamEventPreservesExistingMappings(t *testing.T) {
 	sess := &session.Session{}
 
 	assistant, ok := server.agentEventToStreamEvent(sess, config.ProviderOpenAI, agent.Event{
-		Type:  agent.EventAssistantDelta,
-		Delta: "hello",
+		Type:   agent.EventAssistantDelta,
+		TurnID: "turn-assistant-1",
+		Delta:  "hello",
 	})
-	if !ok || assistant.Type != "assistant_delta" || assistant.Delta != "hello" {
+	if !ok || assistant.Type != "assistant_delta" || assistant.Delta != "hello" || assistant.TurnID != "turn-assistant-1" {
 		t.Fatalf("assistant mapping changed: %#v", assistant)
 	}
 

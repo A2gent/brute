@@ -187,8 +187,8 @@ func New(
 	// accounting stays consistent with HTTP session execution.
 	contextWindow := 0
 	if appConfig != nil {
-		providerType := config.ProviderType(config.NormalizeProviderRef(appConfig.ActiveProvider))
-		provider := appConfig.Providers[string(providerType)]
+		providerRef := config.NormalizeProviderRef(appConfig.ActiveProvider)
+		provider := appConfig.Providers[providerRef]
 		model := agentConfig.Model
 		if model == "" {
 			model = provider.Model
@@ -196,7 +196,7 @@ func New(
 		if model == "" {
 			model = appConfig.DefaultModel
 		}
-		contextWindow = config.ResolveContextWindow(providerType, provider, model)
+		contextWindow = config.ResolveContextWindowForRef(providerRef, provider, model)
 	}
 	if agentConfig.ContextWindow <= 0 {
 		agentConfig.ContextWindow = contextWindow

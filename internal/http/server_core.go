@@ -228,7 +228,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	if dockerSafeMode && activeProvider != "" {
 		providerType := config.ProviderType(activeProvider)
-		if config.GetProviderDefinition(providerType) != nil {
+		if config.GetProviderDefinitionForRef(activeProvider) != nil {
 			usage := s.providerUsageStatus(r.Context(), providerType)
 			body["provider_usage"] = usage
 			if limitReached, detail := providerUsageLimitReached(usage, time.Now()); limitReached {

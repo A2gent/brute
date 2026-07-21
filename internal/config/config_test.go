@@ -409,6 +409,36 @@ func TestSaveUsesPrivateFileMode(t *testing.T) {
 	}
 }
 
+func TestSaveBacksUpExistingConfigBeforeReplacingIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	previous := []byte(`{"active_provider":"google","providers":{"google":{"api_key":"keep-me"}}}`)
+	if err := os.WriteFile(path, previous, 0o600); err != nil {
+		t.Fatalf("write existing config: %v", err)
+	}
+
+	cfg := DefaultConfig()
+	if err := cfg.Save(path); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	backup, err := os.ReadFile(path + ".bak")
+	if err != nil {
+		t.Fatalf("read backup: %v", err)
+	}
+	if string(backup) != string(previous) {
+		t.Fatalf("backup = %q, want %q", backup, previous)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path + ".bak")
+		if err != nil {
+			t.Fatalf("stat backup: %v", err)
+		}
+		if info.Mode().Perm() != 0600 {
+			t.Fatalf("backup mode = %o, want 0600", info.Mode().Perm())
+		}
+	}
+}
+
 func quoteJSON(t *testing.T, value string) string {
 	t.Helper()
 

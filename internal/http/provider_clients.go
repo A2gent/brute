@@ -124,11 +124,11 @@ func (s *Server) resolveContextWindowForProvider(providerType config.ProviderTyp
 		}
 		minContext := 0
 		for _, node := range chain {
-			nodeType := config.ProviderType(node.Provider)
-			if config.GetProviderDefinition(nodeType) == nil {
+			nodeRef := config.NormalizeProviderRef(node.Provider)
+			if config.GetProviderDefinitionForRef(nodeRef) == nil {
 				continue
 			}
-			window := config.ResolveContextWindow(nodeType, s.config.Providers[string(nodeType)], node.Model)
+			window := config.ResolveContextWindowForRef(nodeRef, s.config.Providers[nodeRef], node.Model)
 			if window <= 0 {
 				continue
 			}
@@ -138,7 +138,7 @@ func (s *Server) resolveContextWindowForProvider(providerType config.ProviderTyp
 		}
 		return minContext
 	}
-	return config.ResolveContextWindow(providerType, provider, model)
+	return config.ResolveContextWindowForRef(ref, provider, model)
 }
 
 func (s *Server) providerStatefulResponses(providerType config.ProviderType) bool {

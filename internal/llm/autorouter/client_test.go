@@ -77,3 +77,16 @@ func TestResolveTargetFailsOnOutOfRangeRouterIndex(t *testing.T) {
 		t.Fatalf("error = %v, want out-of-range routing error", err)
 	}
 }
+
+func TestValidateAutoRouterProviderAcceptsCustomClaudeRefs(t *testing.T) {
+	customRef := "anthropic:work"
+	err := validateAutoRouterProvider(config.Provider{
+		RouterProvider: customRef,
+		RouterRules: []config.RouterRule{
+			{Match: "coding", Provider: customRef, Model: "claude-sonnet-4-6"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("validateAutoRouterProvider(custom Claude refs): %v", err)
+	}
+}

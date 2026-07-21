@@ -62,6 +62,44 @@ func TestCreateLLMClientAutoRouterRoutesCursorWithoutAnthropicHTTPFallback(t *te
 	}
 }
 
+func TestCreateLLMClientAutoRouterRoutesToCustomClaudeRef(t *testing.T) {
+	tmp := t.TempDir()
+	fakeClaude := filepath.Join(tmp, "claude-work")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"custom claude ok\",\"session_id\":\"custom-session\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}'\n"
+	if err := os.WriteFile(fakeClaude, []byte(script), 0o755); err != nil {
+		t.Fatalf("failed to write fake Claude: %v", err)
+	}
+
+	customRef := "anthropic:work"
+	cfg := config.DefaultConfig()
+	cfg.ActiveProvider = string(config.ProviderAutoRouter)
+	cfg.WorkDir = tmp
+	cfg.Providers[customRef] = config.Provider{
+		Name:       customRef,
+		Model:      "claude-sonnet-4-6",
+		BinaryPath: fakeClaude,
+	}
+	cfg.Providers[string(config.ProviderAutoRouter)] = config.Provider{
+		Name:           string(config.ProviderAutoRouter),
+		RouterProvider: customRef,
+		RouterRules: []config.RouterRule{
+			{Match: "single", Provider: customRef, Model: "claude-sonnet-4-6"},
+		},
+	}
+
+	client := (Model{appConfig: cfg}).createLLMClient(config.ProviderAutoRouter)
+	resp, err := client.Chat(context.Background(), &llm.ChatRequest{
+		Messages: []llm.Message{{Role: "user", Content: "implement it"}},
+	})
+	if err != nil {
+		t.Fatalf("custom Claude automatic router Chat returned error: %v", err)
+	}
+	if resp.Content != "custom claude ok" {
+		t.Fatalf("response content = %q, want custom claude ok", resp.Content)
+	}
+}
+
 func TestValidateActiveProviderConfigAcceptsOpenAICodexOAuth(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 

@@ -311,3 +311,27 @@ func TestSessionToResponseIncludesFallbackActiveNode(t *testing.T) {
 		t.Fatalf("snapshot fallback active node = %q/%q, want kimi/kimi-k2.5", snapshot.FallbackActiveProvider, snapshot.FallbackActiveModel)
 	}
 }
+
+func TestSessionToResponseIncludesRuntimeMessageMetadata(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+	sess := session.New("build")
+	sess.AddAssistantMessageWithMetadata("done", nil, map[string]interface{}{
+		"runtime_turn_id": "turn-xyz",
+		"runtime_cost": map[string]interface{}{
+			"total_cost_usd": 0.02,
+		},
+	})
+
+	resp := server.sessionToResponse(sess)
+	if len(resp.Messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(resp.Messages))
+	}
+	md := resp.Messages[0].Metadata
+	if md["runtime_turn_id"] != "turn-xyz" {
+		t.Fatalf("runtime_turn_id = %#v", md["runtime_turn_id"])
+	}
+	cost, ok := md["runtime_cost"].(map[string]interface{})
+	if !ok || cost["total_cost_usd"] != 0.02 {
+		t.Fatalf("runtime_cost = %#v", md["runtime_cost"])
+	}
+}

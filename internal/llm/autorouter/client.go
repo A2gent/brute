@@ -120,7 +120,7 @@ func validateAutoRouterProvider(provider config.Provider) error {
 	if (config.IsFallbackAggregateRef(routerProvider) || routerProviderType == config.ProviderFallback) && strings.TrimSpace(provider.RouterModel) != "" {
 		return fmt.Errorf("router_model is not allowed when router_provider is a fallback chain")
 	}
-	if !config.IsFallbackAggregateRef(routerProvider) && config.GetProviderDefinition(routerProviderType) == nil {
+	if !config.IsFallbackAggregateRef(routerProvider) && config.GetProviderDefinitionForRef(routerProvider) == nil {
 		return fmt.Errorf("router_provider is unsupported: %s", routerProvider)
 	}
 
@@ -137,7 +137,7 @@ func validateAutoRouterProvider(provider config.Provider) error {
 		if (config.IsFallbackAggregateRef(targetProvider) || targetType == config.ProviderFallback) && strings.TrimSpace(rule.Model) != "" {
 			return fmt.Errorf("routing rule %q targets a fallback chain and must not set model", rule.Match)
 		}
-		if !config.IsFallbackAggregateRef(targetProvider) && config.GetProviderDefinition(targetType) == nil {
+		if !config.IsFallbackAggregateRef(targetProvider) && config.GetProviderDefinitionForRef(targetProvider) == nil {
 			return fmt.Errorf("routing rule %q has unsupported provider: %s", rule.Match, rule.Provider)
 		}
 	}

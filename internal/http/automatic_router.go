@@ -74,7 +74,7 @@ func (s *Server) normalizeAndValidateRouterRules(raw []config.RouterRule) ([]con
 			continue
 		}
 
-		def := config.GetProviderDefinition(ptype)
+		def := config.GetProviderDefinitionForRef(rule.Provider)
 		if def == nil {
 			return nil, fmt.Errorf("routing rule %q has unsupported provider: %s", rule.Match, rule.Provider)
 		}
@@ -109,7 +109,7 @@ func (s *Server) validateAutoRouterProvider(provider config.Provider) error {
 			return fmt.Errorf("invalid router_provider: %w", err)
 		}
 	} else {
-		def := config.GetProviderDefinition(routerProviderType)
+		def := config.GetProviderDefinitionForRef(routerProvider)
 		if def == nil {
 			return fmt.Errorf("router_provider is unsupported: %s", routerProvider)
 		}

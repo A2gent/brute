@@ -415,16 +415,54 @@ func (c *Config) Save(path string) error {
 		return err
 	}
 
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	// Preserve the last on-disk configuration before replacing it. This
+	// makes accidental sparse saves recoverable and avoids exposing secrets via
+	// permissive default file modes.
+	previous, err := os.ReadFile(path)
+	if err == nil {
+		if err := writePrivateFileAtomically(path+".bak", previous); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	return writePrivateFileAtomically(path, data)
+}
+
+func writePrivateFileAtomically(path string, data []byte) (retErr error) {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return err
+	tmpPath := tmp.Name()
+	defer func() {
+		if retErr != nil {
+			_ = tmp.Close()
+		}
+		_ = os.Remove(tmpPath)
+	}()
+
+	if err := tmp.Chmod(0600); err != nil {
+		retErr = err
+		return retErr
 	}
-	if err := f.Close(); err != nil {
-		return err
+	if _, err := tmp.Write(data); err != nil {
+		retErr = err
+		return retErr
 	}
-	return os.Chmod(path, 0600)
+	if err := tmp.Sync(); err != nil {
+		retErr = err
+		return retErr
+	}
+	if err := tmp.Close(); err != nil {
+		retErr = err
+		return retErr
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		retErr = err
+		return retErr
+	}
+	return nil
 }

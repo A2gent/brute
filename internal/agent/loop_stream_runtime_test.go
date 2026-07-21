@@ -57,13 +57,14 @@ func TestCallLLMForwardsStructuredRuntimeEventsUnchanged(t *testing.T) {
 	ag := New(Config{}, mock, nil, nil)
 
 	var got []Event
-	_, err := ag.callLLM(context.Background(), &llm.ChatRequest{}, 3, func(ev Event) {
+	_, _, err := ag.callLLM(context.Background(), &llm.ChatRequest{}, 3, func(ev Event) {
 		got = append(got, ev)
 	})
 	if err != nil {
 		t.Fatalf("callLLM returned error: %v", err)
 	}
 
+	var turnID string
 	wantRuntime := []llm.StreamEventType{
 		llm.StreamEventReasoningDelta,
 		llm.StreamEventToolStarted,
@@ -81,12 +82,28 @@ func TestCallLLMForwardsStructuredRuntimeEventsUnchanged(t *testing.T) {
 			if ev.Step != 3 || ev.Delta != "done" {
 				t.Fatalf("assistant delta = step:%d delta:%q, want step:3 delta:done", ev.Step, ev.Delta)
 			}
+			if ev.TurnID == "" {
+				t.Fatal("assistant delta missing turn_id")
+			}
+			if turnID == "" {
+				turnID = ev.TurnID
+			} else if ev.TurnID != turnID {
+				t.Fatalf("assistant delta turn_id = %q, want %q", ev.TurnID, turnID)
+			}
 		case EventLLMRuntime:
 			if runtimeIdx >= len(wantRuntime) {
 				t.Fatalf("unexpected extra runtime event: %+v", ev.Runtime)
 			}
 			if ev.Step != 3 {
 				t.Fatalf("runtime event step = %d, want 3", ev.Step)
+			}
+			if ev.TurnID == "" {
+				t.Fatal("runtime event missing turn_id")
+			}
+			if turnID == "" {
+				turnID = ev.TurnID
+			} else if ev.TurnID != turnID {
+				t.Fatalf("runtime event turn_id = %q, want %q", ev.TurnID, turnID)
 			}
 			if ev.Runtime == nil {
 				t.Fatal("runtime event missing payload")
@@ -104,6 +121,79 @@ func TestCallLLMForwardsStructuredRuntimeEventsUnchanged(t *testing.T) {
 	}
 	if runtimeIdx != len(wantRuntime) {
 		t.Fatalf("got %d runtime events, want %d", runtimeIdx, len(wantRuntime))
+	}
+	if turnID == "" {
+		t.Fatal("expected non-empty shared turn_id")
+	}
+}
+
+func TestCallLLMAccumulatorObservesWithoutOnEvent(t *testing.T) {
+	mock := &mockStreamingLLM{
+		streamEvents: []llm.StreamEvent{
+			{Type: llm.StreamEventCost, TotalCostUSD: 0.01, DurationMS: 100, DurationAPIMS: 90, NumTurns: 1},
+			{Type: llm.StreamEventContentDelta, ContentDelta: "done"},
+		},
+		response: &llm.ChatResponse{Content: "done"},
+	}
+	ag := New(Config{}, mock, nil, nil)
+
+	_, acc, err := ag.callLLM(context.Background(), &llm.ChatRequest{}, 1, nil)
+	if err != nil {
+		t.Fatalf("callLLM returned error: %v", err)
+	}
+	md := acc.metadata()
+	if md["runtime_turn_id"] == "" {
+		t.Fatalf("runtime_turn_id missing: %#v", md)
+	}
+	cost, ok := md["runtime_cost"].(map[string]interface{})
+	if !ok || cost["total_cost_usd"] != 0.01 {
+		t.Fatalf("runtime_cost = %#v", md["runtime_cost"])
+	}
+}
+
+func TestRunWithEventsPersistsRuntimeMetadataOnAssistantMessage(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	sm := session.NewManager(store)
+	sess, err := sm.Create("test-agent")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	sess.AddUserMessage("hello")
+
+	mock := &mockStreamingLLM{
+		streamEvents: []llm.StreamEvent{
+			{Type: llm.StreamEventCost, TotalCostUSD: 0.02, DurationMS: 200, DurationAPIMS: 180, NumTurns: 1},
+			{Type: llm.StreamEventContentDelta, ContentDelta: "Hi there"},
+		},
+		response: &llm.ChatResponse{Content: "Hi there"},
+	}
+	ag := New(Config{MaxSteps: 3}, mock, tools.NewManager(t.TempDir()), sm)
+
+	_, _, err = ag.RunWithEvents(context.Background(), sess, "hello", nil)
+	if err != nil {
+		t.Fatalf("RunWithEvents returned error: %v", err)
+	}
+	if len(sess.Messages) < 2 {
+		t.Fatalf("expected assistant message, got %#v", sess.Messages)
+	}
+	last := sess.Messages[len(sess.Messages)-1]
+	if last.Role != "assistant" || last.Content != "Hi there" {
+		t.Fatalf("assistant message = %#v", last)
+	}
+	if last.Metadata["runtime_turn_id"] == "" {
+		t.Fatalf("missing runtime_turn_id metadata: %#v", last.Metadata)
+	}
+	if last.Metadata["llm_duration_ms"] == nil {
+		t.Fatalf("missing timing metadata: %#v", last.Metadata)
+	}
+	cost, ok := last.Metadata["runtime_cost"].(map[string]interface{})
+	if !ok || cost["total_cost_usd"] != 0.02 {
+		t.Fatalf("runtime_cost = %#v", last.Metadata["runtime_cost"])
 	}
 }
 

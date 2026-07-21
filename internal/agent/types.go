@@ -18,6 +18,7 @@ type Config struct {
 	UseProviderSession       bool
 	ProviderSessionIdentity  string
 	CompressToolResults      bool
+	PersistRuntimeReasoning  bool
 }
 
 // EventType is emitted while the agent executes a run.
@@ -96,6 +97,7 @@ type compactionConfig struct {
 // Event describes a streaming update from the agent.
 type Event struct {
 	Type         EventType
+	TurnID       string
 	Step         int
 	Delta        string
 	ToolCalls    []ToolCallEvent // Populated for EventToolExecuting

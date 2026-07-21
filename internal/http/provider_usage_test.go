@@ -227,6 +227,40 @@ func TestProviderUsageStatusForAnthropicReturnsCachedRateLimits(t *testing.T) {
 	}
 }
 
+func TestProviderUsageEndpointSupportsConfiguredCustomClaudeRef(t *testing.T) {
+	server, cleanup := newRequestLoggingTestServer(t)
+	defer cleanup()
+	customRef := "anthropic:work"
+	claudePath := filepath.Join(t.TempDir(), "claude-work")
+	if err := os.WriteFile(claudePath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	server.config.Providers[string(config.ProviderAnthropic)] = config.Provider{BinaryPath: filepath.Join(t.TempDir(), "missing-claude")}
+	server.config.Providers[customRef] = config.Provider{Name: customRef, BinaryPath: claudePath}
+	cachePath := filepath.Join(t.TempDir(), "claude-rate-limits.json")
+	writeAnthropicRateLimitCache(t, cachePath, `{
+		"rate_limits": {
+			"five_hour": {"used_percentage": 37, "resets_at": 4102444800}
+		}
+	}`, time.Now())
+	t.Setenv(claudeRateLimitsCachePathEnv, cachePath)
+
+	req := httptest.NewRequest(http.MethodGet, "/providers/anthropic%3Awork/usage", nil)
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("custom Claude usage status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var usage ProviderUsageResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &usage); err != nil {
+		t.Fatalf("failed to parse custom Claude usage body: %v", err)
+	}
+	if usage.Provider != customRef || usage.Status != providerUsageStatusAvailable {
+		t.Fatalf("unexpected custom Claude usage: %+v", usage)
+	}
+}
+
 func TestProviderUsageStatusForAnthropicReturnsUnavailableWhenCacheMissing(t *testing.T) {
 	server := newAnthropicUsageTestServer(t)
 	cachePath := filepath.Join(t.TempDir(), "missing-rate-limits.json")
@@ -318,6 +352,46 @@ func TestHealthReturnsOfflineForDockerSafeAnthropicLimitReached(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "anthropic usage limit reached") || !strings.Contains(rec.Body.String(), "provider_usage") {
 		t.Fatalf("expected usage details in health body: %s", rec.Body.String())
+	}
+}
+
+func TestHealthReturnsOfflineForDockerSafeCustomClaudeLimitReached(t *testing.T) {
+	server, cleanup := newRequestLoggingTestServer(t)
+	defer cleanup()
+	customRef := "anthropic:work"
+	claudePath := filepath.Join(t.TempDir(), "claude-work")
+	if err := os.WriteFile(claudePath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	server.config.ActiveProvider = customRef
+	server.config.Providers[string(config.ProviderAnthropic)] = config.Provider{BinaryPath: filepath.Join(t.TempDir(), "missing-claude")}
+	server.config.Providers[customRef] = config.Provider{Name: customRef, BinaryPath: claudePath}
+	cachePath := filepath.Join(t.TempDir(), "claude-rate-limits.json")
+	writeAnthropicRateLimitCache(t, cachePath, `{
+		"rate_limits": {
+			"five_hour": {"used_percentage": 100, "resets_at": 4102444800}
+		}
+	}`, time.Now())
+	t.Setenv("A2GENT_PARENT_PROXY_URL", "http://parent.example/v1")
+	t.Setenv(claudeRateLimitsCachePathEnv, cachePath)
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	server.handleHealth(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("custom Claude health status = %d, want %d; body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to parse custom Claude health body: %v", err)
+	}
+	if body["provider"] != customRef || body["reason"] != "anthropic:work_usage_limit_reached" {
+		t.Fatalf("unexpected custom Claude health body: %+v", body)
+	}
+	usage, ok := body["provider_usage"].(map[string]interface{})
+	if !ok || usage["provider"] != customRef {
+		t.Fatalf("health did not preserve custom Claude usage ref: %+v", body)
 	}
 }
 

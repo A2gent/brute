@@ -2,6 +2,8 @@ package http
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -55,5 +57,39 @@ func TestRouterDecisionStreamEventIncludesVisibleDecision(t *testing.T) {
 	}
 	if event.RoutedRule != "coding, mid complexity" || event.RoutedReason == "" {
 		t.Fatalf("router event omitted decision context: %#v", event)
+	}
+}
+
+func TestAutoRouterAcceptsCustomClaudeAsRouterProviderAndRule(t *testing.T) {
+	claudePath := filepath.Join(t.TempDir(), "claude-work")
+	if err := os.WriteFile(claudePath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.DefaultConfig()
+	customRef := "anthropic:work"
+	cfg.Providers[customRef] = config.Provider{
+		Name:       customRef,
+		BinaryPath: claudePath,
+		Model:      "claude-sonnet-4-6",
+	}
+	server := &Server{config: cfg}
+	autoCfg := config.Provider{
+		RouterProvider: customRef,
+		RouterModel:    "claude-sonnet-4-6",
+		RouterRules: []config.RouterRule{
+			{Match: "coding", Provider: customRef},
+		},
+	}
+
+	if err := server.validateAutoRouterProvider(autoCfg); err != nil {
+		t.Fatalf("validateAutoRouterProvider(custom Claude): %v", err)
+	}
+	rules, err := server.normalizeAndValidateRouterRules(autoCfg.RouterRules)
+	if err != nil {
+		t.Fatalf("normalizeAndValidateRouterRules(custom Claude): %v", err)
+	}
+	if len(rules) != 1 || rules[0].Provider != customRef || rules[0].Model != "claude-sonnet-4-6" {
+		t.Fatalf("unexpected normalized custom Claude rule: %+v", rules)
 	}
 }

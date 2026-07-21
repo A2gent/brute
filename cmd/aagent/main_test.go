@@ -30,6 +30,37 @@ func TestInitLLMClientUsesClaudeCLIForAnthropicTUI(t *testing.T) {
 	}
 }
 
+func TestInitLLMClientUsesCustomClaudeRefInFallback(t *testing.T) {
+	cfg := config.DefaultConfig()
+	customRef := "anthropic:work"
+	cfg.ActiveProvider = string(config.ProviderFallback)
+	cfg.WorkDir = t.TempDir()
+	cfg.Providers[customRef] = config.Provider{
+		Name:       customRef,
+		Model:      "claude-sonnet-4-6",
+		BinaryPath: filepath.Join(t.TempDir(), "claude-work"),
+	}
+	cfg.Providers[string(config.ProviderLMStudio)] = config.Provider{
+		Name:    string(config.ProviderLMStudio),
+		Model:   "local-model",
+		BaseURL: "http://127.0.0.1:1/v1",
+	}
+	cfg.Providers[string(config.ProviderFallback)] = config.Provider{
+		FallbackChainNodes: []config.FallbackChainNode{
+			{Provider: customRef, Model: "claude-sonnet-4-6"},
+			{Provider: string(config.ProviderLMStudio), Model: "local-model"},
+		},
+	}
+
+	client, err := initLLMClient(cfg)
+	if err != nil {
+		t.Fatalf("initLLMClient(fallback with custom Claude): %v", err)
+	}
+	if client == nil {
+		t.Fatal("initLLMClient returned nil client")
+	}
+}
+
 func TestInitLLMClientUsesOpenAICodexOAuth(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 

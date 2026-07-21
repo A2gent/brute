@@ -44,13 +44,13 @@ type claudeRateLimitWindow struct {
 }
 
 func (s *Server) handleProviderUsage(w http.ResponseWriter, r *http.Request) {
-	providerType := config.ProviderType(config.NormalizeProviderRef(chi.URLParam(r, "providerType")))
-	if config.GetProviderDefinition(providerType) == nil {
+	providerRef := config.NormalizeProviderRef(chi.URLParam(r, "providerType"))
+	if config.GetProviderDefinitionForRef(providerRef) == nil {
 		s.errorResponse(w, http.StatusNotFound, "Unknown provider")
 		return
 	}
 
-	usage := s.providerUsageStatus(r.Context(), providerType)
+	usage := s.providerUsageStatus(r.Context(), config.ProviderType(providerRef))
 	s.jsonResponse(w, http.StatusOK, usage)
 }
 
@@ -59,6 +59,10 @@ func (s *Server) providerUsageStatus(ctx context.Context, providerType config.Pr
 		Provider:    string(providerType),
 		CheckedAt:   time.Now().UTC().Format(time.RFC3339),
 		Refreshable: true,
+	}
+
+	if config.IsClaudeProviderRef(string(providerType)) {
+		return s.anthropicUsageStatus(providerType)
 	}
 
 	switch providerType {
@@ -82,8 +86,6 @@ func (s *Server) providerUsageStatus(ctx context.Context, providerType config.Pr
 			return response
 		}
 		return usage
-	case config.ProviderAnthropic:
-		return s.anthropicUsageStatus()
 	case config.ProviderCursor:
 		usage, err := s.cursorUsageStatus(ctx)
 		if err != nil {
@@ -101,15 +103,15 @@ func (s *Server) providerUsageStatus(ctx context.Context, providerType config.Pr
 	}
 }
 
-func (s *Server) anthropicUsageStatus() ProviderUsageResponse {
+func (s *Server) anthropicUsageStatus(providerType config.ProviderType) ProviderUsageResponse {
 	response := ProviderUsageResponse{
-		Provider:    string(config.ProviderAnthropic),
+		Provider:    string(providerType),
 		Source:      anthropicUsageSource,
 		CheckedAt:   time.Now().UTC().Format(time.RFC3339),
 		Refreshable: true,
 	}
 
-	if !s.providerConfiguredForUse(config.ProviderAnthropic) {
+	if !s.providerConfiguredForUse(providerType) {
 		response.Status = providerUsageStatusNotConfigured
 		response.UsageLeftText = "Usage left unavailable — Claude Code CLI is not available. Install Claude Code or set AAGENT_CLAUDE_CLI_PATH."
 		return response
@@ -121,6 +123,7 @@ func (s *Server) anthropicUsageStatus() ProviderUsageResponse {
 		response.UsageLeftText = err.Error()
 		return response
 	}
+	status.Provider = string(providerType)
 	return status
 }
 

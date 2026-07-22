@@ -100,6 +100,12 @@ func validateIntegration(integration storage.Integration) error {
 			return fmt.Errorf("webhook url must start with http:// or https://")
 		}
 	}
+	if integration.Provider == "comfyui" {
+		baseURL := strings.ToLower(strings.TrimSpace(integration.Config["base_url"]))
+		if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
+			return fmt.Errorf("comfyui base_url must start with http:// or https://")
+		}
+	}
 
 	return nil
 }
@@ -183,6 +189,10 @@ func defaultIntegrationName(provider string) string {
 		return "Exa"
 	case "tavily":
 		return "Tavily"
+	case "leonardo":
+		return "Leonardo AI"
+	case "comfyui":
+		return "ComfyUI"
 	default:
 		return provider
 	}

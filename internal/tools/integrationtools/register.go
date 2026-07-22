@@ -1,6 +1,8 @@
 package integrationtools
 
 import (
+	"path/filepath"
+
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/speechcache"
 	"github.com/A2gent/brute/internal/storage"
@@ -33,4 +35,6 @@ func Register(manager *tools.Manager, store storage.Store, clipStore *speechcach
 	manager.Register(NewYoutubeTranscriptTool())
 	manager.Register(NewBrowserChromeTool(manager.WorkDir()))
 	manager.Register(NewLeonardoGenerateImageTool(store, sessionManager))
+	manager.Register(NewComfyUIGenerateImageTool(store, filepath.Join(manager.WorkDir(), "generated", "comfyui")))
+	manager.Register(NewComfyUIRunWorkflowTool(store, manager.WorkDir(), filepath.Join(manager.WorkDir(), "generated", "comfyui")))
 }

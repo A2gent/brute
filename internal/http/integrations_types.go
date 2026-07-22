@@ -24,6 +24,7 @@ var supportedIntegrationProviders = map[string]struct{}{
 	"exa":             {},
 	"tavily":          {},
 	"leonardo":        {},
+	"comfyui":         {},
 	"youtube":         {},
 	"a2_registry":     {},
 }
@@ -51,6 +52,7 @@ var requiredConfigFields = map[string][]string{
 	"exa":             {"api_key"},
 	"tavily":          {"api_key"},
 	"leonardo":        {"api_key"},
+	"comfyui":         {"base_url"},
 	"youtube":         {},
 	"a2_registry":     {"api_key"},
 }

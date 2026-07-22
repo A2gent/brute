@@ -24,6 +24,7 @@ func isManagedAppSettingKey(key string) bool {
 		"AAGENT_SCHEDULE_TO_CRON_PROMPT_TEMPLATE":             {},
 		"AAGENT_SCHEDULE_TO_CRON_SYSTEM_PROMPT":               {},
 		"AAGENT_SESSIONS_FOLDER":                              {},
+		"AAGENT_SKILLS_FOLDER":                                {},
 		"AAGENT_SESSION_SUMMARY_PROMPT_TEMPLATE":              {},
 		"AAGENT_SYSTEM_PROMPT_APPEND":                         {},
 		"AAGENT_WORKFLOW_BARE_STATUS_RETRY_PROMPT":            {},

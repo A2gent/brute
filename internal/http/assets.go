@@ -80,8 +80,12 @@ func (s *Server) handleGetGeneratedAsset(w http.ResponseWriter, r *http.Request)
 	}
 	resolvedPath, err := filepath.EvalSymlinks(absPath)
 	if err != nil {
-		s.errorResponse(w, http.StatusNotFound, "generated asset not found")
-		return
+		var ok bool
+		resolvedPath, ok = s.resolveDockerWorkspaceGeneratedAsset(absPath)
+		if !ok {
+			s.errorResponse(w, http.StatusNotFound, "generated asset not found")
+			return
+		}
 	}
 	if !s.generatedAssetPathAllowed(resolvedPath) {
 		s.errorResponse(w, http.StatusForbidden, "generated asset path is outside the generated files folder")
@@ -118,7 +122,7 @@ func (s *Server) handleGetGeneratedAsset(w http.ResponseWriter, r *http.Request)
 	http.ServeFile(w, r, resolvedPath)
 }
 
-func (s *Server) generatedAssetPathAllowed(candidate string) bool {
+func (s *Server) generatedAssetRoots() []string {
 	roots := []string{filepath.Join(strings.TrimSpace(s.config.DataPath), "generated")}
 	if workDir := strings.TrimSpace(s.config.WorkDir); workDir != "" {
 		roots = append(roots, filepath.Join(workDir, "generated"))
@@ -132,9 +136,17 @@ func (s *Server) generatedAssetPathAllowed(candidate string) bool {
 			}
 		}
 	}
-	for _, root := range roots {
+	return roots
+}
+
+func (s *Server) generatedAssetPathAllowed(candidate string) bool {
+	for _, root := range s.generatedAssetRoots() {
 		absRoot, err := filepath.Abs(root)
-		if err == nil && pathWithinRoot(absRoot, candidate) {
+		if err != nil {
+			continue
+		}
+		resolvedRoot, err := filepath.EvalSymlinks(absRoot)
+		if err == nil && pathWithinRoot(resolvedRoot, candidate) {
 			return true
 		}
 	}
@@ -147,4 +159,36 @@ func pathWithinRoot(root, candidate string) bool {
 		return false
 	}
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+func (s *Server) resolveDockerWorkspaceGeneratedAsset(candidate string) (string, bool) {
+	workspaceRoot := filepath.Clean(filepath.Join(string(filepath.Separator), "workspace", "generated"))
+	rel, err := filepath.Rel(workspaceRoot, filepath.Clean(candidate))
+	if err != nil || rel == "." || rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+
+	matches := map[string]struct{}{}
+	for _, root := range s.generatedAssetRoots() {
+		absRoot, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		resolvedRoot, err := filepath.EvalSymlinks(absRoot)
+		if err != nil {
+			continue
+		}
+		resolvedCandidate, err := filepath.EvalSymlinks(filepath.Join(resolvedRoot, rel))
+		if err != nil || !pathWithinRoot(resolvedRoot, resolvedCandidate) {
+			continue
+		}
+		matches[resolvedCandidate] = struct{}{}
+	}
+	if len(matches) != 1 {
+		return "", false
+	}
+	for match := range matches {
+		return match, true
+	}
+	return "", false
 }

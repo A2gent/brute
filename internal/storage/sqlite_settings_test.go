@@ -9,8 +9,9 @@ func TestSaveSettingsSeparatesManagedSettingsFromCustomEnv(t *testing.T) {
 	}
 	defer store.Close()
 	if err := store.SaveSettingsAndCustomEnv(map[string]string{
-		"A2A_REGISTRY_URL":  "https://registry.example",
-		"CUSTOM_TOOL_TOKEN": "secret",
+		"A2A_REGISTRY_URL":     "https://registry.example",
+		"AAGENT_SKILLS_FOLDER": "/tmp/skills",
+		"CUSTOM_TOOL_TOKEN":    "secret",
 	}, map[string]string{"EXPLICIT_CUSTOM": "ok"}); err != nil {
 		t.Fatalf("SaveSettingsAndCustomEnv: %v", err)
 	}
@@ -18,7 +19,7 @@ func TestSaveSettingsSeparatesManagedSettingsFromCustomEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSettings: %v", err)
 	}
-	if settings["A2A_REGISTRY_URL"] != "https://registry.example" {
+	if settings["A2A_REGISTRY_URL"] != "https://registry.example" || settings["AAGENT_SKILLS_FOLDER"] != "/tmp/skills" {
 		t.Fatalf("managed setting missing: %#v", settings)
 	}
 	if _, ok := settings["CUSTOM_TOOL_TOKEN"]; ok {

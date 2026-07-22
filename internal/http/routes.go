@@ -222,6 +222,7 @@ func (s *Server) registerAssetRoutes(r chi.Router) {
 	// Local assets exposed for session UI rendering.
 	r.Route("/assets", func(r chi.Router) {
 		r.Get("/images", s.handleGetImageAsset)
+		r.Get("/generated", s.handleGetGeneratedAsset)
 	})
 }
 

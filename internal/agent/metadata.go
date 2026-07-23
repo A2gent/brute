@@ -102,6 +102,28 @@ func metadataFloat(metadata map[string]interface{}, key string) float64 {
 	}
 }
 
+func recordLLMRequestMetadata(sess *session.Session, requestAt time.Time, provider, model string, usage llm.TokenUsage) {
+	if sess == nil {
+		return
+	}
+	provider = strings.TrimSpace(provider)
+	model = strings.TrimSpace(model)
+	if sess.Metadata != nil {
+		// Fallback traces identify the provider that actually served the response.
+		if active, ok := sess.Metadata["fallback_active_provider"].(string); ok && strings.TrimSpace(active) != "" {
+			provider = strings.TrimSpace(active)
+			if activeModel, ok := sess.Metadata["fallback_active_model"].(string); ok && strings.TrimSpace(activeModel) != "" {
+				model = strings.TrimSpace(activeModel)
+			}
+		}
+	}
+	metadataSetString(sess, metadataLastLLMRequestAt, requestAt.UTC().Format(time.RFC3339Nano))
+	metadataSetString(sess, metadataLastLLMProvider, provider)
+	metadataSetString(sess, metadataLastLLMModel, model)
+	metadataSetFloat(sess, metadataLastLLMInputTokens, float64(usage.InputTokens))
+	metadataSetFloat(sess, metadataLastLLMCachedInputTokens, float64(usage.CachedInputTokens))
+}
+
 func metadataSetFloat(sess *session.Session, key string, value float64) {
 	if sess.Metadata == nil {
 		sess.Metadata = map[string]interface{}{}

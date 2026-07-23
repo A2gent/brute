@@ -128,6 +128,7 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		totalUsage.CachedInputTokens += response.Usage.CachedInputTokens
 		totalUsage.ReasoningTokens += response.Usage.ReasoningTokens
 		a.addTokenUsageMetadata(sess, response.Usage)
+		recordLLMRequestMetadata(sess, llmStart, a.config.Provider, a.config.Model, response.Usage)
 
 		// Check if we have tool calls
 		if len(response.ToolCalls) == 0 {
@@ -340,6 +341,7 @@ func (a *Agent) finalizeAfterStepLimit(ctx context.Context, sess *session.Sessio
 
 	usage := response.Usage
 	a.addTokenUsageMetadata(sess, usage)
+	recordLLMRequestMetadata(sess, llmStart, a.config.Provider, a.config.Model, usage)
 	metadata := mergeRuntimeMetadata(
 		stepLimitFailureMetadata(a.config.MaxSteps, llmStart, llmCompleted, a.config.Provider, a.config.Model, map[string]interface{}{
 			"finalized_after_step_limit": true,

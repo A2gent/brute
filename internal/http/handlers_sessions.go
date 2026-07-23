@@ -72,6 +72,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			OutputTokens:       outputTokens,
 			RunDurationSeconds: sessionRunDurationSeconds(sess.CreatedAt, sess.UpdatedAt, string(sess.Status)),
 			TaskProgress:       sess.TaskProgress,
+			PromptCache:        sessionPromptCache(sess),
 			CreatedAt:          sess.CreatedAt,
 			UpdatedAt:          sess.UpdatedAt,
 			A2AInbound:         isInbound,

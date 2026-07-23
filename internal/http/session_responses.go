@@ -82,6 +82,7 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		RunDurationSeconds:     sessionRunDurationSeconds(sess.CreatedAt, sess.UpdatedAt, string(sess.Status)),
 		TaskProgress:           sess.TaskProgress,
 		ProviderFailures:       sessionProviderFailures(sess.Metadata),
+		PromptCache:            sessionPromptCache(sess),
 		CreatedAt:              sess.CreatedAt,
 		UpdatedAt:              sess.UpdatedAt,
 		Messages:               s.messagesToResponse(sess.Messages),

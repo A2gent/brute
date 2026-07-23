@@ -41,6 +41,17 @@ type CreateSessionResponse struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type PromptCachePayload struct {
+	Provider          string    `json:"provider"`
+	Model             string    `json:"model,omitempty"`
+	LastRequestAt     time.Time `json:"last_request_at"`
+	ExpiresAt         time.Time `json:"expires_at"`
+	TTLSeconds        int       `json:"ttl_seconds"`
+	CachedInputTokens int       `json:"cached_input_tokens"`
+	HitObserved       bool      `json:"hit_observed"`
+	Estimated         bool      `json:"estimated"`
+}
+
 // SessionResponse represents a session with its messages
 type SessionResponse struct {
 	ID                     string                       `json:"id"`
@@ -71,6 +82,7 @@ type SessionResponse struct {
 	RunDurationSeconds     int64                        `json:"run_duration_seconds"`
 	TaskProgress           string                       `json:"task_progress,omitempty"`
 	ProviderFailures       []ProviderFailurePayload     `json:"provider_failures,omitempty"`
+	PromptCache            *PromptCachePayload          `json:"prompt_cache,omitempty"`
 	CreatedAt              time.Time                    `json:"created_at"`
 	UpdatedAt              time.Time                    `json:"updated_at"`
 	Messages               []MessageResponse            `json:"messages"`
@@ -191,6 +203,7 @@ type ChatStreamEvent struct {
 	RoutedReason            string                       `json:"routed_reason,omitempty"`
 	FallbackActiveProvider  string                       `json:"fallback_active_provider,omitempty"`
 	FallbackActiveModel     string                       `json:"fallback_active_model,omitempty"`
+	PromptCache             *PromptCachePayload          `json:"prompt_cache,omitempty"`
 	Step                    int                          `json:"step,omitempty"`
 	TurnID                  string                       `json:"turn_id,omitempty"`
 	RuntimeTool             *StreamRuntimeToolEvent      `json:"runtime_tool,omitempty"`
@@ -313,6 +326,7 @@ type SessionListItem struct {
 	OutputTokens       int                    `json:"output_tokens"`
 	RunDurationSeconds int64                  `json:"run_duration_seconds"`
 	TaskProgress       string                 `json:"task_progress,omitempty"`
+	PromptCache        *PromptCachePayload    `json:"prompt_cache,omitempty"`
 	CreatedAt          time.Time              `json:"created_at"`
 	UpdatedAt          time.Time              `json:"updated_at"`
 	Metadata           map[string]interface{} `json:"metadata,omitempty"`

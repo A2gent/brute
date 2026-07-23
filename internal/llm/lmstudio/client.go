@@ -74,6 +74,7 @@ type openAIRequest struct {
 	Temperature         *float64        `json:"temperature,omitempty"`
 	Tools               []openAITool    `json:"tools,omitempty"`
 	Stream              bool            `json:"stream,omitempty"`
+	PromptCacheKey      string          `json:"prompt_cache_key,omitempty"`
 }
 
 // modelRequiresMaxCompletionTokens reports whether an OpenAI model rejects the
@@ -159,9 +160,12 @@ type openAIResponse struct {
 		Code    any    `json:"code"`
 	} `json:"error,omitempty"`
 	Usage struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
+		PromptTokens        int `json:"prompt_tokens"`
+		CompletionTokens    int `json:"completion_tokens"`
+		TotalTokens         int `json:"total_tokens"`
+		PromptTokensDetails struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
 	} `json:"usage"`
 }
 
@@ -195,8 +199,11 @@ type openAIStreamResponse struct {
 		Code    any    `json:"code"`
 	} `json:"error,omitempty"`
 	Usage struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
+		PromptTokens        int `json:"prompt_tokens"`
+		CompletionTokens    int `json:"completion_tokens"`
+		PromptTokensDetails struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
 	} `json:"usage"`
 }
 
@@ -299,6 +306,12 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 		Messages: messages,
 		Tools:    tools,
 	}
+	if c.providerName() == "OpenAI" {
+		reqBody.PromptCacheKey = strings.TrimSpace(request.PromptCacheKey)
+		if reqBody.PromptCacheKey == "" {
+			reqBody.PromptCacheKey = strings.TrimSpace(request.SessionID)
+		}
+	}
 	applyTokenLimit(&reqBody, model, maxTokens, request.Temperature)
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -370,8 +383,9 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 		Images:     responseImages,
 		StopReason: choice.FinishReason,
 		Usage: llm.TokenUsage{
-			InputTokens:  oaiResp.Usage.PromptTokens,
-			OutputTokens: oaiResp.Usage.CompletionTokens,
+			InputTokens:       oaiResp.Usage.PromptTokens,
+			OutputTokens:      oaiResp.Usage.CompletionTokens,
+			CachedInputTokens: oaiResp.Usage.PromptTokensDetails.CachedTokens,
 		},
 	}
 
@@ -447,6 +461,12 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		Tools:    tools,
 		Stream:   true,
 	}
+	if c.providerName() == "OpenAI" {
+		reqBody.PromptCacheKey = strings.TrimSpace(request.PromptCacheKey)
+		if reqBody.PromptCacheKey == "" {
+			reqBody.PromptCacheKey = strings.TrimSpace(request.SessionID)
+		}
+	}
 	applyTokenLimit(&reqBody, model, maxTokens, request.Temperature)
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -504,8 +524,9 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 
 		if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
 			result.Usage = llm.TokenUsage{
-				InputTokens:  chunk.Usage.PromptTokens,
-				OutputTokens: chunk.Usage.CompletionTokens,
+				InputTokens:       chunk.Usage.PromptTokens,
+				OutputTokens:      chunk.Usage.CompletionTokens,
+				CachedInputTokens: chunk.Usage.PromptTokensDetails.CachedTokens,
 			}
 			if onEvent != nil {
 				if err := onEvent(llm.StreamEvent{Type: llm.StreamEventUsage, Usage: result.Usage}); err != nil {

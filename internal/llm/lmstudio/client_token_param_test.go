@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -89,4 +90,54 @@ func TestModelRequiresMaxCompletionTokensCaseInsensitive(t *testing.T) {
 	if !modelRequiresMaxCompletionTokens(strings.ToUpper("gpt-5.5")) {
 		t.Errorf("expected case-insensitive match for GPT-5.5")
 	}
+}
+
+func TestOpenAIChatUsesSessionCacheKeyAndReadsCachedTokens(t *testing.T) {
+	var captured map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"role": "assistant", "content": "ok"}}},
+			"usage": map[string]any{
+				"prompt_tokens":         2048,
+				"completion_tokens":     10,
+				"prompt_tokens_details": map[string]any{"cached_tokens": 1024},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient("sk-test", "gpt-5.5", server.URL)
+	client.baseURL = server.URL
+	// providerName detects OpenAI from the URL in production; use the official hostname
+	// only for cache-key detection while retaining the local test transport.
+	client.httpClient.Transport = rewriteHostTransport{target: server.URL, base: http.DefaultTransport}
+	client.baseURL = "https://api.openai.com/v1"
+	resp, err := client.Chat(context.Background(), &llm.ChatRequest{
+		Model: "gpt-5.5", SessionID: "session-cache-key", Messages: []llm.Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if got := captured["prompt_cache_key"]; got != "session-cache-key" {
+		t.Fatalf("prompt_cache_key = %#v", got)
+	}
+	if got := resp.Usage.CachedInputTokens; got != 1024 {
+		t.Fatalf("cached input tokens = %d", got)
+	}
+}
+
+type rewriteHostTransport struct {
+	target string
+	base   http.RoundTripper
+}
+
+func (t rewriteHostTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	target, _ := url.Parse(t.target)
+	clone := req.Clone(req.Context())
+	clone.URL.Scheme = target.Scheme
+	clone.URL.Host = target.Host
+	return t.base.RoundTrip(clone)
 }

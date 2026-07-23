@@ -76,6 +76,7 @@ func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, 
 
 	logging.Info("Context compaction starting: session=%s messages_to_summarize=%d", sess.ID, len(messagesToSummarize))
 
+	llmStartedAt := time.Now()
 	response, err := a.llmClient.Chat(ctx, request)
 	if err != nil {
 		logging.Warn("Context compaction LLM error: %v", err)
@@ -88,6 +89,7 @@ func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, 
 	logging.Info("Context compaction LLM response: content_len=%d usage=%+v", len(response.Content), response.Usage)
 
 	a.addTokenUsageMetadata(sess, response.Usage)
+	recordLLMRequestMetadata(sess, llmStartedAt, a.config.Provider, a.config.Model, response.Usage)
 	metadataSetFloat(sess, metadataCurrentContextTokens, 0)
 
 	compactionCount := int(metadataFloat(sess.Metadata, metadataCompactionCount)) + 1

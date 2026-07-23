@@ -247,6 +247,9 @@ type Store interface {
 
 	// Recurring job operations
 	SaveJob(job *RecurringJob) error
+	// UpdateExistingJob updates an existing job and returns false when the row is gone.
+	// Post-run schedule updates must use this so a deleted loop is not re-inserted.
+	UpdateExistingJob(job *RecurringJob) (bool, error)
 	GetJob(id string) (*RecurringJob, error)
 	ListJobs() ([]*RecurringJob, error)
 	DeleteJob(id string) error

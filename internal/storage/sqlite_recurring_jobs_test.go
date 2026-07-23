@@ -84,6 +84,102 @@ func TestProjectRecurringJobPersistenceAndDelete(t *testing.T) {
 	}
 }
 
+func TestUpdateExistingJobDoesNotResurrectDeletedJob(t *testing.T) {
+	store, err := NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC()
+	job := &RecurringJob{
+		ID:               "job-delete-while-running",
+		Name:             "task, micro",
+		ScheduleHuman:    "every 20 min",
+		ScheduleCron:     "*/20 * * * *",
+		TaskPrompt:       "Do a light TODO item",
+		TaskPromptSource: "text",
+		Enabled:          true,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	if err := store.SaveJob(job); err != nil {
+		t.Fatalf("SaveJob: %v", err)
+	}
+	if err := store.DeleteJob(job.ID); err != nil {
+		t.Fatalf("DeleteJob: %v", err)
+	}
+
+	// Reproduce the bug path: in-memory job still held by a finishing run.
+	nextRun := now.Add(20 * time.Minute)
+	job.LastRunAt = &now
+	job.NextRunAt = &nextRun
+	job.UpdatedAt = now.Add(time.Minute)
+
+	updated, err := store.UpdateExistingJob(job)
+	if err != nil {
+		t.Fatalf("UpdateExistingJob: %v", err)
+	}
+	if updated {
+		t.Fatal("UpdateExistingJob reported updated=true for deleted job")
+	}
+	if _, err := store.GetJob(job.ID); err == nil {
+		t.Fatal("GetJob succeeded after UpdateExistingJob on deleted job; loop was resurrected")
+	}
+
+	// Contrast: SaveJob would insert the deleted row again (the old bug).
+	if err := store.SaveJob(job); err != nil {
+		t.Fatalf("SaveJob after delete: %v", err)
+	}
+	if _, err := store.GetJob(job.ID); err != nil {
+		t.Fatalf("expected SaveJob to resurrect deleted job for contrast, got: %v", err)
+	}
+}
+
+func TestUpdateExistingJobUpdatesScheduleWhenPresent(t *testing.T) {
+	store, err := NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC()
+	job := &RecurringJob{
+		ID:               "job-update-existing",
+		Name:             "keep me",
+		ScheduleHuman:    "every hour",
+		ScheduleCron:     "0 * * * *",
+		TaskPrompt:       "work",
+		TaskPromptSource: "text",
+		Enabled:          true,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	if err := store.SaveJob(job); err != nil {
+		t.Fatalf("SaveJob: %v", err)
+	}
+
+	nextRun := now.Add(time.Hour)
+	job.LastRunAt = &now
+	job.NextRunAt = &nextRun
+	job.UpdatedAt = now.Add(time.Second)
+	updated, err := store.UpdateExistingJob(job)
+	if err != nil {
+		t.Fatalf("UpdateExistingJob: %v", err)
+	}
+	if !updated {
+		t.Fatal("UpdateExistingJob reported updated=false for existing job")
+	}
+
+	got, err := store.GetJob(job.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if got.LastRunAt == nil || got.NextRunAt == nil {
+		t.Fatalf("expected last/next run to be set, got %#v", got)
+	}
+}
+
 func TestSaveJobExecutionUpdatesSessionID(t *testing.T) {
 	store, err := NewSQLiteStore(t.TempDir())
 	if err != nil {

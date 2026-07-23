@@ -60,6 +60,9 @@ func (m *memStore) ListProjectGitReviewOverlayCache(string, string, string, stri
 	return nil, nil
 }
 func (m *memStore) SaveJob(*storage.RecurringJob) error          { return nil }
+func (m *memStore) UpdateExistingJob(*storage.RecurringJob) (bool, error) {
+	return false, nil
+}
 func (m *memStore) GetJob(string) (*storage.RecurringJob, error) { return nil, nil }
 func (m *memStore) ListJobs() ([]*storage.RecurringJob, error)   { return nil, nil }
 func (m *memStore) DeleteJob(string) error                       { return nil }

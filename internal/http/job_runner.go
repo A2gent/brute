@@ -226,8 +226,14 @@ func (s *Server) finishJobExecution(ctx context.Context, job *storage.RecurringJ
 	}
 	job.UpdatedAt = now
 
-	if err := s.store.SaveJob(job); err != nil {
+	// WHY: UPDATE-only so finishing a run cannot recreate a loop the user already deleted.
+	updated, err := s.store.UpdateExistingJob(job)
+	if err != nil {
 		logging.Error("Failed to update job after execution: %v", err)
+		return
+	}
+	if !updated {
+		logging.Info("Skipped post-run update for deleted job %s (%s)", job.Name, job.ID)
 	}
 }
 

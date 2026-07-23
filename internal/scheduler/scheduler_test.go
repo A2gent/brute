@@ -2,9 +2,45 @@ package scheduler
 
 import (
 	"testing"
+	"time"
 
 	"github.com/A2gent/brute/internal/config"
+	"github.com/A2gent/brute/internal/storage"
 )
+
+func TestRescheduleJobAfterAttemptDoesNotResurrectDeletedJob(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC()
+	job := &storage.RecurringJob{
+		ID:               "job-reschedule-deleted",
+		Name:             "task, micro",
+		ScheduleHuman:    "every 20 min",
+		ScheduleCron:     "*/20 * * * *",
+		TaskPrompt:       "light work",
+		TaskPromptSource: "text",
+		Enabled:          true,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	if err := store.SaveJob(job); err != nil {
+		t.Fatalf("SaveJob: %v", err)
+	}
+	if err := store.DeleteJob(job.ID); err != nil {
+		t.Fatalf("DeleteJob: %v", err)
+	}
+
+	s := &Scheduler{store: store}
+	s.rescheduleJobAfterAttempt(job, now)
+
+	if _, err := store.GetJob(job.ID); err == nil {
+		t.Fatal("deleted job was resurrected by rescheduleJobAfterAttempt")
+	}
+}
 
 func TestCreateBaseLLMClientAcceptsOpenAICodexOAuth(t *testing.T) {
 	cfg := config.DefaultConfig()

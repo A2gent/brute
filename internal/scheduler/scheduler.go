@@ -317,8 +317,14 @@ func (s *Scheduler) rescheduleJobAfterAttempt(job *storage.RecurringJob, attempt
 	}
 	job.UpdatedAt = time.Now()
 
-	if err := s.store.SaveJob(job); err != nil {
+	// WHY: UPDATE-only so a delete during an in-flight run cannot be undone by INSERT upsert.
+	updated, err := s.store.UpdateExistingJob(job)
+	if err != nil {
 		logging.Error("Failed to update job %s after execution attempt: %v", job.ID, err)
+		return
+	}
+	if !updated {
+		logging.Info("Skipped reschedule for deleted job %s (%s)", job.Name, job.ID)
 	}
 }
 

@@ -82,6 +82,48 @@ func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
 	return nil
 }
 
+// UpdateExistingJob updates schedule/run fields only when the job row still exists.
+// WHY: SaveJob uses INSERT and would resurrect a loop deleted while a run was in flight.
+func (s *SQLiteStore) UpdateExistingJob(job *RecurringJob) (bool, error) {
+	result, err := s.db.Exec(`
+		UPDATE recurring_jobs SET
+			project_id = ?,
+			name = ?,
+			schedule_human = ?,
+			schedule_cron = ?,
+			task_prompt = ?,
+			task_prompt_source = ?,
+			task_prompt_file = ?,
+			run_target = ?,
+			workflow_id = ?,
+			workflow_name = ?,
+			workflow_definition = ?,
+			launch_agent_id = ?,
+			launch_agent_name = ?,
+			launch_agent_runtime = ?,
+			unified_agent_id = ?,
+			docker_agent_id = ?,
+			llm_provider = ?,
+			llm_model = ?,
+			enabled = ?,
+			last_run_at = ?,
+			next_run_at = ?,
+			updated_at = ?
+		WHERE id = ?
+	`, nullableString(job.ProjectID), job.Name, job.ScheduleHuman, job.ScheduleCron, job.TaskPrompt, job.TaskPromptSource, job.TaskPromptFile,
+		job.RunTarget, job.WorkflowID, job.WorkflowName, job.WorkflowDefJSON,
+		job.LaunchAgentID, job.LaunchAgentName, job.LaunchAgentRun, job.UnifiedAgentID, job.DockerAgentID,
+		job.LLMProvider, job.LLMModel, job.Enabled, job.LastRunAt, job.NextRunAt, job.UpdatedAt, job.ID)
+	if err != nil {
+		return false, fmt.Errorf("failed to update job: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to read job update rows: %w", err)
+	}
+	return rows > 0, nil
+}
+
 // GetJob retrieves a recurring job by ID
 func (s *SQLiteStore) GetJob(id string) (*RecurringJob, error) {
 	row := s.db.QueryRow(`

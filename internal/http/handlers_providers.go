@@ -557,10 +557,6 @@ func (s *Server) openAICodexModelCatalogOptions() openaicodex.ModelCatalogOption
 	return opts
 }
 
-func (s *Server) handleListOpenRouterModels(w http.ResponseWriter, r *http.Request) {
-	s.handleListOpenAICompatibleModels(w, r, config.ProviderOpenRouter, "OpenRouter")
-}
-
 func (s *Server) handleListOpenCodeZenModels(w http.ResponseWriter, r *http.Request) {
 	s.handleListOpenAICompatibleModels(w, r, config.ProviderOpenCodeZen, "OpenCode Zen")
 }

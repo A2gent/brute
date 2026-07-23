@@ -2,10 +2,12 @@ package http
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/A2gent/brute/internal/config"
@@ -149,6 +151,69 @@ func TestCursorModelsRouteFallsBackWhenCLIQueryFails(t *testing.T) {
 	for index, model := range expected {
 		if response.Models[index] != model {
 			t.Fatalf("cursor fallback model[%d] = %q, want %q", index, response.Models[index], model)
+		}
+	}
+}
+
+type openRouterModelsDoFunc func(*http.Request) (*http.Response, error)
+
+func (f openRouterModelsDoFunc) Do(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestOpenRouterModelsRouteUsesOfficialCatalog(t *testing.T) {
+	requested := false
+	client := openRouterModelsDoFunc(func(req *http.Request) (*http.Response, error) {
+		requested = true
+		if got := req.URL.String(); got != "https://openrouter.ai/api/v1/models" {
+			t.Fatalf("OpenRouter models URL = %q, want official catalog", got)
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer test-openrouter-key" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(`{
+				"data": [
+					{"id": "z-ai/glm-5.2"},
+					{"id": " tencent/hy3:free "},
+					{"id": ""}
+				]
+			}`)),
+			Request: req,
+		}, nil
+	})
+
+	cfg := config.DefaultConfig()
+	cfg.Providers[string(config.ProviderOpenRouter)] = config.Provider{
+		BaseURL: "https://proxy.example/v1",
+		APIKey:  "test-openrouter-key",
+	}
+	server := &Server{config: cfg, openRouterModelsClient: client}
+
+	req := httptest.NewRequest(http.MethodGet, "/providers/openrouter/models?base_url=https://edited.example/v1", nil)
+	rec := httptest.NewRecorder()
+	server.handleListOpenRouterModels(rec, req)
+
+	if !requested {
+		t.Fatal("official OpenRouter catalog was not requested")
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("OpenRouter models status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+
+	var response ListProviderModelsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode OpenRouter models response: %v", err)
+	}
+	expected := []string{"tencent/hy3:free", "z-ai/glm-5.2"}
+	if len(response.Models) != len(expected) {
+		t.Fatalf("OpenRouter models = %v, want %v", response.Models, expected)
+	}
+	for index, model := range expected {
+		if response.Models[index] != model {
+			t.Fatalf("OpenRouter model[%d] = %q, want %q", index, response.Models[index], model)
 		}
 	}
 }

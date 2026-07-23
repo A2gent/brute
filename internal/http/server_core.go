@@ -34,6 +34,7 @@ import (
 type Server struct {
 	config                   *config.Config
 	llmClient                llm.Client
+	openRouterModelsClient   openRouterModelsHTTPClient
 	toolManager              *tools.Manager
 	sessionManager           *session.Manager
 	store                    storage.Store

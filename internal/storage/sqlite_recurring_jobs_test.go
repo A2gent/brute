@@ -180,6 +180,66 @@ func TestUpdateExistingJobUpdatesScheduleWhenPresent(t *testing.T) {
 	}
 }
 
+func TestUpdateExistingJobKeepsConcurrentUserEdits(t *testing.T) {
+	store, err := NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC()
+	job := &RecurringJob{
+		ID:               "job-disabled-mid-run",
+		Name:             "task, micro",
+		ScheduleHuman:    "every 20 min",
+		ScheduleCron:     "*/20 * * * *",
+		TaskPrompt:       "Do a light TODO item",
+		TaskPromptSource: "text",
+		Enabled:          true,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	if err := store.SaveJob(job); err != nil {
+		t.Fatalf("SaveJob: %v", err)
+	}
+
+	// A run started with this snapshot (Enabled=true). Meanwhile the user disables and
+	// renames the loop in the UI, which SaveJob persists as an independent write.
+	edited := *job
+	edited.Enabled = false
+	edited.Name = "task, micro (paused)"
+	if err := store.SaveJob(&edited); err != nil {
+		t.Fatalf("SaveJob edit: %v", err)
+	}
+
+	// The finishing run reschedules using its now-stale snapshot (still Enabled=true).
+	nextRun := now.Add(20 * time.Minute)
+	job.LastRunAt = &now
+	job.NextRunAt = &nextRun
+	job.UpdatedAt = now.Add(time.Minute)
+	updated, err := store.UpdateExistingJob(job)
+	if err != nil {
+		t.Fatalf("UpdateExistingJob: %v", err)
+	}
+	if !updated {
+		t.Fatal("UpdateExistingJob reported updated=false for existing job")
+	}
+
+	got, err := store.GetJob(job.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if got.Enabled {
+		t.Fatal("reschedule re-enabled a loop the user disabled mid-run")
+	}
+	if got.Name != "task, micro (paused)" {
+		t.Fatalf("reschedule reverted user rename: got %q", got.Name)
+	}
+	if got.LastRunAt == nil || got.NextRunAt == nil {
+		t.Fatalf("expected scheduling fields to be set, got %#v", got)
+	}
+}
+
 func TestSaveJobExecutionUpdatesSessionID(t *testing.T) {
 	store, err := NewSQLiteStore(t.TempDir())
 	if err != nil {

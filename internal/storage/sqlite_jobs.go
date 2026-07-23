@@ -82,38 +82,23 @@ func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
 	return nil
 }
 
-// UpdateExistingJob updates schedule/run fields only when the job row still exists.
-// WHY: SaveJob uses INSERT and would resurrect a loop deleted while a run was in flight.
+// UpdateExistingJob persists post-run scheduling fields (last/next run) only when the
+// job row still exists. It is the reschedule path used by the scheduler and job runner.
+// WHY: two reasons drive the narrow column set:
+//  1. SaveJob uses INSERT and would resurrect a loop deleted while a run was in flight;
+//     the WHERE id = ? guard here reports updated=false instead.
+//  2. The caller holds a job snapshot captured at run START. Writing every column back
+//     would clobber edits the user made mid-run (e.g. disabling a frequently-running loop),
+//     making a toggled-off loop re-enable itself and appear to "keep coming back". So we
+//     only touch the scheduling columns the run is actually responsible for.
 func (s *SQLiteStore) UpdateExistingJob(job *RecurringJob) (bool, error) {
 	result, err := s.db.Exec(`
 		UPDATE recurring_jobs SET
-			project_id = ?,
-			name = ?,
-			schedule_human = ?,
-			schedule_cron = ?,
-			task_prompt = ?,
-			task_prompt_source = ?,
-			task_prompt_file = ?,
-			run_target = ?,
-			workflow_id = ?,
-			workflow_name = ?,
-			workflow_definition = ?,
-			launch_agent_id = ?,
-			launch_agent_name = ?,
-			launch_agent_runtime = ?,
-			unified_agent_id = ?,
-			docker_agent_id = ?,
-			llm_provider = ?,
-			llm_model = ?,
-			enabled = ?,
 			last_run_at = ?,
 			next_run_at = ?,
 			updated_at = ?
 		WHERE id = ?
-	`, nullableString(job.ProjectID), job.Name, job.ScheduleHuman, job.ScheduleCron, job.TaskPrompt, job.TaskPromptSource, job.TaskPromptFile,
-		job.RunTarget, job.WorkflowID, job.WorkflowName, job.WorkflowDefJSON,
-		job.LaunchAgentID, job.LaunchAgentName, job.LaunchAgentRun, job.UnifiedAgentID, job.DockerAgentID,
-		job.LLMProvider, job.LLMModel, job.Enabled, job.LastRunAt, job.NextRunAt, job.UpdatedAt, job.ID)
+	`, job.LastRunAt, job.NextRunAt, job.UpdatedAt, job.ID)
 	if err != nil {
 		return false, fmt.Errorf("failed to update job: %w", err)
 	}

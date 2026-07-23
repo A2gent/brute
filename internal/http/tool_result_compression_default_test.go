@@ -56,6 +56,13 @@ func TestSettingsResponseExposesCompressionEnabledByDefault(t *testing.T) {
 	}
 }
 
+func TestSettingsResponseExposesBrowserChromeHeadlessByDefault(t *testing.T) {
+	resp := settingsResponse(map[string]string{}, nil)
+	if got := resp.Settings[storage.BrowserChromeHeadlessSettingKey]; got != "true" {
+		t.Fatalf("browser Chrome headless default = %q, want true", got)
+	}
+}
+
 func TestSettingsResponseHidesBranchTaskDocAppSettings(t *testing.T) {
 	resp := settingsResponse(map[string]string{
 		legacyBranchTaskDocDirectorySettingPrefix + "project-1": "/tmp/docs",

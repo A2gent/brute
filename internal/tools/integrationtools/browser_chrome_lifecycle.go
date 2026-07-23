@@ -1,13 +1,24 @@
 package integrationtools
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os/exec"
 	"time"
 
 	"github.com/A2gent/brute/internal/logging"
+	"github.com/A2gent/brute/internal/tools"
 	"github.com/go-rod/rod"
-	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/proto"
+)
+
+const (
+	browserChromeSetupAttempts       = 2
+	browserChromeSetupAttemptTimeout = 10 * time.Second
+	browserChromeSetupRetryDelay     = 250 * time.Millisecond
+	browserChromeLaunchWait          = 3 * time.Second
 )
 
 // isChromeRunning reports whether any Google Chrome process is currently running.
@@ -18,39 +29,33 @@ func isChromeRunning() bool {
 	return err == nil
 }
 
-func (t *BrowserChromeTool) ensureBrowser() error {
+func (t *BrowserChromeTool) ensureBrowser(probeCtx, connectionCtx context.Context) error {
 	// Check if existing browser connection is still valid
 	if t.browser != nil {
 		// Try to verify the connection is still alive
-		_, err := t.browser.Version()
+		_, err := t.browser.Context(probeCtx).Version()
 		if err == nil {
 			return nil
 		}
 		// Connection is dead, reset it
 		logging.Info("Browser connection is stale, reconnecting...")
-		t.browser = nil
+		t.dropBrowserConnection()
 	}
 
 	logging.Info("Connecting to Chrome on port %s...", t.debugPort)
 
-	// Try to connect to existing Chrome first
-	wsURL := fmt.Sprintf("ws://localhost:%s", t.debugPort)
-	browser := rod.New().ControlURL(wsURL)
-	if err := browser.Connect(); err == nil {
-		logging.Info("Connected to existing Chrome on port %s", t.debugPort)
-		t.browser = browser
-		return nil
-	}
-
-	// Try with resolved URL
-	resolvedURL, resolveErr := launcher.ResolveURL(":" + t.debugPort)
+	// Resolve through Chrome's version endpoint with the operation context.
+	resolvedURL, resolveErr := resolveChromeWebSocketURL(probeCtx, t.debugPort)
 	if resolveErr == nil {
-		browser = rod.New().ControlURL(resolvedURL)
+		browser := rod.New().Context(connectionCtx).ControlURL(resolvedURL)
 		if err := browser.Connect(); err == nil {
 			logging.Info("Connected to Chrome via resolved URL: %s", resolvedURL)
 			t.browser = browser
 			return nil
 		}
+	}
+	if err := probeCtx.Err(); err != nil {
+		return err
 	}
 
 	logging.Info("No debuggable Chrome instance found on port %s, launching agent Chrome...", t.debugPort)
@@ -67,7 +72,8 @@ func (t *BrowserChromeTool) ensureBrowser() error {
 
 	logging.Info("Launching Chrome with user-data-dir: %s", t.userDataDir)
 	logging.Info("Using Chrome profile directory: %s (path: %s)", t.profileDirectory, t.profileDir)
-	logging.Info("Headless mode: %v", t.headless)
+	headless := t.headlessEnabled()
+	logging.Info("Headless mode: %v", headless)
 
 	args := []string{
 		"--user-data-dir=" + t.userDataDir,
@@ -79,8 +85,8 @@ func (t *BrowserChromeTool) ensureBrowser() error {
 		"--new-window",
 	}
 
-	if t.headless {
-		args = append(args, "--headless")
+	if headless {
+		args = append(args, "--headless=new")
 		logging.Info("Running in headless mode")
 	}
 
@@ -91,20 +97,23 @@ func (t *BrowserChromeTool) ensureBrowser() error {
 
 	logging.Info("Chrome launched, PID: %d", cmd.Process.Pid)
 
-	// Wait for Chrome to start
-	time.Sleep(3 * time.Second)
+	// Wait for Chrome to start without making cancellation wait for a fixed sleep.
+	if err := waitForBrowserChromeRetry(probeCtx, browserChromeLaunchWait); err != nil {
+		_ = cmd.Process.Kill()
+		return err
+	}
 
 	// Connect to Chrome
-	resolvedURL, resolveErr = launcher.ResolveURL(":" + t.debugPort)
+	resolvedURL, resolveErr = resolveChromeWebSocketURL(probeCtx, t.debugPort)
 	if resolveErr != nil {
-		cmd.Process.Kill()
+		_ = cmd.Process.Kill()
 		return fmt.Errorf("failed to resolve Chrome URL: %w", resolveErr)
 	}
 	logging.Info("Resolved WebSocket URL: %s", resolvedURL)
 
-	browser = rod.New().ControlURL(resolvedURL)
+	browser := rod.New().Context(connectionCtx).ControlURL(resolvedURL)
 	if err := browser.Connect(); err != nil {
-		cmd.Process.Kill()
+		_ = cmd.Process.Kill()
 		return fmt.Errorf("failed to connect to Chrome: %w", err)
 	}
 
@@ -114,38 +123,117 @@ func (t *BrowserChromeTool) ensureBrowser() error {
 }
 
 // ensureBrowserAndPage ensures both browser connection and a persistent page exist
-func (t *BrowserChromeTool) ensureBrowserAndPage() error {
-	// First ensure browser is connected
-	if err := t.ensureBrowser(); err != nil {
+func (t *BrowserChromeTool) ensureBrowserAndPage(ctx context.Context) error {
+	var lastErr error
+	for attempt := 1; attempt <= browserChromeSetupAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		tools.ReportProgress(ctx, tools.ProgressEvent{
+			Status:  "running",
+			Content: fmt.Sprintf("Preparing Chrome (attempt %d/%d)", attempt, browserChromeSetupAttempts),
+		})
+
+		attemptCtx, cancelAttempt := context.WithTimeout(ctx, browserChromeSetupAttemptTimeout)
+		err := t.ensureBrowserAndPageAttempt(attemptCtx, ctx)
+		if err == nil {
+			cancelAttempt()
+			return nil
+		}
+		cancelAttempt()
+		lastErr = err
+		logging.Warn("Chrome setup attempt %d/%d failed: %v", attempt, browserChromeSetupAttempts, err)
+		t.dropBrowserConnection()
+
+		if attempt < browserChromeSetupAttempts {
+			if err := waitForBrowserChromeRetry(ctx, browserChromeSetupRetryDelay); err != nil {
+				return err
+			}
+		}
+	}
+	return fmt.Errorf("Chrome setup failed after %d attempts: %w", browserChromeSetupAttempts, lastErr)
+}
+
+func (t *BrowserChromeTool) ensureBrowserAndPageAttempt(probeCtx, connectionCtx context.Context) error {
+	if err := t.ensureBrowser(probeCtx, connectionCtx); err != nil {
 		return err
 	}
 
-	// Check if we have a valid page
-	if t.page != nil {
-		// Verify page is still valid by trying to get info
-		_, err := t.page.Info()
-		if err == nil {
-			return nil
+	if t.pageTargetID != "" {
+		if _, err := (proto.TargetGetTargetInfo{TargetID: t.pageTargetID}).Call(t.browser.Context(probeCtx)); err == nil {
+			if _, err := t.browser.PageFromTarget(t.pageTargetID); err == nil {
+				return nil
+			}
 		}
-		// Page is stale, need a new one
 		logging.Info("Page connection is stale, creating new page...")
-		t.page = nil
+		t.pageTargetID = ""
 	}
 
-	// Create a new persistent page using MustPage which properly initializes everything
+	// Creating a fresh target avoids Target.getTargets, the call that previously
+	// left sessions blocked before their action timeout was installed.
 	logging.Info("Creating new browser page...")
-
-	// Get list of existing pages first
-	pages, err := t.browser.Pages()
-	if err == nil && len(pages) > 0 {
-		// Use the first existing page if available
-		t.page = pages[0]
-		logging.Info("Using existing browser page")
-		return nil
+	target, err := (proto.TargetCreateTarget{URL: "about:blank"}).Call(t.browser.Context(probeCtx))
+	if err != nil {
+		return fmt.Errorf("failed to create browser page: %w", err)
 	}
-
-	// Create new page - MustPage handles all initialization
-	t.page = t.browser.MustPage("")
+	t.pageTargetID = target.TargetID
+	if _, err := t.browser.PageFromTarget(t.pageTargetID); err != nil {
+		t.pageTargetID = ""
+		return fmt.Errorf("failed to attach browser page: %w", err)
+	}
 	logging.Info("Browser page created successfully")
 	return nil
+}
+
+func (t *BrowserChromeTool) pageForContext(ctx context.Context) (*rod.Page, error) {
+	if t.browser == nil || t.pageTargetID == "" {
+		return nil, fmt.Errorf("browser page is not initialized")
+	}
+	page, err := t.browser.Context(ctx).PageFromTarget(t.pageTargetID)
+	if err != nil {
+		return nil, err
+	}
+	return page.Context(ctx), nil
+}
+
+func (t *BrowserChromeTool) dropBrowserConnection() {
+	t.browser = nil
+}
+
+func resolveChromeWebSocketURL(ctx context.Context, debugPort string) (string, error) {
+	endpoint := fmt.Sprintf("http://127.0.0.1:%s/json/version", debugPort)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("Chrome debug endpoint returned %s", resp.Status)
+	}
+	var payload struct {
+		WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", fmt.Errorf("failed to decode Chrome debug endpoint: %w", err)
+	}
+	if payload.WebSocketDebuggerURL == "" {
+		return "", fmt.Errorf("Chrome debug endpoint did not provide webSocketDebuggerUrl")
+	}
+	return payload.WebSocketDebuggerURL, nil
+}
+
+func waitForBrowserChromeRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

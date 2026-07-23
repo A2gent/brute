@@ -1,7 +1,11 @@
 package integrationtools
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,7 +16,154 @@ import (
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/proto"
 )
+
+type browserChromeSettingsStub struct {
+	settings map[string]string
+	err      error
+}
+
+func (s browserChromeSettingsStub) GetSettings() (map[string]string, error) {
+	return s.settings, s.err
+}
+
+func TestBrowserChromeHeadlessDefaultsToTrue(t *testing.T) {
+	t.Setenv("CHROME_HEADLESS", "")
+
+	tool := NewBrowserChromeTool(t.TempDir())
+	if !tool.headlessEnabled() {
+		t.Fatal("expected Chrome to run headless by default")
+	}
+}
+
+func TestBrowserChromeHeadlessUsesSavedSetting(t *testing.T) {
+	t.Setenv("CHROME_HEADLESS", "true")
+
+	tool := newBrowserChromeTool(t.TempDir(), browserChromeSettingsStub{
+		settings: map[string]string{"CHROME_HEADLESS": "false"},
+	})
+	if tool.headlessEnabled() {
+		t.Fatal("expected saved setting to enable full UI Chrome")
+	}
+}
+
+func TestBrowserChromeHeadlessFallsBackToEnvironment(t *testing.T) {
+	t.Setenv("CHROME_HEADLESS", "false")
+
+	tool := newBrowserChromeTool(t.TempDir(), browserChromeSettingsStub{err: errors.New("settings unavailable")})
+	if tool.headlessEnabled() {
+		t.Fatal("expected environment fallback to enable full UI Chrome")
+	}
+}
+
+func TestBrowserChromeExecuteTimesOutWhilePreparingBrowser(t *testing.T) {
+	tool := NewBrowserChromeTool(t.TempDir())
+	tool.executionTimeout = 25 * time.Millisecond
+	tool.ensureBrowserAndPageOverride = func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+
+	startedAt := time.Now()
+	result, err := tool.Execute(
+		context.Background(),
+		json.RawMessage(`{"action":"navigate","url":"file:///tmp/test.png"}`),
+	)
+	if err != nil {
+		t.Fatalf("Execute returned an unexpected error: %v", err)
+	}
+	if result.Success {
+		t.Fatalf("expected browser preparation timeout, got success: %+v", result)
+	}
+	if !strings.Contains(result.Error, context.DeadlineExceeded.Error()) {
+		t.Fatalf("expected deadline error, got %q", result.Error)
+	}
+	if elapsed := time.Since(startedAt); elapsed > time.Second {
+		t.Fatalf("browser setup ignored its execution deadline: %s", elapsed)
+	}
+}
+
+func TestBrowserChromeExecuteCanCancelWhileWaitingForBrowserLock(t *testing.T) {
+	tool := NewBrowserChromeTool(t.TempDir())
+	tool.executionTimeout = time.Second
+	tool.operationGate <- struct{}{}
+	t.Cleanup(func() {
+		<-tool.operationGate
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := tool.Execute(
+		ctx,
+		json.RawMessage(`{"action":"navigate","url":"file:///tmp/test.png"}`),
+	)
+	if err != nil {
+		t.Fatalf("Execute returned an unexpected error: %v", err)
+	}
+	if result.Success {
+		t.Fatalf("expected canceled browser lock wait, got success: %+v", result)
+	}
+	if !strings.Contains(result.Error, context.Canceled.Error()) {
+		t.Fatalf("expected cancellation error, got %q", result.Error)
+	}
+}
+
+func TestBrowserChromeNavigationURLConvertsLocalFileToDataURL(t *testing.T) {
+	htmlPath := filepath.Join(t.TempDir(), "fixture with spaces.html")
+	if err := os.WriteFile(htmlPath, []byte("<!doctype html><title>local fixture</title>"), 0644); err != nil {
+		t.Fatalf("write local browser fixture: %v", err)
+	}
+
+	navigationURL, err := browserChromeNavigationURL((&url.URL{Scheme: "file", Path: htmlPath}).String())
+	if err != nil {
+		t.Fatalf("convert local file URL: %v", err)
+	}
+	if !strings.HasPrefix(navigationURL, "data:text/html") {
+		t.Fatalf("expected an HTML data URL, got %q", navigationURL)
+	}
+	if strings.Contains(navigationURL, htmlPath) {
+		t.Fatalf("data URL leaked the local path: %q", navigationURL)
+	}
+}
+
+func TestBrowserChromeNavigateLocalFileLive(t *testing.T) {
+	if os.Getenv("AAGENT_BROWSER_CHROME_LIVE_TEST") != "1" {
+		t.Skip("set AAGENT_BROWSER_CHROME_LIVE_TEST=1 to run against the configured Chrome debug port")
+	}
+
+	htmlPath := filepath.Join(t.TempDir(), "browser-chrome-live.html")
+	if err := os.WriteFile(htmlPath, []byte("<!doctype html><title>browser chrome live test</title>"), 0644); err != nil {
+		t.Fatalf("write live browser fixture: %v", err)
+	}
+
+	tool := NewBrowserChromeTool(t.TempDir())
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cleanupCancel()
+		if err := tool.ensureBrowser(cleanupCtx, cleanupCtx); err != nil || tool.pageTargetID == "" {
+			return
+		}
+		_, _ = proto.TargetCloseTarget{TargetID: tool.pageTargetID}.Call(tool.browser.Context(cleanupCtx))
+		tool.dropBrowserConnection()
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	startedAt := time.Now()
+	result, err := tool.Execute(
+		ctx,
+		json.RawMessage(fmt.Sprintf(`{"action":"navigate","url":%q}`, "file://"+htmlPath)),
+	)
+	if err != nil {
+		t.Fatalf("Execute returned an unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("live navigation failed after %s: %s", time.Since(startedAt), result.Error)
+	}
+}
 
 func TestFormatElementsAsTOONIncludesGeometryAndState(t *testing.T) {
 	out := formatElementsAsTOON(map[string]interface{}{

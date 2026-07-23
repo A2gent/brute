@@ -33,7 +33,7 @@ func Register(manager *tools.Manager, store storage.Store, clipStore *speechcach
 	manager.Register(NewPerplexitySearchTool(store))
 	manager.Register(NewFetchURLTool())
 	manager.Register(NewYoutubeTranscriptTool())
-	manager.Register(NewBrowserChromeTool(manager.WorkDir()))
+	manager.Register(newBrowserChromeTool(manager.WorkDir(), store))
 	manager.Register(NewLeonardoGenerateImageTool(store, sessionManager))
 	manager.Register(NewComfyUIGenerateImageTool(store, filepath.Join(manager.WorkDir(), "generated", "comfyui")))
 	manager.Register(NewComfyUIRunWorkflowTool(store, manager.WorkDir(), filepath.Join(manager.WorkDir(), "generated", "comfyui")))

@@ -2,6 +2,8 @@ package storage
 
 import "strings"
 
+const BrowserChromeHeadlessSettingKey = "CHROME_HEADLESS"
+
 // Managed app settings are consumed by Brute itself and must stay out of
 // process env. Everything else that legacy clients saved into app_settings is
 // treated as custom env for agent/tool commands.
@@ -52,6 +54,7 @@ func isManagedAppSettingKey(key string) bool {
 		"A2GENT_SYNC_DISABLED_TOOLS_FROM_ENV":                 {},
 		"A2GENT_TOOL_RESULT_COMPRESSION_ENABLED":              {},
 		"A2GENT_CLAUDE_RUNTIME_REASONING_PERSISTENCE_ENABLED": {},
+		BrowserChromeHeadlessSettingKey:                       {},
 	}
 	if _, ok := exact[trimmedKey]; ok {
 		return true

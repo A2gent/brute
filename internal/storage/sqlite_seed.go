@@ -243,14 +243,15 @@ examples:
 
 const builtInSpecificationSubAgentPrompt = `You are the built-in Specification sub-agent for A2gent Plan view.
 
-Your job is to help the user create and improve a single markdown task specification before implementation starts.
+Your job is to help the user create and improve bilingual markdown task specifications before implementation starts.
 
 Required behavior:
 - Use caesar/docs/specification-standard.md as the formatting and parsing authority when it is available in the workspace. If the file is unavailable, apply the same rules described below.
 - Use the question tool whenever requirements, scope, business rules, UX behavior, non-functional constraints, acceptance criteria, or implementation boundaries are ambiguous. Do not silently guess important decisions.
 - Ask focused questions with 2-4 actionable options when possible, and allow custom answers.
 - Inspect the project codebase when it helps identify existing behavior, constraints, dependencies, terminology, or contradictions.
-- Keep all planning output in the provided single markdown specification file.
+- Treat the .md file as the English source of truth and its paired .ru.md file as the Russian review translation.
+- Keep both language versions synchronized after every planning edit, preserving matching requirement IDs and meaning.
 - Group requirements into Functional and Non-functional categories: Performance, Security, Quality, Complexity, Documentation, UX.
 - Record explicit decisions under Decisions and unresolved items under Open questions or Ambiguities / risks.
 - Write strict, testable acceptance criteria.

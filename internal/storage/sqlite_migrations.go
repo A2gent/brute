@@ -297,6 +297,9 @@ func (s *SQLiteStore) migrate() error {
 	if err := s.migrateLegacyCustomEnvFromAppSettings(); err != nil {
 		return fmt.Errorf("failed to migrate custom env settings: %w", err)
 	}
+	if err := s.migrateBrowserChromeHeadlessSetting(); err != nil {
+		return fmt.Errorf("failed to migrate browser Chrome headless setting: %w", err)
+	}
 	// Move legacy global project prompt options into project rows once the
 	// settings column exists. Branch task documentation settings are project
 	// scoped, so their old global env-style keys are removed after migration.
@@ -498,6 +501,41 @@ func (s *SQLiteStore) migrateLegacyCustomEnvFromAppSettings() error {
 		if _, err := tx.Exec(`DELETE FROM app_settings WHERE TRIM(key) = ? AND key <> ?`, key, key); err != nil {
 			return fmt.Errorf("failed to normalize managed setting %q: %w", key, err)
 		}
+	}
+	return tx.Commit()
+}
+
+func (s *SQLiteStore) migrateBrowserChromeHeadlessSetting() error {
+	var value string
+	var updatedAt interface{}
+	err := s.db.QueryRow(`
+		SELECT value, updated_at
+		FROM custom_env
+		WHERE key = ?
+	`, BrowserChromeHeadlessSettingKey).Scan(&value, &updatedAt)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Preserve an already-saved managed value if both legacy and current rows exist.
+	if _, err := tx.Exec(`
+		INSERT INTO app_settings (key, value, updated_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(key) DO NOTHING
+	`, BrowserChromeHeadlessSettingKey, value, updatedAt); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM custom_env WHERE key = ?`, BrowserChromeHeadlessSettingKey); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

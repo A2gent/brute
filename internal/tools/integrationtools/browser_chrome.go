@@ -2,37 +2,59 @@ package integrationtools
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"mime"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/A2gent/brute/internal/logging"
+	"github.com/A2gent/brute/internal/storage"
 	"github.com/A2gent/brute/internal/tools"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
 )
 
-// BrowserChromeTool allows controlling a Chrome browser instance.
-type BrowserChromeTool struct {
-	mu               sync.Mutex
-	browser          *rod.Browser
-	page             *rod.Page // Persistent page across calls
-	workDir          string
-	debugPort        string
-	userDataDir      string
-	profileDir       string
-	profileDirectory string
-	headless         bool
-	capabilities     []string
+type browserChromeSettingsReader interface {
+	GetSettings() (map[string]string, error)
 }
 
-const browserChromeActionTimeout = 45 * time.Second
+// BrowserChromeTool allows controlling a Chrome browser instance.
+type BrowserChromeTool struct {
+	operationGate                chan struct{}
+	browser                      *rod.Browser
+	pageTargetID                 proto.TargetTargetID
+	workDir                      string
+	debugPort                    string
+	userDataDir                  string
+	profileDir                   string
+	profileDirectory             string
+	settingsReader               browserChromeSettingsReader
+	capabilities                 []string
+	executionTimeout             time.Duration
+	ensureBrowserAndPageOverride func(context.Context) error
+}
+
+const (
+	browserChromeExecutionTimeout   = 60 * time.Second
+	browserChromeActionTimeout      = 45 * time.Second
+	browserChromeProgressInterval   = 10 * time.Second
+	browserChromeWaitStableDuration = time.Second
+	browserChromeMaxLocalFileBytes  = 32 << 20
+)
 
 // NewBrowserChromeTool creates a new instance of the browser tool.
 func NewBrowserChromeTool(workDir string) *BrowserChromeTool {
+	return newBrowserChromeTool(workDir, nil)
+}
+
+func newBrowserChromeTool(workDir string, settingsReader browserChromeSettingsReader) *BrowserChromeTool {
 	debugPort := os.Getenv("CHROME_DEBUG_PORT")
 	if debugPort == "" {
 		debugPort = "9223"
@@ -54,13 +76,40 @@ func NewBrowserChromeTool(workDir string) *BrowserChromeTool {
 	}
 
 	return &BrowserChromeTool{
+		operationGate:    make(chan struct{}, 1),
 		workDir:          workDir,
 		debugPort:        debugPort,
 		userDataDir:      userDataDir,
 		profileDir:       profileDir,
 		profileDirectory: profileDirectory,
-		headless:         strings.ToLower(os.Getenv("CHROME_HEADLESS")) == "true",
+		settingsReader:   settingsReader,
 		capabilities:     []string{"navigate", "click", "type", "scroll", "screenshot", "read_content", "eval"},
+		executionTimeout: browserChromeExecutionTimeout,
+	}
+}
+
+func (t *BrowserChromeTool) headlessEnabled() bool {
+	if t.settingsReader != nil {
+		if settings, err := t.settingsReader.GetSettings(); err == nil {
+			if enabled, valid := parseBrowserChromeBool(settings[storage.BrowserChromeHeadlessSettingKey]); valid {
+				return enabled
+			}
+		}
+	}
+	if enabled, valid := parseBrowserChromeBool(os.Getenv(storage.BrowserChromeHeadlessSettingKey)); valid {
+		return enabled
+	}
+	return true
+}
+
+func parseBrowserChromeBool(raw string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true, true
+	case "0", "false", "no", "off":
+		return false, true
+	default:
+		return false, false
 	}
 }
 
@@ -147,29 +196,79 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 		return &tools.Result{Success: false, Error: "action is required"}, nil
 	}
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	executionTimeout := t.executionTimeout
+	if executionTimeout <= 0 {
+		executionTimeout = browserChromeExecutionTimeout
+	}
+	executionCtx, cancelExecution := context.WithTimeout(ctx, executionTimeout)
+	defer cancelExecution()
+
+	tools.ReportProgress(executionCtx, tools.ProgressEvent{
+		Status:  "queued",
+		Content: fmt.Sprintf("Waiting for Chrome access (deadline %s)", executionTimeout),
+	})
+	if err := t.acquireOperation(executionCtx); err != nil {
+		return browserChromeFailure("failed while waiting for Chrome access", err), nil
+	}
+	defer t.releaseOperation()
+
+	stopHeartbeat := startBrowserChromeHeartbeat(executionCtx, action)
+	defer stopHeartbeat()
 
 	// Ensure browser and page are ready
-	if err := t.ensureBrowserAndPage(); err != nil {
-		return &tools.Result{Success: false, Error: fmt.Sprintf("failed to ensure browser: %v", err)}, nil
+	tools.ReportProgress(executionCtx, tools.ProgressEvent{
+		Status:  "running",
+		Content: "Preparing Chrome connection and page",
+	})
+	ensureBrowserAndPage := t.ensureBrowserAndPage
+	if t.ensureBrowserAndPageOverride != nil {
+		ensureBrowserAndPage = t.ensureBrowserAndPageOverride
+	}
+	if err := ensureBrowserAndPage(executionCtx); err != nil {
+		return browserChromeFailure("failed to ensure browser", err), nil
 	}
 
-	opCtx, cancel := context.WithTimeout(ctx, browserChromeActionTimeout)
-	defer cancel()
-	page := t.page.Context(opCtx)
+	actionCtx, cancelAction := context.WithTimeout(executionCtx, browserChromeActionTimeout)
+	defer cancelAction()
+	defer func() {
+		if actionCtx.Err() != nil {
+			t.pageTargetID = ""
+		}
+		t.dropBrowserConnection()
+	}()
+	page, err := t.pageForContext(actionCtx)
+	if err != nil {
+		return browserChromeFailure("failed to attach to browser page", err), nil
+	}
+	tools.ReportProgress(actionCtx, tools.ProgressEvent{
+		Status:  "running",
+		Content: fmt.Sprintf("Chrome ready, executing %s", action),
+	})
 
 	switch action {
 	case "navigate":
-		url, ok := input["url"].(string)
-		if !ok || url == "" {
+		requestedURL, ok := input["url"].(string)
+		if !ok || requestedURL == "" {
 			return &tools.Result{Success: false, Error: "url is required for navigate"}, nil
 		}
-		if err := page.Navigate(url); err != nil {
-			return &tools.Result{Success: false, Error: fmt.Sprintf("failed to navigate: %v", err)}, nil
+		navigationURL, err := browserChromeNavigationURL(requestedURL)
+		if err != nil {
+			return browserChromeFailure("failed to prepare navigation URL", err), nil
 		}
-		page.WaitLoad()
-		return &tools.Result{Success: true, Output: fmt.Sprintf("Navigated to %s", page.MustInfo().URL)}, nil
+		if err := page.Navigate(navigationURL); err != nil {
+			return browserChromeFailure("failed to navigate", err), nil
+		}
+		if err := page.WaitLoad(); err != nil {
+			return browserChromeFailure("failed waiting for page load", err), nil
+		}
+		info, err := page.Info()
+		if err != nil {
+			return browserChromeFailure("failed to read page info after navigation", err), nil
+		}
+		if navigationURL != requestedURL {
+			return &tools.Result{Success: true, Output: fmt.Sprintf("Navigated to local file %s", requestedURL)}, nil
+		}
+		return &tools.Result{Success: true, Output: fmt.Sprintf("Navigated to %s", info.URL)}, nil
 
 	case "click":
 		selector, ok := input["selector"].(string)
@@ -177,7 +276,9 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 			return &tools.Result{Success: false, Error: "selector is required for click"}, nil
 		}
 		// Wait for page to be stable before interacting
-		page.MustWaitStable()
+		if err := page.WaitStable(browserChromeWaitStableDuration); err != nil {
+			return browserChromeFailure("failed waiting for page stability", err), nil
+		}
 		el, err := page.Element(escapeCSSSelector(selector))
 		if err != nil {
 			return &tools.Result{Success: false, Error: fmt.Sprintf("failed to find element: %v", err)}, nil
@@ -194,7 +295,9 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 			return &tools.Result{Success: false, Error: "selector and text are required for type"}, nil
 		}
 		// Wait for page to be stable before interacting
-		page.MustWaitStable()
+		if err := page.WaitStable(browserChromeWaitStableDuration); err != nil {
+			return browserChromeFailure("failed waiting for page stability", err), nil
+		}
 		el, err := page.Element(escapeCSSSelector(selector))
 		if err != nil {
 			return &tools.Result{Success: false, Error: fmt.Sprintf("failed to find element: %v", err)}, nil
@@ -210,7 +313,9 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 			return &tools.Result{Success: false, Error: "key is required for press_key"}, nil
 		}
 		// Wait for page to be stable before pressing key
-		page.MustWaitStable()
+		if err := page.WaitStable(browserChromeWaitStableDuration); err != nil {
+			return browserChromeFailure("failed waiting for page stability", err), nil
+		}
 		// Map common key names to input.Key constants
 		inputKey := keyFromString(key)
 		if inputKey == 0 {
@@ -228,9 +333,13 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 			return &tools.Result{Success: false, Error: "x and y coordinates are required for click_at"}, nil
 		}
 		// Wait for page to be stable before clicking
-		page.MustWaitStable()
+		if err := page.WaitStable(browserChromeWaitStableDuration); err != nil {
+			return browserChromeFailure("failed waiting for page stability", err), nil
+		}
 		// Move mouse to coordinates and click
-		page.Mouse.MustMoveTo(x, y)
+		if err := page.Mouse.MoveTo(proto.NewPoint(x, y)); err != nil {
+			return browserChromeFailure("failed to move mouse", err), nil
+		}
 		if err := page.Mouse.Click(proto.InputMouseButtonLeft, 1); err != nil {
 			return &tools.Result{Success: false, Error: fmt.Sprintf("failed to click: %v", err)}, nil
 		}
@@ -252,7 +361,9 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 			// Default: scroll down by 500px
 			scrollY = 500
 		}
-		page.MustWaitStable()
+		if err := page.WaitStable(browserChromeWaitStableDuration); err != nil {
+			return browserChromeFailure("failed waiting for page stability", err), nil
+		}
 
 		selector, hasSelector := input["selector"].(string)
 		if hasSelector && selector != "" {
@@ -331,7 +442,7 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 		// many JS-heavy sites expose navigation tabs as styled div/span elements rather
 		// than semantic links or buttons.
 		// Returns data in TOON format (Token-Oriented Object Notation) for compact LLM output
-		result := page.MustEval(fmt.Sprintf(`(offset, perPage) => {
+		result, err := page.Eval(fmt.Sprintf(`(offset, perPage) => {
 			const elements = [];
 			const seen = new Set();
 
@@ -428,10 +539,13 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 			const paged = elements.slice(%d, %d);
 			return { elements: paged, total: total, page: %d, perPage: %d, hasMore: total > %d };
 		}`, offset, offset+perPage, pageNum, perPage, offset+perPage))
+		if err != nil {
+			return browserChromeFailure("failed to inspect interactive elements", err), nil
+		}
 
 		// Format output in TOON format (Token-Oriented Object Notation)
 		// TOON is ~40%% more token-efficient than JSON for structured data
-		return &tools.Result{Success: true, Output: formatElementsAsTOON(result)}, nil
+		return &tools.Result{Success: true, Output: formatElementsAsTOON(result.Value)}, nil
 
 	case "eval":
 		script, _ := input["script"].(string)
@@ -439,7 +553,9 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 			return &tools.Result{Success: false, Error: "script is required for eval"}, nil
 		}
 		// Wait for page to be stable before evaluating
-		page.MustWaitStable()
+		if err := page.WaitStable(browserChromeWaitStableDuration); err != nil {
+			return browserChromeFailure("failed waiting for page stability", err), nil
+		}
 		wrappedScript := buildBrowserEvalScript(script)
 		result, err := page.Eval(wrappedScript)
 		if err != nil {
@@ -454,4 +570,96 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 	default:
 		return &tools.Result{Success: false, Error: fmt.Sprintf("unknown action: %s", action)}, nil
 	}
+}
+
+func (t *BrowserChromeTool) acquireOperation(ctx context.Context) error {
+	select {
+	case t.operationGate <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (t *BrowserChromeTool) releaseOperation() {
+	<-t.operationGate
+}
+
+func browserChromeFailure(prefix string, err error) *tools.Result {
+	logging.Warn("browser_chrome %s: %v", prefix, err)
+	return &tools.Result{
+		Success: false,
+		Error:   fmt.Sprintf("%s: %v", prefix, err),
+		Metadata: map[string]interface{}{
+			"failure_stage": prefix,
+			"retryable":     true,
+		},
+	}
+}
+
+func startBrowserChromeHeartbeat(ctx context.Context, action string) func() {
+	stopped := make(chan struct{})
+	startedAt := time.Now()
+	go func() {
+		ticker := time.NewTicker(browserChromeProgressInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				tools.ReportProgress(ctx, tools.ProgressEvent{
+					Status:  "running",
+					Content: fmt.Sprintf("Chrome %s still running (%s elapsed)", action, time.Since(startedAt).Round(time.Second)),
+				})
+			case <-ctx.Done():
+				return
+			case <-stopped:
+				return
+			}
+		}
+	}()
+
+	var stopOnce sync.Once
+	return func() {
+		stopOnce.Do(func() {
+			close(stopped)
+		})
+	}
+}
+
+func browserChromeNavigationURL(rawURL string) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", err
+	}
+	if !strings.EqualFold(parsed.Scheme, "file") {
+		return rawURL, nil
+	}
+	if parsed.Host != "" && !strings.EqualFold(parsed.Host, "localhost") {
+		return "", fmt.Errorf("remote file URL hosts are not supported")
+	}
+
+	localPath, err := url.PathUnescape(parsed.Path)
+	if err != nil {
+		return "", fmt.Errorf("invalid file URL path: %w", err)
+	}
+	info, err := os.Stat(localPath)
+	if err != nil {
+		return "", fmt.Errorf("cannot read local file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("local file URL must point to a regular file")
+	}
+	if info.Size() > browserChromeMaxLocalFileBytes {
+		return "", fmt.Errorf("local file is %d bytes; maximum is %d", info.Size(), browserChromeMaxLocalFileBytes)
+	}
+	data, err := os.ReadFile(localPath)
+	if err != nil {
+		return "", fmt.Errorf("cannot read local file: %w", err)
+	}
+
+	contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(localPath)))
+	if contentType == "" {
+		contentType = http.DetectContentType(data)
+	}
+	return "data:" + contentType + ";base64," + base64.StdEncoding.EncodeToString(data), nil
 }

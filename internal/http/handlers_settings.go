@@ -100,6 +100,9 @@ func settingsResponse(settings map[string]string, customEnv map[string]string) S
 	if strings.TrimSpace(out[filesearch.IndexingEnabledSettingKey]) == "" {
 		out[filesearch.IndexingEnabledSettingKey] = "false"
 	}
+	if strings.TrimSpace(out[storage.BrowserChromeHeadlessSettingKey]) == "" {
+		out[storage.BrowserChromeHeadlessSettingKey] = "true"
+	}
 	return SettingsResponse{
 		Settings:                               out,
 		CustomEnv:                              compactSettingsMap(customEnv),

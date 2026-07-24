@@ -170,6 +170,90 @@ func (s *Server) handleProjectDatabaseListTables(w http.ResponseWriter, r *http.
 	s.jsonResponse(w, http.StatusOK, resp)
 }
 
+func (s *Server) handleProjectDatabaseTableSchema(w http.ResponseWriter, r *http.Request) {
+	dbID := chi.URLParam(r, "dbID")
+	tableName := chi.URLParam(r, "tableName")
+	if tableName == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Table is required")
+		return
+	}
+
+	dbRecord, err := s.store.GetProjectDatabase(dbID)
+	if err != nil {
+		s.errorResponse(w, http.StatusNotFound, "Project database not found")
+		return
+	}
+	if dbRecord.Engine == "redis" {
+		s.errorResponse(w, http.StatusBadRequest, "Table schema is not available for Redis connections")
+		return
+	}
+
+	columns, err := dbtool.GetTableColumns(r.Context(), dbtool.Config{
+		Engine:     dbRecord.Engine,
+		DSN:        dbRecord.DSN,
+		IsReadOnly: dbRecord.IsReadOnly,
+	}, tableName)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to load table schema: "+err.Error())
+		return
+	}
+
+	response := make([]ProjectDatabaseTableColumnResponse, len(columns))
+	for index, column := range columns {
+		response[index] = ProjectDatabaseTableColumnResponse{
+			Name:         column.Name,
+			DataType:     column.DataType,
+			IsPrimaryKey: column.IsPrimaryKey,
+			IsNullable:   column.IsNullable,
+		}
+	}
+	s.jsonResponse(w, http.StatusOK, response)
+}
+
+func (s *Server) handleProjectDatabaseUpdateCell(w http.ResponseWriter, r *http.Request) {
+	dbID := chi.URLParam(r, "dbID")
+	tableName := chi.URLParam(r, "tableName")
+	if tableName == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Table is required")
+		return
+	}
+
+	dbRecord, err := s.store.GetProjectDatabase(dbID)
+	if err != nil {
+		s.errorResponse(w, http.StatusNotFound, "Project database not found")
+		return
+	}
+
+	var req ProjectDatabaseUpdateCellRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+	if req.Column == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Column is required")
+		return
+	}
+	if len(req.PrimaryKey) == 0 {
+		s.errorResponse(w, http.StatusBadRequest, "Primary key values are required")
+		return
+	}
+
+	result, err := dbtool.UpdateTableCell(r.Context(), dbtool.Config{
+		Engine:     dbRecord.Engine,
+		DSN:        dbRecord.DSN,
+		IsReadOnly: dbRecord.IsReadOnly,
+	}, tableName, req.Column, req.Value, req.PrimaryKey)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to update cell: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, ProjectDatabaseUpdateCellResponse{
+		Query:        result.Query,
+		RowsAffected: result.RowsAffected,
+	})
+}
+
 func (s *Server) handleProjectDatabaseColumnAnalytics(w http.ResponseWriter, r *http.Request) {
 	dbID := chi.URLParam(r, "dbID")
 	tableName := chi.URLParam(r, "tableName")

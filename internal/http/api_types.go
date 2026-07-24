@@ -648,6 +648,24 @@ type ProjectDatabaseTableResponse struct {
 	Name string `json:"name"`
 }
 
+type ProjectDatabaseTableColumnResponse struct {
+	Name         string `json:"name"`
+	DataType     string `json:"data_type"`
+	IsPrimaryKey bool   `json:"is_primary_key"`
+	IsNullable   bool   `json:"is_nullable"`
+}
+
+type ProjectDatabaseUpdateCellRequest struct {
+	Column         string            `json:"column"`
+	Value          *string           `json:"value"`
+	PrimaryKey     map[string]string `json:"primary_key"`
+}
+
+type ProjectDatabaseUpdateCellResponse struct {
+	Query        string `json:"query"`
+	RowsAffected int64  `json:"rows_affected"`
+}
+
 type ProjectDatabaseDataRequest struct {
 	Query  string `json:"query"` // Raw query, or we can use specific pagination args for read-only table view
 	Limit  int    `json:"limit,omitempty"`

@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -145,9 +146,7 @@ func ExecuteQuery(ctx context.Context, cfg Config, query string, limit, offset i
 			return "", err
 		}
 	} else if format == "json" {
-		// JSON formatting (simplified)
-		buf.WriteString("[\n")
-		firstRow := true
+		var records []map[string]interface{}
 
 		rawResult := make([][]byte, len(cols))
 		dest := make([]interface{}, len(cols))
@@ -159,27 +158,22 @@ func ExecuteQuery(ctx context.Context, cfg Config, query string, limit, offset i
 			if err := rows.Scan(dest...); err != nil {
 				return "", err
 			}
-			if !firstRow {
-				buf.WriteString(",\n")
-			}
-			firstRow = false
-			buf.WriteString("  {")
-
+			record := make(map[string]interface{}, len(cols))
 			for i, raw := range rawResult {
-				colName := cols[i]
-				val := "null"
-				if raw != nil {
-					// Extremely naive escaping for JSON. Better to use json.Marshal
-					val = fmt.Sprintf(`"%s"`, strings.ReplaceAll(strings.ReplaceAll(string(raw), "\\", "\\\\"), "\"", "\\\""))
+				if raw == nil {
+					record[cols[i]] = nil
+					continue
 				}
-				buf.WriteString(fmt.Sprintf(`"%s": %s`, colName, val))
-				if i < len(cols)-1 {
-					buf.WriteString(", ")
-				}
+				record[cols[i]] = string(raw)
 			}
-			buf.WriteString("}")
+			records = append(records, record)
 		}
-		buf.WriteString("\n]")
+
+		encoded, err := json.Marshal(records)
+		if err != nil {
+			return "", fmt.Errorf("failed to encode query results as JSON: %w", err)
+		}
+		buf.Write(encoded)
 	} else {
 		return "", fmt.Errorf("unsupported format: %s", format)
 	}

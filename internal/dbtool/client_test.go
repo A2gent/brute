@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"net"
 	"reflect"
@@ -27,10 +28,47 @@ func TestSQLExecuteQueryFormatsResultsAndAppliesPagination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteQuery JSON returned error: %v", err)
 	}
-	for _, expected := range []string{`"name": "beta\"quoted"`, `"note": "line\\break"`} {
-		if !strings.Contains(jsonOutput, expected) {
-			t.Fatalf("expected %s in JSON output: %s", expected, jsonOutput)
-		}
+	var parsed []map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonOutput), &parsed); err != nil {
+		t.Fatalf("JSON output is not valid: %v\noutput: %s", err, jsonOutput)
+	}
+	if len(parsed) != 1 {
+		t.Fatalf("expected one row, got %#v", parsed)
+	}
+	if got, want := parsed[0]["name"], `beta"quoted`; got != want {
+		t.Fatalf("unexpected name value: got %#v want %#v", got, want)
+	}
+	if got, want := parsed[0]["note"], `line\break`; got != want {
+		t.Fatalf("unexpected note value: got %#v want %#v", got, want)
+	}
+}
+
+func TestSQLExecuteQueryJSONEscapesControlCharacters(t *testing.T) {
+	dbPath := createSQLiteFixture(t)
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite fixture: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO items (name, note) VALUES (?, ?)`, "control", "line1\nline2\tend"); err != nil {
+		t.Fatalf("insert control-character row: %v", err)
+	}
+	_ = db.Close()
+
+	jsonOutput, err := ExecuteQuery(context.Background(), Config{Engine: "sqlite", DSN: dbPath}, `SELECT name, note FROM items WHERE name = 'control'`, 1, 0, "json")
+	if err != nil {
+		t.Fatalf("ExecuteQuery JSON returned error: %v", err)
+	}
+
+	var parsed []map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonOutput), &parsed); err != nil {
+		t.Fatalf("JSON output is not valid: %v\noutput: %s", err, jsonOutput)
+	}
+	if len(parsed) != 1 {
+		t.Fatalf("expected one row, got %#v", parsed)
+	}
+	if got, want := parsed[0]["note"], "line1\nline2\tend"; got != want {
+		t.Fatalf("unexpected note value: got %#v want %#v", got, want)
 	}
 }
 

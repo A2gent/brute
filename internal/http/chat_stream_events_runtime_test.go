@@ -336,6 +336,30 @@ func TestAgentEventToStreamEventToolCompletedMutualExclusion(t *testing.T) {
 	}
 }
 
+func TestAgentEventToStreamEventStreamsPromptCacheWindow(t *testing.T) {
+	// tool_executing / tool_completed follow an LLM turn that refreshed the prompt
+	// cache, so they must carry the new window to reset the UI countdown live.
+	server := &Server{}
+	sess := &session.Session{Status: session.StatusRunning, Metadata: map[string]interface{}{
+		"last_llm_request_at": "2026-07-23T12:00:00Z",
+		"last_llm_provider":   "anthropic:work",
+		"last_llm_model":      "claude-sonnet-4-5",
+	}}
+
+	for _, ev := range []agent.Event{
+		{Type: agent.EventToolExecuting, Step: 1, ToolCalls: []agent.ToolCallEvent{{ID: "call_1", Name: "read", Input: `{}`}}},
+		{Type: agent.EventToolCompleted, Step: 1},
+	} {
+		got, ok := server.agentEventToStreamEvent(sess, config.ProviderAnthropic, ev)
+		if !ok {
+			t.Fatalf("%s: expected mapped stream event", ev.Type)
+		}
+		if got.PromptCache == nil || got.PromptCache.TTLSeconds != 300 {
+			t.Fatalf("%s prompt cache = %#v", ev.Type, got.PromptCache)
+		}
+	}
+}
+
 func TestAgentEventToStreamEventPreservesExistingMappings(t *testing.T) {
 	server := &Server{}
 	sess := &session.Session{}

@@ -32,6 +32,10 @@ func (s *Server) agentEventToStreamEvent(sess *session.Session, providerType con
 			Step:      ev.Step,
 			Message:   streamLastMessageResponse(s, sess),
 			ToolCalls: toolCalls,
+			// A tool_executing event fires right after an LLM turn refreshed the
+			// prompt-cache window, so stream the new expiry to reset the UI countdown
+			// live instead of waiting for the run to finish.
+			PromptCache: sessionPromptCache(sess),
 		}, true
 	case agent.EventToolProgress:
 		if ev.ToolProgress == nil {
@@ -50,9 +54,10 @@ func (s *Server) agentEventToStreamEvent(sess *session.Session, providerType con
 		}, true
 	case agent.EventToolCompleted:
 		event := ChatStreamEvent{
-			Type:   "tool_completed",
-			Step:   ev.Step,
-			Status: string(sess.Status),
+			Type:        "tool_completed",
+			Step:        ev.Step,
+			Status:      string(sess.Status),
+			PromptCache: sessionPromptCache(sess),
 		}
 		if len(sess.Messages) > 0 {
 			msg := s.messageToResponse(sess.Messages[len(sess.Messages)-1])

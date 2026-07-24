@@ -238,6 +238,8 @@ type NativeToolApprovalQuestion struct {
 type NativeToolApprovalQuestionOption struct {
 	Label       string `json:"label"`
 	Description string `json:"description"`
+	ImageURL    string `json:"image_url,omitempty"`
+	AudioURL    string `json:"audio_url,omitempty"`
 }
 
 // StreamToolCallEvent represents a tool call in a stream event.

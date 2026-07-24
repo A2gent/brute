@@ -48,6 +48,7 @@ Use this when:
 - Multiple valid approaches exist and you need user preference
 - You encounter an ambiguous situation requiring human judgment
 - An operation fails and you need to know whether to retry or skip
+- You generated multiple asset candidates (images, audio) and need the user to pick one
 
 The session will pause and wait for user input. Once they respond, execution continues.
 
@@ -56,6 +57,8 @@ Guidelines:
 - Provide 2-4 actionable options
 - Keep option labels short (1-5 words)
 - Add descriptions explaining each option
+- Attach image_url and/or audio_url on options when the user should compare visual or audio assets
+- Use absolute filesystem paths or full http(s) URLs for media fields
 - Enable 'custom' to allow freeform text input (enabled by default)`
 }
 
@@ -83,10 +86,18 @@ func (t *QuestionTool) Schema() map[string]interface{} {
 						},
 						"description": map[string]interface{}{
 							"type":        "string",
-							"description": "Explanation of what this option means",
+							"description": "Explanation of what this option means. Optional when image_url or audio_url is provided.",
+						},
+						"image_url": map[string]interface{}{
+							"type":        "string",
+							"description": "Optional preview image URL or absolute filesystem path for this option",
+						},
+						"audio_url": map[string]interface{}{
+							"type":        "string",
+							"description": "Optional preview audio URL or absolute filesystem path for this option",
 						},
 					},
-					"required": []string{"label", "description"},
+					"required": []string{"label"},
 				},
 			},
 			"multiple": map[string]interface{}{
@@ -121,8 +132,14 @@ func (t *QuestionTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 		if opt.Label == "" {
 			return &Result{Success: false, Error: fmt.Sprintf("option %d is missing label", i+1)}, nil
 		}
-		if opt.Description == "" {
-			return &Result{Success: false, Error: fmt.Sprintf("option %d is missing description", i+1)}, nil
+		if opt.Description == "" && strings.TrimSpace(opt.ImageURL) == "" && strings.TrimSpace(opt.AudioURL) == "" {
+			return &Result{Success: false, Error: fmt.Sprintf("option %d must include description or media preview", i+1)}, nil
+		}
+		if strings.TrimSpace(opt.ImageURL) == "" && opt.ImageURL != "" {
+			return &Result{Success: false, Error: fmt.Sprintf("option %d image_url must not be blank", i+1)}, nil
+		}
+		if strings.TrimSpace(opt.AudioURL) == "" && opt.AudioURL != "" {
+			return &Result{Success: false, Error: fmt.Sprintf("option %d audio_url must not be blank", i+1)}, nil
 		}
 	}
 

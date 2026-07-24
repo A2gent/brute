@@ -71,6 +71,12 @@ func (m Model) renderQuestionPrompt() string {
 		}
 
 		text := fmt.Sprintf("  %s %s", icon, opt.Label)
+		if strings.TrimSpace(opt.ImageURL) != "" {
+			text += " [image]"
+		}
+		if strings.TrimSpace(opt.AudioURL) != "" {
+			text += " [audio]"
+		}
 		sb.WriteString(style.Render(text))
 		sb.WriteString("\n")
 	}

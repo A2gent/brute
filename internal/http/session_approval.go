@@ -287,6 +287,8 @@ func nativeToolApprovalQuestionsFromInput(raw json.RawMessage) []NativeToolAppro
 			Options     []struct {
 				Label       string `json:"label"`
 				Description string `json:"description"`
+				ImageURL    string `json:"image_url"`
+				AudioURL    string `json:"audio_url"`
 			} `json:"options"`
 		} `json:"questions"`
 	}
@@ -308,6 +310,8 @@ func nativeToolApprovalQuestionsFromInput(raw json.RawMessage) []NativeToolAppro
 			options = append(options, NativeToolApprovalQuestionOption{
 				Label:       label,
 				Description: strings.TrimSpace(opt.Description),
+				ImageURL:    strings.TrimSpace(opt.ImageURL),
+				AudioURL:    strings.TrimSpace(opt.AudioURL),
 			})
 		}
 		out = append(out, NativeToolApprovalQuestion{

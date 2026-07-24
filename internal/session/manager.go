@@ -190,6 +190,8 @@ type QuestionData struct {
 type QuestionOption struct {
 	Label       string `json:"label"`
 	Description string `json:"description"`
+	ImageURL    string `json:"image_url,omitempty"`
+	AudioURL    string `json:"audio_url,omitempty"`
 }
 
 // SetPendingQuestion stores a pending question in session metadata

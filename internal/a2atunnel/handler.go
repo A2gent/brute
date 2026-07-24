@@ -479,6 +479,24 @@ func renderPendingQuestion(q *session.QuestionData) string {
 				b.WriteString("\n")
 				continue
 			}
+			imageURL := strings.TrimSpace(opt.ImageURL)
+			audioURL := strings.TrimSpace(opt.AudioURL)
+			if imageURL != "" || audioURL != "" {
+				b.WriteString("- ")
+				b.WriteString(label)
+				if imageURL != "" {
+					b.WriteString(" [image: ")
+					b.WriteString(imageURL)
+					b.WriteString("]")
+				}
+				if audioURL != "" {
+					b.WriteString(" [audio: ")
+					b.WriteString(audioURL)
+					b.WriteString("]")
+				}
+				b.WriteString("\n")
+				continue
+			}
 			b.WriteString("- ")
 			b.WriteString(label)
 			b.WriteString("\n")

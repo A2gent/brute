@@ -51,6 +51,29 @@ func TestSessionPromptCacheForOpenAIIsConservativeEstimate(t *testing.T) {
 	}
 }
 
+func TestSessionPromptCacheForCursorIsConservativeEstimate(t *testing.T) {
+	lastRequestAt := time.Date(2026, time.July, 23, 12, 0, 0, 0, time.UTC)
+	sess := session.New("build")
+	sess.Metadata["last_llm_request_at"] = lastRequestAt.Format(time.RFC3339Nano)
+	sess.Metadata["last_llm_provider"] = string(config.ProviderCursor)
+	sess.Metadata["last_llm_model"] = "composer-2.5"
+	sess.Metadata["last_llm_cached_input_tokens"] = float64(770139)
+
+	cache := sessionPromptCache(sess)
+	if cache == nil {
+		t.Fatal("expected Cursor prompt cache metadata")
+	}
+	if cache.Provider != string(config.ProviderCursor) || cache.Model != "composer-2.5" {
+		t.Fatalf("cache target = %q/%q", cache.Provider, cache.Model)
+	}
+	if cache.TTLSeconds != 300 || !cache.Estimated || !cache.HitObserved || cache.CachedInputTokens != 770139 {
+		t.Fatalf("Cursor cache policy = %#v", cache)
+	}
+	if !cache.ExpiresAt.Equal(lastRequestAt.Add(5 * time.Minute)) {
+		t.Fatalf("cache expiry = %s", cache.ExpiresAt)
+	}
+}
+
 func TestSessionPromptCacheOmitsUnsupportedProviderAndInvalidTimestamp(t *testing.T) {
 	for name, metadata := range map[string]map[string]interface{}{
 		"unsupported": {

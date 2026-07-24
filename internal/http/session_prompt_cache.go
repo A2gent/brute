@@ -36,6 +36,11 @@ func sessionPromptCache(sess *session.Session) *PromptCachePayload {
 			return nil
 		}
 		estimated = true
+	case provider == string(config.ProviderCursor):
+		// Cursor reuses the underlying model-provider cache. TTL depends on the
+		// routed backend (often ~5m for Anthropic-backed models), so surface a
+		// conservative five-minute estimate to incentivize timely follow-ups.
+		estimated = true
 	default:
 		return nil
 	}

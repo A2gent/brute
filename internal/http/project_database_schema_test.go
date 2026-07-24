@@ -18,7 +18,8 @@ func TestHandleProjectDatabaseTableSchemaSQLite(t *testing.T) {
 		t.Fatalf("open sqlite fixture: %v", err)
 	}
 	for _, statement := range []string{
-		`CREATE TABLE invoices (id INTEGER PRIMARY KEY, paid INTEGER NOT NULL DEFAULT 0, note TEXT)`,
+		`CREATE TABLE customers (id INTEGER PRIMARY KEY)`,
+		`CREATE TABLE invoices (id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL, paid INTEGER NOT NULL DEFAULT 0, note TEXT, FOREIGN KEY (customer_id) REFERENCES customers(id))`,
 	} {
 		if _, err := fixture.Exec(statement); err != nil {
 			fixture.Close()
@@ -49,8 +50,15 @@ func TestHandleProjectDatabaseTableSchemaSQLite(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
 		t.Fatalf("decode schema response: %v", err)
 	}
-	if len(response) != 3 || response[0].Name != "id" || !response[0].IsPrimaryKey {
+	if len(response) != 4 || response[0].Name != "id" || !response[0].IsPrimaryKey {
 		t.Fatalf("unexpected schema response: %+v", response)
+	}
+	customerIDColumn := response[1]
+	if customerIDColumn.Name != "customer_id" || len(customerIDColumn.ForeignKeys) != 1 {
+		t.Fatalf("unexpected customer_id foreign keys: %+v", customerIDColumn)
+	}
+	if customerIDColumn.ForeignKeys[0].ReferencedTable != "customers" || customerIDColumn.ForeignKeys[0].ReferencedColumn != "id" {
+		t.Fatalf("unexpected foreign key target: %+v", customerIDColumn.ForeignKeys[0])
 	}
 }
 

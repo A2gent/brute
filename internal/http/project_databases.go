@@ -200,11 +200,20 @@ func (s *Server) handleProjectDatabaseTableSchema(w http.ResponseWriter, r *http
 
 	response := make([]ProjectDatabaseTableColumnResponse, len(columns))
 	for index, column := range columns {
+		foreignKeys := make([]ProjectDatabaseColumnAnalyticsForeignKey, len(column.ForeignKeys))
+		for foreignKeyIndex, foreignKey := range column.ForeignKeys {
+			foreignKeys[foreignKeyIndex] = ProjectDatabaseColumnAnalyticsForeignKey{
+				ConstraintName:   foreignKey.ConstraintName,
+				ReferencedTable:  foreignKey.ReferencedTable,
+				ReferencedColumn: foreignKey.ReferencedColumn,
+			}
+		}
 		response[index] = ProjectDatabaseTableColumnResponse{
 			Name:         column.Name,
 			DataType:     column.DataType,
 			IsPrimaryKey: column.IsPrimaryKey,
 			IsNullable:   column.IsNullable,
+			ForeignKeys:  foreignKeys,
 		}
 	}
 	s.jsonResponse(w, http.StatusOK, response)

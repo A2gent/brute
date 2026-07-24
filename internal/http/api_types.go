@@ -649,10 +649,11 @@ type ProjectDatabaseTableResponse struct {
 }
 
 type ProjectDatabaseTableColumnResponse struct {
-	Name         string `json:"name"`
-	DataType     string `json:"data_type"`
-	IsPrimaryKey bool   `json:"is_primary_key"`
-	IsNullable   bool   `json:"is_nullable"`
+	Name         string                                     `json:"name"`
+	DataType     string                                     `json:"data_type"`
+	IsPrimaryKey bool                                       `json:"is_primary_key"`
+	IsNullable   bool                                       `json:"is_nullable"`
+	ForeignKeys  []ProjectDatabaseColumnAnalyticsForeignKey `json:"foreign_keys"`
 }
 
 type ProjectDatabaseUpdateCellRequest struct {

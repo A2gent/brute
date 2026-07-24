@@ -146,7 +146,8 @@ func ExecuteQuery(ctx context.Context, cfg Config, query string, limit, offset i
 			return "", err
 		}
 	} else if format == "json" {
-		var records []map[string]interface{}
+		// WHY: json.Marshal(nil slice) emits null; the UI expects an array.
+		records := make([]map[string]interface{}, 0)
 
 		rawResult := make([][]byte, len(cols))
 		dest := make([]interface{}, len(cols))

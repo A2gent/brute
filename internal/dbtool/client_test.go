@@ -43,6 +43,18 @@ func TestSQLExecuteQueryFormatsResultsAndAppliesPagination(t *testing.T) {
 	}
 }
 
+func TestSQLExecuteQueryJSONReturnsEmptyArrayForNoRows(t *testing.T) {
+	dbPath := createSQLiteFixture(t)
+
+	jsonOutput, err := ExecuteQuery(context.Background(), Config{Engine: "sqlite", DSN: dbPath}, `SELECT name, note FROM items WHERE name = 'missing'`, 10, 0, "json")
+	if err != nil {
+		t.Fatalf("ExecuteQuery JSON returned error: %v", err)
+	}
+	if jsonOutput != "[]" {
+		t.Fatalf("expected empty JSON array, got %q", jsonOutput)
+	}
+}
+
 func TestSQLExecuteQueryJSONEscapesControlCharacters(t *testing.T) {
 	dbPath := createSQLiteFixture(t)
 

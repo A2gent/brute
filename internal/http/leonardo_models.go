@@ -14,8 +14,13 @@ import (
 )
 
 type LeonardoModelsRequest struct {
-	APIKey string `json:"api_key"`
+	APIKey        string `json:"api_key"`
+	IntegrationID string `json:"integration_id"`
 }
+
+// leonardoModelsBaseURL is the Leonardo API base for model listing.
+// Overridden in tests to point at a mock server.
+var leonardoModelsBaseURL = "https://cloud.leonardo.ai/api/rest/v2"
 
 type LeonardoModelOption struct {
 	ID          string `json:"id"`
@@ -34,7 +39,19 @@ func (s *Server) handleListLeonardoModels(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Resolve API key: either provided directly or fetched from a saved integration.
+	// After saving, Caesar masks sensitive config values with "***" so the raw key is
+	// only available server-side. When an integration_id is supplied, look up the real
+	// key from the store to avoid sending the masked placeholder to Leonardo.
 	apiKey := strings.TrimSpace(req.APIKey)
+	if apiKey == "" && strings.TrimSpace(req.IntegrationID) != "" {
+		integration, err := s.store.GetIntegration(strings.TrimSpace(req.IntegrationID))
+		if err != nil || integration == nil {
+			s.errorResponse(w, http.StatusBadRequest, "integration not found")
+			return
+		}
+		apiKey = strings.TrimSpace(integration.Config["api_key"])
+	}
 	if apiKey == "" {
 		s.errorResponse(w, http.StatusBadRequest, "api_key is required")
 		return
@@ -50,7 +67,9 @@ func (s *Server) handleListLeonardoModels(w http.ResponseWriter, r *http.Request
 }
 
 func listLeonardoPlatformModels(ctx context.Context, apiKey string) ([]LeonardoModelOption, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://cloud.leonardo.ai/api/rest/v1/platformModels", nil)
+	// Leonardo migrated from v1 to v2; v1/platformModels is deprecated and returns 500.
+	modelsURL := strings.TrimRight(leonardoModelsBaseURL, "/") + "/models"
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build Leonardo models request: %w", err)
 	}

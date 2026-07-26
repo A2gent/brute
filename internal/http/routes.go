@@ -366,6 +366,7 @@ func (s *Server) registerMindRoutes(r chi.Router) {
 		r.Get("/browse", s.handleBrowseMindDirectories)
 		r.Get("/tree", s.handleListMindTree)
 		r.Get("/file", s.handleGetMindFile)
+		r.Get("/file/raw", s.handleGetMindFileRaw)
 		r.Post("/file", s.handleUpsertMindFile)
 		r.Put("/file", s.handleUpsertMindFile)
 		r.Delete("/file", s.handleDeleteMindFile)

@@ -59,6 +59,44 @@ func (s *Server) handleGetMindFile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleGetMindFileRaw streams image/PDF files from the My Mind vault for browser-native previews.
+func (s *Server) handleGetMindFileRaw(w http.ResponseWriter, r *http.Request) {
+	rootFolder, err := s.loadMindRootFolder()
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	resolvedPath, normalizedRelPath, err := resolveMindPath(rootFolder, relPath)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if normalizedRelPath == "" {
+		s.errorResponse(w, http.StatusBadRequest, "File path is required")
+		return
+	}
+	if !isProjectRawPreviewFile(normalizedRelPath) {
+		s.errorResponse(w, http.StatusBadRequest, "Only PDF and image files can be previewed")
+		return
+	}
+
+	info, err := os.Stat(resolvedPath)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to access file: "+err.Error())
+		return
+	}
+	if info.IsDir() {
+		s.errorResponse(w, http.StatusBadRequest, "Path is a directory")
+		return
+	}
+
+	w.Header().Set("Content-Type", projectRawPreviewContentType(normalizedRelPath))
+	w.Header().Set("Content-Disposition", "inline; filename=\""+strings.ReplaceAll(filepath.Base(normalizedRelPath), "\"", "")+"\"")
+	http.ServeFile(w, r, resolvedPath)
+}
+
 func (s *Server) handleUpsertMindFile(w http.ResponseWriter, r *http.Request) {
 	rootFolder, err := s.loadMindRootFolder()
 	if err != nil {

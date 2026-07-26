@@ -113,6 +113,59 @@ func TestProjectFileEditorRejectsAbsolutePathWithProjectRootMessage(t *testing.T
 	}
 }
 
+func TestProjectFileEditorAllowsMovingMediaFiles(t *testing.T) {
+	tests := []struct {
+		name     string
+		fromPath string
+		toPath   string
+	}{
+		{name: "image", fromPath: "screenshots/capture.png", toPath: "archive/capture.png"},
+		{name: "video", fromPath: "clips/demo.mp4", toPath: "archive/demo.mp4"},
+		{name: "image with spaces", fromPath: "IMAGE 2026-07-16 16 11 29.jpg", toPath: "photos/IMAGE 2026-07-16 16 11 29.jpg"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, projectID, projectDir := newProjectFileTestServer(t)
+			fromFullPath := filepath.Join(projectDir, filepath.FromSlash(tt.fromPath))
+			if err := os.MkdirAll(filepath.Dir(fromFullPath), 0o755); err != nil {
+				t.Fatalf("failed to create parent directory: %v", err)
+			}
+			content := []byte("binary-preview-content")
+			if err := os.WriteFile(fromFullPath, content, 0o644); err != nil {
+				t.Fatalf("failed to write test file: %v", err)
+			}
+			toFullPath := filepath.Join(projectDir, filepath.FromSlash(tt.toPath))
+			if err := os.MkdirAll(filepath.Dir(toFullPath), 0o755); err != nil {
+				t.Fatalf("failed to create destination directory: %v", err)
+			}
+
+			payload, err := json.Marshal(MoveMindFileRequest{
+				FromPath: tt.fromPath,
+				ToPath:   tt.toPath,
+			})
+			if err != nil {
+				t.Fatalf("failed to marshal request: %v", err)
+			}
+			rec := requestProjectFileMove(t, server, projectID, bytes.NewReader(payload))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+			}
+
+			if _, err := os.Stat(fromFullPath); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("expected source file to be moved, stat err=%v", err)
+			}
+			moved, err := os.ReadFile(toFullPath)
+			if err != nil {
+				t.Fatalf("failed to read moved file: %v", err)
+			}
+			if !bytes.Equal(moved, content) {
+				t.Fatalf("expected moved file content %q, got %q", content, moved)
+			}
+		})
+	}
+}
+
 func TestProjectFileEditorAllowsDeletingMediaFiles(t *testing.T) {
 	tests := []struct {
 		name string
@@ -423,6 +476,17 @@ func requestProjectSearchMode(t *testing.T, server *Server, projectID string, qu
 		target += "&mode=" + url.QueryEscape(mode)
 	}
 	req := httptest.NewRequest(http.MethodGet, target, nil)
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+	return rec
+}
+
+func requestProjectFileMove(t *testing.T, server *Server, projectID string, body *bytes.Reader) *httptest.ResponseRecorder {
+	t.Helper()
+
+	target := "/projects/file/move?projectID=" + url.QueryEscape(projectID)
+	req := httptest.NewRequest(http.MethodPost, target, body)
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.router.ServeHTTP(rec, req)
 	return rec

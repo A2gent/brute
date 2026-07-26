@@ -465,10 +465,6 @@ func (s *Server) handleMoveProjectFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	isDir := fromInfo.IsDir()
-	if !isDir && !isProjectEditableFile(fromNormalized) {
-		s.errorResponse(w, http.StatusBadRequest, "Images and videos cannot be moved from the project editor")
-		return
-	}
 
 	toResolved, toNormalized, err := resolveProjectPath(resolvedRoot, req.ToPath)
 	if err != nil {
@@ -477,11 +473,6 @@ func (s *Server) handleMoveProjectFile(w http.ResponseWriter, r *http.Request) {
 	}
 	if toNormalized == "" {
 		s.errorResponse(w, http.StatusBadRequest, "Destination path is required")
-		return
-	}
-
-	if !isDir && !isProjectEditableFile(toNormalized) {
-		s.errorResponse(w, http.StatusBadRequest, "Destination cannot be an image or video file")
 		return
 	}
 

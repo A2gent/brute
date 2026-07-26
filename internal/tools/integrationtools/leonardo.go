@@ -2,7 +2,6 @@ package integrationtools
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,27 +14,29 @@ import (
 	"strings"
 	"time"
 
-	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/storage"
 	"github.com/A2gent/brute/internal/tools"
-	"github.com/google/uuid"
 )
 
 const (
-	leonardoAPIBaseURL                 = "https://cloud.leonardo.ai/api/rest/v1"
-	leonardoGenerationStatusFailed     = "failed"
-	leonardoGenerationStatusDone       = "completed"
-	leonardoGenerationStatusProcessing = "processing"
-	leonardoGenerationStatusWait       = "pending"
-	defaultLeonardoWidth               = 1344
-	defaultLeonardoHeight              = 768
-	defaultLeonardoNumImages           = 1
+	leonardoAPIBaseURL            = "https://cloud.leonardo.ai/api/rest/v1"
+	leonardoAPIStatusComplete     = "COMPLETE"
+	leonardoAPIStatusFailed       = "FAILED"
+	leonardoAPIStatusPending      = "PENDING"
+	defaultLeonardoWidth          = 1344
+	defaultLeonardoHeight         = 768
+	defaultLeonardoNumImages      = 1
+	leonardoDefaultPollInterval   = 2 * time.Second
+	leonardoDefaultTimeout        = 10 * time.Minute
+	leonardoHTTPClientTimeout     = 60 * time.Second
 )
 
 type LeonardoGenerateImageTool struct {
-	store          storage.Store
-	sessionManager *session.Manager
-	client         *http.Client
+	store        storage.Store
+	outputDir    string
+	apiBaseURL   string
+	client       *http.Client
+	pollInterval time.Duration
 }
 
 type LeonardoGenerateImageParams struct {
@@ -50,34 +51,13 @@ type LeonardoGenerateImageParams struct {
 	PresetStyle     string `json:"preset_style,omitempty"`
 }
 
-type LeonardoWebhookProcessor struct {
-	store          storage.Store
-	sessionManager *session.Manager
-	outputDir      string
-	client         *http.Client
-}
-
-func NewLeonardoGenerateImageTool(store storage.Store, sessionManager *session.Manager) *LeonardoGenerateImageTool {
+func NewLeonardoGenerateImageTool(store storage.Store, outputDir string) *LeonardoGenerateImageTool {
 	return &LeonardoGenerateImageTool{
-		store:          store,
-		sessionManager: sessionManager,
+		store:        store,
+		outputDir:    strings.TrimSpace(outputDir),
+		pollInterval: leonardoDefaultPollInterval,
 		client: &http.Client{
-			Timeout: 60 * time.Second,
-		},
-	}
-}
-
-func NewLeonardoWebhookProcessor(store storage.Store, sessionManager *session.Manager, dataPath string) *LeonardoWebhookProcessor {
-	root := strings.TrimSpace(dataPath)
-	if root == "" {
-		root = os.TempDir()
-	}
-	return &LeonardoWebhookProcessor{
-		store:          store,
-		sessionManager: sessionManager,
-		outputDir:      filepath.Join(root, "generated", "leonardo"),
-		client: &http.Client{
-			Timeout: 60 * time.Second,
+			Timeout: leonardoHTTPClientTimeout,
 		},
 	}
 }
@@ -87,7 +67,7 @@ func (t *LeonardoGenerateImageTool) Name() string {
 }
 
 func (t *LeonardoGenerateImageTool) Description() string {
-	return "Generate images with Leonardo AI. This is asynchronous: the session pauses until Square relays the Leonardo webhook back to the agent."
+	return "Generate images with Leonardo AI. Submits a generation request and polls the Leonardo API until images are ready, then returns local file paths for preview in Caesar."
 }
 
 func (t *LeonardoGenerateImageTool) Schema() map[string]interface{} {
@@ -145,19 +125,8 @@ func (t *LeonardoGenerateImageTool) Execute(ctx context.Context, params json.Raw
 	if prompt == "" {
 		return &tools.Result{Success: false, Error: "prompt is required"}, nil
 	}
-	if t.store == nil || t.sessionManager == nil {
+	if t.store == nil {
 		return &tools.Result{Success: false, Error: "leonardo integration is not fully configured on the server"}, nil
-	}
-
-	sessionID, _ := ctx.Value("session_id").(string)
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return &tools.Result{Success: false, Error: "leonardo_generate_image requires an active session"}, nil
-	}
-	toolCallID, _ := ctx.Value("tool_call_id").(string)
-	toolCallID = strings.TrimSpace(toolCallID)
-	if toolCallID == "" {
-		return &tools.Result{Success: false, Error: "leonardo_generate_image requires a tool_call_id"}, nil
 	}
 
 	integration, err := t.selectIntegration(p.IntegrationID, p.IntegrationName)
@@ -169,6 +138,59 @@ func (t *LeonardoGenerateImageTool) Execute(ctx context.Context, params json.Raw
 		return &tools.Result{Success: false, Error: "selected leonardo integration is missing api_key"}, nil
 	}
 
+	timeoutSeconds := parsePositiveInt(integration.Config["timeout_seconds"])
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = int(leonardoDefaultTimeout / time.Second)
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
+	defer cancel()
+
+	requestBody := t.buildGenerationRequest(prompt, p, integration)
+	body, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode leonardo request: %w", err)
+	}
+
+	generationID, err := t.createGeneration(ctx, apiKey, body)
+	if err != nil {
+		return &tools.Result{Success: false, Error: err.Error()}, nil
+	}
+
+	statusPayload, err := t.waitForGeneration(ctx, apiKey, generationID)
+	if err != nil {
+		return &tools.Result{Success: false, Error: err.Error()}, nil
+	}
+
+	status := strings.ToUpper(strings.TrimSpace(extractLeonardoStatus(statusPayload)))
+	if status == leonardoAPIStatusFailed {
+		detail := extractLeonardoError(statusPayload)
+		if detail == "" {
+			detail = "Leonardo generation failed"
+		}
+		return &tools.Result{Success: false, Error: fmt.Sprintf("Leonardo generation %s failed: %s", generationID, detail)}, nil
+	}
+	if status != leonardoAPIStatusComplete {
+		return &tools.Result{Success: false, Error: fmt.Sprintf("Leonardo generation %s ended with unexpected status %q", generationID, status)}, nil
+	}
+
+	imageURLs := extractLeonardoImageURLs(statusPayload)
+	if len(imageURLs) == 0 {
+		return &tools.Result{Success: false, Error: fmt.Sprintf("Leonardo generation %s completed without image URLs", generationID)}, nil
+	}
+
+	localPaths, err := t.downloadImages(ctx, generationID, imageURLs)
+	if err != nil {
+		return &tools.Result{Success: false, Error: err.Error()}, nil
+	}
+
+	return &tools.Result{
+		Success:  true,
+		Output:   buildLeonardoToolResultContent(generationID, localPaths, imageURLs),
+		Metadata: buildLeonardoToolResultMetadata(localPaths, imageURLs),
+	}, nil
+}
+
+func (t *LeonardoGenerateImageTool) buildGenerationRequest(prompt string, p LeonardoGenerateImageParams, integration *storage.Integration) map[string]interface{} {
 	requestBody := map[string]interface{}{
 		"prompt": prompt,
 	}
@@ -201,9 +223,8 @@ func (t *LeonardoGenerateImageTool) Execute(ctx context.Context, params json.Raw
 		height = defaultLeonardoHeight
 	}
 	requestBody["width"] = width
-	if height > 0 {
-		requestBody["height"] = height
-	}
+	requestBody["height"] = height
+
 	numImages := p.NumImages
 	if numImages <= 0 {
 		numImages = parsePositiveInt(integration.Config["num_images"])
@@ -212,15 +233,20 @@ func (t *LeonardoGenerateImageTool) Execute(ctx context.Context, params json.Raw
 		numImages = defaultLeonardoNumImages
 	}
 	requestBody["num_images"] = numImages
+	return requestBody
+}
 
-	body, err := json.Marshal(requestBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode leonardo request: %w", err)
+func (t *LeonardoGenerateImageTool) baseURL() string {
+	if base := strings.TrimSpace(t.apiBaseURL); base != "" {
+		return strings.TrimRight(base, "/")
 	}
+	return leonardoAPIBaseURL
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, leonardoAPIBaseURL+"/generations", strings.NewReader(string(body)))
+func (t *LeonardoGenerateImageTool) createGeneration(ctx context.Context, apiKey string, body []byte) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.baseURL()+"/generations", strings.NewReader(string(body)))
 	if err != nil {
-		return nil, fmt.Errorf("failed to build leonardo request: %w", err)
+		return "", fmt.Errorf("failed to build leonardo request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -228,191 +254,137 @@ func (t *LeonardoGenerateImageTool) Execute(ctx context.Context, params json.Raw
 
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return &tools.Result{Success: false, Error: fmt.Sprintf("leonardo request failed: %v", err)}, nil
+		return "", fmt.Errorf("leonardo request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
 	if err != nil {
-		return &tools.Result{Success: false, Error: fmt.Sprintf("failed to read leonardo response: %v", err)}, nil
+		return "", fmt.Errorf("failed to read leonardo response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		detail := strings.TrimSpace(string(respBody))
 		if detail == "" {
 			detail = resp.Status
 		}
-		return &tools.Result{Success: false, Error: fmt.Sprintf("leonardo API error (status %d): %s", resp.StatusCode, detail)}, nil
+		return "", fmt.Errorf("leonardo API error (status %d): %s", resp.StatusCode, detail)
 	}
 
 	generationID := extractLeonardoGenerationID(respBody)
 	if generationID == "" {
-		return &tools.Result{Success: false, Error: "leonardo response did not include a generation id"}, nil
+		return "", fmt.Errorf("leonardo response did not include a generation id")
 	}
-
-	now := time.Now()
-	record := &storage.LeonardoGeneration{
-		ID:            uuid.NewString(),
-		SessionID:     sessionID,
-		ToolCallID:    toolCallID,
-		IntegrationID: integration.ID,
-		GenerationID:  generationID,
-		Status:        leonardoGenerationStatusWait,
-		Prompt:        prompt,
-		RequestJSON:   string(body),
-		ResponseJSON:  strings.TrimSpace(string(respBody)),
-		CreatedAt:     now,
-		UpdatedAt:     now,
-	}
-	if err := t.store.SaveLeonardoGeneration(record); err != nil {
-		return nil, fmt.Errorf("failed to persist leonardo generation: %w", err)
-	}
-
-	sess, err := t.sessionManager.Get(sessionID)
-	if err == nil && sess != nil {
-		sess.SetStatus(session.StatusWaitingExternal)
-		if err := t.sessionManager.Save(sess); err != nil {
-			return nil, fmt.Errorf("failed to update session status: %w", err)
-		}
-	}
-
-	return &tools.Result{
-		Success: true,
-		Output:  fmt.Sprintf("Leonardo generation queued.\nGeneration ID: %s\nThe session is waiting for the Leonardo webhook callback.", generationID),
-		Metadata: map[string]interface{}{
-			"external_wait": true,
-			"leonardo_generation": map[string]interface{}{
-				"generation_id":  generationID,
-				"integration_id": integration.ID,
-				"status":         leonardoGenerationStatusWait,
-			},
-		},
-	}, nil
+	return generationID, nil
 }
 
-func (p *LeonardoWebhookProcessor) HandleWebhook(ctx context.Context, payload json.RawMessage) (sessionID string, retErr error) {
-	effectivePayload, err := unwrapLeonardoWebhookPayload(payload)
-	if err != nil {
-		return "", err
+func (t *LeonardoGenerateImageTool) waitForGeneration(ctx context.Context, apiKey, generationID string) ([]byte, error) {
+	interval := t.pollInterval
+	if interval <= 0 {
+		interval = leonardoDefaultPollInterval
 	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 
-	generationID := extractLeonardoGenerationID(effectivePayload)
-	if generationID == "" {
-		return "", fmt.Errorf("leonardo webhook payload did not include a generation id")
-	}
-
-	record, claimed, err := p.store.ClaimLeonardoGenerationByGenerationID(
-		generationID,
-		leonardoGenerationStatusWait,
-		leonardoGenerationStatusProcessing,
-	)
-	if err != nil {
-		return "", err
-	}
-	if !claimed {
-		return "", nil
-	}
-	defer func() {
-		if retErr == nil || record == nil || record.Status != leonardoGenerationStatusProcessing {
-			return
+	for {
+		payload, status, err := t.fetchGenerationStatus(ctx, apiKey, generationID)
+		if err != nil {
+			return nil, err
 		}
-		record.Status = leonardoGenerationStatusWait
-		record.Error = ""
-		record.UpdatedAt = time.Now()
-		if saveErr := p.store.SaveLeonardoGeneration(record); saveErr != nil {
-			retErr = fmt.Errorf("%w (and failed to restore leonardo generation to pending: %v)", retErr, saveErr)
-		}
-	}()
 
-	sess, err := p.sessionManager.Get(record.SessionID)
+		switch strings.ToUpper(strings.TrimSpace(status)) {
+		case leonardoAPIStatusComplete, leonardoAPIStatusFailed:
+			return payload, nil
+		case leonardoAPIStatusPending, "":
+			// Keep polling until Leonardo reports a terminal status.
+		default:
+			// Unknown in-progress statuses are treated as pending.
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("timed out waiting for Leonardo generation %s: %w", generationID, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func (t *LeonardoGenerateImageTool) fetchGenerationStatus(ctx context.Context, apiKey, generationID string) ([]byte, string, error) {
+	endpoint := t.baseURL() + "/generations/" + url.PathEscape(generationID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to load target session: %w", err)
+		return nil, "", fmt.Errorf("failed to build leonardo status request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("leonardo status request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read leonardo status response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		detail := strings.TrimSpace(string(respBody))
+		if detail == "" {
+			detail = resp.Status
+		}
+		return nil, "", fmt.Errorf("leonardo status API error (status %d): %s", resp.StatusCode, detail)
 	}
 
-	status := extractLeonardoStatus(effectivePayload)
-	imageURLs := extractLeonardoImageURLs(effectivePayload)
+	return respBody, extractLeonardoStatus(respBody), nil
+}
+
+func (t *LeonardoGenerateImageTool) downloadImages(ctx context.Context, generationID string, imageURLs []string) ([]string, error) {
+	outDir := t.outputDir
+	if outDir == "" {
+		outDir = filepath.Join(os.TempDir(), "generated", "leonardo")
+	}
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return nil, fmt.Errorf("failed to create leonardo output folder: %w", err)
+	}
+
 	localPaths := make([]string, 0, len(imageURLs))
-	processingErr := ""
-	if isLeonardoFailureStatus(status) {
-		processingErr = extractLeonardoError(effectivePayload)
-		if processingErr == "" {
-			processingErr = "Leonardo generation failed"
+	for idx, rawURL := range imageURLs {
+		path, err := t.downloadImage(ctx, outDir, generationID, idx, rawURL)
+		if err != nil {
+			return nil, err
 		}
-		record.Status = leonardoGenerationStatusFailed
-		record.Error = processingErr
-	} else {
-		if len(imageURLs) == 0 {
-			processingErr = "Leonardo webhook did not include any generated image URLs"
-			record.Status = leonardoGenerationStatusFailed
-			record.Error = processingErr
-		}
-		for idx, rawURL := range imageURLs {
-			path, downloadErr := p.downloadImage(ctx, sess.ID, generationID, idx, rawURL)
-			if downloadErr != nil {
-				processingErr = downloadErr.Error()
-				record.Status = leonardoGenerationStatusFailed
-				record.Error = processingErr
-				break
-			}
-			localPaths = append(localPaths, path)
-		}
-		if processingErr == "" {
-			record.Status = leonardoGenerationStatusDone
-		}
+		localPaths = append(localPaths, path)
 	}
-
-	record.ResponseJSON = strings.TrimSpace(string(effectivePayload))
-	record.UpdatedAt = time.Now()
-	if err := p.store.SaveLeonardoGeneration(record); err != nil {
-		return "", fmt.Errorf("failed to update leonardo generation status: %w", err)
-	}
-
-	toolResult := session.ToolResult{
-		ToolCallID: record.ToolCallID,
-		Name:       "leonardo_generate_image",
-	}
-	if record.Status == leonardoGenerationStatusFailed {
-		toolResult.IsError = true
-		toolResult.Content = fmt.Sprintf("Leonardo generation %s failed: %s", generationID, record.Error)
-	} else {
-		toolResult.Content = buildLeonardoToolResultContent(generationID, localPaths, imageURLs)
-		toolResult.Metadata = buildLeonardoToolResultMetadata(localPaths, imageURLs)
-	}
-
-	sess.AddToolResult([]session.ToolResult{toolResult})
-	sess.SetStatus(session.StatusRunning)
-	if err := p.sessionManager.Save(sess); err != nil {
-		return "", fmt.Errorf("failed to save leonardo tool result to session: %w", err)
-	}
-
-	return sess.ID, nil
+	return localPaths, nil
 }
 
-func unwrapLeonardoWebhookPayload(payload json.RawMessage) (json.RawMessage, error) {
-	var envelope struct {
-		Metadata map[string]interface{} `json:"metadata"`
-		HTTP     struct {
-			BodyBase64 string `json:"body_base64"`
-		} `json:"http"`
-	}
-	if err := json.Unmarshal(payload, &envelope); err != nil {
-		return payload, nil
-	}
-	if envelope.Metadata == nil {
-		return payload, nil
-	}
-	eventType, _ := envelope.Metadata["internal_event"].(string)
-	if strings.TrimSpace(eventType) != "webhook_inbound" {
-		return payload, nil
-	}
-	encoded := strings.TrimSpace(envelope.HTTP.BodyBase64)
-	if encoded == "" {
-		return nil, fmt.Errorf("webhook relay payload did not include a body")
-	}
-	raw, err := base64.StdEncoding.DecodeString(encoded)
+func (t *LeonardoGenerateImageTool) downloadImage(ctx context.Context, outDir, generationID string, index int, rawURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode webhook relay body: %w", err)
+		return "", fmt.Errorf("failed to build image download request: %w", err)
 	}
-	return json.RawMessage(raw), nil
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to download generated image: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("failed to download generated image: %s", resp.Status)
+	}
+
+	ext := imageFileExtension(rawURL, resp.Header.Get("Content-Type"))
+	path := filepath.Join(outDir, fmt.Sprintf("%s-%d%s", generationID, index+1, ext))
+	file, err := os.Create(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to create generated image file: %w", err)
+	}
+	defer file.Close()
+
+	if _, err := io.Copy(file, io.LimitReader(resp.Body, 20*1024*1024)); err != nil {
+		return "", fmt.Errorf("failed to store generated image: %w", err)
+	}
+	return path, nil
 }
 
 func buildLeonardoToolResultContent(generationID string, localPaths []string, imageURLs []string) string {
@@ -448,39 +420,6 @@ func buildLeonardoToolResultMetadata(localPaths []string, imageURLs []string) ma
 		}
 	}
 	return metadata
-}
-
-func (p *LeonardoWebhookProcessor) downloadImage(ctx context.Context, sessionID, generationID string, index int, rawURL string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to build image download request: %w", err)
-	}
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to download generated image: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("failed to download generated image: %s", resp.Status)
-	}
-
-	if err := os.MkdirAll(filepath.Join(p.outputDir, sessionID), 0o755); err != nil {
-		return "", fmt.Errorf("failed to create leonardo output folder: %w", err)
-	}
-
-	ext := imageFileExtension(rawURL, resp.Header.Get("Content-Type"))
-	path := filepath.Join(p.outputDir, sessionID, fmt.Sprintf("%s-%d%s", generationID, index+1, ext))
-	file, err := os.Create(path)
-	if err != nil {
-		return "", fmt.Errorf("failed to create generated image file: %w", err)
-	}
-	defer file.Close()
-
-	if _, err := io.Copy(file, io.LimitReader(resp.Body, 20*1024*1024)); err != nil {
-		return "", fmt.Errorf("failed to store generated image: %w", err)
-	}
-	return path, nil
 }
 
 func imageFileExtension(rawURL string, contentType string) string {
@@ -575,7 +514,7 @@ func extractLeonardoStatus(raw []byte) string {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return ""
 	}
-	return strings.ToLower(strings.TrimSpace(findStringByKey(payload, "status")))
+	return strings.ToUpper(strings.TrimSpace(findStringByKey(payload, "status")))
 }
 
 func extractLeonardoError(raw []byte) string {
@@ -608,15 +547,6 @@ func extractLeonardoImageURLs(raw []byte) []string {
 		}
 	}
 	return filtered
-}
-
-func isLeonardoFailureStatus(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "failed", "error":
-		return true
-	default:
-		return false
-	}
 }
 
 func findStringByKey(value interface{}, key string) string {

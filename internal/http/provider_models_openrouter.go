@@ -24,7 +24,8 @@ type openRouterModelsHTTPClient interface {
 
 type openRouterModelsResponse struct {
 	Data []struct {
-		ID string `json:"id"`
+		ID            string `json:"id"`
+		ContextLength int    `json:"context_length"`
 	} `json:"data"`
 }
 
@@ -81,11 +82,16 @@ func fetchOpenRouterModels(ctx context.Context, client openRouterModelsHTTPClien
 	}
 
 	models := make([]string, 0, len(payload.Data))
+	contextCache := make(map[string]int, len(payload.Data))
 	for _, model := range payload.Data {
 		if id := strings.TrimSpace(model.ID); id != "" {
 			models = append(models, id)
+			if model.ContextLength > 0 {
+				contextCache[id] = model.ContextLength
+			}
 		}
 	}
+	config.CacheOpenRouterModelContextWindows(contextCache)
 	sort.Strings(models)
 	return models, nil
 }

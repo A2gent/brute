@@ -27,7 +27,7 @@ const (
 	comfyUIDefaultSampler      = "euler"
 	comfyUIDefaultScheduler    = "normal"
 	comfyUIDefaultNegative     = "low quality, blurry, deformed"
-	comfyUIDefaultTimeout      = 180 * time.Second
+	comfyUIDefaultTimeout      = 15 * time.Minute
 	comfyUIDefaultPollInterval = 500 * time.Millisecond
 )
 

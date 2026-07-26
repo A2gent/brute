@@ -26,7 +26,6 @@ import (
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/tools"
-	"github.com/A2gent/brute/internal/tools/integrationtools"
 )
 
 const (
@@ -530,26 +529,6 @@ func (s *Server) handleA2AInternalEvent(ctx context.Context, payload json.RawMes
 			return nil, err
 		}
 		return &a2atunnel.InternalEventResult{Payload: payload, ConversationID: conversationID}, nil
-	case "leonardo_webhook":
-		processor := integrationtools.NewLeonardoWebhookProcessor(s.store, s.sessionManager, s.config.DataPath)
-		sessionID, err := processor.HandleWebhook(ctx, payload)
-		if err != nil {
-			return nil, err
-		}
-		if strings.TrimSpace(sessionID) != "" {
-			s.resumeSessionAfterExternalToolResult(sessionID)
-		}
-		return &a2atunnel.InternalEventResult{ConversationID: sessionID}, nil
-	case "webhook_inbound":
-		processor := integrationtools.NewLeonardoWebhookProcessor(s.store, s.sessionManager, s.config.DataPath)
-		sessionID, err := processor.HandleWebhook(ctx, payload)
-		if err != nil {
-			return nil, err
-		}
-		if strings.TrimSpace(sessionID) != "" {
-			s.resumeSessionAfterExternalToolResult(sessionID)
-		}
-		return &a2atunnel.InternalEventResult{ConversationID: sessionID}, nil
 	default:
 		return nil, fmt.Errorf("unsupported internal event: %s", eventType)
 	}

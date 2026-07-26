@@ -136,6 +136,10 @@ func TestGrokProviderDefinition(t *testing.T) {
 func TestResolveContextWindowUsesModelSpecificOpenRouterLimits(t *testing.T) {
 	t.Parallel()
 
+	// Populate the cache with a known context window for owl-alpha.
+	CacheOpenRouterModelContextWindow("owl-alpha", 1000000)
+	t.Cleanup(ResetOpenRouterModelContextCache)
+
 	cases := []struct {
 		name     string
 		provider Provider
@@ -163,6 +167,11 @@ func TestResolveContextWindowUsesModelSpecificOpenRouterLimits(t *testing.T) {
 			model:    "openrouter/openrouter/owl-alpha",
 			want:     64000,
 		},
+		{
+			name:  "cached model returns its real context window",
+			model: "openrouter/xiaomi/mimo-v2.5",
+			want:  0, // not in cache, falls back to provider default
+		},
 	}
 
 	for _, tt := range cases {
@@ -172,6 +181,52 @@ func TestResolveContextWindowUsesModelSpecificOpenRouterLimits(t *testing.T) {
 
 			if got := ResolveContextWindow(ProviderOpenRouter, tt.provider, tt.model); got != tt.want {
 				t.Fatalf("ResolveContextWindow(openrouter, %#v, %q) = %d, want %d", tt.provider, tt.model, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveContextWindowUsesCachedOpenRouterModelContextWindow(t *testing.T) {
+	t.Parallel()
+
+	CacheOpenRouterModelContextWindow("openrouter/xiaomi/mimo-v2.5", 1000000)
+	CacheOpenRouterModelContextWindow("deepseek/deepseek-r1", 131072)
+	t.Cleanup(ResetOpenRouterModelContextCache)
+
+	cases := []struct {
+		name  string
+		model string
+		want  int
+	}{
+		{
+			name:  "mimo-v2.5 with openrouter prefix",
+			model: "openrouter/xiaomi/mimo-v2.5",
+			want:  1000000,
+		},
+		{
+			name:  "mimo-v2.5 without openrouter prefix",
+			model: "xiaomi/mimo-v2.5",
+			want:  1000000,
+		},
+		{
+			name:  "deepseek-r1 with openrouter prefix",
+			model: "openrouter/deepseek/deepseek-r1",
+			want:  131072,
+		},
+		{
+			name:  "unknown model falls back to provider default",
+			model: "openrouter/unknown-model",
+			want:  128000,
+		},
+	}
+
+	for _, tt := range cases {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := ResolveContextWindow(ProviderOpenRouter, Provider{}, tt.model); got != tt.want {
+				t.Fatalf("ResolveContextWindow(openrouter, %#v, %q) = %d, want %d", Provider{}, tt.model, got, tt.want)
 			}
 		})
 	}

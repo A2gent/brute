@@ -11,6 +11,9 @@ import (
 func TestResolveContextWindowForOpenRouterOwlAlpha(t *testing.T) {
 	t.Parallel()
 
+	config.CacheOpenRouterModelContextWindow("owl-alpha", 1000000)
+	t.Cleanup(config.ResetOpenRouterModelContextCache)
+
 	cfg := config.DefaultConfig()
 	cfg.ActiveProvider = string(config.ProviderOpenRouter)
 	cfg.Providers[string(config.ProviderOpenRouter)] = config.Provider{

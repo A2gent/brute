@@ -95,8 +95,9 @@ type Integration struct {
 	UpdatedAt time.Time
 }
 
-// LeonardoGeneration tracks an async Leonardo image generation request
-// initiated from a session tool call and later completed through webhook relay.
+// LeonardoGeneration tracks a legacy async Leonardo image generation request.
+// The current leonardo_generate_image tool polls the Leonardo API synchronously
+// and no longer writes to this table.
 type LeonardoGeneration struct {
 	ID            string
 	SessionID     string

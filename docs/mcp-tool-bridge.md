@@ -302,9 +302,9 @@ Do **not** expose all ~60 tools. Reasons: token cost in the CLI's own context, a
 | Delegation (`delegate_to_subagent`, `delegate_to_agent`, `parallel`, `pipeline`) | **No (phase 1)** | Re-entrancy risk: a delegated child could spawn another CLI that calls back again. Revisit with a depth guard. |
 | MCP meta (`mcp_call`, `mcp_list_tools`) | **No** | Recursive MCP-through-MCP |
 
-Selection reuses the existing disabled-tools machinery (`A2GENT_DISABLED_TOOLS`, `resolveDisabledToolNames`) plus an MCP-specific allowlist.
+Selection reuses the existing disabled-tools machinery (`A2GENT_DISABLED_TOOLS`, `resolveDisabledToolNames`) plus the bridge's fixed denylist for native, delegation, and MCP meta tools.
 
-## Naming and allowlist
+## Naming and tool policy
 
 Claude Code namespaces MCP tools as `mcp__<server>__<tool>`. With server name `a2gent`:
 
@@ -340,18 +340,9 @@ Required:
 
 Exposed MCP tool schemas are injected into the **CLI's** context and count against subscription usage windows, not against a token bill. Keeping the exposed set small still matters for context budget and latency, but it does not create metered spend the way the direct API path does.
 
-## Configuration
+## Runtime behavior
 
-```bash
-# Enable the bridge (default: off)
-export A2GENT_CLAUDE_MCP_BRIDGE_ENABLED=true
-
-# Optional: override the exposed allowlist (comma-separated)
-export A2GENT_CLAUDE_MCP_BRIDGE_TOOLS=question,openai_generate_image,jira_query
-
-# Optional: blocking-tool wait timeout (Go duration, default 5m)
-export A2GENT_CLAUDE_MCP_BRIDGE_TIMEOUT=5m
-```
+The bridge is enabled automatically for Claude Code CLI sessions and has no MCP-specific environment variables or feature flags. It exposes all registered tools except the fixed denylist described above, while still honoring the shared disabled-tools policy. Blocking `question` calls use a fixed five-minute timeout.
 
 Generated MCP config passed to the CLI:
 
@@ -373,14 +364,14 @@ Generated MCP config passed to the CLI:
 |---|---|---|
 | 1. MCP server: `initialize`, `tools/list`, `tools/call` | new `internal/http/mcp_bridge.go` | brute |
 | 2. Session token registry, lifetime tied to the CLI process | `internal/http/mcp_bridge.go`, `internal/llm/claudecli/client.go` | brute |
-| 3. Schema exposure filtered by allowlist | reuse `tools.Manager.GetDefinitions` + `resolveDisabledToolNames` | brute |
+| 3. Schema exposure filtered by fixed denylist and shared disabled-tools policy | reuse `tools.Manager.GetDefinitions` + `resolveDisabledToolNames` | brute |
 | 4. Blocking `question` via `approval.Broker`, `kind: "question"` | `internal/http/mcp_bridge.go`, `internal/approval` | brute |
 | 5. **Fork `handleAnswerQuestion` to skip resume when a bridge question is live** | `internal/http/handlers_session_interactions.go:82-105` | brute |
-| 6. CLI args: `--mcp-config`, `--strict-mcp-config`, allowlist | `appendCommonArgs`, `claudeToolsArgs` (`internal/llm/claudecli/tools.go`) | brute |
-| 7. Feature flag + loopback guard | `internal/http/toolmanager.go`, `server_core.go` | brute |
+| 6. CLI args: `--mcp-config`, `--strict-mcp-config`, MCP tool wildcard | `appendCommonArgs`, `claudeToolsArgs` (`internal/llm/claudecli/tools.go`) | brute |
+| 7. Always-on bridge + loopback guard | `internal/http/toolmanager.go`, `server_core.go` | brute |
 | 8. Approval panel, SSE handling, question rendering | none | **Caesar: no change** |
 
-Ship behind `A2GENT_CLAUDE_MCP_BRIDGE_ENABLED`, default off, so the current claudecli path stays untouched until the bridge is proven.
+The bridge ships enabled by default for Claude Code CLI sessions. The loopback guard, per-invocation token, fixed tool denylist, and shared disabled-tools policy remain mandatory safeguards.
 
 ## Tests
 
@@ -394,7 +385,7 @@ go test ./internal/http/... -run MCPBridgeQuestion
 # Answer endpoint must not spawn a duplicate run while a bridge question is live
 go test ./internal/http/... -run AnswerQuestionBridge
 
-# CLI arg construction: --mcp-config, --strict-mcp-config, allowlist
+# CLI arg construction: --mcp-config, --strict-mcp-config, tool wildcard
 go test ./internal/llm/claudecli/... -run MCP
 
 # Full suite

@@ -14,7 +14,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -27,33 +26,14 @@ import (
 )
 
 const (
-	mcpBridgeEnabledEnv = "A2GENT_CLAUDE_MCP_BRIDGE_ENABLED"
-	mcpBridgeToolsEnv   = "A2GENT_CLAUDE_MCP_BRIDGE_TOOLS"
-	mcpBridgeTimeoutEnv = "A2GENT_CLAUDE_MCP_BRIDGE_TIMEOUT"
-
 	mcpBridgeDefaultTimeout  = 5 * time.Minute
 	mcpBridgeProtocolVersion = "2024-11-05"
 	mcpBridgeMaxBodyBytes    = 4 << 20
 )
 
-func mcpBridgeEnabled() bool {
-	return envBool(mcpBridgeEnabledEnv)
-}
-
-func mcpBridgeBlockingTimeout() time.Duration {
-	if raw := strings.TrimSpace(os.Getenv(mcpBridgeTimeoutEnv)); raw != "" {
-		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
-			return d
-		}
-	}
-	return mcpBridgeDefaultTimeout
-}
-
-// mcpBridgeDefaultExcludedTools keeps the CLI on its own native equivalents and
-// blocks re-entrant categories (delegation, MCP-through-MCP). Everything else
-// is exposed by default; A2GENT_CLAUDE_MCP_BRIDGE_TOOLS replaces this policy
-// with an explicit allowlist.
-var mcpBridgeDefaultExcludedTools = map[string]struct{}{
+// mcpBridgeExcludedTools keeps the CLI on its own native equivalents and
+// blocks re-entrant categories such as delegation and MCP-through-MCP.
+var mcpBridgeExcludedTools = map[string]struct{}{
 	"bash": {}, "code_execution": {}, "read": {}, "write": {}, "edit": {},
 	"replace_lines": {}, "insert_lines": {}, "file_search": {}, "content_search": {},
 	"glob": {}, "find_files": {}, "grep": {}, "filter": {}, "man": {},
@@ -63,15 +43,7 @@ var mcpBridgeDefaultExcludedTools = map[string]struct{}{
 }
 
 func mcpBridgeToolExposed(name string) bool {
-	if raw := strings.TrimSpace(os.Getenv(mcpBridgeToolsEnv)); raw != "" {
-		for _, entry := range strings.Split(raw, ",") {
-			if strings.TrimSpace(entry) == name {
-				return true
-			}
-		}
-		return false
-	}
-	_, excluded := mcpBridgeDefaultExcludedTools[name]
+	_, excluded := mcpBridgeExcludedTools[name]
 	return !excluded
 }
 
@@ -84,15 +56,17 @@ type mcpBridgeToken struct {
 }
 
 type mcpBridgeState struct {
-	mu        sync.Mutex
-	tokens    map[string]*mcpBridgeToken
-	questions map[string]int
+	mu              sync.Mutex
+	tokens          map[string]*mcpBridgeToken
+	questions       map[string]int
+	questionTimeout time.Duration
 }
 
 func newMCPBridgeState() *mcpBridgeState {
 	return &mcpBridgeState{
-		tokens:    make(map[string]*mcpBridgeToken),
-		questions: make(map[string]int),
+		tokens:          make(map[string]*mcpBridgeToken),
+		questions:       make(map[string]int),
+		questionTimeout: mcpBridgeDefaultTimeout,
 	}
 }
 
@@ -158,7 +132,7 @@ func (st *mcpBridgeState) hasPendingQuestion(sessionID string) bool {
 // claudecliMCPBridgeHook implements claudecli.MCPBridgeHook: it mints a
 // per-invocation token and returns the inline --mcp-config JSON for the CLI.
 func (s *Server) claudecliMCPBridgeHook(_ context.Context, sessionID string) (string, func(), error) {
-	if s == nil || s.mcpBridge == nil || !mcpBridgeEnabled() {
+	if s == nil || s.mcpBridge == nil {
 		return "", nil, nil
 	}
 	sessionID = strings.TrimSpace(sessionID)
@@ -215,8 +189,8 @@ func (m *mcpBridgeRPCMessage) isNotification() bool {
 }
 
 func (s *Server) handleMCPBridge(w http.ResponseWriter, r *http.Request) {
-	if s.mcpBridge == nil || !mcpBridgeEnabled() {
-		s.errorResponse(w, http.StatusNotFound, "MCP bridge is disabled")
+	if s.mcpBridge == nil {
+		s.errorResponse(w, http.StatusServiceUnavailable, "MCP bridge is unavailable")
 		return
 	}
 	// WHY: brute binds 0.0.0.0 without authentication, and this endpoint can
@@ -450,7 +424,7 @@ func (s *Server) mcpBridgeAskQuestion(ctx context.Context, sessionID string, arg
 		Input:     args,
 		Reason:    reason,
 		AskUser:   &approval.AskUserPayload{Question: question},
-		Timeout:   mcpBridgeBlockingTimeout(),
+		Timeout:   s.mcpBridge.questionTimeout,
 	})
 	if err != nil {
 		return fmt.Sprintf("question was not answered: %v", err), true

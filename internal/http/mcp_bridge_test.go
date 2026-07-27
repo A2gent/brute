@@ -15,7 +15,6 @@ import (
 
 func newMCPBridgeTestServer(t *testing.T) *Server {
 	t.Helper()
-	t.Setenv(mcpBridgeEnabledEnv, "true")
 	server, _ := newBruteHTTPProxyTestServer(t)
 	return server
 }
@@ -97,21 +96,22 @@ func mcpBridgeCallResultText(t *testing.T, resp mcpBridgeTestResponse) (string, 
 	return text, isError
 }
 
-func TestMCPBridgeDisabledReturns404(t *testing.T) {
-
-	server, _ := newBruteHTTPProxyTestServer(t)
+func TestMCPBridgeEnabledByDefault(t *testing.T) {
+	server := newMCPBridgeTestServer(t)
 	sess, err := server.sessionManager.Create("build")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	token, revoke := server.mustMintMCPBridgeToken(t, sess.ID)
+	cfg, revoke, err := server.claudecliMCPBridgeHook(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatalf("hook: %v", err)
+	}
+	if revoke == nil {
+		t.Fatal("expected bridge token revoke callback")
+	}
 	defer revoke()
-
-	req := newMCPBridgeRequest(t, sess.ID, token, mcpBridgeRPC(t, 1, "initialize", nil))
-	rec := httptest.NewRecorder()
-	server.router.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", rec.Code)
+	if cfg == "" {
+		t.Fatal("expected bridge config without feature flags")
 	}
 }
 
@@ -367,8 +367,8 @@ func TestMCPBridgeQuestionBlocksAndReturnsAnswer(t *testing.T) {
 
 func TestMCPBridgeQuestionTimeout(t *testing.T) {
 
-	t.Setenv(mcpBridgeTimeoutEnv, "50ms")
 	server := newMCPBridgeTestServer(t)
+	server.mcpBridge.questionTimeout = 50 * time.Millisecond
 	sess, err := server.sessionManager.Create("build")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
@@ -444,22 +444,6 @@ func TestAnswerQuestionBridgePendingSkipsResume(t *testing.T) {
 	// The fork must not spawn a resume run while the CLI subprocess owns the session.
 	if got := server.activeSessionRunCount(sess.ID); got != 0 {
 		t.Fatalf("active runs = %d, want 0 (resume must not fire for bridge questions)", got)
-	}
-}
-
-func TestMCPBridgeHookDisabledWithoutFlag(t *testing.T) {
-
-	server, _ := newBruteHTTPProxyTestServer(t)
-	sess, err := server.sessionManager.Create("build")
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	cfg, revoke, err := server.claudecliMCPBridgeHook(context.Background(), sess.ID)
-	if err != nil {
-		t.Fatalf("hook: %v", err)
-	}
-	if cfg != "" || revoke != nil {
-		t.Fatalf("expected empty config without flag, got %q", cfg)
 	}
 }
 

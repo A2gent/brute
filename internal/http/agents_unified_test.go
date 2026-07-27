@@ -580,6 +580,122 @@ workspace:
 	}
 }
 
+func TestListUnifiedAgentsExcludesGlobalCatalogDefinitionsWithConfiguredProjectBinding(t *testing.T) {
+	server, store := newUnifiedAgentsTestServer(t)
+
+	now := time.Now()
+	soulProject, err := store.GetProject(storage.SystemProjectSoulID)
+	if err != nil {
+		t.Fatalf("failed to load soul project: %v", err)
+	}
+	if soulProject.Folder == nil {
+		t.Fatalf("soul project folder is missing")
+	}
+
+	projectRoot := t.TempDir()
+	project := &storage.Project{ID: "proj-app", Name: "App", Folder: &projectRoot, CreatedAt: now, UpdatedAt: now}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatalf("failed to save project: %v", err)
+	}
+
+	projectAgentsDir := filepath.Join(projectRoot, "agents", "project-reviewer")
+	if err := os.MkdirAll(projectAgentsDir, 0o755); err != nil {
+		t.Fatalf("failed to create project agents dir: %v", err)
+	}
+	projectYAML := `
+version: "1"
+agent:
+  id: project-reviewer
+  name: Project Reviewer
+runtime:
+  type: docker
+`
+	if err := os.WriteFile(filepath.Join(projectAgentsDir, "agent.yaml"), []byte(projectYAML), 0o644); err != nil {
+		t.Fatalf("failed to write project agent yaml: %v", err)
+	}
+
+	globalAgentsDir := filepath.Join(*soulProject.Folder, "agents", "global-reviewer")
+	if err := os.MkdirAll(globalAgentsDir, 0o755); err != nil {
+		t.Fatalf("failed to create global agents dir: %v", err)
+	}
+	globalYAML := `
+version: "1"
+agent:
+  id: global-reviewer
+  name: Global Reviewer
+runtime:
+  type: docker
+workspace:
+  scope: current_project
+  mount: rw
+`
+	if err := os.WriteFile(filepath.Join(globalAgentsDir, "agent.yaml"), []byte(globalYAML), 0o644); err != nil {
+		t.Fatalf("failed to write global agent yaml: %v", err)
+	}
+
+	storedGlobalYAML := `
+version: "1"
+agent:
+  id: global-reviewer
+  name: Global Reviewer
+runtime:
+  type: docker
+workspace:
+  scope: configured_project
+  mount: rw
+local:
+  project_bindings:
+    configured_project: proj-app
+  definition_dir: ` + filepath.Join(globalAgentsDir) + `
+`
+	projectID := "proj-app"
+	if err := store.SaveAgentDefinition(&storage.AgentDefinitionRecord{
+		ID:             "global-reviewer",
+		Name:           "Global Reviewer",
+		Runtime:        agentdef.RuntimeDocker,
+		ProjectID:      &projectID,
+		DefinitionYAML: storedGlobalYAML,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("failed to save stored global definition: %v", err)
+	}
+
+	projectReq := httptest.NewRequest(http.MethodGet, "/unified-agents/?project_id=proj-app", nil)
+	projectRec := httptest.NewRecorder()
+	server.handleListUnifiedAgents(projectRec, projectReq)
+	if projectRec.Code != http.StatusOK {
+		t.Fatalf("project list failed: %d %s", projectRec.Code, projectRec.Body.String())
+	}
+	var projectResp struct {
+		Agents []UnifiedAgentResponse `json:"agents"`
+	}
+	if err := json.Unmarshal(projectRec.Body.Bytes(), &projectResp); err != nil {
+		t.Fatalf("failed to decode project response: %v", err)
+	}
+	projectIDs := unifiedAgentIDs(projectResp.Agents)
+	if !projectIDs["project-reviewer"] || projectIDs["global-reviewer"] {
+		t.Fatalf("project list should include only project-folder definitions, got %+v", projectResp.Agents)
+	}
+
+	globalReq := httptest.NewRequest(http.MethodGet, "/unified-agents/", nil)
+	globalRec := httptest.NewRecorder()
+	server.handleListUnifiedAgents(globalRec, globalReq)
+	if globalRec.Code != http.StatusOK {
+		t.Fatalf("global list failed: %d %s", globalRec.Code, globalRec.Body.String())
+	}
+	var globalResp struct {
+		Agents []UnifiedAgentResponse `json:"agents"`
+	}
+	if err := json.Unmarshal(globalRec.Body.Bytes(), &globalResp); err != nil {
+		t.Fatalf("failed to decode global response: %v", err)
+	}
+	globalIDs := unifiedAgentIDs(globalResp.Agents)
+	if !globalIDs["global-reviewer"] || globalIDs["project-reviewer"] {
+		t.Fatalf("global list should include global catalog definitions only, got %+v", globalResp.Agents)
+	}
+}
+
 func TestListUnifiedAgentsIncludesDiscoveredProjectFolderDefinitions(t *testing.T) {
 	server, store := newUnifiedAgentsTestServer(t)
 

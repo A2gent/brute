@@ -104,6 +104,30 @@ func (s *Server) soulProjectFolder() string {
 	return strings.TrimSpace(*project.Folder)
 }
 
+func pathWithinDirectory(path string, root string) bool {
+	path = strings.TrimSpace(path)
+	root = strings.TrimSpace(root)
+	if path == "" || root == "" {
+		return false
+	}
+	pathAbs, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return false
+	}
+	rootAbs, err := filepath.Abs(filepath.Clean(root))
+	if err != nil {
+		return false
+	}
+	if pathAbs == rootAbs {
+		return true
+	}
+	rel, err := filepath.Rel(rootAbs, pathAbs)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 func discoverAgentDefinitionsInDirectory(rootDir string) ([]discoveredAgentDefinition, []string) {
 	rootDir = strings.TrimSpace(rootDir)
 	if rootDir == "" {

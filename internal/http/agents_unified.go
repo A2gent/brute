@@ -86,16 +86,19 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 		appSettings = map[string]string{}
 	}
 
+	globalCatalogDir := s.resolveGlobalAgentDefinitionsDirectory(appSettings)
 	var definitionsDirectory string
+	var projectCatalogDir string
 	if filterHasProject {
 		project, projectErr := s.store.GetProject(projectFilter)
 		if projectErr != nil {
 			warnings = append(warnings, "project unavailable for agent definitions scan: "+projectErr.Error())
 		} else {
 			definitionsDirectory = s.resolveScopedProjectAgentDefinitionsDirectory(project)
+			projectCatalogDir = definitionsDirectory
 		}
 	} else {
-		definitionsDirectory = s.resolveGlobalAgentDefinitionsDirectory(appSettings)
+		definitionsDirectory = globalCatalogDir
 	}
 
 	discoveredDefinitions, discoverWarnings := discoverAgentDefinitionsInDirectory(definitionsDirectory)
@@ -160,7 +163,7 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 		} else {
 			warnings = append(warnings, "agent definition "+record.ID+": "+defErr.Error())
 		}
-		if !storedAgentDefinitionMatchesProjectFilter(record, parsedDef, agentProjectID, projectFilter, filterHasProject) {
+		if !storedAgentDefinitionMatchesProjectFilter(record, parsedDef, agentProjectID, projectFilter, filterHasProject, globalCatalogDir, projectCatalogDir) {
 			continue
 		}
 		if _, exists := seenAgentIDs[record.ID]; exists {
@@ -221,6 +224,8 @@ func storedAgentDefinitionMatchesProjectFilter(
 	agentProjectID string,
 	projectFilter string,
 	filterHasProject bool,
+	globalCatalogDir string,
+	projectCatalogDir string,
 ) bool {
 	if !matchesUnifiedAgentProjectFilter(agentProjectID, projectFilter, filterHasProject) {
 		return false
@@ -228,14 +233,25 @@ func storedAgentDefinitionMatchesProjectFilter(
 	if !filterHasProject {
 		return true
 	}
-	return storedAgentDefinitionOwnedByProject(def, projectFilter)
+	return storedAgentDefinitionOwnedByProject(def, projectFilter, globalCatalogDir, projectCatalogDir)
 }
 
-func storedAgentDefinitionOwnedByProject(def *agentdef.Definition, projectFilter string) bool {
+func storedAgentDefinitionOwnedByProject(def *agentdef.Definition, projectFilter string, globalCatalogDir string, projectCatalogDir string) bool {
 	if def == nil {
 		return true
 	}
 	projectFilter = strings.TrimSpace(projectFilter)
+	definitionDir := strings.TrimSpace(def.Local.DefinitionDir)
+
+	// WHY: stored copies of global catalog agents can retain configured_project after
+	// being started in a project, but they must stay in the global Agents view only.
+	if definitionDir != "" && globalCatalogDir != "" && pathWithinDirectory(definitionDir, globalCatalogDir) {
+		return false
+	}
+	if definitionDir != "" && projectCatalogDir != "" && pathWithinDirectory(definitionDir, projectCatalogDir) {
+		return true
+	}
+
 	if strings.TrimSpace(def.Local.ProjectBindings[agentdef.WorkspaceScopeConfiguredProject]) == projectFilter {
 		return true
 	}

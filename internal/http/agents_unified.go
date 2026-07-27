@@ -101,10 +101,12 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 	discoveredDefinitions, discoverWarnings := discoverAgentDefinitionsInDirectory(definitionsDirectory)
 	warnings = append(warnings, discoverWarnings...)
 	for _, item := range discoveredDefinitions {
-		if !matchesUnifiedAgentProjectFilter(item.ProjectID, projectFilter, filterHasProject) {
+		agentProjectID := resolvedDiscoveredAgentProjectID(item.ProjectID, projectFilter, filterHasProject)
+		if !matchesUnifiedAgentProjectFilter(agentProjectID, projectFilter, filterHasProject) {
 			continue
 		}
 		entry := unifiedAgentResponseFromDiscoveredDefinition(item)
+		entry.ProjectID = agentProjectID
 		if containers := containersByDefID[item.ID]; len(containers) > 0 {
 			applyUnifiedAgentContainerStatus(&entry, containers)
 		}
@@ -211,6 +213,16 @@ func matchesUnifiedAgentProjectFilter(agentProjectID string, projectFilter strin
 		return agentProjectID == projectFilter
 	}
 	return agentProjectID == ""
+}
+
+func resolvedDiscoveredAgentProjectID(definitionProjectID string, projectFilter string, filterHasProject bool) string {
+	definitionProjectID = strings.TrimSpace(definitionProjectID)
+	projectFilter = strings.TrimSpace(projectFilter)
+	if filterHasProject && definitionProjectID == "" {
+		// WHY: definitions discovered under <project>/agents/ are project-local even when YAML omits configured_project.
+		return projectFilter
+	}
+	return definitionProjectID
 }
 
 func subAgentProjectID(sa *storage.SubAgent) string {

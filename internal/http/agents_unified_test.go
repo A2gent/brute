@@ -529,6 +529,61 @@ workspace:
 	}
 }
 
+func TestListUnifiedAgentsIncludesDiscoveredProjectFolderDefinitions(t *testing.T) {
+	server, store := newUnifiedAgentsTestServer(t)
+
+	now := time.Now()
+	projectRoot := t.TempDir()
+	project := &storage.Project{ID: "proj-app", Name: "App", Folder: &projectRoot, CreatedAt: now, UpdatedAt: now}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatalf("failed to save project: %v", err)
+	}
+
+	agentsDir := filepath.Join(projectRoot, "agents", "folder-reviewer")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatalf("failed to create project agents dir: %v", err)
+	}
+	yamlDef := `
+version: "1"
+agent:
+  id: folder-reviewer
+  name: Folder Reviewer
+runtime:
+  type: docker
+`
+	if err := os.WriteFile(filepath.Join(agentsDir, "agent.yaml"), []byte(yamlDef), 0o644); err != nil {
+		t.Fatalf("failed to write project agent yaml: %v", err)
+	}
+
+	globalYAML := `
+version: "1"
+agent:
+  id: global-reviewer
+  name: Global Reviewer
+runtime:
+  type: docker
+`
+	if err := store.SaveAgentDefinition(&storage.AgentDefinitionRecord{ID: "global-reviewer", Name: "Global Reviewer", Runtime: agentdef.RuntimeDocker, DefinitionYAML: globalYAML, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("failed to save global definition: %v", err)
+	}
+
+	projectReq := httptest.NewRequest(http.MethodGet, "/unified-agents/?project_id=proj-app", nil)
+	projectRec := httptest.NewRecorder()
+	server.handleListUnifiedAgents(projectRec, projectReq)
+	if projectRec.Code != http.StatusOK {
+		t.Fatalf("project list failed: %d %s", projectRec.Code, projectRec.Body.String())
+	}
+	var projectResp struct {
+		Agents []UnifiedAgentResponse `json:"agents"`
+	}
+	if err := json.Unmarshal(projectRec.Body.Bytes(), &projectResp); err != nil {
+		t.Fatalf("failed to decode project response: %v", err)
+	}
+	if len(projectResp.Agents) != 1 || projectResp.Agents[0].ID != "folder-reviewer" || projectResp.Agents[0].ProjectID != "proj-app" {
+		t.Fatalf("project list should include only discovered project-folder definitions, got %+v", projectResp.Agents)
+	}
+}
+
 func unifiedAgentIDs(agents []UnifiedAgentResponse) map[string]bool {
 	ids := make(map[string]bool, len(agents))
 	for _, agent := range agents {

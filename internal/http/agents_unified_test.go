@@ -529,6 +529,57 @@ workspace:
 	}
 }
 
+func TestListUnifiedAgentsExcludesGlobalDefinitionsWithStaleProjectID(t *testing.T) {
+	server, store := newUnifiedAgentsTestServer(t)
+
+	now := time.Now()
+	projectRoot := t.TempDir()
+	project := &storage.Project{ID: "proj-app", Name: "App", Folder: &projectRoot, CreatedAt: now, UpdatedAt: now}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatalf("failed to save project: %v", err)
+	}
+
+	globalYAML := `
+version: "1"
+agent:
+  id: global-reviewer
+  name: Global Reviewer
+runtime:
+  type: docker
+workspace:
+  scope: current_project
+  mount: rw
+`
+	projectID := "proj-app"
+	if err := store.SaveAgentDefinition(&storage.AgentDefinitionRecord{
+		ID:             "global-reviewer",
+		Name:           "Global Reviewer",
+		Runtime:        agentdef.RuntimeDocker,
+		ProjectID:      &projectID,
+		DefinitionYAML: globalYAML,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("failed to save stale global definition: %v", err)
+	}
+
+	projectReq := httptest.NewRequest(http.MethodGet, "/unified-agents/?project_id=proj-app", nil)
+	projectRec := httptest.NewRecorder()
+	server.handleListUnifiedAgents(projectRec, projectReq)
+	if projectRec.Code != http.StatusOK {
+		t.Fatalf("project list failed: %d %s", projectRec.Code, projectRec.Body.String())
+	}
+	var projectResp struct {
+		Agents []UnifiedAgentResponse `json:"agents"`
+	}
+	if err := json.Unmarshal(projectRec.Body.Bytes(), &projectResp); err != nil {
+		t.Fatalf("failed to decode project response: %v", err)
+	}
+	if len(projectResp.Agents) != 0 {
+		t.Fatalf("project list should exclude global-runtime definitions with stale project ids, got %+v", projectResp.Agents)
+	}
+}
+
 func TestListUnifiedAgentsIncludesDiscoveredProjectFolderDefinitions(t *testing.T) {
 	server, store := newUnifiedAgentsTestServer(t)
 

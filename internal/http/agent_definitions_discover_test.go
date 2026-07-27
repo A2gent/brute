@@ -85,6 +85,28 @@ func TestResolveProjectAgentDefinitionsDirectory(t *testing.T) {
 	}
 }
 
+func TestResolveScopedProjectAgentDefinitionsDirectoryRejectsExternalAbsolutePath(t *testing.T) {
+	server, store := newUnifiedAgentsTestServer(t)
+	projectRoot := filepath.Join(t.TempDir(), "repo")
+	externalAgentsDir := filepath.Join(t.TempDir(), "global-agents")
+	if err := os.MkdirAll(externalAgentsDir, 0o755); err != nil {
+		t.Fatalf("failed to create external agents dir: %v", err)
+	}
+	project := createTestProject(t, store, "project-1", "Project", projectRoot)
+	project.Settings = map[string]string{
+		projectAgentDefinitionsDirectorySettingKey: externalAgentsDir,
+	}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatalf("failed to save project: %v", err)
+	}
+
+	got := server.resolveScopedProjectAgentDefinitionsDirectory(project)
+	want := filepath.Join(projectRoot, defaultProjectAgentDefinitionsDirectory)
+	if got != want {
+		t.Fatalf("resolveScopedProjectAgentDefinitionsDirectory() = %q, want %q", got, want)
+	}
+}
+
 func createTestProject(t *testing.T, store *storage.SQLiteStore, id, name, folder string) *storage.Project {
 	t.Helper()
 	project := &storage.Project{

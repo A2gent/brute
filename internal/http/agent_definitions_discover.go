@@ -68,6 +68,34 @@ func (s *Server) resolveProjectAgentDefinitionsDirectory(project *storage.Projec
 	return filepath.Join(rootFolder, configured)
 }
 
+func (s *Server) resolveScopedProjectAgentDefinitionsDirectory(project *storage.Project) string {
+	if project == nil || project.Folder == nil {
+		return s.resolveProjectAgentDefinitionsDirectory(project)
+	}
+	rootFolder := strings.TrimSpace(*project.Folder)
+	if rootFolder == "" {
+		return s.resolveProjectAgentDefinitionsDirectory(project)
+	}
+	configured := s.resolveProjectAgentDefinitionsDirectory(project)
+	if configured == "" {
+		return configured
+	}
+	rootAbs, err := filepath.Abs(rootFolder)
+	if err != nil {
+		return configured
+	}
+	dirAbs, err := filepath.Abs(configured)
+	if err != nil {
+		return filepath.Join(rootAbs, defaultProjectAgentDefinitionsDirectory)
+	}
+	rel, err := filepath.Rel(rootAbs, dirAbs)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		// WHY: project listings must not scan a global agents folder configured via absolute path.
+		return filepath.Join(rootAbs, defaultProjectAgentDefinitionsDirectory)
+	}
+	return dirAbs
+}
+
 func (s *Server) soulProjectFolder() string {
 	project, err := s.store.GetProject(storage.SystemProjectSoulID)
 	if err != nil || project == nil || project.Folder == nil {

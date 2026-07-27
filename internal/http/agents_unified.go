@@ -92,7 +92,7 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 		if projectErr != nil {
 			warnings = append(warnings, "project unavailable for agent definitions scan: "+projectErr.Error())
 		} else {
-			definitionsDirectory = s.resolveProjectAgentDefinitionsDirectory(project)
+			definitionsDirectory = s.resolveScopedProjectAgentDefinitionsDirectory(project)
 		}
 	} else {
 		definitionsDirectory = s.resolveGlobalAgentDefinitionsDirectory(appSettings)
@@ -160,7 +160,7 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 		} else {
 			warnings = append(warnings, "agent definition "+record.ID+": "+defErr.Error())
 		}
-		if !matchesUnifiedAgentProjectFilter(agentProjectID, projectFilter, filterHasProject) {
+		if !storedAgentDefinitionMatchesProjectFilter(record, parsedDef, agentProjectID, projectFilter, filterHasProject) {
 			continue
 		}
 		if _, exists := seenAgentIDs[record.ID]; exists {
@@ -213,6 +213,39 @@ func matchesUnifiedAgentProjectFilter(agentProjectID string, projectFilter strin
 		return agentProjectID == projectFilter
 	}
 	return agentProjectID == ""
+}
+
+func storedAgentDefinitionMatchesProjectFilter(
+	record *storage.AgentDefinitionRecord,
+	def *agentdef.Definition,
+	agentProjectID string,
+	projectFilter string,
+	filterHasProject bool,
+) bool {
+	if !matchesUnifiedAgentProjectFilter(agentProjectID, projectFilter, filterHasProject) {
+		return false
+	}
+	if !filterHasProject {
+		return true
+	}
+	return storedAgentDefinitionOwnedByProject(def, projectFilter)
+}
+
+func storedAgentDefinitionOwnedByProject(def *agentdef.Definition, projectFilter string) bool {
+	if def == nil {
+		return true
+	}
+	projectFilter = strings.TrimSpace(projectFilter)
+	if strings.TrimSpace(def.Local.ProjectBindings[agentdef.WorkspaceScopeConfiguredProject]) == projectFilter {
+		return true
+	}
+	switch strings.TrimSpace(def.Workspace.Scope) {
+	case "", agentdef.WorkspaceScopeNone, agentdef.WorkspaceScopeCurrentProject, agentdef.WorkspaceScopeAllProjects, agentdef.WorkspaceScopeSelectedProjects:
+		// WHY: global-runtime definitions must stay out of project listings unless they bind configured_project.
+		return false
+	default:
+		return true
+	}
 }
 
 func resolvedDiscoveredAgentProjectID(definitionProjectID string, projectFilter string, filterHasProject bool) string {

@@ -101,14 +101,11 @@ func (t *delegateToAgentTool) Execute(ctx context.Context, params json.RawMessag
 		return &tools.Result{Success: false, Error: "task is required"}, nil
 	}
 
-	// Legacy sub-agent rows are rich configuration records; execution is Docker.
-	if sa, err := t.server.store.GetSubAgent(agentID); err == nil {
-		return t.server.runSubAgentDockerDelegation(ctx, sa, task)
-	}
-
-	// Stored unified definitions: docker agents run in warm managed containers.
-	if record, err := t.server.store.GetAgentDefinition(agentID); err == nil && record != nil {
-		return t.server.runStoredDefinitionDelegation(ctx, record, task)
+	// Legacy sub-agent rows, stored definitions, and project-folder discoveries
+	// all resolve through definitionForUnifiedAgent before Docker delegation.
+	currentProjectID := delegationParentProjectID(ctx, t.server)
+	if def, _, err := t.server.definitionForUnifiedAgent(agentID, currentProjectID); err == nil {
+		return t.server.runDockerDefinitionDelegation(ctx, agentID, def, task)
 	}
 
 	// Remote runtime: favorited A2A registry agents, matched by ID or name.
@@ -170,16 +167,20 @@ func (s *Server) runSubAgentDockerDelegation(ctx context.Context, sa *storage.Su
 	return s.runDockerDefinitionDelegation(ctx, sa.ID, def, task)
 }
 
+func delegationParentProjectID(ctx context.Context, s *Server) string {
+	if parentSessionID, _ := ctx.Value("session_id").(string); parentSessionID != "" {
+		if parentSess, sessErr := s.sessionManager.Get(parentSessionID); sessErr == nil && parentSess.ProjectID != nil {
+			return strings.TrimSpace(*parentSess.ProjectID)
+		}
+	}
+	return ""
+}
+
 func (s *Server) runDockerDefinitionDelegation(ctx context.Context, agentID string, def *agentdef.Definition, task string) (*tools.Result, error) {
 	if def.Runtime.Type != agentdef.RuntimeDocker {
 		return &tools.Result{Success: false, Error: fmt.Sprintf("agent %q has runtime %q; local configured agents must use docker runtime", agentID, def.Runtime.Type)}, nil
 	}
-	currentProjectID := ""
-	if parentSessionID, _ := ctx.Value("session_id").(string); parentSessionID != "" {
-		if parentSess, sessErr := s.sessionManager.Get(parentSessionID); sessErr == nil && parentSess.ProjectID != nil {
-			currentProjectID = strings.TrimSpace(*parentSess.ProjectID)
-		}
-	}
+	currentProjectID := delegationParentProjectID(ctx, s)
 
 	workspace, err := s.resolveDockerWorkspaceBinding(def, currentProjectID)
 	if err != nil {

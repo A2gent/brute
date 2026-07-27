@@ -256,11 +256,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	directDockerAgentID := strings.TrimSpace(req.DockerAgentID)
 	if directUnifiedAgentID != "" || directDockerAgentID != "" {
 		if directUnifiedAgentID != "" {
-			if _, saErr := s.store.GetSubAgent(directUnifiedAgentID); saErr != nil {
-				if record, defErr := s.store.GetAgentDefinition(directUnifiedAgentID); defErr != nil || record == nil {
-					s.errorResponse(w, http.StatusBadRequest, "Unified agent not found: "+directUnifiedAgentID)
-					return
-				}
+			projectID := strings.TrimSpace(req.ProjectID)
+			if _, _, err := s.definitionForUnifiedAgent(directUnifiedAgentID, projectID); err != nil {
+				s.errorResponse(w, http.StatusBadRequest, "Unified agent not found: "+directUnifiedAgentID)
+				return
 			}
 			sess.Metadata["unified_agent_id"] = directUnifiedAgentID
 		}

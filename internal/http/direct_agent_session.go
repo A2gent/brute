@@ -17,6 +17,25 @@ func (s *Server) hasDirectAgentTarget(sess *session.Session) bool {
 	return strings.TrimSpace(metadataString(sess.Metadata["unified_agent_id"])) != "" || strings.TrimSpace(metadataString(sess.Metadata["docker_agent_id"])) != ""
 }
 
+func (s *Server) unifiedAgentDefinitionForSession(sess *session.Session) (*agentdef.Definition, error) {
+	if sess == nil || sess.Metadata == nil {
+		return nil, fmt.Errorf("session has no direct agent target")
+	}
+	agentID := strings.TrimSpace(metadataString(sess.Metadata["unified_agent_id"]))
+	if agentID == "" {
+		return nil, fmt.Errorf("session has no unified agent target")
+	}
+	currentProjectID := ""
+	if sess.ProjectID != nil {
+		currentProjectID = strings.TrimSpace(*sess.ProjectID)
+	}
+	def, _, err := s.definitionForUnifiedAgent(agentID, currentProjectID)
+	if err != nil {
+		return nil, fmt.Errorf("unified agent %q not found", agentID)
+	}
+	return def, nil
+}
+
 func (s *Server) resolveDirectAgentContainer(ctx context.Context, sess *session.Session) (*LocalDockerAgent, *dockerWorkspaceBinding, error) {
 	if sess == nil || sess.Metadata == nil {
 		return nil, nil, fmt.Errorf("session has no direct agent target")
@@ -26,20 +45,9 @@ func (s *Server) resolveDirectAgentContainer(ctx context.Context, sess *session.
 		currentProjectID = strings.TrimSpace(*sess.ProjectID)
 	}
 	if agentID := strings.TrimSpace(metadataString(sess.Metadata["unified_agent_id"])); agentID != "" {
-		var def *agentdef.Definition
-		if sa, err := s.store.GetSubAgent(agentID); err == nil {
-			def, err = agentdef.FromSubAgent(sa)
-			if err != nil {
-				return nil, nil, err
-			}
-		} else if record, err := s.store.GetAgentDefinition(agentID); err == nil && record != nil {
-			parsed, err := agentdef.ParseYAML([]byte(record.DefinitionYAML))
-			if err != nil {
-				return nil, nil, err
-			}
-			def = parsed
-		} else {
-			return nil, nil, fmt.Errorf("unified agent %q not found", agentID)
+		def, err := s.unifiedAgentDefinitionForSession(sess)
+		if err != nil {
+			return nil, nil, err
 		}
 		workspace, err := s.resolveDockerWorkspaceBinding(def, currentProjectID)
 		if err != nil {

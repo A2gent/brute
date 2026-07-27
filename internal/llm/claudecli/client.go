@@ -21,6 +21,12 @@ const (
 	claudeCodePromptPrefix = "You are running through Claude Code CLI. Use Claude Code's native tools directly when you need to inspect or modify files, then return the final answer to A2gent. Do not print JSON tool calls for A2gent to execute."
 )
 
+// MCPBridgeHook builds the per-invocation MCP bridge configuration for a
+// session-scoped CLI run. It returns the inline --mcp-config JSON and a revoke
+// callback tied to the CLI process lifetime; an empty configJSON disables the
+// bridge for that invocation.
+type MCPBridgeHook func(ctx context.Context, sessionID string) (configJSON string, revoke func(), err error)
+
 // Options controls how the Claude Code CLI is invoked.
 type Options struct {
 	Executable           string
@@ -32,6 +38,10 @@ type Options struct {
 	PermissionMode       string
 	MaxBudgetUSD         string
 	NoSessionPersistence bool
+
+	// MCPBridge exposes A2gent tools (question, integrations) to the CLI over a
+	// loopback MCP server; only used on the direct (non-sidecar) path.
+	MCPBridge MCPBridgeHook
 
 	// Optional Claude Agent SDK sidecar transport (enabled only when
 	// AAGENT_CLAUDE_AGENT_SDK_SIDECAR_PATH is set and Broker is non-nil).
@@ -46,6 +56,39 @@ type Options struct {
 type ApprovalResolvePayload struct {
 	Answers map[string]string
 	Message string
+}
+
+// mcpBridgeInvocation carries the per-run MCP bridge CLI args and the token
+// revocation callback that must run when the CLI subprocess exits.
+type mcpBridgeInvocation struct {
+	args         []string
+	allowedTools string
+	revoke       func()
+}
+
+func (c *Client) newMCPBridgeInvocation(ctx context.Context) mcpBridgeInvocation {
+	inv := mcpBridgeInvocation{revoke: func() {}}
+	if c.options.MCPBridge == nil {
+		return inv
+	}
+	sessionID, _ := ctx.Value("session_id").(string)
+	if strings.TrimSpace(sessionID) == "" {
+		return inv
+	}
+	configJSON, revoke, err := c.options.MCPBridge(ctx, sessionID)
+	if err != nil {
+		logging.Warn("MCP bridge config failed, continuing without bridge: %v", err)
+		return inv
+	}
+	if strings.TrimSpace(configJSON) == "" {
+		return inv
+	}
+	if revoke != nil {
+		inv.revoke = revoke
+	}
+	inv.args = []string{"--mcp-config", configJSON, "--strict-mcp-config"}
+	inv.allowedTools = "mcp__a2gent__.*"
+	return inv
 }
 
 // Client implements llm.Client by shelling out to Claude Code CLI.
@@ -103,7 +146,9 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	}
 
 	prompt := buildPrompt(request)
-	args := c.buildArgs(request, model, prompt)
+	bridge := c.newMCPBridgeInvocation(ctx)
+	defer bridge.revoke()
+	args := c.buildArgs(request, model, prompt, bridge)
 
 	claudePath, err := findExecutable(c.options.Executable)
 	if err != nil {
@@ -187,7 +232,9 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	}
 
 	prompt := buildPrompt(request)
-	args := c.buildStreamArgs(request, model, prompt)
+	bridge := c.newMCPBridgeInvocation(ctx)
+	defer bridge.revoke()
+	args := c.buildStreamArgs(request, model, prompt, bridge)
 
 	claudePath, err := findExecutable(c.options.Executable)
 	if err != nil {
@@ -291,12 +338,12 @@ func (c *Client) providerSessionCursor(raw string) string {
 	return BindProviderSessionCursor(c.options.Identity, raw)
 }
 
-func (c *Client) buildArgs(request *llm.ChatRequest, model, prompt string) []string {
+func (c *Client) buildArgs(request *llm.ChatRequest, model, prompt string, bridge mcpBridgeInvocation) []string {
 	args := []string{"-p", prompt, "--output-format", "json", "--model", model}
-	return c.appendCommonArgs(args, request)
+	return c.appendCommonArgs(args, request, bridge)
 }
 
-func (c *Client) buildStreamArgs(request *llm.ChatRequest, model, prompt string) []string {
+func (c *Client) buildStreamArgs(request *llm.ChatRequest, model, prompt string, bridge mcpBridgeInvocation) []string {
 	args := []string{
 		"-p", prompt,
 		"--output-format", "stream-json",
@@ -304,9 +351,9 @@ func (c *Client) buildStreamArgs(request *llm.ChatRequest, model, prompt string)
 		"--include-partial-messages",
 		"--model", model,
 	}
-	return c.appendCommonArgs(args, request)
+	return c.appendCommonArgs(args, request, bridge)
 }
-func (c *Client) appendCommonArgs(args []string, request *llm.ChatRequest) []string {
+func (c *Client) appendCommonArgs(args []string, request *llm.ChatRequest, bridge mcpBridgeInvocation) []string {
 	if systemPrompt := buildSystemPrompt(request.SystemPrompt); systemPrompt != "" {
 		args = append(args, "--append-system-prompt", systemPrompt)
 	}
@@ -323,9 +370,19 @@ func (c *Client) appendCommonArgs(args []string, request *llm.ChatRequest) []str
 	toolsArg, allowedArg, includeTools := claudeToolsArgs(request)
 	if includeTools {
 		args = append(args, "--tools", toolsArg)
+		if bridge.allowedTools != "" {
+			if allowedArg == "" {
+				allowedArg = bridge.allowedTools
+			} else {
+				allowedArg += "," + bridge.allowedTools
+			}
+		}
 		if allowedArg != "" {
 			args = append(args, "--allowedTools", allowedArg)
 		}
+	}
+	if len(bridge.args) > 0 {
+		args = append(args, bridge.args...)
 	}
 	permissionMode := c.options.PermissionMode
 	if permissionMode == "" {

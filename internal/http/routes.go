@@ -192,6 +192,9 @@ func (s *Server) registerMCPRoutes(r chi.Router) {
 		r.Delete("/{serverID}", s.handleDeleteMCPServer)
 		r.Post("/{serverID}/test", s.handleTestMCPServer)
 	})
+
+	// Session-scoped MCP bridge for the Claude Code CLI subprocess (loopback + token guarded).
+	r.Post("/mcp/sessions/{sessionID}", s.handleMCPBridge)
 }
 
 func (s *Server) registerSpeechRoutes(r chi.Router) {

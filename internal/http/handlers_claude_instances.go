@@ -50,6 +50,7 @@ func (s *Server) claudecliOptionsForRef(ref string) claudecli.Options {
 		NoSessionPersistence: noSessionPersistence,
 		PermissionMode:       strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_PERMISSION_MODE")),
 		MaxBudgetUSD:         strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_MAX_BUDGET_USD")),
+		MCPBridge:            s.claudecliMCPBridgeHook,
 	}
 	if strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_AGENT_SDK_SIDECAR_PATH")) != "" && s.approvalBroker != nil {
 		opts.SidecarPath = strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_AGENT_SDK_SIDECAR_PATH"))

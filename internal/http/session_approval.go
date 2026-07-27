@@ -248,6 +248,9 @@ func nativeToolApprovalQuestions(req approval.Request) []NativeToolApprovalQuest
 	if questions := nativeToolApprovalQuestionsFromInput(req.Input); len(questions) > 0 {
 		return questions
 	}
+	if question, ok := nativeToolApprovalQuestionFromBridgeInput(req.Input); ok {
+		return []NativeToolApprovalQuestion{question}
+	}
 	if req.AskUser == nil {
 		return nil
 	}
@@ -323,6 +326,61 @@ func nativeToolApprovalQuestionsFromInput(raw json.RawMessage) []NativeToolAppro
 		})
 	}
 	return out
+}
+
+// nativeToolApprovalQuestionFromBridgeInput parses the A2gent question tool
+// argument shape ({question, header, options, multiple, custom}) used by the
+// MCP bridge, so Caesar renders the same panel as for the Claude Agent SDK.
+func nativeToolApprovalQuestionFromBridgeInput(raw json.RawMessage) (NativeToolApprovalQuestion, bool) {
+	if len(raw) == 0 {
+		return NativeToolApprovalQuestion{}, false
+	}
+	var payload struct {
+		Question string `json:"question"`
+		Header   string `json:"header"`
+		Options  []struct {
+			Label       string `json:"label"`
+			Description string `json:"description"`
+			ImageURL    string `json:"image_url"`
+			AudioURL    string `json:"audio_url"`
+		} `json:"options"`
+		Multiple bool  `json:"multiple"`
+		Custom   *bool `json:"custom"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return NativeToolApprovalQuestion{}, false
+	}
+	if strings.TrimSpace(payload.Question) == "" && len(payload.Options) == 0 {
+		return NativeToolApprovalQuestion{}, false
+	}
+	header := strings.TrimSpace(payload.Header)
+	if header == "" {
+		header = "Question"
+	}
+	custom := true
+	if payload.Custom != nil {
+		custom = *payload.Custom
+	}
+	options := make([]NativeToolApprovalQuestionOption, 0, len(payload.Options))
+	for _, opt := range payload.Options {
+		label := strings.TrimSpace(opt.Label)
+		if label == "" {
+			continue
+		}
+		options = append(options, NativeToolApprovalQuestionOption{
+			Label:       label,
+			Description: strings.TrimSpace(opt.Description),
+			ImageURL:    strings.TrimSpace(opt.ImageURL),
+			AudioURL:    strings.TrimSpace(opt.AudioURL),
+		})
+	}
+	return NativeToolApprovalQuestion{
+		Question: payload.Question,
+		Header:   header,
+		Options:  options,
+		Multiple: payload.Multiple,
+		Custom:   custom,
+	}, true
 }
 
 func validApprovalDecision(decision approval.Decision) bool {

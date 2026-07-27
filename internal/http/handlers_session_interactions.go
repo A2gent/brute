@@ -95,6 +95,15 @@ func (s *Server) handleAnswerQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// WHY: while the MCP bridge holds a question, the Claude CLI subprocess is
+	// still alive and blocked on tools/call. Resuming here would spawn a second
+	// parallel run on the same session; resolve the broker instead and return.
+	if s.mcpBridge.hasPendingQuestion(sessionID) {
+		s.resolveMCPBridgeQuestion(sessionID, req.Answer)
+		s.jsonResponse(w, http.StatusOK, map[string]interface{}{"status": "ok"})
+		return
+	}
+
 	if err := s.sessionManager.AnswerQuestion(sessionID, req.Answer); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to answer question: "+err.Error())
 		return

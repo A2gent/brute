@@ -62,6 +62,7 @@ type Server struct {
 	approvalAuditMu          sync.Mutex
 	approvalResolvePayloadMu sync.Mutex
 	approvalResolvePayload   map[string]approvalResolvePayload
+	mcpBridge                *mcpBridgeState
 
 	// A2A gRPC tunnel (managed by a2a_tunnel.go)
 	tunnelMu     sync.Mutex
@@ -109,6 +110,7 @@ func NewServer(
 		contextCompressor:      contextcompress.NewCompressorWithSessionStore(contextcompress.Config{Enabled: true}, sessionManager),
 		claudeHealthCache:      newClaudeHealthCache(),
 		approvalResolvePayload: make(map[string]approvalResolvePayload),
+		mcpBridge:              newMCPBridgeState(),
 	}
 	s.initApprovalBroker()
 	s.dockerRuntime = newDockerRuntimeManager(s)

@@ -13,7 +13,7 @@ import (
 const (
 	agentDefinitionsFolderSettingKey           = "AAGENT_AGENT_DEFINITIONS_FOLDER"
 	projectAgentDefinitionsDirectorySettingKey = "A2GENT_PROJECT_AGENT_DEFINITIONS_DIRECTORY"
-	defaultProjectAgentDefinitionsDirectory    = "agent"
+	defaultProjectAgentDefinitionsDirectory    = "agents"
 	defaultGlobalAgentDefinitionsFolder        = "agents"
 )
 

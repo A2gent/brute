@@ -28,7 +28,7 @@ func (t *importAgentDefinitionYAMLTool) Name() string {
 }
 
 func (t *importAgentDefinitionYAMLTool) Description() string {
-	return `Create or update a unified local agent definition from YAML. Use this for reusable Agents-page definitions, not one-off containers. Local definitions run in Docker; legacy runtime.type=host YAML is accepted only as a migration marker and is coerced to Docker. Provide either config_yaml or config_path. When run from a project session, the current project is used unless project_id is explicitly set. Prefer a reusable Soul folder such as agents/<agent-id>/agent.yaml for global definitions, or a project-local agent/<agent-id>/agent.yaml folder for project-specific definitions, optionally with adjacent skills/ and settings files. Passing the folder path is supported. Updating an existing definition removes stale managed Docker containers so the next run uses the new definition.`
+	return `Create or update a unified local agent definition from YAML. Use this for reusable Agents-page definitions, not one-off containers. Local definitions run in Docker; legacy runtime.type=host YAML is accepted only as a migration marker and is coerced to Docker. Provide either config_yaml or config_path. When run from a project session, the current project is used unless project_id is explicitly set. Prefer a reusable Soul folder such as agents/<agent-id>/agent.yaml for global definitions, or a project-local agents/<agent-id>/agent.yaml folder for project-specific definitions, optionally with adjacent skills/ and settings files. Passing the folder path is supported. Updating an existing definition removes stale managed Docker containers so the next run uses the new definition.`
 }
 
 func (t *importAgentDefinitionYAMLTool) Schema() map[string]interface{} {
@@ -41,7 +41,7 @@ func (t *importAgentDefinitionYAMLTool) Schema() map[string]interface{} {
 			},
 			"config_path": map[string]interface{}{
 				"type":        "string",
-				"description": "Path to a unified agent YAML file or definition folder. Global reusable source should live in Soul under agents/<agent-id>/agent.yaml; project-specific source should live under the bound project's agent/<agent-id>/agent.yaml, optionally with adjacent skills/.",
+				"description": "Path to a unified agent YAML file or definition folder. Global reusable source should live in Soul under agents/<agent-id>/agent.yaml; project-specific source should live under the bound project's agents/<agent-id>/agent.yaml, optionally with adjacent skills/.",
 			},
 			"project_id": map[string]interface{}{
 				"type":        "string",

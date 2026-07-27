@@ -225,6 +225,85 @@ func discoveredAgentDefinitionFromConfigPath(configPath string, definitionDir st
 	}, nil
 }
 
+func discoveredDefinitionByIDInDirectory(id string, rootDir string) (*agentdef.Definition, string, error) {
+	id = strings.TrimSpace(id)
+	rootDir = strings.TrimSpace(rootDir)
+	if id == "" {
+		return nil, "", fmt.Errorf("agent ID is required")
+	}
+	if rootDir == "" {
+		return nil, "", fmt.Errorf("agent definitions directory is empty")
+	}
+
+	discovered, _ := discoverAgentDefinitionsInDirectory(rootDir)
+	for _, item := range discovered {
+		if item.ID != id || item.Definition == nil {
+			continue
+		}
+		def := *item.Definition
+		if strings.TrimSpace(def.Local.DefinitionDir) == "" {
+			def.Local.DefinitionDir = strings.TrimSpace(item.DefinitionDir)
+		}
+		return &def, strings.TrimSpace(item.ProjectID), nil
+	}
+	return nil, "", fmt.Errorf("discovered agent definition %q not found in %s", id, rootDir)
+}
+
+func (s *Server) discoveredDefinitionForUnifiedAgent(id string, projectID string) (*agentdef.Definition, string, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, "", fmt.Errorf("agent ID is required")
+	}
+
+	appSettings, settingsErr := s.store.GetSettings()
+	if settingsErr != nil {
+		appSettings = map[string]string{}
+	}
+
+	projectID = strings.TrimSpace(projectID)
+	if projectID != "" {
+		project, err := s.store.GetProject(projectID)
+		if err != nil {
+			return nil, "", err
+		}
+		dir := s.resolveScopedProjectAgentDefinitionsDirectory(project)
+		if def, discoveredProjectID, err := discoveredDefinitionByIDInDirectory(id, dir); err == nil {
+			if discoveredProjectID == "" {
+				discoveredProjectID = projectID
+			}
+			return def, discoveredProjectID, nil
+		}
+	}
+
+	globalDir := s.resolveGlobalAgentDefinitionsDirectory(appSettings)
+	if def, discoveredProjectID, err := discoveredDefinitionByIDInDirectory(id, globalDir); err == nil {
+		return def, discoveredProjectID, nil
+	}
+
+	if projectID != "" {
+		return nil, "", fmt.Errorf("discovered agent definition not found: %s", id)
+	}
+
+	projects, err := s.store.ListProjects()
+	if err != nil {
+		return nil, "", err
+	}
+	for _, project := range projects {
+		if project == nil {
+			continue
+		}
+		dir := s.resolveScopedProjectAgentDefinitionsDirectory(project)
+		if def, discoveredProjectID, err := discoveredDefinitionByIDInDirectory(id, dir); err == nil {
+			if discoveredProjectID == "" {
+				discoveredProjectID = strings.TrimSpace(project.ID)
+			}
+			return def, discoveredProjectID, nil
+		}
+	}
+
+	return nil, "", fmt.Errorf("discovered agent definition not found: %s", id)
+}
+
 func unifiedAgentResponseFromDiscoveredDefinition(item discoveredAgentDefinition) UnifiedAgentResponse {
 	entry := UnifiedAgentResponse{
 		ID:         item.ID,

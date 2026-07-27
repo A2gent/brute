@@ -409,7 +409,7 @@ tools:
 		t.Fatalf("failed to save agent definition: %v", err)
 	}
 
-	def, err := server.definitionForUnifiedAgent("youtube-transcriber")
+	def, _, err := server.definitionForUnifiedAgent("youtube-transcriber", "")
 	if err != nil {
 		t.Fatalf("definitionForUnifiedAgent failed: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestDefinitionForUnifiedAgentUsesSavedSubAgent(t *testing.T) {
 		t.Fatalf("failed to save sub-agent: %v", err)
 	}
 
-	def, err := server.definitionForUnifiedAgent("saved-agent")
+	def, _, err := server.definitionForUnifiedAgent("saved-agent", "")
 	if err != nil {
 		t.Fatalf("definitionForUnifiedAgent failed: %v", err)
 	}
@@ -632,6 +632,58 @@ runtime:
 	}
 	if len(projectResp.Agents) != 1 || projectResp.Agents[0].ID != "folder-reviewer" || projectResp.Agents[0].ProjectID != "proj-app" {
 		t.Fatalf("project list should include only discovered project-folder definitions, got %+v", projectResp.Agents)
+	}
+}
+
+func TestStartUnifiedAgentUsesDiscoveredProjectFolderDefinition(t *testing.T) {
+	server, store := newUnifiedAgentsTestServer(t)
+
+	now := time.Now()
+	projectRoot := t.TempDir()
+	project := &storage.Project{ID: "proj-app", Name: "App", Folder: &projectRoot, CreatedAt: now, UpdatedAt: now}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatalf("failed to save project: %v", err)
+	}
+
+	agentsDir := filepath.Join(projectRoot, "agents", "folder-reviewer")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatalf("failed to create project agents dir: %v", err)
+	}
+	yamlDef := `
+version: "1"
+agent:
+  id: folder-reviewer
+  name: Folder Reviewer
+runtime:
+  type: docker
+workspace:
+  scope: current_project
+  mount: rw
+`
+	if err := os.WriteFile(filepath.Join(agentsDir, "agent.yaml"), []byte(yamlDef), 0o644); err != nil {
+		t.Fatalf("failed to write project agent yaml: %v", err)
+	}
+
+	def, discoveredProjectID, err := server.definitionForUnifiedAgent("folder-reviewer", "proj-app")
+	if err != nil {
+		t.Fatalf("definitionForUnifiedAgent failed: %v", err)
+	}
+	if def.Agent.ID != "folder-reviewer" {
+		t.Fatalf("unexpected definition: %+v", def)
+	}
+	if discoveredProjectID != "proj-app" {
+		t.Fatalf("discoveredProjectID = %q, want proj-app", discoveredProjectID)
+	}
+	if def.Local.DefinitionDir != agentsDir {
+		t.Fatalf("definition_dir = %q, want %q", def.Local.DefinitionDir, agentsDir)
+	}
+
+	_, discoveredProjectID, err = server.definitionForUnifiedAgent("folder-reviewer", "")
+	if err != nil {
+		t.Fatalf("definitionForUnifiedAgent failed without project scope: %v", err)
+	}
+	if discoveredProjectID != "proj-app" {
+		t.Fatalf("discoveredProjectID without project scope = %q, want proj-app", discoveredProjectID)
 	}
 }
 

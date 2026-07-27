@@ -579,7 +579,8 @@ func (s *Server) handleStartUnifiedAgent(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	def, err := s.definitionForUnifiedAgent(id)
+	projectID, _ := unifiedAgentsProjectFilter(r)
+	def, discoveredProjectID, err := s.definitionForUnifiedAgent(id, projectID)
 	if err != nil {
 		status := http.StatusNotFound
 		if strings.Contains(err.Error(), "invalid") || strings.Contains(err.Error(), "failed to build") {
@@ -596,7 +597,17 @@ func (s *Server) handleStartUnifiedAgent(w http.ResponseWriter, r *http.Request)
 		def.Agent.ID = id
 	}
 
-	agent, err := s.dockerRuntime.ensureAgentContainer(r.Context(), def, "")
+	startProjectID := strings.TrimSpace(projectID)
+	if startProjectID == "" {
+		startProjectID = strings.TrimSpace(discoveredProjectID)
+	}
+	if startProjectID == "" {
+		if configuredProjectID := projectIDFromDefinition(def); configuredProjectID != nil {
+			startProjectID = strings.TrimSpace(*configuredProjectID)
+		}
+	}
+
+	agent, err := s.dockerRuntime.ensureAgentContainer(r.Context(), def, startProjectID)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Failed to start agent: "+err.Error())
 		return
@@ -604,29 +615,39 @@ func (s *Server) handleStartUnifiedAgent(w http.ResponseWriter, r *http.Request)
 	s.jsonResponse(w, http.StatusOK, agent)
 }
 
-func (s *Server) definitionForUnifiedAgent(id string) (*agentdef.Definition, error) {
+func (s *Server) definitionForUnifiedAgent(id string, projectID string) (*agentdef.Definition, string, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
-		return nil, fmt.Errorf("agent ID is required")
+		return nil, "", fmt.Errorf("agent ID is required")
 	}
 
 	if sa, err := s.store.GetSubAgent(id); err == nil && sa != nil {
 		def, defErr := agentdef.FromSubAgent(sa)
 		if defErr != nil {
-			return nil, fmt.Errorf("failed to build agent definition from saved agent %s: %w", id, defErr)
+			return nil, "", fmt.Errorf("failed to build agent definition from saved agent %s: %w", id, defErr)
 		}
-		return def, nil
+		discoveredProjectID := subAgentProjectID(sa)
+		return def, discoveredProjectID, nil
 	}
 
 	record, err := s.store.GetAgentDefinition(id)
-	if err != nil {
-		return nil, fmt.Errorf("agent definition not found: %s", id)
+	if err == nil && record != nil {
+		def, parseErr := agentdef.ParseYAML([]byte(record.DefinitionYAML))
+		if parseErr != nil {
+			return nil, "", fmt.Errorf("stored agent definition %s is invalid: %w", id, parseErr)
+		}
+		discoveredProjectID := agentDefinitionRecordProjectID(record)
+		if discoveredProjectID == "" {
+			discoveredProjectID = stringFromOptional(projectIDFromDefinition(def))
+		}
+		return def, discoveredProjectID, nil
 	}
-	def, err := agentdef.ParseYAML([]byte(record.DefinitionYAML))
-	if err != nil {
-		return nil, fmt.Errorf("stored agent definition %s is invalid: %w", id, err)
+
+	def, discoveredProjectID, discoverErr := s.discoveredDefinitionForUnifiedAgent(id, projectID)
+	if discoverErr != nil {
+		return nil, "", fmt.Errorf("agent definition not found: %s", id)
 	}
-	return def, nil
+	return def, discoveredProjectID, nil
 }
 
 // handleDeleteAgentDefinition removes a stored definition and force-removes

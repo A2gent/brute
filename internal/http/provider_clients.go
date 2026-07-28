@@ -2,9 +2,11 @@
 package http
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/A2gent/brute/internal/codexauth"
 	"github.com/A2gent/brute/internal/config"
@@ -368,7 +370,30 @@ func (s *Server) createFallbackChainClient(providerRef config.ProviderType, sess
 		retries = fallback.DefaultMaxRetries
 	}
 	start := sessionFallbackStartIndex(sess, providerRef)
-	return fallback.NewClient(nodes, fallback.WithMaxRetries(retries), fallback.WithStartIndex(start)), nil
+	opts := []fallback.ClientOption{
+		fallback.WithMaxRetries(retries),
+		fallback.WithStartIndex(start),
+	}
+	if skipper := s.fallbackNodeUsageSkipper(); skipper != nil {
+		opts = append(opts, fallback.WithNodeSkipper(skipper))
+	}
+	return fallback.NewClient(nodes, opts...), nil
+}
+
+// fallbackNodeUsageSkipper skips fallback nodes when Brute already knows their usage is exhausted.
+func (s *Server) fallbackNodeUsageSkipper() fallback.NodeSkipFunc {
+	if s == nil {
+		return nil
+	}
+	return func(ctx context.Context, node fallback.Node) (bool, string) {
+		provider := config.NormalizeProviderRef(node.Name)
+		if provider == "" {
+			return false, ""
+		}
+		usage := s.providerUsageStatus(ctx, config.ProviderType(provider))
+		reached, detail := providerUsageLimitReached(usage, time.Now())
+		return reached, detail
+	}
 }
 
 func (s *Server) createParentProxyLLMClient(providerType config.ProviderType, modelName string) (llm.Client, bool) {

@@ -57,6 +57,49 @@ func TestIsRetryableError_UnsafeForRetryMarker(t *testing.T) {
 	}
 }
 
+func TestClientChat_SkipsNodeWhenUsageLimitKnown(t *testing.T) {
+	primary := &countingLLM{err: errors.New("primary should not run")}
+	secondary := &countingLLM{}
+	client := NewClient([]Node{
+		{Name: "primary", Model: "model-a", Client: primary},
+		{Name: "secondary", Model: "model-b", Client: secondary},
+	}, WithNodeSkipper(func(ctx context.Context, node Node) (bool, string) {
+		if node.Name == "primary" {
+			return true, "Claude 5h resets 2026-07-28T20:00:00Z"
+		}
+		return false, ""
+	}))
+
+	_, err := client.Chat(context.Background(), &llm.ChatRequest{})
+	if err != nil {
+		t.Fatalf("expected secondary to succeed, got %v", err)
+	}
+	if primary.calls != 0 {
+		t.Fatalf("expected primary provider to be skipped, got %d calls", primary.calls)
+	}
+	if secondary.calls != 1 {
+		t.Fatalf("expected secondary provider to be called once, got %d calls", secondary.calls)
+	}
+}
+
+func TestClientChat_AllNodesSkippedReturnsAggregateError(t *testing.T) {
+	primary := &countingLLM{}
+	client := NewClient([]Node{
+		{Name: "primary", Client: primary},
+		{Name: "secondary", Client: &countingLLM{}},
+	}, WithNodeSkipper(func(ctx context.Context, node Node) (bool, string) {
+		return true, "usage limit reached"
+	}))
+
+	_, err := client.Chat(context.Background(), &llm.ChatRequest{})
+	if err == nil {
+		t.Fatal("expected error when all nodes are skipped")
+	}
+	if primary.calls != 0 {
+		t.Fatalf("expected providers to be skipped without calls, got %d", primary.calls)
+	}
+}
+
 func TestClientChat_DoesNotRetryOrFallbackOnUnsafeError(t *testing.T) {
 	primary := &countingLLM{err: llm.UnsafeForRetry(errors.New("native tool execution may have started"))}
 	secondary := &countingLLM{err: errors.New("secondary should not run")}

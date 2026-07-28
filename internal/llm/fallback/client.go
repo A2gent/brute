@@ -24,13 +24,18 @@ type Node struct {
 	Client llm.Client
 }
 
+// NodeSkipFunc reports whether a chain node should be bypassed before any LLM call.
+// The reason is included in logs, traces, and aggregate errors.
+type NodeSkipFunc func(ctx context.Context, node Node) (skip bool, reason string)
+
 // Client attempts providers in order and falls back on transient/provider-side failures.
 // Each provider is retried up to MaxRetries times before moving to the next.
 type Client struct {
-	nodes      []Node
-	maxRetries int
-	mu         sync.Mutex
-	current    int // current provider index; only moves forward
+	nodes       []Node
+	maxRetries  int
+	nodeSkipper NodeSkipFunc
+	mu          sync.Mutex
+	current     int // current provider index; only moves forward
 }
 
 // ClientOption configures the fallback client.
@@ -52,6 +57,14 @@ func WithStartIndex(idx int) ClientOption {
 		if idx >= 0 {
 			c.current = idx
 		}
+	}
+}
+
+// WithNodeSkipper bypasses nodes when the callback returns skip=true.
+// Used to skip providers with known-zero usage before attempting a request.
+func WithNodeSkipper(skip NodeSkipFunc) ClientOption {
+	return func(c *Client) {
+		c.nodeSkipper = skip
 	}
 }
 
@@ -92,6 +105,11 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	var failures []string
 	for i := start; i < len(c.nodes); i++ {
 		node := c.nodes[i]
+		if skip, reason := c.shouldSkipNode(ctx, node); skip {
+			failures = append(failures, formatSkippedFailure(node.Name, reason))
+			c.setCurrentIndex(i + 1)
+			continue
+		}
 		nodeReq := cloneRequestWithModel(request, node.Model)
 		var lastErr error
 		for attempt := 0; attempt <= c.maxRetries; attempt++ {
@@ -142,6 +160,28 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	var failures []string
 	for i := start; i < len(c.nodes); i++ {
 		node := c.nodes[i]
+		if skip, reason := c.shouldSkipNode(ctx, node); skip {
+			nextNode := ""
+			nextModel := ""
+			if i+1 < len(c.nodes) {
+				nextNode = c.nodes[i+1].Name
+				nextModel = strings.TrimSpace(c.nodes[i+1].Model)
+			}
+			emitProviderTrace(onEvent, llm.StreamEvent{
+				Type:          llm.StreamEventProviderTrace,
+				Provider:      node.Name,
+				Model:         strings.TrimSpace(node.Model),
+				NodeIndex:     i + 1,
+				TotalNodes:    len(c.nodes),
+				Phase:         "skipped_usage_limit",
+				Reason:        reason,
+				FallbackTo:    nextNode,
+				FallbackModel: nextModel,
+			})
+			failures = append(failures, formatSkippedFailure(node.Name, reason))
+			c.setCurrentIndex(i + 1)
+			continue
+		}
 		nodeReq := cloneRequestWithModel(request, node.Model)
 		emitProviderTrace(onEvent, llm.StreamEvent{
 			Type:        llm.StreamEventProviderTrace,
@@ -363,6 +403,30 @@ func (c *Client) setCurrentIndex(idx int) {
 	if idx > c.current {
 		c.current = idx
 	}
+}
+
+func (c *Client) shouldSkipNode(ctx context.Context, node Node) (bool, string) {
+	if c.nodeSkipper == nil {
+		return false, ""
+	}
+	skip, reason := c.nodeSkipper(ctx, node)
+	if !skip {
+		return false, ""
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "usage limit reached"
+	}
+	logging.Warn("Fallback chain skipping provider %s/%s: %s", node.Name, strings.TrimSpace(node.Model), reason)
+	return true, reason
+}
+
+func formatSkippedFailure(provider, reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return fmt.Sprintf("%s: skipped (usage limit reached)", provider)
+	}
+	return fmt.Sprintf("%s: skipped (%s)", provider, reason)
 }
 
 func emitProviderTrace(onEvent func(llm.StreamEvent) error, ev llm.StreamEvent) {

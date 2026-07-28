@@ -328,8 +328,16 @@ func (s *Server) handleCreateMindFolder(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if _, err := os.Stat(resolvedPath); err == nil {
-		s.errorResponse(w, http.StatusConflict, "A file or folder already exists at this path")
+	if stat, err := os.Stat(resolvedPath); err == nil {
+		if !stat.IsDir() {
+			s.errorResponse(w, http.StatusConflict, "A file or folder already exists at this path")
+			return
+		}
+		// Folder already exists. Treat as success so callers can ensure paths exist.
+		s.jsonResponse(w, http.StatusOK, CreateFolderResponse{
+			RootFolder: rootFolder,
+			Path:       filepath.ToSlash(normalizedRelPath),
+		})
 		return
 	} else if !errors.Is(err, os.ErrNotExist) {
 		s.errorResponse(w, http.StatusBadRequest, "Failed to check path: "+err.Error())

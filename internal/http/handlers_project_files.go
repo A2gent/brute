@@ -566,8 +566,16 @@ func (s *Server) handleCreateProjectFolder(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if _, err := os.Stat(resolvedPath); err == nil {
-		s.errorResponse(w, http.StatusConflict, "A file or folder already exists at this path")
+	if stat, err := os.Stat(resolvedPath); err == nil {
+		if !stat.IsDir() {
+			s.errorResponse(w, http.StatusConflict, "A file or folder already exists at this path")
+			return
+		}
+		// Folder already exists (e.g. editing an agent definition). Treat as success.
+		s.jsonResponse(w, http.StatusOK, CreateFolderResponse{
+			RootFolder: resolvedRoot,
+			Path:       filepath.ToSlash(normalizedRelPath),
+		})
 		return
 	} else if !errors.Is(err, os.ErrNotExist) {
 		s.errorResponse(w, http.StatusBadRequest, "Failed to check path: "+err.Error())

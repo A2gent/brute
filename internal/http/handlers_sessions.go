@@ -427,6 +427,30 @@ func (s *Server) handleUpdateSessionProject(w http.ResponseWriter, r *http.Reque
 	s.jsonResponse(w, http.StatusOK, s.sessionToResponse(sess))
 }
 
+func (s *Server) handleUpdateSessionNeedsFeedback(w http.ResponseWriter, r *http.Request) {
+	sessionID := chi.URLParam(r, "sessionID")
+
+	sess, err := s.sessionManager.Get(sessionID)
+	if err != nil {
+		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
+		return
+	}
+
+	var req UpdateSessionNeedsFeedbackRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	setSessionNeedsFeedback(sess, req.NeedsFeedback)
+	if err := s.sessionManager.Save(sess); err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to update session needs_feedback: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, s.sessionToResponse(sess))
+}
+
 func (s *Server) handleUpdateSessionProvider(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionID")
 

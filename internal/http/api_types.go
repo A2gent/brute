@@ -593,6 +593,10 @@ type UpdateSessionProviderRequest struct {
 	Model    *string `json:"model,omitempty"`
 }
 
+type UpdateSessionNeedsFeedbackRequest struct {
+	NeedsFeedback bool `json:"needs_feedback"`
+}
+
 type ProjectResponse struct {
 	ID          string            `json:"id"`
 	Name        string            `json:"name"`

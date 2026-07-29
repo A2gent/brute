@@ -19,7 +19,49 @@ const (
 	sessionQueueModeMetadataKey = "queue_mode"
 	sessionQueueAutoStartKey    = "queue_auto_start"
 	sessionQueuePausedKey       = "queue_paused"
+	// WHY: Marks investigation/decision sessions so Caesar can pin them after completion
+	// as a feedback reminder above ordinary fix-it runs.
+	sessionNeedsFeedbackKey = "needs_feedback"
 )
+
+func sessionNeedsFeedbackFromMetadata(metadata map[string]interface{}) bool {
+	if metadata == nil {
+		return false
+	}
+	raw, ok := metadata[sessionNeedsFeedbackKey]
+	if !ok {
+		return false
+	}
+	switch v := raw.(type) {
+	case bool:
+		return v
+	case string:
+		return strings.EqualFold(strings.TrimSpace(v), "true")
+	default:
+		return false
+	}
+}
+
+func sessionNeedsFeedback(sess *session.Session) bool {
+	if sess == nil {
+		return false
+	}
+	return sessionNeedsFeedbackFromMetadata(sess.Metadata)
+}
+
+func setSessionNeedsFeedback(sess *session.Session, enabled bool) {
+	if sess == nil {
+		return
+	}
+	if sess.Metadata == nil {
+		sess.Metadata = map[string]interface{}{}
+	}
+	if enabled {
+		sess.Metadata[sessionNeedsFeedbackKey] = true
+		return
+	}
+	delete(sess.Metadata, sessionNeedsFeedbackKey)
+}
 
 func normalizeSessionQueueMode(raw string) (string, error) {
 	normalized := strings.TrimSpace(strings.ToLower(raw))

@@ -41,16 +41,9 @@ func modelContextWindow(providerType ProviderType, model string) int {
 
 	switch providerType {
 	case ProviderOpenRouter:
-		// Check the dynamically-populated cache first. The cache is filled
-		// from the OpenRouter /api/v1/models endpoint and contains the real
-		// context_length for each model.
-		if window := openRouterCachedContextWindow(model); window > 0 {
-			return window
-		}
-		// Normalise stored id variations so the cache lookup also matches ids
-		// written with or without the "openrouter/" prefix.
-		stripped := strings.TrimPrefix(normalizedModel, "openrouter/")
-		if window := openRouterCachedContextWindow(stripped); window > 0 {
+		// Cache is filled from OpenRouter /api/v1/models context_length.
+		// Candidate matching inside the cache handles openrouter/ prefix variants.
+		if window := openRouterCachedContextWindow(normalizedModel); window > 0 {
 			return window
 		}
 	}

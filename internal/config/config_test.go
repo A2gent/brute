@@ -134,9 +134,8 @@ func TestGrokProviderDefinition(t *testing.T) {
 }
 
 func TestResolveContextWindowUsesModelSpecificOpenRouterLimits(t *testing.T) {
-	t.Parallel()
-
-	// Populate the cache with a known context window for owl-alpha.
+	// Global OpenRouter context cache is shared; keep this test serial.
+	ResetOpenRouterModelContextCache()
 	CacheOpenRouterModelContextWindow("owl-alpha", 1000000)
 	t.Cleanup(ResetOpenRouterModelContextCache)
 
@@ -168,17 +167,15 @@ func TestResolveContextWindowUsesModelSpecificOpenRouterLimits(t *testing.T) {
 			want:     64000,
 		},
 		{
-			name:  "cached model returns its real context window",
+			name:  "uncached model falls back to provider default",
 			model: "openrouter/xiaomi/mimo-v2.5",
-			want:  0, // not in cache, falls back to provider default
+			want:  128000,
 		},
 	}
 
 	for _, tt := range cases {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
 			if got := ResolveContextWindow(ProviderOpenRouter, tt.provider, tt.model); got != tt.want {
 				t.Fatalf("ResolveContextWindow(openrouter, %#v, %q) = %d, want %d", tt.provider, tt.model, got, tt.want)
 			}
@@ -187,8 +184,8 @@ func TestResolveContextWindowUsesModelSpecificOpenRouterLimits(t *testing.T) {
 }
 
 func TestResolveContextWindowUsesCachedOpenRouterModelContextWindow(t *testing.T) {
-	t.Parallel()
-
+	// Global OpenRouter context cache is shared; keep this test serial.
+	ResetOpenRouterModelContextCache()
 	CacheOpenRouterModelContextWindow("openrouter/xiaomi/mimo-v2.5", 1000000)
 	CacheOpenRouterModelContextWindow("deepseek/deepseek-r1", 131072)
 	t.Cleanup(ResetOpenRouterModelContextCache)
@@ -223,8 +220,6 @@ func TestResolveContextWindowUsesCachedOpenRouterModelContextWindow(t *testing.T
 	for _, tt := range cases {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
 			if got := ResolveContextWindow(ProviderOpenRouter, Provider{}, tt.model); got != tt.want {
 				t.Fatalf("ResolveContextWindow(openrouter, %#v, %q) = %d, want %d", Provider{}, tt.model, got, tt.want)
 			}

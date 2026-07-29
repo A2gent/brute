@@ -9,8 +9,8 @@ import (
 )
 
 func TestResolveContextWindowForOpenRouterOwlAlpha(t *testing.T) {
-	t.Parallel()
-
+	// Global OpenRouter context cache is shared across packages; keep serial.
+	config.ResetOpenRouterModelContextCache()
 	config.CacheOpenRouterModelContextWindow("owl-alpha", 1000000)
 	t.Cleanup(config.ResetOpenRouterModelContextCache)
 

@@ -59,7 +59,7 @@ func (m *memStore) SaveProjectGitReviewOverlayCache(*storage.ProjectGitReviewOve
 func (m *memStore) ListProjectGitReviewOverlayCache(string, string, string, string) ([]*storage.ProjectGitReviewOverlayCache, error) {
 	return nil, nil
 }
-func (m *memStore) SaveJob(*storage.RecurringJob) error          { return nil }
+func (m *memStore) SaveJob(*storage.RecurringJob) error { return nil }
 func (m *memStore) UpdateExistingJob(*storage.RecurringJob) (bool, error) {
 	return false, nil
 }
@@ -109,6 +109,12 @@ func (m *memStore) ListAgentDefinitions() ([]*storage.AgentDefinitionRecord, err
 	return nil, nil
 }
 func (m *memStore) DeleteAgentDefinition(string) error { return nil }
+func (m *memStore) SaveTeam(*storage.TeamRecord) error { return nil }
+func (m *memStore) GetTeam(string) (*storage.TeamRecord, error) {
+	return nil, nil
+}
+func (m *memStore) ListTeams(*string) ([]*storage.TeamRecord, error) { return nil, nil }
+func (m *memStore) DeleteTeam(string) error                          { return nil }
 func (m *memStore) SaveProjectDatabase(*storage.ProjectDatabase) error {
 	return nil
 }

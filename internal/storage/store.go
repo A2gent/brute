@@ -141,6 +141,17 @@ type AgentDefinitionRecord struct {
 	UpdatedAt      time.Time
 }
 
+// TeamRecord indexes a canonical team YAML definition for listing and run lookup.
+type TeamRecord struct {
+	ID             string
+	ProjectID      string
+	Name           string
+	Description    string
+	DefinitionYAML string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
 // SubAgent represents a reusable sub-agent configuration.
 type SubAgent struct {
 	ID                string
@@ -290,6 +301,12 @@ type Store interface {
 	GetAgentDefinition(id string) (*AgentDefinitionRecord, error)
 	ListAgentDefinitions() ([]*AgentDefinitionRecord, error)
 	DeleteAgentDefinition(id string) error
+
+	// Team definition operations
+	SaveTeam(team *TeamRecord) error
+	GetTeam(id string) (*TeamRecord, error)
+	ListTeams(projectID *string) ([]*TeamRecord, error)
+	DeleteTeam(id string) error
 
 	// Project Database operations
 	SaveProjectDatabase(db *ProjectDatabase) error

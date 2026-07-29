@@ -277,6 +277,17 @@ func (s *SQLiteStore) migrate() error {
 		`ALTER TABLE recurring_jobs ADD COLUMN unified_agent_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE recurring_jobs ADD COLUMN docker_agent_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE recurring_jobs ADD COLUMN llm_model TEXT NOT NULL DEFAULT ''`,
+		// Team definitions keep canonical YAML while SQLite provides fast listing.
+		`CREATE TABLE IF NOT EXISTS teams (
+				id TEXT PRIMARY KEY,
+				project_id TEXT NOT NULL DEFAULT '',
+				name TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				definition_yaml TEXT NOT NULL,
+				created_at TIMESTAMP NOT NULL,
+				updated_at TIMESTAMP NOT NULL
+			)`,
+		`CREATE INDEX IF NOT EXISTS idx_teams_project_id ON teams(project_id)`,
 	}
 
 	for _, m := range migrations {

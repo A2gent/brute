@@ -61,6 +61,7 @@ func (s *Server) setupRoutes() {
 	s.registerSessionRoutes(r)
 	s.registerSessionTemplateRoutes(r)
 	s.registerProjectRoutes(r)
+	s.registerTeamRoutes(r)
 	s.registerJobRoutes(r)
 	s.registerMindRoutes(r)
 	s.registerSubAgentRoutes(r)
@@ -345,6 +346,18 @@ func (s *Server) registerProjectRoutes(r chi.Router) {
 		r.Patch("/{projectID}/databases/{dbID}/tables/{tableName}/cells", s.handleProjectDatabaseUpdateCell)
 		r.Get("/{projectID}/databases/{dbID}/tables/{tableName}/columns/{columnName}/analytics", s.handleProjectDatabaseColumnAnalytics)
 		r.Post("/{projectID}/databases/{dbID}/query", s.handleProjectDatabaseQuery)
+	})
+}
+
+func (s *Server) registerTeamRoutes(r chi.Router) {
+	r.Route("/teams", func(r chi.Router) {
+		r.Get("/", s.handleListTeams)
+		r.Post("/", s.handleCreateTeam)
+		r.Post("/import-yaml", s.handleImportTeamYAML)
+		r.Get("/{teamID}", s.handleGetTeam)
+		r.Put("/{teamID}", s.handleUpdateTeam)
+		r.Delete("/{teamID}", s.handleDeleteTeam)
+		r.Get("/{teamID}/yaml", s.handleExportTeamYAML)
 	})
 }
 

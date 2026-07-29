@@ -288,6 +288,41 @@ func (s *SQLiteStore) migrate() error {
 				updated_at TIMESTAMP NOT NULL
 			)`,
 		`CREATE INDEX IF NOT EXISTS idx_teams_project_id ON teams(project_id)`,
+		`CREATE TABLE IF NOT EXISTS team_runs (
+				id TEXT PRIMARY KEY,
+				team_id TEXT NOT NULL,
+				session_id TEXT NOT NULL,
+				status TEXT NOT NULL,
+				stop_reason TEXT NOT NULL DEFAULT '',
+				policy_json TEXT NOT NULL,
+				started_at TIMESTAMP NOT NULL,
+				ended_at TIMESTAMP
+			)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_team_runs_session ON team_runs(session_id)`,
+		`CREATE TABLE IF NOT EXISTS team_run_members (
+				team_run_id TEXT NOT NULL,
+				role TEXT NOT NULL,
+				agent_ref TEXT NOT NULL,
+				session_id TEXT NOT NULL,
+				PRIMARY KEY (team_run_id, role),
+				FOREIGN KEY (team_run_id) REFERENCES team_runs(id) ON DELETE CASCADE
+			)`,
+		`CREATE TABLE IF NOT EXISTS team_messages (
+				id TEXT PRIMARY KEY,
+				team_run_id TEXT NOT NULL,
+				thread_id TEXT NOT NULL,
+				from_role TEXT NOT NULL,
+				to_roles TEXT NOT NULL,
+				cc_roles TEXT NOT NULL DEFAULT '[]',
+				kind TEXT NOT NULL,
+				subject TEXT NOT NULL DEFAULT '',
+				body TEXT NOT NULL,
+				expects_reply INTEGER NOT NULL DEFAULT 0,
+				created_at TIMESTAMP NOT NULL,
+				delivered_json TEXT NOT NULL DEFAULT '{}',
+				FOREIGN KEY (team_run_id) REFERENCES team_runs(id) ON DELETE CASCADE
+			)`,
+		`CREATE INDEX IF NOT EXISTS idx_team_messages_run ON team_messages(team_run_id, created_at, id)`,
 	}
 
 	for _, m := range migrations {

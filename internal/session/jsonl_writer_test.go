@@ -115,6 +115,26 @@ func (m *memStore) GetTeam(string) (*storage.TeamRecord, error) {
 }
 func (m *memStore) ListTeams(*string) ([]*storage.TeamRecord, error) { return nil, nil }
 func (m *memStore) DeleteTeam(string) error                          { return nil }
+func (m *memStore) SaveTeamRun(*storage.TeamRun) error               { return nil }
+func (m *memStore) GetTeamRun(string) (*storage.TeamRun, error)      { return nil, nil }
+func (m *memStore) GetTeamRunBySession(string) (*storage.TeamRun, error) {
+	return nil, nil
+}
+func (m *memStore) SaveTeamRunMember(*storage.TeamRunMember) error { return nil }
+func (m *memStore) ListTeamRunMembers(string) ([]*storage.TeamRunMember, error) {
+	return nil, nil
+}
+func (m *memStore) AppendTeamMessage(*storage.TeamMessage) error { return nil }
+func (m *memStore) GetTeamMessage(string, string) (*storage.TeamMessage, error) {
+	return nil, nil
+}
+func (m *memStore) ListTeamMessages(string, string, int) ([]*storage.TeamMessage, error) {
+	return nil, nil
+}
+func (m *memStore) ListPendingTeamMessages(string, string, int) ([]*storage.TeamMessage, error) {
+	return nil, nil
+}
+func (m *memStore) MarkTeamMessageDelivered(string, string, string, time.Time) error { return nil }
 func (m *memStore) SaveProjectDatabase(*storage.ProjectDatabase) error {
 	return nil
 }

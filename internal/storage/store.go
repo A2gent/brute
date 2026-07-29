@@ -308,6 +308,18 @@ type Store interface {
 	ListTeams(projectID *string) ([]*TeamRecord, error)
 	DeleteTeam(id string) error
 
+	// Team run and mailbox operations
+	SaveTeamRun(run *TeamRun) error
+	GetTeamRun(id string) (*TeamRun, error)
+	GetTeamRunBySession(sessionID string) (*TeamRun, error)
+	SaveTeamRunMember(member *TeamRunMember) error
+	ListTeamRunMembers(runID string) ([]*TeamRunMember, error)
+	AppendTeamMessage(message *TeamMessage) error
+	GetTeamMessage(runID, messageID string) (*TeamMessage, error)
+	ListTeamMessages(runID, after string, limit int) ([]*TeamMessage, error)
+	ListPendingTeamMessages(runID, role string, limit int) ([]*TeamMessage, error)
+	MarkTeamMessageDelivered(runID, messageID, role string, deliveredAt time.Time) error
+
 	// Project Database operations
 	SaveProjectDatabase(db *ProjectDatabase) error
 	GetProjectDatabase(id string) (*ProjectDatabase, error)

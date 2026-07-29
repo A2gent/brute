@@ -29,7 +29,7 @@ func New(config Config, llmClient llm.Client, toolManager *tools.Manager, sessio
 // NewWithCompressor creates an agent with optional pre-send tool-result compression.
 func NewWithCompressor(config Config, llmClient llm.Client, toolManager *tools.Manager, sessionManager *session.Manager, compressor *contextcompress.Compressor) *Agent {
 	if config.MaxSteps == 0 {
-		config.MaxSteps = 50
+		config.MaxSteps = 100
 	}
 	systemPromptExplicit := config.SystemPrompt != ""
 	if config.SystemPrompt == "" {

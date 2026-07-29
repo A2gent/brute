@@ -261,7 +261,8 @@ func DefaultConfig() *Config {
 	return &Config{
 		DefaultModel:   "kimi-k2.5",
 		ActiveProvider: string(ProviderKimi),
-		MaxSteps:       50,
+		// Complex coding runs routinely exceed the old 50-step budget.
+		MaxSteps:       100,
 		Temperature:    0.0,
 		LLMRetries:     3,
 		DataPath:       resolveDataPath(),
@@ -357,6 +358,14 @@ func Load() (*Config, error) {
 				return nil, err
 			}
 			break
+		}
+	}
+
+	// Apply after file load so operators can raise the budget without editing
+	// a secrets-bearing config.json (and without fighting a stale max_steps value).
+	if maxStepsStr := strings.TrimSpace(os.Getenv("AAGENT_MAX_STEPS")); maxStepsStr != "" {
+		if maxSteps, err := strconv.Atoi(maxStepsStr); err == nil && maxSteps > 0 {
+			cfg.MaxSteps = maxSteps
 		}
 	}
 

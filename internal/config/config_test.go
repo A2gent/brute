@@ -262,6 +262,9 @@ func TestDefaultConfigUsesEnvironmentDataPathAndSafeToolDefaults(t *testing.T) {
 	if cfg.LLMRetries != 3 {
 		t.Fatalf("LLMRetries = %d, want 3", cfg.LLMRetries)
 	}
+	if cfg.MaxSteps != 100 {
+		t.Fatalf("MaxSteps = %d, want 100", cfg.MaxSteps)
+	}
 	if !reflect.DeepEqual(cfg.CORSAllowedOrigins, []string{"*"}) {
 		t.Fatalf("CORSAllowedOrigins = %#v, want wildcard", cfg.CORSAllowedOrigins)
 	}
@@ -344,6 +347,7 @@ func TestLoadUsesEnvironmentWhenNoConfigFileExists(t *testing.T) {
 	t.Setenv("AAGENT_MODEL", "gpt-test")
 	t.Setenv("AAGENT_DATA_PATH", dataPath)
 	t.Setenv("AAGENT_LLM_RETRIES", "5")
+	t.Setenv("AAGENT_MAX_STEPS", "175")
 	t.Setenv("A2GENT_CORS_ALLOWED_ORIGINS", " https://app.example.com, https://app.example.com, http://localhost:5173 ")
 
 	cfg, err := Load()
@@ -354,7 +358,7 @@ func TestLoadUsesEnvironmentWhenNoConfigFileExists(t *testing.T) {
 	if cfg.ActiveProvider != string(ProviderOpenAICodex) {
 		t.Fatalf("ActiveProvider = %q, want %q", cfg.ActiveProvider, ProviderOpenAICodex)
 	}
-	if cfg.DefaultModel != "gpt-test" || cfg.DataPath != dataPath || cfg.LLMRetries != 5 {
+	if cfg.DefaultModel != "gpt-test" || cfg.DataPath != dataPath || cfg.LLMRetries != 5 || cfg.MaxSteps != 175 {
 		t.Fatalf("Load did not apply env overrides: %#v", cfg)
 	}
 	wantOrigins := []string{"https://app.example.com", "http://localhost:5173"}
@@ -363,6 +367,32 @@ func TestLoadUsesEnvironmentWhenNoConfigFileExists(t *testing.T) {
 	}
 	if info, err := os.Stat(dataPath); err != nil || !info.IsDir() {
 		t.Fatalf("Load should create data directory %q, stat=%#v err=%v", dataPath, info, err)
+	}
+}
+
+func TestLoadMaxStepsEnvOverridesConfigFile(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.json")
+	dataPath := filepath.Join(tmp, "configured-data")
+	isolateLoadFileLookup(t, configPath)
+
+	raw := `{
+  "default_model": "gemini-file",
+  "active_provider": "google",
+  "max_steps": 40,
+  "data_path": ` + quoteJSON(t, dataPath) + `
+}`
+	if err := os.WriteFile(configPath, []byte(raw), 0o644); err != nil {
+		t.Fatalf("write config fixture: %v", err)
+	}
+	t.Setenv("AAGENT_MAX_STEPS", "120")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if cfg.MaxSteps != 120 {
+		t.Fatalf("MaxSteps = %d, want 120 from AAGENT_MAX_STEPS", cfg.MaxSteps)
 	}
 }
 

@@ -19,6 +19,11 @@ const (
 	AgentTypeDeveloper AgentType = "developer"
 	AgentTypeTester    AgentType = "tester"
 	AgentTypeDocs      AgentType = "docs"
+
+	// Sub-agents stay below the parent default (100) but still need room for
+	// multi-file research / implementation without hitting the tool-step budget.
+	defaultSubagentMaxSteps = 50
+	exploreSubagentMaxSteps = 30
 )
 
 // Spawner handles sub-agent creation and execution
@@ -77,7 +82,7 @@ func (s *Spawner) getAgentConfig(agentType AgentType) agent.Config {
 	base := agent.Config{
 		Name:        string(agentType),
 		Model:       s.model,
-		MaxSteps:    25, // Sub-agents have lower step limit
+		MaxSteps:    defaultSubagentMaxSteps,
 		Temperature: 0.0,
 	}
 
@@ -89,7 +94,7 @@ func (s *Spawner) getAgentConfig(agentType AgentType) agent.Config {
 	case AgentTypeExplore:
 		base.Description = "Fast read-only agent for codebase exploration"
 		base.SystemPrompt = exploreAgentPrompt
-		base.MaxSteps = 15 // Explore should be fast
+		base.MaxSteps = exploreSubagentMaxSteps
 
 	case AgentTypeDeveloper:
 		base.Description = "Code implementation and debugging"

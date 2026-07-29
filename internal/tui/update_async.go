@@ -53,9 +53,6 @@ func (m Model) updateSessionSync(msg sessionSyncMsg) (Model, []tea.Cmd) {
 		} else {
 			m.session = msg.session
 		}
-		if workflow := workflowFromSessionMetadata(msg.session); workflow.ID != "" {
-			m.selectedWorkflow = workflow
-		}
 	}
 	cmds = append(cmds, sessionSyncCmd(m.sessionManager, m.session.ID))
 	return m, cmds

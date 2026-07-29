@@ -8,34 +8,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func (m Model) updateWorkflowMenuKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
-	if !m.showAgentsMenu {
-		return m, nil, false
-	}
-
-	switch msg.Type {
-	case tea.KeyEsc:
-		m.showAgentsMenu = false
-		m.viewport.SetContent(m.renderMessages())
-		return m, nil, true
-	case tea.KeyUp:
-		if m.agentsMenuIndex > 0 {
-			m.agentsMenuIndex--
-		}
-		return m, nil, true
-	case tea.KeyDown:
-		if m.agentsMenuIndex < len(m.availableWorkflows)-1 {
-			m.agentsMenuIndex++
-		}
-		return m, nil, true
-	case tea.KeyEnter:
-		model, cmd := m.selectWorkflowForNewSession()
-		return model.(Model), cmd, true
-	default:
-		return m, nil, true
-	}
-}
-
 func (m Model) updateGlobalKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 	switch msg.Type {
 	case tea.KeyCtrlC:

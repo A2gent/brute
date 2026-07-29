@@ -76,16 +76,6 @@ func (m Model) View() string {
 		)
 	}
 
-	// Check if we should show workflow/agent menu overlay
-	if m.showAgentsMenu {
-		agentsView := m.renderAgentsMenu()
-		return lipgloss.JoinVertical(
-			lipgloss.Left,
-			topBar,
-			agentsView,
-		)
-	}
-
 	// Question prompt (rendered above input if active)
 	var questionPrompt string
 	if m.showQuestionPrompt {
@@ -233,34 +223,15 @@ func (m Model) renderActiveAgentLine(width int) string {
 	if width < 1 {
 		width = 1
 	}
-	workflow := m.selectedWorkflow
-	if sessionWorkflow := workflowFromSessionMetadata(m.session); sessionWorkflow.ID != "" {
-		workflow = sessionWorkflow
-	}
-	if workflow.ID == "" {
-		workflow = builtinUserMainWorkflow()
-	}
-
-	label := workflowLaunchLabel(workflow)
-	if label == "" {
-		label = m.agentConfig.Name
-	}
+	label := strings.TrimSpace(m.agentConfig.Name)
 	if label == "" {
 		label = "agent"
 	}
 	text := fmt.Sprintf("  Agent: %s", label)
-	if workflow.Name != "" && workflow.Name != label {
-		text += fmt.Sprintf("  •  Workflow: %s", workflow.Name)
-	}
 	if m.selectedProjectName != "" {
 		text += fmt.Sprintf("  •  Project: %s", m.selectedProjectName)
 	}
-	text = truncateLine(text, width)
-	return lipgloss.NewStyle().
-		Background(lipgloss.Color("#1a1a1a")).
-		Foreground(lipgloss.Color("#888888")).
-		Width(width).
-		Render(text)
+	return lipgloss.NewStyle().Background(lipgloss.Color("#1a1a1a")).Foreground(lipgloss.Color("#888888")).Width(width).Render(truncateLine(text, width))
 }
 
 func (m Model) renderEmptySessionView() string {

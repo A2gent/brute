@@ -62,7 +62,7 @@ func (s *Scheduler) SetToolManagerForSessionResolver(resolve func(*session.Sessi
 }
 
 // SetJobExecutor routes scheduled loop runs through the HTTP server's job runner
-// so workflow/agent configuration matches manual "Run Now" executions.
+// so agent configuration matches manual "Run Now" executions.
 func (s *Scheduler) SetJobExecutor(executor func(context.Context, *storage.RecurringJob)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -53,11 +53,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m = updated
 		}
-		if updated, cmd, handled := m.updateWorkflowMenuKey(msg); handled {
-			return updated, cmd
-		} else {
-			m = updated
-		}
 		if updated, cmd, handled := m.updateGlobalKey(msg); handled {
 			return updated, cmd
 		} else {

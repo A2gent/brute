@@ -100,7 +100,7 @@ type preparedJobExecution struct {
 	startedAt           time.Time
 }
 
-// ExecuteJob runs a recurring job using the same workflow/agent routing as chat sessions.
+// ExecuteJob runs a recurring job using the same agent routing as chat sessions.
 func (s *Server) ExecuteJob(ctx context.Context, job *storage.RecurringJob) (*storage.JobExecution, error) {
 	prepared, err := s.prepareJobExecution(job)
 	if err != nil {

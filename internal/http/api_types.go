@@ -182,34 +182,32 @@ type ChatResponse struct {
 }
 
 type ChatStreamEvent struct {
-	Type                    string                       `json:"type"`
-	Delta                   string                       `json:"delta,omitempty"`
-	Content                 string                       `json:"content,omitempty"`
-	Message                 *MessageResponse             `json:"message,omitempty"`
-	Messages                []MessageResponse            `json:"messages,omitempty"`
-	Status                  string                       `json:"status,omitempty"`
-	Usage                   *UsageResponse               `json:"usage,omitempty"`
-	Error                   string                       `json:"error,omitempty"`
-	Question                *session.QuestionData        `json:"question,omitempty"`
-	ToolCalls               []StreamToolCallEvent        `json:"tool_calls,omitempty"`
-	ToolProgress            *StreamToolProgressEvent     `json:"tool_progress,omitempty"`
-	ToolResult              *StreamToolResultEvent       `json:"tool_result,omitempty"`
-	Provider                *StreamProviderEvent         `json:"provider,omitempty"`
-	Workflow                interface{}                  `json:"workflow,omitempty"`
-	WorkflowTranscriptEntry interface{}                  `json:"workflow_transcript_entry,omitempty"`
-	RoutedProvider          string                       `json:"routed_provider,omitempty"`
-	RoutedModel             string                       `json:"routed_model,omitempty"`
-	RoutedRule              string                       `json:"routed_rule,omitempty"`
-	RoutedReason            string                       `json:"routed_reason,omitempty"`
-	FallbackActiveProvider  string                       `json:"fallback_active_provider,omitempty"`
-	FallbackActiveModel     string                       `json:"fallback_active_model,omitempty"`
-	PromptCache             *PromptCachePayload          `json:"prompt_cache,omitempty"`
-	Step                    int                          `json:"step,omitempty"`
-	TurnID                  string                       `json:"turn_id,omitempty"`
-	RuntimeTool             *StreamRuntimeToolEvent      `json:"runtime_tool,omitempty"`
-	Cost                    *StreamRuntimeCostEvent      `json:"cost,omitempty"`
-	RuntimeWarning          *StreamRuntimeWarningPayload `json:"runtime_warning,omitempty"`
-	Approval                *NativeToolApprovalResponse  `json:"approval,omitempty"`
+	Type                   string                       `json:"type"`
+	Delta                  string                       `json:"delta,omitempty"`
+	Content                string                       `json:"content,omitempty"`
+	Message                *MessageResponse             `json:"message,omitempty"`
+	Messages               []MessageResponse            `json:"messages,omitempty"`
+	Status                 string                       `json:"status,omitempty"`
+	Usage                  *UsageResponse               `json:"usage,omitempty"`
+	Error                  string                       `json:"error,omitempty"`
+	Question               *session.QuestionData        `json:"question,omitempty"`
+	ToolCalls              []StreamToolCallEvent        `json:"tool_calls,omitempty"`
+	ToolProgress           *StreamToolProgressEvent     `json:"tool_progress,omitempty"`
+	ToolResult             *StreamToolResultEvent       `json:"tool_result,omitempty"`
+	Provider               *StreamProviderEvent         `json:"provider,omitempty"`
+	RoutedProvider         string                       `json:"routed_provider,omitempty"`
+	RoutedModel            string                       `json:"routed_model,omitempty"`
+	RoutedRule             string                       `json:"routed_rule,omitempty"`
+	RoutedReason           string                       `json:"routed_reason,omitempty"`
+	FallbackActiveProvider string                       `json:"fallback_active_provider,omitempty"`
+	FallbackActiveModel    string                       `json:"fallback_active_model,omitempty"`
+	PromptCache            *PromptCachePayload          `json:"prompt_cache,omitempty"`
+	Step                   int                          `json:"step,omitempty"`
+	TurnID                 string                       `json:"turn_id,omitempty"`
+	RuntimeTool            *StreamRuntimeToolEvent      `json:"runtime_tool,omitempty"`
+	Cost                   *StreamRuntimeCostEvent      `json:"cost,omitempty"`
+	RuntimeWarning         *StreamRuntimeWarningPayload `json:"runtime_warning,omitempty"`
+	Approval               *NativeToolApprovalResponse  `json:"approval,omitempty"`
 }
 
 // NativeToolApprovalResponse matches Caesar's pending approval DTO.
@@ -369,74 +367,65 @@ type ToolDefinitionResponse struct {
 
 // CreateJobRequest represents a request to create a recurring job
 type CreateJobRequest struct {
-	Name               string                 `json:"name"`
-	ProjectID          string                 `json:"project_id,omitempty"`
-	ScheduleText       string                 `json:"schedule_text"` // Natural language schedule
-	TaskPrompt         string                 `json:"task_prompt"`
-	TaskPromptSource   string                 `json:"task_prompt_source,omitempty"` // "text" | "file"
-	TaskPromptFile     string                 `json:"task_prompt_file,omitempty"`
-	RunTarget          string                 `json:"run_target,omitempty"` // "workflow" | "agent"
-	WorkflowID         string                 `json:"workflow_id,omitempty"`
-	WorkflowName       string                 `json:"workflow_name,omitempty"`
-	WorkflowDefinition map[string]interface{} `json:"workflow_definition,omitempty"`
-	LaunchAgentID      string                 `json:"launch_agent_id,omitempty"`
-	LaunchAgentName    string                 `json:"launch_agent_name,omitempty"`
-	LaunchAgentRuntime string                 `json:"launch_agent_runtime,omitempty"`
-	UnifiedAgentID     string                 `json:"unified_agent_id,omitempty"`
-	DockerAgentID      string                 `json:"docker_agent_id,omitempty"`
-	LLMProvider        string                 `json:"llm_provider,omitempty"`
-	LLMModel           string                 `json:"llm_model,omitempty"`
-	Enabled            bool                   `json:"enabled"`
+	Name               string `json:"name"`
+	ProjectID          string `json:"project_id,omitempty"`
+	ScheduleText       string `json:"schedule_text"` // Natural language schedule
+	TaskPrompt         string `json:"task_prompt"`
+	TaskPromptSource   string `json:"task_prompt_source,omitempty"` // "text" | "file"
+	TaskPromptFile     string `json:"task_prompt_file,omitempty"`
+	RunTarget          string `json:"run_target,omitempty"` // "agent"
+	LaunchAgentID      string `json:"launch_agent_id,omitempty"`
+	LaunchAgentName    string `json:"launch_agent_name,omitempty"`
+	LaunchAgentRuntime string `json:"launch_agent_runtime,omitempty"`
+	UnifiedAgentID     string `json:"unified_agent_id,omitempty"`
+	DockerAgentID      string `json:"docker_agent_id,omitempty"`
+	LLMProvider        string `json:"llm_provider,omitempty"`
+	LLMModel           string `json:"llm_model,omitempty"`
+	Enabled            bool   `json:"enabled"`
 }
 
 // UpdateJobRequest represents a request to update a recurring job
 type UpdateJobRequest struct {
-	Name               string                  `json:"name"`
-	ProjectID          *string                 `json:"project_id,omitempty"`
-	ScheduleText       string                  `json:"schedule_text"`
-	TaskPrompt         string                  `json:"task_prompt"`
-	TaskPromptSource   string                  `json:"task_prompt_source,omitempty"` // "text" | "file"
-	TaskPromptFile     string                  `json:"task_prompt_file,omitempty"`
-	RunTarget          string                  `json:"run_target,omitempty"`
-	WorkflowID         string                  `json:"workflow_id,omitempty"`
-	WorkflowName       string                  `json:"workflow_name,omitempty"`
-	WorkflowDefinition *map[string]interface{} `json:"workflow_definition,omitempty"`
-	LaunchAgentID      string                  `json:"launch_agent_id,omitempty"`
-	LaunchAgentName    string                  `json:"launch_agent_name,omitempty"`
-	LaunchAgentRuntime string                  `json:"launch_agent_runtime,omitempty"`
-	UnifiedAgentID     string                  `json:"unified_agent_id,omitempty"`
-	DockerAgentID      string                  `json:"docker_agent_id,omitempty"`
-	LLMProvider        *string                 `json:"llm_provider,omitempty"`
-	LLMModel           string                  `json:"llm_model,omitempty"`
-	Enabled            *bool                   `json:"enabled,omitempty"`
+	Name               string  `json:"name"`
+	ProjectID          *string `json:"project_id,omitempty"`
+	ScheduleText       string  `json:"schedule_text"`
+	TaskPrompt         string  `json:"task_prompt"`
+	TaskPromptSource   string  `json:"task_prompt_source,omitempty"` // "text" | "file"
+	TaskPromptFile     string  `json:"task_prompt_file,omitempty"`
+	RunTarget          string  `json:"run_target,omitempty"`
+	LaunchAgentID      string  `json:"launch_agent_id,omitempty"`
+	LaunchAgentName    string  `json:"launch_agent_name,omitempty"`
+	LaunchAgentRuntime string  `json:"launch_agent_runtime,omitempty"`
+	UnifiedAgentID     string  `json:"unified_agent_id,omitempty"`
+	DockerAgentID      string  `json:"docker_agent_id,omitempty"`
+	LLMProvider        *string `json:"llm_provider,omitempty"`
+	LLMModel           string  `json:"llm_model,omitempty"`
+	Enabled            *bool   `json:"enabled,omitempty"`
 }
 
 // JobResponse represents a recurring job response
 type JobResponse struct {
-	ID                 string                 `json:"id"`
-	ProjectID          string                 `json:"project_id,omitempty"`
-	Name               string                 `json:"name"`
-	ScheduleHuman      string                 `json:"schedule_human"`
-	ScheduleCron       string                 `json:"schedule_cron"`
-	TaskPrompt         string                 `json:"task_prompt"`
-	TaskPromptSource   string                 `json:"task_prompt_source"`
-	TaskPromptFile     string                 `json:"task_prompt_file,omitempty"`
-	RunTarget          string                 `json:"run_target,omitempty"`
-	WorkflowID         string                 `json:"workflow_id,omitempty"`
-	WorkflowName       string                 `json:"workflow_name,omitempty"`
-	WorkflowDefinition map[string]interface{} `json:"workflow_definition,omitempty"`
-	LaunchAgentID      string                 `json:"launch_agent_id,omitempty"`
-	LaunchAgentName    string                 `json:"launch_agent_name,omitempty"`
-	LaunchAgentRuntime string                 `json:"launch_agent_runtime,omitempty"`
-	UnifiedAgentID     string                 `json:"unified_agent_id,omitempty"`
-	DockerAgentID      string                 `json:"docker_agent_id,omitempty"`
-	LLMProvider        string                 `json:"llm_provider,omitempty"`
-	LLMModel           string                 `json:"llm_model,omitempty"`
-	Enabled            bool                   `json:"enabled"`
-	LastRunAt          *time.Time             `json:"last_run_at,omitempty"`
-	NextRunAt          *time.Time             `json:"next_run_at,omitempty"`
-	CreatedAt          time.Time              `json:"created_at"`
-	UpdatedAt          time.Time              `json:"updated_at"`
+	ID                 string     `json:"id"`
+	ProjectID          string     `json:"project_id,omitempty"`
+	Name               string     `json:"name"`
+	ScheduleHuman      string     `json:"schedule_human"`
+	ScheduleCron       string     `json:"schedule_cron"`
+	TaskPrompt         string     `json:"task_prompt"`
+	TaskPromptSource   string     `json:"task_prompt_source"`
+	TaskPromptFile     string     `json:"task_prompt_file,omitempty"`
+	RunTarget          string     `json:"run_target,omitempty"`
+	LaunchAgentID      string     `json:"launch_agent_id,omitempty"`
+	LaunchAgentName    string     `json:"launch_agent_name,omitempty"`
+	LaunchAgentRuntime string     `json:"launch_agent_runtime,omitempty"`
+	UnifiedAgentID     string     `json:"unified_agent_id,omitempty"`
+	DockerAgentID      string     `json:"docker_agent_id,omitempty"`
+	LLMProvider        string     `json:"llm_provider,omitempty"`
+	LLMModel           string     `json:"llm_model,omitempty"`
+	Enabled            bool       `json:"enabled"`
+	LastRunAt          *time.Time `json:"last_run_at,omitempty"`
+	NextRunAt          *time.Time `json:"next_run_at,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
 type SessionTemplateRequest struct {
@@ -663,9 +652,9 @@ type ProjectDatabaseTableColumnResponse struct {
 }
 
 type ProjectDatabaseUpdateCellRequest struct {
-	Column         string            `json:"column"`
-	Value          *string           `json:"value"`
-	PrimaryKey     map[string]string `json:"primary_key"`
+	Column     string            `json:"column"`
+	Value      *string           `json:"value"`
+	PrimaryKey map[string]string `json:"primary_key"`
 }
 
 type ProjectDatabaseUpdateCellResponse struct {

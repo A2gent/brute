@@ -11,63 +11,35 @@ import (
 )
 
 func (m Model) createNewSession() (tea.Model, tea.Cmd) {
-	return m.createNewSessionWithWorkflow(m.selectedWorkflow)
-}
-
-func (m Model) createNewSessionWithWorkflow(workflow tuiWorkflow) (tea.Model, tea.Cmd) {
-	// Save current session
 	if m.session != nil {
 		m.saveSessionIfNotEmpty()
 	}
 
-	// Create new session
 	newSess, err := m.sessionManager.Create(m.agentConfig.Name)
 	if err != nil {
-		m.messages = append(m.messages, message{
-			role:      "error",
-			content:   fmt.Sprintf("Failed to create new session: %v", err),
-			timestamp: time.Now(),
-		})
+		m.messages = append(m.messages, message{role: "error", content: fmt.Sprintf("Failed to create new session: %v", err), timestamp: time.Now()})
 		m.viewport.SetContent(m.renderMessages())
 		return m, nil
 	}
-	if workflow.ID == "" {
-		workflow = builtinUserMainWorkflow()
-	}
-	m.selectedWorkflow = workflow
-	applyWorkflowMetadata(newSess, workflow)
 	if m.selectedProjectID != nil {
 		newSess.ProjectID = m.selectedProjectID
 	}
 	if err := m.sessionManager.Save(newSess); err != nil {
-		m.messages = append(m.messages, message{
-			role:      "error",
-			content:   fmt.Sprintf("Failed to save workflow selection: %v", err),
-			timestamp: time.Now(),
-		})
+		m.messages = append(m.messages, message{role: "error", content: fmt.Sprintf("Failed to save session: %v", err), timestamp: time.Now()})
 		m.viewport.SetContent(m.renderMessages())
 		return m, nil
 	}
 
-	// Reset model state for new session
 	m.session = newSess
 	m.agent = agent.New(m.agentConfig, m.llmClient, m.toolManager, m.sessionManager)
-	m.messages = make([]message, 0)
+	m.messages = []message{{role: "system", content: fmt.Sprintf("Started new session: %s", newSess.ID[:8]), timestamp: time.Now()}}
 	m.taskSummary = ""
 	m.totalInputTokens = 0
 	m.totalOutputTokens = 0
 	m.queuedMessages = nil
 	m.lastUserInputTime = time.Now()
-
-	// Show confirmation
-	m.messages = append(m.messages, message{
-		role:      "system",
-		content:   fmt.Sprintf("Started new session: %s\nWorkflow: %s", newSess.ID[:8], workflow.Name),
-		timestamp: time.Now(),
-	})
 	m.viewport.SetContent(m.renderMessages())
 	m.viewport.GotoBottom()
-
 	logging.Info("Created new session: %s", newSess.ID)
 	return m, nil
 }
@@ -138,9 +110,6 @@ func (m Model) switchToSession(sessionID string) Model {
 	// Update model with new session
 	m.session = newSess
 	m.agent = agent.New(m.agentConfig, m.llmClient, m.toolManager, m.sessionManager)
-	if workflow := workflowFromSessionMetadata(newSess); workflow.ID != "" {
-		m.selectedWorkflow = workflow
-	}
 	m.taskSummary = newSess.Title
 	m.totalInputTokens = 0
 	m.totalOutputTokens = 0

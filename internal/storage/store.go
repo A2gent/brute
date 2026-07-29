@@ -53,10 +53,7 @@ type RecurringJob struct {
 	TaskPrompt       string // The actual task instructions for the agent
 	TaskPromptSource string // "text" | "file"
 	TaskPromptFile   string // Absolute path when TaskPromptSource is "file"
-	RunTarget        string // "workflow" | "agent"
-	WorkflowID       string
-	WorkflowName     string
-	WorkflowDefJSON  string // Serialized workflow_definition payload
+	RunTarget        string // "agent"; legacy values remain unsupported
 	LaunchAgentID    string
 	LaunchAgentName  string
 	LaunchAgentRun   string // host | docker

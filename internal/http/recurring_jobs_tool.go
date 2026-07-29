@@ -25,22 +25,20 @@ type recurringJobsParams struct {
 	ProjectID       string `json:"project_id,omitempty"`
 
 	// create
-	Name             string `json:"name,omitempty"`
-	ScheduleText     string `json:"schedule_text,omitempty"`
-	TaskPrompt       string `json:"task_prompt,omitempty"`
-	TaskPromptSource string `json:"task_prompt_source,omitempty"` // "text" | "file"
-	TaskPromptFile   string `json:"task_prompt_file,omitempty"`
-	LLMProvider      string `json:"llm_provider,omitempty"`
-	LLMModel         string `json:"llm_model,omitempty"`
-	RunTarget        string `json:"run_target,omitempty"`
-	LaunchAgentID    string `json:"launch_agent_id,omitempty"`
-	LaunchAgentName  string `json:"launch_agent_name,omitempty"`
+	Name               string `json:"name,omitempty"`
+	ScheduleText       string `json:"schedule_text,omitempty"`
+	TaskPrompt         string `json:"task_prompt,omitempty"`
+	TaskPromptSource   string `json:"task_prompt_source,omitempty"` // "text" | "file"
+	TaskPromptFile     string `json:"task_prompt_file,omitempty"`
+	LLMProvider        string `json:"llm_provider,omitempty"`
+	LLMModel           string `json:"llm_model,omitempty"`
+	RunTarget          string `json:"run_target,omitempty"`
+	LaunchAgentID      string `json:"launch_agent_id,omitempty"`
+	LaunchAgentName    string `json:"launch_agent_name,omitempty"`
 	LaunchAgentRuntime string `json:"launch_agent_runtime,omitempty"`
-	UnifiedAgentID   string `json:"unified_agent_id,omitempty"`
-	DockerAgentID    string `json:"docker_agent_id,omitempty"`
-	WorkflowID       string `json:"workflow_id,omitempty"`
-	WorkflowName     string `json:"workflow_name,omitempty"`
-	Enabled          *bool  `json:"enabled,omitempty"`
+	UnifiedAgentID     string `json:"unified_agent_id,omitempty"`
+	DockerAgentID      string `json:"docker_agent_id,omitempty"`
+	Enabled            *bool  `json:"enabled,omitempty"`
 
 	// delete, run_now
 	JobID string `json:"job_id,omitempty"`
@@ -233,8 +231,6 @@ func (t *recurringJobsTool) handleCreate(ctx context.Context, p recurringJobsPar
 	}
 	applyCreateJobRunConfig(job, CreateJobRequest{
 		RunTarget:          p.RunTarget,
-		WorkflowID:         p.WorkflowID,
-		WorkflowName:       p.WorkflowName,
 		LaunchAgentID:      p.LaunchAgentID,
 		LaunchAgentName:    p.LaunchAgentName,
 		LaunchAgentRuntime: p.LaunchAgentRuntime,

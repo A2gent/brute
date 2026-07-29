@@ -10,12 +10,12 @@ import (
 func TestApplyCreateJobRunConfigPersistsProviderAndModel(t *testing.T) {
 	job := &storage.RecurringJob{}
 	applyCreateJobRunConfig(job, CreateJobRequest{
-		RunTarget:      jobs.RunTargetAgent,
-		LaunchAgentID:  "builtin:host-agent",
-		LaunchAgentName: "Built-in agent on host",
+		RunTarget:          jobs.RunTargetAgent,
+		LaunchAgentID:      "builtin:host-agent",
+		LaunchAgentName:    "Built-in agent on host",
 		LaunchAgentRuntime: "host",
-		LLMProvider:    "lmstudio",
-		LLMModel:       "ornith",
+		LLMProvider:        "lmstudio",
+		LLMModel:           "ornith",
 	})
 
 	if job.LLMProvider != "lmstudio" {
@@ -34,7 +34,7 @@ func TestApplyCreateJobRunConfigPersistsProviderAndModel(t *testing.T) {
 
 func TestApplyUpdateJobRunConfigPersistsProviderAndModel(t *testing.T) {
 	job := &storage.RecurringJob{
-		RunTarget:   jobs.RunTargetWorkflow,
+		RunTarget:   jobs.RunTargetAgent,
 		LLMProvider: "openai",
 		LLMModel:    "gpt-5.5",
 	}

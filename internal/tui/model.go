@@ -98,12 +98,6 @@ type Model struct {
 	selectedProjectID   *string
 	selectedProjectName string
 
-	// Workflow/agent selection state
-	showAgentsMenu     bool
-	agentsMenuIndex    int
-	availableWorkflows []tuiWorkflow
-	selectedWorkflow   tuiWorkflow
-
 	// Config reference for persistence
 	appConfig *config.Config
 
@@ -178,11 +172,6 @@ func New(
 		Background(darkGray)
 
 	cmdRegistry := commands.NewRegistry()
-	selectedWorkflow := workflowFromSessionMetadata(sess)
-	if selectedWorkflow.ID == "" {
-		selectedWorkflow = builtinUserMainWorkflow()
-	}
-
 	// Determine context window from the configured provider/model so token
 	// accounting stays consistent with HTTP session execution.
 	contextWindow := 0
@@ -223,7 +212,6 @@ func New(
 		appConfig:         appConfig,
 		serverPortUpdates: serverPortUpdates,
 		sessionEvents:     sessionEvents,
-		selectedWorkflow:  selectedWorkflow,
 	}
 
 	// Load existing messages from session
@@ -356,7 +344,7 @@ func (m Model) hasActiveRunIndicator() bool {
 func (m Model) calculateViewportHeight() int {
 	fixedHeight := 2 // top bar + bottom bar
 	if m.hasDiscussion() || m.showQuestionPrompt {
-		fixedHeight += 4 // bottom textarea + active workflow/agent line
+		fixedHeight += 4 // bottom textarea + active agent line
 	}
 	if m.hasActiveRunIndicator() {
 		fixedHeight++

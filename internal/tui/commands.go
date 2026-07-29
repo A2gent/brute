@@ -17,8 +17,6 @@ func (m Model) executeCommand(cmdName string, args []string) (tea.Model, tea.Cmd
 		return m.showSessions()
 	case "projects":
 		return m.showProjectsSelection()
-	case "agents":
-		return m.showAgentsSelection()
 	case "provider":
 		return m.showProviderSelection()
 	case "models":

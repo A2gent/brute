@@ -23,8 +23,6 @@ var reservedSessionTemplateSlashCommands = map[string]struct{}{
 	"run":                         {},
 	"provider":                    {},
 	"model":                       {},
-	"workflow":                    {},
-	"wf":                          {},
 	"help":                        {},
 	"h":                           {},
 	"?":                           {},

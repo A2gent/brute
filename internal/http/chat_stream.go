@@ -151,58 +151,6 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.hasRunnableWorkflow(sess) {
-		content, usage, runErr := s.runWorkflowSession(runCtx, sess, req.Message, writeEvent)
-		if runErr != nil {
-			if isCancellationError(runErr) {
-				sess.SetStatus(session.StatusPaused)
-				_ = s.sessionManager.Save(sess)
-				_ = writeEvent(ChatStreamEvent{
-					Type:     "error",
-					Error:    "Request was canceled before completion",
-					Status:   string(sess.Status),
-					Messages: s.messagesToResponse(sess.Messages),
-				})
-				return
-			}
-			sess.AddAssistantMessage(fmt.Sprintf("Workflow failed: %s", runErr.Error()), nil)
-			sess.SetStatus(session.StatusFailed)
-			_ = s.sessionManager.Save(sess)
-			s.refreshSessionSummaryWithPrompt(runCtx, sess)
-			s.triggerSerialSessionQueueIfAdvanceable(sess)
-			_ = writeEvent(ChatStreamEvent{
-				Type:     "error",
-				Error:    "Workflow error: " + runErr.Error(),
-				Status:   string(sess.Status),
-				Messages: s.messagesToResponse(sess.Messages),
-			})
-			return
-		}
-		sess.AddAssistantMessage(content, nil)
-		sess.SetStatus(workflowSessionStatus(sess))
-		if saveErr := s.sessionManager.Save(sess); saveErr != nil {
-			_ = writeEvent(ChatStreamEvent{
-				Type:     "error",
-				Error:    "Failed to save workflow response: " + saveErr.Error(),
-				Status:   string(sess.Status),
-				Messages: s.messagesToResponse(sess.Messages),
-			})
-			return
-		}
-		s.triggerSerialSessionQueueIfAdvanceable(sess)
-		_ = writeEvent(ChatStreamEvent{
-			Type:     "done",
-			Content:  content,
-			Messages: s.messagesToResponse(sess.Messages),
-			Status:   string(sess.Status),
-			Usage: &UsageResponse{
-				InputTokens:  usage.InputTokens,
-				OutputTokens: usage.OutputTokens,
-			},
-		})
-		return
-	}
-
 	providerType := s.resolveSessionProviderType(sess)
 	model := s.resolveSessionModel(sess, providerType)
 	routingPrompt := messageForRouting(req.Message, len(images))

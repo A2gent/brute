@@ -62,7 +62,7 @@ func FromSubAgent(sa *storage.SubAgent) (*Definition, error) {
 
 // ToSubAgentConfig extracts the rich saved-agent configuration shape from any
 // definition: name, LLM, tool allow-list, instruction blocks, and project
-// binding. Prompt composition, workflow nodes, and A2A inbound routing use this
+// binding. Prompt composition, delegated sessions, and A2A inbound routing use this
 // so the unified definition stays the single source of truth.
 func ToSubAgentConfig(def *Definition) (*storage.SubAgent, error) {
 	if def == nil {

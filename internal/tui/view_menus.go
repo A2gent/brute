@@ -197,50 +197,6 @@ func (m Model) renderSessionsList() string {
 }
 
 // showProviderSelection shows the provider selection menu
-func (m Model) renderAgentsMenu() string {
-	if !m.showAgentsMenu {
-		return ""
-	}
-
-	var items []string
-	items = append(items, lipgloss.NewStyle().Bold(true).Render("Select Workflow / Agent (Enter creates a new session, Esc cancels):"))
-	items = append(items, "")
-
-	currentID := m.selectedWorkflow.ID
-	if sessionWorkflow := workflowFromSessionMetadata(m.session); sessionWorkflow.ID != "" {
-		currentID = sessionWorkflow.ID
-	}
-	for i, workflow := range m.availableWorkflows {
-		baseLabel := fmt.Sprintf("  %s", workflow.Name)
-		label := baseLabel
-		if workflow.BuiltIn {
-			label += commandDescStyle.Render(" [built-in]")
-		}
-		if workflow.ID == currentID {
-			label += commandDescStyle.Render(" (current)")
-		}
-		target := workflowLaunchLabel(workflow)
-		if target != "" && target != workflow.Name {
-			label += commandDescStyle.Render(fmt.Sprintf(" -> %s", target))
-		}
-		if workflow.Description != "" {
-			label += commandDescStyle.Render(fmt.Sprintf(" - %s", truncateLine(workflow.Description, 80)))
-		}
-
-		if i == m.agentsMenuIndex {
-			label = commandSelectedStyle.Render(baseLabel) + strings.TrimPrefix(label, baseLabel)
-		} else {
-			label = commandItemStyle.Render(label)
-		}
-		items = append(items, label)
-	}
-
-	items = append(items, "")
-	items = append(items, lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render("  ↑/↓: navigate  enter: create session with workflow  esc: cancel"))
-
-	content := strings.Join(items, "\n")
-	return commandMenuStyle.Width(m.width - 4).Render(content)
-}
 
 // renderProjectsMenu renders the projects selection menu
 func (m Model) renderProjectsMenu() string {

@@ -10,7 +10,7 @@ import (
 
 const recurringJobSelectColumns = `
 	id, project_id, name, schedule_human, schedule_cron, task_prompt, task_prompt_source, task_prompt_file,
-	run_target, workflow_id, workflow_name, workflow_definition,
+	run_target,
 	launch_agent_id, launch_agent_name, launch_agent_runtime, unified_agent_id, docker_agent_id,
 	llm_provider, llm_model, enabled, last_run_at, next_run_at, created_at, updated_at
 `
@@ -25,7 +25,7 @@ func scanRecurringJob(
 
 	err := scan(
 		&job.ID, &projectID, &job.Name, &job.ScheduleHuman, &job.ScheduleCron, &job.TaskPrompt, &job.TaskPromptSource, &job.TaskPromptFile,
-		&job.RunTarget, &job.WorkflowID, &job.WorkflowName, &job.WorkflowDefJSON,
+		&job.RunTarget,
 		&job.LaunchAgentID, &job.LaunchAgentName, &job.LaunchAgentRun, &job.UnifiedAgentID, &job.DockerAgentID,
 		&job.LLMProvider, &job.LLMModel, &enabled, &lastRunAt, &nextRunAt, &job.CreatedAt, &job.UpdatedAt,
 	)
@@ -48,7 +48,7 @@ func scanRecurringJob(
 func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
 	_, err := s.db.Exec(`
 		INSERT INTO recurring_jobs (`+recurringJobSelectColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			project_id = excluded.project_id,
 			name = excluded.name,
@@ -58,9 +58,6 @@ func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
 			task_prompt_source = excluded.task_prompt_source,
 			task_prompt_file = excluded.task_prompt_file,
 			run_target = excluded.run_target,
-			workflow_id = excluded.workflow_id,
-			workflow_name = excluded.workflow_name,
-			workflow_definition = excluded.workflow_definition,
 			launch_agent_id = excluded.launch_agent_id,
 			launch_agent_name = excluded.launch_agent_name,
 			launch_agent_runtime = excluded.launch_agent_runtime,
@@ -73,7 +70,7 @@ func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
 			next_run_at = excluded.next_run_at,
 			updated_at = excluded.updated_at
 	`, job.ID, nullableString(job.ProjectID), job.Name, job.ScheduleHuman, job.ScheduleCron, job.TaskPrompt, job.TaskPromptSource, job.TaskPromptFile,
-		job.RunTarget, job.WorkflowID, job.WorkflowName, job.WorkflowDefJSON,
+		job.RunTarget,
 		job.LaunchAgentID, job.LaunchAgentName, job.LaunchAgentRun, job.UnifiedAgentID, job.DockerAgentID,
 		job.LLMProvider, job.LLMModel, job.Enabled, job.LastRunAt, job.NextRunAt, job.CreatedAt, job.UpdatedAt)
 	if err != nil {

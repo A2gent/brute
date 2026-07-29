@@ -17,7 +17,6 @@ var errSessionProviderConfiguration = errors.New("session provider configuration
 type sessionRunResult struct {
 	Content      string
 	Usage        llm.TokenUsage
-	Workflow     bool
 	DirectAgent  bool
 	Status       string
 	ProviderType config.ProviderType
@@ -49,17 +48,6 @@ func (s *Server) runSessionWithoutStreaming(ctx context.Context, sess *session.S
 		result.Content = chatResp.Content
 		result.Usage = llm.TokenUsage{InputTokens: chatResp.Usage.InputTokens, OutputTokens: chatResp.Usage.OutputTokens}
 		result.Status = chatResp.Status
-		return result, err
-	}
-
-	if s.hasRunnableWorkflow(sess) {
-		result.Workflow = true
-		content, usage, err := s.runWorkflowSession(ctx, sess, userMessage, func(event ChatStreamEvent) bool {
-			publishEvent(event)
-			return true
-		})
-		result.Content = content
-		result.Usage = usage
 		return result, err
 	}
 
@@ -128,14 +116,6 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 			publishError("Agent error: " + runErr.Error())
 			return runErr
 		}
-		if result.Workflow {
-			sess.AddAssistantMessage(fmt.Sprintf("Workflow failed: %s", runErr.Error()), nil)
-			sess.SetStatus(session.StatusFailed)
-			_ = s.sessionManager.Save(sess)
-			s.triggerSerialSessionQueueIfAdvanceable(sess)
-			publishError("Workflow error: " + runErr.Error())
-			return runErr
-		}
 		adaptedErr := s.adaptProviderErrorMessage(result.ProviderType, runErr)
 		addRequestFailedAssistantMessage(sess, adaptedErr)
 		sess.SetStatus(session.StatusFailed)
@@ -154,14 +134,6 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 		}
 		if err := s.sessionManager.Save(sess); err != nil {
 			return fmt.Errorf("failed to save agent response: %w", err)
-		}
-	}
-
-	if result.Workflow {
-		sess.AddAssistantMessage(result.Content, nil)
-		sess.SetStatus(workflowSessionStatus(sess))
-		if err := s.sessionManager.Save(sess); err != nil {
-			return fmt.Errorf("failed to save workflow response: %w", err)
 		}
 	}
 
@@ -192,9 +164,6 @@ func (s *Server) sessionRunHTTPError(result sessionRunResult, runErr error) (int
 	}
 	if result.DirectAgent {
 		return 500, "Agent error: " + runErr.Error()
-	}
-	if result.Workflow {
-		return 500, "Workflow error: " + runErr.Error()
 	}
 	adaptedErr := s.adaptProviderErrorMessage(result.ProviderType, runErr)
 	return 500, "Agent error: " + adaptedErr.Error()

@@ -249,14 +249,19 @@ func discoveredAgentDefinitionFromConfigPath(configPath string, definitionDir st
 	}, nil
 }
 
-func discoveredDefinitionByIDInDirectory(id string, rootDir string) (*agentdef.Definition, string, error) {
+type discoveredAgentDefinitionLocation struct {
+	Item        discoveredAgentDefinition
+	CatalogRoot string
+}
+
+func discoveredAgentDefinitionByIDInDirectory(id string, rootDir string) (*discoveredAgentDefinition, error) {
 	id = strings.TrimSpace(id)
 	rootDir = strings.TrimSpace(rootDir)
 	if id == "" {
-		return nil, "", fmt.Errorf("agent ID is required")
+		return nil, fmt.Errorf("agent ID is required")
 	}
 	if rootDir == "" {
-		return nil, "", fmt.Errorf("agent definitions directory is empty")
+		return nil, fmt.Errorf("agent definitions directory is empty")
 	}
 
 	discovered, _ := discoverAgentDefinitionsInDirectory(rootDir)
@@ -264,13 +269,96 @@ func discoveredDefinitionByIDInDirectory(id string, rootDir string) (*agentdef.D
 		if item.ID != id || item.Definition == nil {
 			continue
 		}
-		def := *item.Definition
-		if strings.TrimSpace(def.Local.DefinitionDir) == "" {
-			def.Local.DefinitionDir = strings.TrimSpace(item.DefinitionDir)
-		}
-		return &def, strings.TrimSpace(item.ProjectID), nil
+		return &item, nil
 	}
-	return nil, "", fmt.Errorf("discovered agent definition %q not found in %s", id, rootDir)
+	return nil, fmt.Errorf("discovered agent definition %q not found in %s", id, rootDir)
+}
+
+func discoveredDefinitionByIDInDirectory(id string, rootDir string) (*agentdef.Definition, string, error) {
+	item, err := discoveredAgentDefinitionByIDInDirectory(id, rootDir)
+	if err != nil {
+		return nil, "", err
+	}
+	def := *item.Definition
+	if strings.TrimSpace(def.Local.DefinitionDir) == "" {
+		def.Local.DefinitionDir = strings.TrimSpace(item.DefinitionDir)
+	}
+	return &def, strings.TrimSpace(item.ProjectID), nil
+}
+
+// deleteDiscoveredAgentDefinitionAtCatalog removes a YAML file or its parent folder
+// when definitions use the usual one-folder-per-agent layout.
+func deleteDiscoveredAgentDefinitionAtCatalog(item discoveredAgentDefinition, catalogRoot string) error {
+	configPath := filepath.Clean(strings.TrimSpace(item.ConfigPath))
+	definitionDir := filepath.Clean(strings.TrimSpace(item.DefinitionDir))
+	catalogRoot = filepath.Clean(strings.TrimSpace(catalogRoot))
+	if configPath == "" || catalogRoot == "" {
+		return fmt.Errorf("invalid discovered agent definition paths")
+	}
+	if !pathWithinDirectory(configPath, catalogRoot) {
+		return fmt.Errorf("agent definition path is outside allowed directory")
+	}
+
+	if definitionDir != "" && definitionDir != catalogRoot && pathWithinDirectory(definitionDir, catalogRoot) {
+		if err := os.RemoveAll(definitionDir); err != nil {
+			return fmt.Errorf("failed to remove agent definition directory %s: %w", definitionDir, err)
+		}
+		return nil
+	}
+
+	if err := os.Remove(configPath); err != nil {
+		return fmt.Errorf("failed to remove agent definition file %s: %w", configPath, err)
+	}
+	return nil
+}
+
+func (s *Server) findDiscoveredAgentDefinitionLocation(id string, projectID string) (*discoveredAgentDefinitionLocation, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("agent ID is required")
+	}
+
+	appSettings, settingsErr := s.store.GetSettings()
+	if settingsErr != nil {
+		appSettings = map[string]string{}
+	}
+
+	projectID = strings.TrimSpace(projectID)
+	if projectID != "" {
+		project, err := s.store.GetProject(projectID)
+		if err != nil {
+			return nil, err
+		}
+		dir := s.resolveScopedProjectAgentDefinitionsDirectory(project)
+		if item, err := discoveredAgentDefinitionByIDInDirectory(id, dir); err == nil {
+			return &discoveredAgentDefinitionLocation{Item: *item, CatalogRoot: dir}, nil
+		}
+	}
+
+	globalDir := s.resolveGlobalAgentDefinitionsDirectory(appSettings)
+	if item, err := discoveredAgentDefinitionByIDInDirectory(id, globalDir); err == nil {
+		return &discoveredAgentDefinitionLocation{Item: *item, CatalogRoot: globalDir}, nil
+	}
+
+	if projectID != "" {
+		return nil, fmt.Errorf("agent definition not found: %s", id)
+	}
+
+	projects, err := s.store.ListProjects()
+	if err != nil {
+		return nil, err
+	}
+	for _, project := range projects {
+		if project == nil {
+			continue
+		}
+		dir := s.resolveScopedProjectAgentDefinitionsDirectory(project)
+		if item, err := discoveredAgentDefinitionByIDInDirectory(id, dir); err == nil {
+			return &discoveredAgentDefinitionLocation{Item: *item, CatalogRoot: dir}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("agent definition not found: %s", id)
 }
 
 func (s *Server) discoveredDefinitionForUnifiedAgent(id string, projectID string) (*agentdef.Definition, string, error) {

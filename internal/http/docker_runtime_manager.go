@@ -407,8 +407,18 @@ func (m *dockerRuntimeManager) ensureAgentContainerForWorkspace(ctx context.Cont
 	return agent, nil
 }
 
-func (m *dockerRuntimeManager) createAgentContainer(ctx context.Context, def *agentdef.Definition, containerName string, workspace dockerWorkspaceBinding) (*LocalDockerAgent, error) {
+func localDockerCreateRequestForRuntimeDefinition(def *agentdef.Definition) createLocalDockerAgentRequest {
 	req := localDockerCreateRequestBaseFromDefinition(def)
+	if def != nil {
+		// WHY: specialized agents may extend the Brute image with heavyweight native
+		// capabilities such as Blender. Preserve that choice through to docker run.
+		req.Image = strings.TrimSpace(def.Runtime.Image)
+	}
+	return req
+}
+
+func (m *dockerRuntimeManager) createAgentContainer(ctx context.Context, def *agentdef.Definition, containerName string, workspace dockerWorkspaceBinding) (*LocalDockerAgent, error) {
+	req := localDockerCreateRequestForRuntimeDefinition(def)
 	req.Name = containerName
 	req.ProjectID = workspace.ProjectID
 	req.ProjectMountMode = ""

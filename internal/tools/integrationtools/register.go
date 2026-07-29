@@ -37,4 +37,6 @@ func Register(manager *tools.Manager, store storage.Store, clipStore *speechcach
 	manager.Register(NewLeonardoGenerateImageTool(store, filepath.Join(manager.WorkDir(), "generated", "leonardo")))
 	manager.Register(NewComfyUIGenerateImageTool(store, filepath.Join(manager.WorkDir(), "generated", "comfyui")))
 	manager.Register(NewComfyUIRunWorkflowTool(store, manager.WorkDir(), filepath.Join(manager.WorkDir(), "generated", "comfyui")))
+	manager.Register(NewBlenderRenderTool(store, filepath.Join(manager.WorkDir(), "generated", "blender")).WithWorkDir(manager.WorkDir()))
+	manager.Register(NewBlenderRunScriptTool(store, manager.WorkDir(), filepath.Join(manager.WorkDir(), "generated", "blender")))
 }

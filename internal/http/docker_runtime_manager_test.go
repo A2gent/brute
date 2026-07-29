@@ -24,6 +24,18 @@ func TestContainerNameForAgent(t *testing.T) {
 	}
 }
 
+func TestLocalDockerCreateRequestForRuntimeDefinitionCarriesCustomImage(t *testing.T) {
+	def := &agentdef.Definition{
+		Agent:   agentdef.AgentMeta{ID: "rebel-art"},
+		Runtime: agentdef.Runtime{Type: agentdef.RuntimeDocker, Image: "a2gent-rebel-art:blender-4.3"},
+	}
+
+	req := localDockerCreateRequestForRuntimeDefinition(def)
+	if req.Image != "a2gent-rebel-art:blender-4.3" {
+		t.Fatalf("runtime image = %q, want custom art image", req.Image)
+	}
+}
+
 func TestResolveWorkspaceBinding(t *testing.T) {
 	noScope := &agentdef.Definition{Agent: agentdef.AgentMeta{ID: "x"}, Runtime: agentdef.Runtime{Type: agentdef.RuntimeDocker}}
 	projectID, mount, err := resolveWorkspaceBinding(noScope, "proj-1")

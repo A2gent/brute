@@ -29,6 +29,7 @@ var integrationToolsByProvider = map[string][]string{
 	"elevenlabs":      {"elevenlabs_tts"},
 	"leonardo":        {"leonardo_generate_image"},
 	"comfyui":         {"comfyui_generate_image", "comfyui_run_workflow"},
+	"blender":         {"blender_render", "blender_run_script"},
 	"telegram":        {"telegram_send_message"},
 	"discord":         {"discord_send_message"},
 	"exa":             {"exa_search"},

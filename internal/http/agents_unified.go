@@ -666,18 +666,36 @@ func (s *Server) definitionForUnifiedAgent(id string, projectID string) (*agentd
 	return def, discoveredProjectID, nil
 }
 
-// handleDeleteAgentDefinition removes a stored definition and force-removes
-// the warm containers the runtime manager created for it.
+// handleDeleteAgentDefinition removes a stored or on-disk YAML definition and
+// force-removes the warm containers the runtime manager created for it.
 func (s *Server) handleDeleteAgentDefinition(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "agentDefID")
-	if _, err := s.store.GetAgentDefinition(id); err != nil {
-		s.errorResponse(w, http.StatusNotFound, "Agent definition not found: "+err.Error())
+	id := strings.TrimSpace(chi.URLParam(r, "agentDefID"))
+	if id == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Agent ID is required")
 		return
 	}
 
+	projectID, _ := unifiedAgentsProjectFilter(r)
 	removedContainers := s.removeManagedContainersForAgentDefinition(r.Context(), id, "")
 
-	if err := s.store.DeleteAgentDefinition(id); err != nil {
+	if _, err := s.store.GetAgentDefinition(id); err == nil {
+		if err := s.store.DeleteAgentDefinition(id); err != nil {
+			s.errorResponse(w, http.StatusInternalServerError, "Failed to delete agent definition: "+err.Error())
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"deleted":            true,
+			"removed_containers": removedContainers,
+		})
+		return
+	}
+
+	location, err := s.findDiscoveredAgentDefinitionLocation(id, projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if err := deleteDiscoveredAgentDefinitionAtCatalog(location.Item, location.CatalogRoot); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete agent definition: "+err.Error())
 		return
 	}

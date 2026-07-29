@@ -119,3 +119,62 @@ func createTestProject(t *testing.T, store *storage.SQLiteStore, id, name, folde
 	}
 	return project
 }
+
+func TestDeleteDiscoveredAgentDefinitionAtCatalogRemovesFolder(t *testing.T) {
+	root := t.TempDir()
+	agentDir := filepath.Join(root, "youtube-transcriber-gemini")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatalf("failed to create agent dir: %v", err)
+	}
+	configPath := filepath.Join(agentDir, "agent.yaml")
+	if err := os.WriteFile(configPath, []byte(`
+version: "1"
+agent:
+  id: youtube-transcriber-gemini
+  name: YouTube Transcriber (Gemini)
+runtime:
+  type: docker
+`), 0o644); err != nil {
+		t.Fatalf("failed to write agent yaml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(agentDir, "prompt.md"), []byte("extra"), 0o644); err != nil {
+		t.Fatalf("failed to write sidecar file: %v", err)
+	}
+
+	item, err := discoveredAgentDefinitionByIDInDirectory("youtube-transcriber-gemini", root)
+	if err != nil {
+		t.Fatalf("discoveredAgentDefinitionByIDInDirectory() error: %v", err)
+	}
+	if err := deleteDiscoveredAgentDefinitionAtCatalog(*item, root); err != nil {
+		t.Fatalf("deleteDiscoveredAgentDefinitionAtCatalog() error: %v", err)
+	}
+	if _, err := os.Stat(agentDir); !os.IsNotExist(err) {
+		t.Fatalf("agent directory should be removed, stat err = %v", err)
+	}
+}
+
+func TestDeleteDiscoveredAgentDefinitionAtCatalogRemovesFlatYAML(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "flat-agent.yaml")
+	if err := os.WriteFile(configPath, []byte(`
+version: "1"
+agent:
+  id: flat-agent
+  name: Flat Agent
+runtime:
+  type: docker
+`), 0o644); err != nil {
+		t.Fatalf("failed to write flat yaml: %v", err)
+	}
+
+	item, err := discoveredAgentDefinitionByIDInDirectory("flat-agent", root)
+	if err != nil {
+		t.Fatalf("discoveredAgentDefinitionByIDInDirectory() error: %v", err)
+	}
+	if err := deleteDiscoveredAgentDefinitionAtCatalog(*item, root); err != nil {
+		t.Fatalf("deleteDiscoveredAgentDefinitionAtCatalog() error: %v", err)
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("flat yaml should be removed, stat err = %v", err)
+	}
+}

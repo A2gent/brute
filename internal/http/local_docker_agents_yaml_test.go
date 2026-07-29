@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/A2gent/brute/internal/config"
 )
 
 func resetLocalDockerPortReservationsForTest() {
@@ -335,6 +337,41 @@ func TestLocalDockerAgentYAMLBuildsDockerModelRunnerArgs(t *testing.T) {
 	}
 	if !localDockerAgentBypassesParentLLMProxy(req) {
 		t.Fatalf("Docker Model Runner provider should bypass parent LLM proxy")
+	}
+}
+
+func TestResolveLocalDockerAgentProxyLLMInheritsActiveProviderAndModel(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+	server.config.ActiveProvider = string(config.ProviderCursor)
+	server.config.Providers[string(config.ProviderCursor)] = config.Provider{
+		Name:  string(config.ProviderCursor),
+		Model: "composer-2.5",
+	}
+
+	resolved := server.resolveLocalDockerAgentProxyLLM(createLocalDockerAgentRequest{})
+	if resolved.Provider != string(config.ProviderCursor) {
+		t.Fatalf("provider = %q, want %q", resolved.Provider, config.ProviderCursor)
+	}
+	if resolved.Model != "composer-2.5" {
+		t.Fatalf("model = %q, want composer-2.5", resolved.Model)
+	}
+}
+
+func TestResolveLocalDockerAgentProxyLLMPreservesExplicitTarget(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+	server.config.ActiveProvider = string(config.ProviderCursor)
+
+	resolved := server.resolveLocalDockerAgentProxyLLM(createLocalDockerAgentRequest{
+		LLM: localDockerAgentYAMLLLM{
+			Provider: string(config.ProviderOpenRouter),
+			Model:    "anthropic/claude-sonnet-4",
+		},
+	})
+	if resolved.Provider != string(config.ProviderOpenRouter) {
+		t.Fatalf("provider = %q, want %q", resolved.Provider, config.ProviderOpenRouter)
+	}
+	if resolved.Model != "anthropic/claude-sonnet-4" {
+		t.Fatalf("model = %q, want anthropic/claude-sonnet-4", resolved.Model)
 	}
 }
 

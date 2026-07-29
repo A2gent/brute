@@ -888,6 +888,87 @@ llm:
 	}
 }
 
+func TestDeleteDiscoveredAgentDefinitionRemovesOnDiskFolder(t *testing.T) {
+	server, store := newUnifiedAgentsTestServer(t)
+
+	soulProject, err := store.GetProject(storage.SystemProjectSoulID)
+	if err != nil {
+		t.Fatalf("failed to load soul project: %v", err)
+	}
+	if soulProject.Folder == nil {
+		t.Fatalf("soul project folder is missing")
+	}
+
+	agentDir := filepath.Join(*soulProject.Folder, "agents", "youtube-transcriber-gemini")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatalf("failed to create agent dir: %v", err)
+	}
+	yamlDef := `
+version: "1"
+agent:
+  id: youtube-transcriber-gemini
+  name: YouTube Transcriber (Gemini)
+runtime:
+  type: docker
+`
+	if err := os.WriteFile(filepath.Join(agentDir, "agent.yaml"), []byte(yamlDef), 0o644); err != nil {
+		t.Fatalf("failed to write agent yaml: %v", err)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/unified-agents/youtube-transcriber-gemini", nil)
+	deleteCtx := chi.NewRouteContext()
+	deleteCtx.URLParams.Add("agentDefID", "youtube-transcriber-gemini")
+	deleteReq = deleteReq.WithContext(context.WithValue(deleteReq.Context(), chi.RouteCtxKey, deleteCtx))
+	deleteRec := httptest.NewRecorder()
+	server.handleDeleteAgentDefinition(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 delete, got %d: %s", deleteRec.Code, deleteRec.Body.String())
+	}
+	if _, err := os.Stat(agentDir); !os.IsNotExist(err) {
+		t.Fatalf("agent directory should be removed, stat err = %v", err)
+	}
+}
+
+func TestDeleteDiscoveredAgentDefinitionRemovesProjectScopedFolder(t *testing.T) {
+	server, store := newUnifiedAgentsTestServer(t)
+	now := time.Now()
+
+	projectRoot := t.TempDir()
+	project := &storage.Project{ID: "proj-app", Name: "App", Folder: &projectRoot, CreatedAt: now, UpdatedAt: now}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatalf("failed to save project: %v", err)
+	}
+
+	agentDir := filepath.Join(projectRoot, "agents", "project-reviewer")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatalf("failed to create agent dir: %v", err)
+	}
+	yamlDef := `
+version: "1"
+agent:
+  id: project-reviewer
+  name: Project Reviewer
+runtime:
+  type: docker
+`
+	if err := os.WriteFile(filepath.Join(agentDir, "agent.yaml"), []byte(yamlDef), 0o644); err != nil {
+		t.Fatalf("failed to write agent yaml: %v", err)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/unified-agents/project-reviewer?project_id=proj-app", nil)
+	deleteCtx := chi.NewRouteContext()
+	deleteCtx.URLParams.Add("agentDefID", "project-reviewer")
+	deleteReq = deleteReq.WithContext(context.WithValue(deleteReq.Context(), chi.RouteCtxKey, deleteCtx))
+	deleteRec := httptest.NewRecorder()
+	server.handleDeleteAgentDefinition(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 delete, got %d: %s", deleteRec.Code, deleteRec.Body.String())
+	}
+	if _, err := os.Stat(agentDir); !os.IsNotExist(err) {
+		t.Fatalf("project agent directory should be removed, stat err = %v", err)
+	}
+}
+
 func TestImportDockerAgentYAMLAcceptsAllProjectsScope(t *testing.T) {
 	server, store := newUnifiedAgentsTestServer(t)
 	projectRoot := t.TempDir()

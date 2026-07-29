@@ -80,6 +80,24 @@ type createLocalDockerAgentRequest struct {
 	DefinitionDir    string                                `json:"-"`
 }
 
+func (s *Server) resolveLocalDockerAgentProxyLLM(req createLocalDockerAgentRequest) localDockerAgentYAMLLLM {
+	resolved := req.LLM
+	provider := config.NormalizeProviderRef(localDockerAgentRuntimeProvider(resolved.Provider))
+	if provider == "" && s != nil && s.config != nil {
+		provider = config.NormalizeProviderRef(s.config.ActiveProvider)
+	}
+	if provider == "" {
+		provider = string(config.ProviderLMStudio)
+	}
+	resolved.Provider = provider
+
+	if strings.TrimSpace(resolved.Model) == "" && s != nil {
+		resolved.Model = s.resolveModelForProvider(config.ProviderType(provider))
+	}
+	resolved.Model = strings.TrimSpace(resolved.Model)
+	return resolved
+}
+
 type localDockerAgentCreateResult struct {
 	Agent   *LocalDockerAgent
 	Name    string
@@ -202,6 +220,19 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 		lmStudioBaseURL = strings.TrimSpace(os.Getenv("LM_STUDIO_BASE_URL"))
 	}
 	useParentLLMProxy := s.llmProxyEnabled() && !localDockerAgentBypassesParentLLMProxy(req)
+	if useParentLLMProxy {
+		// Agent definitions may omit llm to inherit the host's active target. Resolve
+		// that inheritance before building Docker args so the child does not silently
+		// fall back to LM Studio and so its labels reflect the provider it will use.
+		req.LLM = s.resolveLocalDockerAgentProxyLLM(req)
+		if req.Labels == nil {
+			req.Labels = map[string]string{}
+		}
+		req.Labels[dockerRuntimeLLMProviderLabelKey] = req.LLM.Provider
+		if req.LLM.Model != "" {
+			req.Labels[dockerRuntimeLLMModelLabelKey] = req.LLM.Model
+		}
+	}
 	if lmStudioBaseURL == "" && !useParentLLMProxy {
 		lmStudioBaseURL = "http://host.docker.internal:1234/v1"
 	}
@@ -316,9 +347,6 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 		if useParentLLMProxy {
 			// Route child agent traffic through the parent's OpenAI-compatible proxy.
 			provider := localDockerAgentRuntimeProvider(req.LLM.Provider)
-			if provider == "" {
-				provider = "lmstudio"
-			}
 			if provider == string(config.ProviderAnthropic) {
 				args = appendClaudeRateLimitCacheDockerArgs(args)
 			}

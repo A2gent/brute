@@ -193,6 +193,8 @@ func defaultIntegrationName(provider string) string {
 		return "Leonardo AI"
 	case "comfyui":
 		return "ComfyUI"
+	case "blender":
+		return "Blender"
 	default:
 		return provider
 	}

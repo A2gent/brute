@@ -359,6 +359,7 @@ func (s *Server) registerTeamRoutes(r chi.Router) {
 		r.Delete("/{teamID}", s.handleDeleteTeam)
 		r.Get("/{teamID}/yaml", s.handleExportTeamYAML)
 	})
+	s.registerTeamRunRoutes(r)
 }
 
 func (s *Server) registerJobRoutes(r chi.Router) {

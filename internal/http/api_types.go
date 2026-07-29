@@ -23,9 +23,11 @@ type CreateSessionRequest struct {
 	// Docker agents reference an already running local Brute container.
 	UnifiedAgentID string                 `json:"unified_agent_id,omitempty"`
 	DockerAgentID  string                 `json:"docker_agent_id,omitempty"`
-	Queued         bool                   `json:"queued,omitempty"`     // If true, create session without starting it
-	QueueMode      string                 `json:"queue_mode,omitempty"` // Optional queue behavior. "serial" runs queued project sessions one at a time.
-	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+	// Optional team launch target. When set, create a team_run header for the parent session.
+	TeamID    string                 `json:"team_id,omitempty"`
+	Queued    bool                   `json:"queued,omitempty"`     // If true, create session without starting it
+	QueueMode string                 `json:"queue_mode,omitempty"` // Optional queue behavior. "serial" runs queued project sessions one at a time.
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // CreateSessionResponse represents a response after creating a session

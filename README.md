@@ -159,52 +159,40 @@ To display Cursor usage in Caesar, Brute calls Cursor's `GetCurrentPeriodUsage` 
 - Context window tracking and management
 - Structured logging and practical failure handling
 
-## Workflow Definition YAML Standard
+## Team Definition YAML Standard
 
-Workflow files used by the web app are stored in the `system-soul` project under `workflows/*.yaml`.
+Team files are stored under `teams/*.yaml` in a project folder (or the soul project for global teams).
+Caesar edits them through `/teams`, and session launch accepts `team_id`.
 
 Minimal structure:
 
 ```yaml
-id: custom-workflow
-name: Custom workflow
-description: Optional summary
-entryNodeId: user
+id: squad-product
+name: Product squad
+description: Design, build and review product changes.
 policy:
-  stopCondition: manual   # manual | max_turns | consensus | judge | timebox
-  maxTurns: 12
-  timeboxMinutes: 20
-  # required when stopCondition: judge
-  # judgeNodeId: critic
-nodes:
-  - id: user
-    label: User           # optional; defaults to id
-    kind: user            # optional; inferred when omitted
-  - id: worker_a
-    label: Research A
-    kind: subagent
-    ref: researcher-a     # sub-agent id/name (optional if label resolves)
-  - id: critic
-    label: Critic
-    kind: subagent
-    ref: critic-agent
-edges:
-  - from: user
-    to: worker_a
-  - from: worker_a
-    to: critic
-    mode: sequential      # optional; inferred as parallel for fan-out
+  lead: architect
+  termination: lead_done   # lead_done | idle | max_messages
+  max_messages: 60
+  max_minutes: 60
+  broadcast_allowed: true
+members:
+  - role: architect
+    agent_id: agent-def-123
+    charter: Owns design decisions and the final answer to the user.
+  - role: developer
+    agent_id: agent-def-456
+    charter: Implements changes in the repository.
 ```
 
-Validation rules:
-- `nodes[].id` is required and must be unique.
-- `edges[].from` and `edges[].to` must reference existing node ids.
-- `policy.stopCondition: judge` requires `policy.judgeNodeId`.
-- `policy.judgeNodeId` must reference an existing node id.
-- `kind` and `ref` are optional, but agent nodes should resolve to configured agents.
-- Loops are supported (for example `developer -> critic -> developer`).
-- For looped graphs, use `policy.maxTurns` and/or `policy.timeboxMinutes` to cap iterations.
-- For `stopCondition: judge`, the judge node should emit `VERDICT: APPROVED` to end early; otherwise the loop continues until limits are reached.
+HTTP API:
+- `GET/POST /teams`, `GET/PUT/DELETE /teams/{id}`, `GET /teams/{id}/yaml`, `POST /teams/import-yaml`
+- `GET /team-runs/{id}`, `GET /team-runs/{id}/messages`, `GET /sessions/{id}/team-run`
+- `POST /sessions` with `team_id` creates a parent session and a `team_run` header
+
+## Workflow Definition YAML Standard (removed)
+
+Graph workflows were deleted in favor of agent teams. Leftover `workflow_*` session metadata is inert.
 
 ## 4. Run Modes
 

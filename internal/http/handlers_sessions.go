@@ -315,6 +315,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			logging.Warn("Failed to persist session project metadata: %v", err)
 		}
 	}
+	if err := s.attachTeamRunToCreatedSession(sess, strings.TrimSpace(req.TeamID)); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	_ = s.ensureSessionSystemPromptSnapshot(sess)
 	if req.Queued && sessionIsSerialQueuedAutoRun(sess) {
 		s.triggerSerialSessionQueueForSession(sess)

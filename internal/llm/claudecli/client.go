@@ -87,7 +87,7 @@ func (c *Client) newMCPBridgeInvocation(ctx context.Context) mcpBridgeInvocation
 		inv.revoke = revoke
 	}
 	inv.args = []string{"--mcp-config", configJSON, "--strict-mcp-config"}
-	inv.allowedTools = "mcp__a2gent__.*"
+	inv.allowedTools = "mcp__a2gent__*"
 	return inv
 }
 

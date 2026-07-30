@@ -313,14 +313,14 @@ mcp__a2gent__question
 mcp__a2gent__openai_generate_image
 ```
 
-Wildcards are supported in `--allowedTools` (`mcp__a2gent__.*`). Note `tools.normalizeToolName` (`internal/tools/manager.go:210-219`) already strips a dotted prefix; the `mcp__` prefix uses underscores and needs explicit stripping.
+Wildcards are supported in `--allowedTools` (`mcp__a2gent__*`). The wildcard directly follows the server separator; adding a dot would require tool names to begin with a dot and leave every A2gent MCP call blocked by Claude's hidden permission prompt. Note `tools.normalizeToolName` (`internal/tools/manager.go:210-219`) already strips a dotted prefix; the `mcp__` prefix uses underscores and needs explicit stripping.
 
 CLI flags to add in `appendCommonArgs` (`internal/llm/claudecli/client.go:309-341`):
 
 ```
 --mcp-config <path-or-inline-json>
 --strict-mcp-config          # ignore user's own MCP servers, keep runs reproducible
---allowedTools ...,mcp__a2gent__.*
+--allowedTools ...,mcp__a2gent__*
 ```
 
 `--strict-mcp-config` matters: without it the developer's personal MCP servers leak into agent runs.

@@ -50,7 +50,7 @@ func TestMCPBridgeInvocationBuildsArgsAndRevoke(t *testing.T) {
 			t.Fatalf("args %q missing %q", joined, want)
 		}
 	}
-	if inv.allowedTools != "mcp__a2gent__.*" {
+	if inv.allowedTools != "mcp__a2gent__*" {
 		t.Fatalf("allowedTools = %q", inv.allowedTools)
 	}
 	inv.revoke()
@@ -80,7 +80,7 @@ func TestMCPBridgeArgsInStreamCommand(t *testing.T) {
 	client := NewClientWithOptions("claude-sonnet-4-5", Options{})
 	bridge := mcpBridgeInvocation{
 		args:         []string{"--mcp-config", `{"mcpServers":{"a2gent":{}}}`, "--strict-mcp-config"},
-		allowedTools: "mcp__a2gent__.*",
+		allowedTools: "mcp__a2gent__*",
 		revoke:       func() {},
 	}
 	request := &llm.ChatRequest{
@@ -103,7 +103,7 @@ func TestMCPBridgeArgsInStreamCommand(t *testing.T) {
 		t.Fatalf("--allowedTools missing: %v", args)
 	}
 	allowed := args[allowedIdx+1]
-	if !strings.Contains(allowed, "Bash") || !strings.Contains(allowed, "mcp__a2gent__.*") {
+	if !strings.Contains(allowed, "Bash") || !strings.Contains(allowed, "mcp__a2gent__*") {
 		t.Fatalf("allowedTools = %q, want Bash + mcp wildcard", allowed)
 	}
 }
@@ -114,7 +114,7 @@ func TestMCPBridgeAllowedToolsWithoutNativeTools(t *testing.T) {
 	client := NewClientWithOptions("claude-sonnet-4-5", Options{})
 	bridge := mcpBridgeInvocation{
 		args:         []string{"--mcp-config", `{}`},
-		allowedTools: "mcp__a2gent__.*",
+		allowedTools: "mcp__a2gent__*",
 		revoke:       func() {},
 	}
 	request := &llm.ChatRequest{
@@ -122,7 +122,7 @@ func TestMCPBridgeAllowedToolsWithoutNativeTools(t *testing.T) {
 	}
 	args := client.buildArgs(request, "claude-sonnet-4-5", "prompt", bridge)
 	joined := strings.Join(args, ",")
-	if !strings.Contains(joined, "mcp__a2gent__.*") {
+	if !strings.Contains(joined, "mcp__a2gent__*") {
 		t.Fatalf("mcp wildcard missing from args: %v", args)
 	}
 }

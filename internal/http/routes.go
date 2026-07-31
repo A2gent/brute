@@ -32,7 +32,7 @@ func (s *Server) setupRoutes() {
 	}
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   allowedOrigins,
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: allowCredentials,
@@ -346,6 +346,14 @@ func (s *Server) registerProjectRoutes(r chi.Router) {
 		r.Patch("/{projectID}/databases/{dbID}/tables/{tableName}/cells", s.handleProjectDatabaseUpdateCell)
 		r.Get("/{projectID}/databases/{dbID}/tables/{tableName}/columns/{columnName}/analytics", s.handleProjectDatabaseColumnAnalytics)
 		r.Post("/{projectID}/databases/{dbID}/query", s.handleProjectDatabaseQuery)
+
+		r.Get("/{projectID}/tasks", s.handleListProjectTasks)
+		r.Post("/{projectID}/tasks", s.handleCreateProjectTask)
+		r.Get("/{projectID}/tasks/import", s.handleProjectTaskImportStatus)
+		r.Post("/{projectID}/tasks/import/next", s.handleImportNextProjectTask)
+		r.Get("/{projectID}/tasks/{taskRef}", s.handleGetProjectTask)
+		r.Patch("/{projectID}/tasks/{taskRef}", s.handleUpdateProjectTask)
+		r.Delete("/{projectID}/tasks/{taskRef}", s.handleDeleteProjectTask)
 	})
 }
 

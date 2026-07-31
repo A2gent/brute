@@ -63,6 +63,8 @@ type Server struct {
 	approvalResolvePayloadMu sync.Mutex
 	approvalResolvePayload   map[string]approvalResolvePayload
 	mcpBridge                *mcpBridgeState
+	writeTaskSource          func(string, []byte, os.FileMode) error
+	removeTaskSource         func(string) error
 
 	// A2A gRPC tunnel (managed by a2a_tunnel.go)
 	tunnelMu     sync.Mutex
@@ -111,6 +113,8 @@ func NewServer(
 		claudeHealthCache:      newClaudeHealthCache(),
 		approvalResolvePayload: make(map[string]approvalResolvePayload),
 		mcpBridge:              newMCPBridgeState(),
+		writeTaskSource:        os.WriteFile,
+		removeTaskSource:       os.Remove,
 	}
 	s.initApprovalBroker()
 	s.dockerRuntime = newDockerRuntimeManager(s)

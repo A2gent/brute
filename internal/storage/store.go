@@ -232,7 +232,8 @@ type Store interface {
 	SaveSession(sess *Session) error
 	GetSession(id string) (*Session, error)
 	GetSessionSummary(id string) (*Session, error)
-	ListSessions() ([]*Session, error)                  // Returns only non-job sessions
+	ListSessions() ([]*Session, error) // Returns only non-job sessions
+	SearchSessionDialogues(query, projectID string) ([]string, error)
 	ListSessionsByJob(jobID string) ([]*Session, error) // Returns sessions for a specific job
 	DeleteSession(id string) error
 
@@ -253,6 +254,13 @@ type Store interface {
 	GetProjectTestCache(projectID string, repoPath string, branch string, baseBranch string, scopeHash string) (*ProjectTestCache, error)
 	SaveProjectGitReviewOverlayCache(cache *ProjectGitReviewOverlayCache) error
 	ListProjectGitReviewOverlayCache(projectID string, repoPath string, branch string, baseBranch string) ([]*ProjectGitReviewOverlayCache, error)
+
+	// Project task operations. Every operation requires an explicit project scope.
+	CreateTask(projectID string, input TaskCreate) (*Task, error)
+	ListTasks(projectID string) ([]*Task, error)
+	GetTask(projectID string, taskRef string) (*Task, error)
+	UpdateTask(projectID string, taskRef string, update TaskUpdate) (*Task, error)
+	DeleteTask(projectID string, taskRef string) error
 
 	// Recurring job operations
 	SaveJob(job *RecurringJob) error

@@ -323,6 +323,32 @@ func (s *SQLiteStore) migrate() error {
 				FOREIGN KEY (team_run_id) REFERENCES team_runs(id) ON DELETE CASCADE
 			)`,
 		`CREATE INDEX IF NOT EXISTS idx_team_messages_run ON team_messages(team_run_id, created_at, id)`,
+		// Tasks are first-class project records. A foreign key enforces the product decision
+		// that every task belongs to exactly one existing project.
+		`CREATE TABLE IF NOT EXISTS tasks (
+				id TEXT PRIMARY KEY,
+				project_id TEXT NOT NULL,
+				ref TEXT NOT NULL,
+				seq INTEGER NOT NULL,
+				title TEXT NOT NULL,
+				body TEXT NOT NULL DEFAULT '',
+				status TEXT NOT NULL DEFAULT 'todo',
+				priority INTEGER NOT NULL DEFAULT 2,
+				complexity INTEGER NOT NULL DEFAULT 0,
+				tags TEXT NOT NULL DEFAULT '[]',
+				price TEXT NOT NULL DEFAULT '',
+				position REAL NOT NULL DEFAULT 0,
+				created_by TEXT NOT NULL DEFAULT 'user',
+				source_key TEXT NOT NULL DEFAULT '',
+				created_at TIMESTAMP NOT NULL,
+				updated_at TIMESTAMP NOT NULL,
+				started_at TIMESTAMP,
+				completed_at TIMESTAMP,
+				FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+			)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_project_ref ON tasks(project_id, ref)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_project_source ON tasks(project_id, source_key) WHERE source_key <> ''`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status)`,
 	}
 
 	for _, m := range migrations {

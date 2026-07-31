@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -20,7 +19,9 @@ func testApprovalLimits() approval.Limits {
 	return approval.Limits{
 		MaxPending:     8,
 		MaxInputBytes:  65536,
-		DefaultTimeout: 300 * time.Millisecond,
+		// Keep interactive sidecar tests above process-scheduling jitter; the
+		// dedicated timeout test overrides ApprovalTimeout to a short value.
+		DefaultTimeout: 5 * time.Second,
 	}
 }
 
@@ -131,26 +132,18 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"done","usage":{"in
 	t.Setenv("RESP_CAPTURE", respCapture)
 
 	broker := approval.New(testApprovalLimits())
+	// Resolve inside Subscribe so approval cannot time out before the test observes pending.
+	unsub := resolveOnRequest(t, broker, "sess-1", approval.DecisionAllowOnce, nil)
+	t.Cleanup(unsub)
 	client := sidecarClient(t, broker, sidecar, writeFakeNodeRunner(t, tmp), tmp, nil)
 
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		waitForBrokerPending(t, broker, 1)
-		req := broker.Pending()[0]
-		if err := broker.Resolve(req.ID, "sess-1", approval.DecisionAllowOnce); err != nil {
-			t.Errorf("Resolve: %v", err)
-		}
-	}()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	resp, err := client.Chat(ctx, &llm.ChatRequest{
 		SessionID: "sess-1",
 		Messages:  []llm.Message{{Role: "user", Content: "hello"}},
 		Tools:     []llm.ToolDefinition{{Name: "bash"}},
 	})
-	<-done
 	if err != nil {
 		t.Fatalf("Chat: %v", err)
 	}
@@ -201,33 +194,34 @@ done
 printf '%s\n' '{"type":"result","subtype":"success","result":"cached","usage":{"input_tokens":1,"output_tokens":1}}'
 `)
 	broker := approval.New(testApprovalLimits())
-	client := sidecarClient(t, broker, sidecar, writeFakeNodeRunner(t, tmp), tmp, nil)
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		waitForBrokerPending(t, broker, 1)
-		req := broker.Pending()[0]
-		if err := broker.Resolve(req.ID, "sess-cache", approval.DecisionAllowSession); err != nil {
+	var resolved int
+	unsub := broker.Subscribe(func(ev approval.Event) {
+		if ev.Kind != approval.EventRequested {
+			return
+		}
+		resolved++
+		if err := broker.Resolve(ev.Request.ID, "sess-cache", approval.DecisionAllowSession); err != nil {
 			t.Errorf("Resolve: %v", err)
 		}
-		time.Sleep(50 * time.Millisecond)
-		if len(broker.Pending()) != 0 {
-			t.Errorf("expected session cache to skip second pending, got %d", len(broker.Pending()))
-		}
-	}()
+	})
+	t.Cleanup(unsub)
+	client := sidecarClient(t, broker, sidecar, writeFakeNodeRunner(t, tmp), tmp, nil)
 
 	resp, err := client.Chat(context.Background(), &llm.ChatRequest{
 		SessionID: "sess-cache",
 		Messages:  []llm.Message{{Role: "user", Content: "go"}},
 	})
-	wg.Wait()
 	if err != nil {
 		t.Fatalf("Chat: %v", err)
 	}
 	if resp.Content != "cached" {
 		t.Fatalf("content = %q", resp.Content)
+	}
+	if resolved != 1 {
+		t.Fatalf("expected one broker request (second cached), got %d", resolved)
+	}
+	if len(broker.Pending()) != 0 {
+		t.Fatalf("expected no pending after session cache, got %d", len(broker.Pending()))
 	}
 }
 
@@ -245,12 +239,9 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"denied-run"}'
 	t.Setenv("RESP_CAPTURE", respCapture)
 
 	broker := approval.New(testApprovalLimits())
+	unsub := resolveOnRequest(t, broker, "sess-deny", approval.DecisionDeny, nil)
+	t.Cleanup(unsub)
 	client := sidecarClient(t, broker, sidecar, writeFakeNodeRunner(t, tmp), tmp, nil)
-	go func() {
-		waitForBrokerPending(t, broker, 1)
-		req := broker.Pending()[0]
-		_ = broker.Resolve(req.ID, "sess-deny", approval.DecisionDeny)
-	}()
 
 	resp, err := client.Chat(context.Background(), &llm.ChatRequest{
 		SessionID: "sess-deny",
@@ -285,6 +276,7 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"after-timeout"}'
 
 	broker := approval.New(testApprovalLimits())
 	client := sidecarClient(t, broker, sidecar, writeFakeNodeRunner(t, tmp), tmp, nil)
+	client.options.ApprovalTimeout = 200 * time.Millisecond
 
 	resp, err := client.Chat(context.Background(), &llm.ChatRequest{
 		SessionID: "sess-timeout",
@@ -314,13 +306,14 @@ read -r _
 printf '%s\n' '{"type":"result","subtype":"success","result":"should-not"}'
 `)
 	broker := approval.New(testApprovalLimits())
-	client := sidecarClient(t, broker, sidecar, writeFakeNodeRunner(t, tmp), tmp, nil)
-
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		waitForBrokerPending(t, broker, 1)
-		cancel()
-	}()
+	unsub := broker.Subscribe(func(ev approval.Event) {
+		if ev.Kind == approval.EventRequested {
+			cancel()
+		}
+	})
+	t.Cleanup(unsub)
+	client := sidecarClient(t, broker, sidecar, writeFakeNodeRunner(t, tmp), tmp, nil)
 
 	_, err := client.Chat(ctx, &llm.ChatRequest{
 		SessionID: "sess-cancel",
@@ -391,20 +384,17 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"answered"}'
 
 	broker := approval.New(testApprovalLimits())
 	resolvePayload := map[string]ApprovalResolvePayload{}
-	client := sidecarClient(t, broker, sidecar, writeFakeNodeRunner(t, tmp), tmp, func(id string) (ApprovalResolvePayload, bool) {
-		payload, ok := resolvePayload[id]
-		return payload, ok
-	})
-
-	go func() {
-		waitForBrokerPending(t, broker, 1)
-		req := broker.Pending()[0]
+	unsub := resolveOnRequest(t, broker, "sess-ask", approval.DecisionAllowOnce, func(req approval.Request) {
 		if req.AskUser == nil || req.AskUser.Question != "Pick?" {
 			t.Errorf("unexpected ask user payload: %#v", req.AskUser)
 		}
 		resolvePayload[req.ID] = ApprovalResolvePayload{Message: "A"}
-		_ = broker.Resolve(req.ID, "sess-ask", approval.DecisionAllowOnce)
-	}()
+	})
+	t.Cleanup(unsub)
+	client := sidecarClient(t, broker, sidecar, writeFakeNodeRunner(t, tmp), tmp, func(id string) (ApprovalResolvePayload, bool) {
+		payload, ok := resolvePayload[id]
+		return payload, ok
+	})
 
 	resp, err := client.Chat(context.Background(), &llm.ChatRequest{
 		SessionID: "sess-ask",
@@ -439,18 +429,15 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"answered"}'
 
 	broker := approval.New(testApprovalLimits())
 	resolvePayload := map[string]ApprovalResolvePayload{}
+	wantAnswers := map[string]string{"Color?": "Red", "Size?": "Large"}
+	unsub := resolveOnRequest(t, broker, "sess-ask-multi", approval.DecisionAllowOnce, func(req approval.Request) {
+		resolvePayload[req.ID] = ApprovalResolvePayload{Answers: wantAnswers}
+	})
+	t.Cleanup(unsub)
 	client := sidecarClient(t, broker, sidecar, writeFakeNodeRunner(t, tmp), tmp, func(id string) (ApprovalResolvePayload, bool) {
 		payload, ok := resolvePayload[id]
 		return payload, ok
 	})
-
-	wantAnswers := map[string]string{"Color?": "Red", "Size?": "Large"}
-	go func() {
-		waitForBrokerPending(t, broker, 1)
-		req := broker.Pending()[0]
-		resolvePayload[req.ID] = ApprovalResolvePayload{Answers: wantAnswers}
-		_ = broker.Resolve(req.ID, "sess-ask-multi", approval.DecisionAllowOnce)
-	}()
 
 	resp, err := client.Chat(context.Background(), &llm.ChatRequest{
 		SessionID: "sess-ask-multi",
@@ -584,16 +571,27 @@ func TestResolveNodePathRequiresExecutable(t *testing.T) {
 	}
 }
 
-func waitForBrokerPending(t *testing.T, broker *approval.Broker, want int) {
+// resolveOnRequest registers a broker subscriber that resolves each requested
+// approval synchronously during emit, before Request starts waiting on timeout.
+func resolveOnRequest(
+	t *testing.T,
+	broker *approval.Broker,
+	sessionID string,
+	decision approval.Decision,
+	beforeResolve func(approval.Request),
+) func() {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(broker.Pending()) >= want {
+	return broker.Subscribe(func(ev approval.Event) {
+		if ev.Kind != approval.EventRequested {
 			return
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for %d pending approvals, got %d", want, len(broker.Pending()))
+		if beforeResolve != nil {
+			beforeResolve(ev.Request)
+		}
+		if err := broker.Resolve(ev.Request.ID, sessionID, decision); err != nil {
+			t.Errorf("Resolve: %v", err)
+		}
+	})
 }
 
 func containsString(values []string, target string) bool {

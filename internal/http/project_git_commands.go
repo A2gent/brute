@@ -133,8 +133,7 @@ func resolveProjectGitTargetRoot(projectRoot string, repoPath string) (string, e
 }
 
 func runGitCommand(projectRoot string, args ...string) (string, error) {
-	commandArgs := append([]string{"-C", projectRoot}, args...)
-	cmd := exec.Command("git", commandArgs...)
+	cmd := gitCommand(projectRoot, args...)
 	output, err := cmd.CombinedOutput()
 	trimmed := strings.TrimSpace(string(output))
 	if err != nil {
@@ -147,8 +146,7 @@ func runGitCommand(projectRoot string, args ...string) (string, error) {
 }
 
 func runGitCommandPreserveLeading(projectRoot string, args ...string) (string, error) {
-	commandArgs := append([]string{"-C", projectRoot}, args...)
-	cmd := exec.Command("git", commandArgs...)
+	cmd := gitCommand(projectRoot, args...)
 	output, err := cmd.CombinedOutput()
 	text := strings.TrimRight(string(output), "\r\n")
 	if err != nil {
@@ -162,8 +160,7 @@ func runGitCommandPreserveLeading(projectRoot string, args ...string) (string, e
 }
 
 func runGitCommandWithExitCode(projectRoot string, args ...string) (string, int, error) {
-	commandArgs := append([]string{"-C", projectRoot}, args...)
-	cmd := exec.Command("git", commandArgs...)
+	cmd := gitCommand(projectRoot, args...)
 	output, err := cmd.CombinedOutput()
 	trimmed := strings.TrimRight(string(output), "\r\n")
 	if err == nil {
@@ -174,6 +171,39 @@ func runGitCommandWithExitCode(projectRoot string, args ...string) (string, int,
 		return trimmed, exitErr.ExitCode(), err
 	}
 	return trimmed, -1, err
+}
+
+// gitCommand runs git against projectRoot without inheriting ambient hook state.
+// When tests (or tools) run under a parent `git commit`/`git push` hook, Git sets
+// GIT_INDEX_FILE/GIT_DIR/etc; leaking those into nested repos breaks tree builds.
+func gitCommand(projectRoot string, args ...string) *exec.Cmd {
+	commandArgs := append([]string{"-C", projectRoot}, args...)
+	cmd := exec.Command("git", commandArgs...)
+	cmd.Env = scrubInheritedGitEnv(os.Environ())
+	return cmd
+}
+
+func scrubInheritedGitEnv(env []string) []string {
+	cleaned := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			cleaned = append(cleaned, entry)
+			continue
+		}
+		switch key {
+		case "GIT_DIR",
+			"GIT_WORK_TREE",
+			"GIT_INDEX_FILE",
+			"GIT_OBJECT_DIRECTORY",
+			"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+			"GIT_QUARANTINE_PATH",
+			"GIT_PREFIX":
+			continue
+		}
+		cleaned = append(cleaned, entry)
+	}
+	return cleaned
 }
 
 func resolveGitRepoFilePath(repoRoot string, relPath string) (string, error) {

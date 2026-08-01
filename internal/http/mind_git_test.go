@@ -7,6 +7,28 @@ import (
 	"testing"
 )
 
+func TestInitMindGitTestRepoIgnoresAmbientGitHookEnv(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is not available")
+	}
+
+	// Simulate git hook/env leakage that otherwise makes nested test commits touch the outer index.
+	outerGitDir := t.TempDir()
+	outerIndex := filepath.Join(t.TempDir(), "index")
+	t.Setenv("GIT_DIR", outerGitDir)
+	t.Setenv("GIT_INDEX_FILE", outerIndex)
+	t.Setenv("GIT_WORK_TREE", t.TempDir())
+	t.Setenv("GIT_PREFIX", "packages/")
+
+	repoRoot := t.TempDir()
+	initMindGitTestRepo(t, repoRoot)
+
+	head := filepath.Join(repoRoot, ".git", "HEAD")
+	if _, err := os.Stat(head); err != nil {
+		t.Fatalf("expected nested repo HEAD after init, got %v", err)
+	}
+}
+
 func TestBuildProjectGitBranchesReadsForEachRefFields(t *testing.T) {
 	t.Parallel()
 
@@ -160,8 +182,7 @@ func initMindGitTestRepo(t *testing.T, repoRoot string) {
 func runGitForMindTest(t *testing.T, repoRoot string, args ...string) {
 	t.Helper()
 
-	commandArgs := append([]string{"-C", repoRoot}, args...)
-	cmd := exec.Command("git", commandArgs...)
+	cmd := gitCommand(repoRoot, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, output)

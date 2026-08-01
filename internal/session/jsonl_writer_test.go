@@ -17,6 +17,9 @@ type memStore struct {
 	sessions map[string]*storage.Session
 }
 
+// Fail fast when storage.Store gains methods that this stub has not implemented yet.
+var _ storage.Store = (*memStore)(nil)
+
 func newMemStore() *memStore { return &memStore{sessions: make(map[string]*storage.Session)} }
 
 func (m *memStore) SaveSession(s *storage.Session) error { m.sessions[s.ID] = s; return nil }
@@ -30,7 +33,10 @@ func (m *memStore) GetSession(id string) (*storage.Session, error) {
 func (m *memStore) GetSessionSummary(id string) (*storage.Session, error) {
 	return m.GetSession(id)
 }
-func (m *memStore) ListSessions() ([]*storage.Session, error)            { return nil, nil }
+func (m *memStore) ListSessions() ([]*storage.Session, error) { return nil, nil }
+func (m *memStore) SearchSessionDialogues(string, string) ([]string, error) {
+	return nil, nil
+}
 func (m *memStore) ListSessionsByJob(string) ([]*storage.Session, error) { return nil, nil }
 func (m *memStore) DeleteSession(string) error                           { return nil }
 func (m *memStore) SaveSessionTemplate(*storage.SessionTemplate) error   { return nil }
@@ -59,6 +65,19 @@ func (m *memStore) SaveProjectGitReviewOverlayCache(*storage.ProjectGitReviewOve
 func (m *memStore) ListProjectGitReviewOverlayCache(string, string, string, string) ([]*storage.ProjectGitReviewOverlayCache, error) {
 	return nil, nil
 }
+
+// Task stubs keep memStore aligned with storage.Store; session tests do not exercise tasks.
+func (m *memStore) CreateTask(string, storage.TaskCreate) (*storage.Task, error) {
+	return nil, nil
+}
+func (m *memStore) ListTasks(string) ([]*storage.Task, error) { return nil, nil }
+func (m *memStore) GetTask(string, string) (*storage.Task, error) {
+	return nil, nil
+}
+func (m *memStore) UpdateTask(string, string, storage.TaskUpdate) (*storage.Task, error) {
+	return nil, nil
+}
+func (m *memStore) DeleteTask(string, string) error     { return nil }
 func (m *memStore) SaveJob(*storage.RecurringJob) error { return nil }
 func (m *memStore) UpdateExistingJob(*storage.RecurringJob) (bool, error) {
 	return false, nil

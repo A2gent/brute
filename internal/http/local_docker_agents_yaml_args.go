@@ -154,6 +154,9 @@ func appendLocalDockerAgentExtraArgs(args []string, req createLocalDockerAgentRe
 	if model := strings.TrimSpace(req.LLM.Model); model != "" {
 		args = append(args, "--env", "AAGENT_MODEL="+model)
 	}
+	if effort := strings.TrimSpace(req.LLM.ReasoningEffort); effort != "" {
+		args = append(args, "--env", "AAGENT_OPENAI_CODEX_REASONING_EFFORT="+effort)
+	}
 	args = appendLocalDockerAgentBaseURLEnv(args, req)
 
 	if workspace := req.Directories.Workspace; strings.TrimSpace(workspace.HostPath) != "" || strings.TrimSpace(workspace.ContainerPath) != "" {

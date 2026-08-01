@@ -167,6 +167,11 @@ func TestLocalDockerCreateRequestBaseFromDefinitionCarriesPublishMetadata(t *tes
 			Category:  "engineering",
 			AvatarURL: "https://example.com/avatar.png",
 		}},
+		LLM: agentdef.LLM{
+			Provider:        "openai_codex",
+			Model:           "gpt-5.6-codex",
+			ReasoningEffort: "high",
+		},
 	}
 
 	req := localDockerCreateRequestBaseFromDefinition(def)
@@ -179,6 +184,9 @@ func TestLocalDockerCreateRequestBaseFromDefinitionCarriesPublishMetadata(t *tes
 	}
 	if labels["a2gent.agent_icon_url"] != "https://example.com/agent-icon.png" {
 		t.Fatalf("agent icon metadata was not converted to labels: %#v", labels)
+	}
+	if req.LLM.ReasoningEffort != "high" {
+		t.Fatalf("reasoning effort was not copied to Docker LLM config: %#v", req.LLM)
 	}
 }
 

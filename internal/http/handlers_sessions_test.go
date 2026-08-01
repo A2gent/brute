@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/A2gent/brute/internal/session"
 )
 
 func TestHandleListSessionsFiltersProjectAndMetadataKeys(t *testing.T) {
@@ -95,6 +97,76 @@ func TestHandleListSessionsIncludesSummary(t *testing.T) {
 	}
 	if got, want := items[0].Summary, "Investigate session summaries."; got != want {
 		t.Fatalf("summary = %q, want %q", got, want)
+	}
+}
+
+func TestHandleListSessionsSearchesDialogueContentOnly(t *testing.T) {
+	t.Parallel()
+
+	server, _ := newBruteHTTPProxyTestServer(t)
+	projectID := "project-search"
+
+	matchingUser, err := server.sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("create user match session: %v", err)
+	}
+	matchingUser.ProjectID = &projectID
+	matchingUser.AddUserMessage("Please prepare the Release Notes today.")
+	if err := server.sessionManager.Save(matchingUser); err != nil {
+		t.Fatalf("save user match session: %v", err)
+	}
+
+	matchingAssistant, err := server.sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("create assistant match session: %v", err)
+	}
+	matchingAssistant.ProjectID = &projectID
+	matchingAssistant.AddUserMessage("What changed?")
+	matchingAssistant.AddAssistantMessage("The release notes are ready.", nil)
+	if err := server.sessionManager.Save(matchingAssistant); err != nil {
+		t.Fatalf("save assistant match session: %v", err)
+	}
+
+	toolOnly, err := server.sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("create tool-only session: %v", err)
+	}
+	toolOnly.ProjectID = &projectID
+	toolOnly.AddUserMessage("Read the file.")
+	toolOnly.AddAssistantMessage("", []session.ToolCall{{
+		ID:    "tool-call-1",
+		Name:  "read",
+		Input: json.RawMessage(`{"path":"release notes.txt"}`),
+	}})
+	toolOnly.AddToolResult([]session.ToolResult{{
+		ToolCallID: "tool-call-1",
+		Name:       "read",
+		Content:    "release notes from file contents",
+	}})
+	if err := server.sessionManager.Save(toolOnly); err != nil {
+		t.Fatalf("save tool-only session: %v", err)
+	}
+
+	req := httptest.NewRequest(stdhttp.MethodGet, "/sessions/?project_id=project-search&search=RELEASE+NOTES", nil)
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+
+	if rec.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var items []SessionListItem
+	if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
+		t.Fatalf("decode sessions response: %v", err)
+	}
+	gotIDs := make(map[string]bool, len(items))
+	for _, item := range items {
+		gotIDs[item.ID] = true
+	}
+	if !gotIDs[matchingUser.ID] || !gotIDs[matchingAssistant.ID] {
+		t.Fatalf("expected user and assistant matches, got %#v", gotIDs)
+	}
+	if gotIDs[toolOnly.ID] {
+		t.Fatalf("expected tool calls and results to be excluded, got %#v", gotIDs)
 	}
 }
 

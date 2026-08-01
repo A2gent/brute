@@ -23,6 +23,7 @@ func (s *Server) agentConfigFromTarget(sess *session.Session, target *executionT
 		Name:                    name,
 		Provider:                string(target.ProviderType),
 		Model:                   target.Model,
+		ReasoningEffort:         target.ReasoningEffort,
 		SystemPrompt:            systemPrompt,
 		MaxSteps:                maxSteps,
 		Temperature:             temperature,

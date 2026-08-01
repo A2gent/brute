@@ -27,10 +27,25 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	filterA2A := r.URL.Query().Get("a2a_inbound") == "true"
 	includeMetadata := r.URL.Query().Get("include_metadata") == "true"
 	filterProjectID := strings.TrimSpace(r.URL.Query().Get("project_id"))
+	searchQuery := strings.TrimSpace(r.URL.Query().Get("search"))
 	metadataKeys := parseSessionListMetadataKeys(r.URL.Query().Get("metadata_keys"))
+
+	var dialogueMatches map[string]struct{}
+	if searchQuery != "" {
+		dialogueMatches, err = s.sessionManager.SearchDialogueSessionIDs(searchQuery, filterProjectID)
+		if err != nil {
+			s.errorResponse(w, http.StatusInternalServerError, "Failed to search sessions: "+err.Error())
+			return
+		}
+	}
 
 	items := make([]SessionListItem, 0, len(sessions))
 	for _, sess := range sessions {
+		if dialogueMatches != nil {
+			if _, matched := dialogueMatches[sess.ID]; !matched {
+				continue
+			}
+		}
 		isInbound, sourceAgentID, sourceAgentName := sessionA2AMeta(sess)
 		if filterA2A && !isInbound {
 			continue
@@ -337,15 +352,16 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.jsonResponse(w, http.StatusCreated, CreateSessionResponse{
-		ID:        sess.ID,
-		AgentID:   sess.AgentID,
-		ParentID:  req.ParentID,
-		LinkType:  req.LinkType,
-		ProjectID: projectID,
-		Provider:  providerType,
-		Model:     model,
-		Status:    string(sess.Status),
-		CreatedAt: sess.CreatedAt,
+		ID:              sess.ID,
+		AgentID:         sess.AgentID,
+		ParentID:        req.ParentID,
+		LinkType:        req.LinkType,
+		ProjectID:       projectID,
+		Provider:        providerType,
+		Model:           model,
+		ReasoningEffort: sessionReasoningEffort(sess),
+		Status:          string(sess.Status),
+		CreatedAt:       sess.CreatedAt,
 	})
 }
 

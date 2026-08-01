@@ -100,3 +100,15 @@ func TestBuildRequestOmitsProviderSessionCursorWhenDisabled(t *testing.T) {
 		t.Fatalf("expected full history, got %d messages", len(request.Messages))
 	}
 }
+
+func TestBuildRequestSetsReasoningEffort(t *testing.T) {
+	sess := session.New("test-agent")
+	sess.AddUserMessage("hello")
+
+	ag := New(Config{ReasoningEffort: " high "}, nil, tools.NewManager(t.TempDir()), nil)
+	request := ag.buildRequest(sess)
+
+	if request.ReasoningEffort != "high" {
+		t.Fatalf("ReasoningEffort = %q, want high", request.ReasoningEffort)
+	}
+}

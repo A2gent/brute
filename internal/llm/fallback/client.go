@@ -19,9 +19,10 @@ const (
 
 // Node represents one provider node in fallback chain order.
 type Node struct {
-	Name   string
-	Model  string
-	Client llm.Client
+	Name            string
+	Model           string
+	ReasoningEffort string
+	Client          llm.Client
 }
 
 // NodeSkipFunc reports whether a chain node should be bypassed before any LLM call.
@@ -110,7 +111,7 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 			c.setCurrentIndex(i + 1)
 			continue
 		}
-		nodeReq := cloneRequestWithModel(request, node.Model)
+		nodeReq := cloneRequestForNode(request, node)
 		var lastErr error
 		for attempt := 0; attempt <= c.maxRetries; attempt++ {
 			if attempt > 0 {
@@ -182,7 +183,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 			c.setCurrentIndex(i + 1)
 			continue
 		}
-		nodeReq := cloneRequestWithModel(request, node.Model)
+		nodeReq := cloneRequestForNode(request, node)
 		emitProviderTrace(onEvent, llm.StreamEvent{
 			Type:        llm.StreamEventProviderTrace,
 			Provider:    node.Name,
@@ -459,12 +460,15 @@ func enrichTraceReason(ctx context.Context, err error) string {
 	return reason + " (request deadline=none)"
 }
 
-func cloneRequestWithModel(request *llm.ChatRequest, model string) *llm.ChatRequest {
+func cloneRequestForNode(request *llm.ChatRequest, node Node) *llm.ChatRequest {
 	if request == nil {
-		return &llm.ChatRequest{Model: model}
+		request = &llm.ChatRequest{}
 	}
 	copied := *request
-	copied.Model = strings.TrimSpace(model)
+	copied.Model = strings.TrimSpace(node.Model)
+	if effort := strings.TrimSpace(node.ReasoningEffort); effort != "" {
+		copied.ReasoningEffort = effort
+	}
 	return &copied
 }
 

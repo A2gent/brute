@@ -16,6 +16,7 @@ import (
 type executionTarget struct {
 	ProviderType            config.ProviderType
 	Model                   string
+	ReasoningEffort         string
 	RoutingRule             string
 	RoutingReason           string
 	ContextWindow           int
@@ -44,10 +45,16 @@ func normalizeRouterRules(raw []config.RouterRule) []config.RouterRule {
 		match := strings.TrimSpace(rule.Match)
 		provider := config.NormalizeProviderRef(rule.Provider)
 		model := strings.TrimSpace(rule.Model)
+		reasoningEffort := strings.TrimSpace(rule.ReasoningEffort)
 		if match == "" || provider == "" {
 			continue
 		}
-		rules = append(rules, config.RouterRule{Match: match, Provider: provider, Model: model})
+		rules = append(rules, config.RouterRule{
+			Match:           match,
+			Provider:        provider,
+			Model:           model,
+			ReasoningEffort: reasoningEffort,
+		})
 	}
 	return rules
 }
@@ -149,9 +156,14 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, providerType config
 		if err != nil {
 			return nil, err
 		}
+		reasoningEffort := strings.TrimSpace(s.config.Providers[string(providerType)].ReasoningEffort)
+		if sessionEffort := sessionReasoningEffort(sess); sessionEffort != "" {
+			reasoningEffort = sessionEffort
+		}
 		return &executionTarget{
 			ProviderType:            providerType,
 			Model:                   requestedModel,
+			ReasoningEffort:         reasoningEffort,
 			ContextWindow:           s.resolveContextWindowForProvider(providerType, requestedModel),
 			StatefulResponses:       s.providerStatefulResponses(providerType),
 			ProviderSessions:        s.providerSessionPersistence(providerType),
@@ -187,6 +199,7 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, providerType config
 	return &executionTarget{
 		ProviderType:            targetProvider,
 		Model:                   targetModel,
+		ReasoningEffort:         strings.TrimSpace(chosen.ReasoningEffort),
 		RoutingRule:             strings.TrimSpace(chosen.Match),
 		RoutingReason:           strings.TrimSpace(reason),
 		ContextWindow:           s.resolveContextWindowForProvider(targetProvider, targetModel),
@@ -247,6 +260,7 @@ func (s *Server) selectRoutingRuleViaLLM(ctx context.Context, userPrompt string,
 	rulesJSON, _ := json.Marshal(indexed)
 
 	req := &llm.ChatRequest{
+		ReasoningEffort: strings.TrimSpace(autoCfg.RouterReasoningEffort),
 		Messages: []llm.Message{
 			{Role: "system", Content: automaticRouterSystemPrompt},
 			{Role: "user", Content: fmt.Sprintf("Rules: %s\n\nUser prompt: %s", string(rulesJSON), userPrompt)},

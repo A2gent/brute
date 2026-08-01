@@ -25,22 +25,23 @@ type Config struct {
 
 // Provider configuration for LLM providers
 type Provider struct {
-	Name               string              `json:"name"`
-	APIKey             string              `json:"api_key"`
-	BaseURL            string              `json:"base_url"`
-	Model              string              `json:"model"`
-	PromptCacheKey     string              `json:"prompt_cache_key,omitempty"`
-	ReasoningEffort    string              `json:"reasoning_effort,omitempty"`
-	TextVerbosity      string              `json:"text_verbosity,omitempty"`
-	ServiceTier        string              `json:"service_tier,omitempty"`
-	MaxTokens          int                 `json:"max_tokens,omitempty"`
-	StatefulResponses  *bool               `json:"stateful_responses,omitempty"`
-	FallbackChain      []string            `json:"fallback_chain,omitempty"` // Legacy provider-only fallback nodes.
-	FallbackChainNodes []FallbackChainNode `json:"fallback_chain_nodes,omitempty"`
-	RouterProvider     string              `json:"router_provider,omitempty"` // Provider reference used by automatic router (direct provider or fallback chain).
-	RouterModel        string              `json:"router_model,omitempty"`    // Optional model override for direct router provider.
-	RouterRules        []RouterRule        `json:"router_rules,omitempty"`
-	ContextWindow      int                 `json:"context_window,omitempty"` // in tokens
+	Name                  string              `json:"name"`
+	APIKey                string              `json:"api_key"`
+	BaseURL               string              `json:"base_url"`
+	Model                 string              `json:"model"`
+	PromptCacheKey        string              `json:"prompt_cache_key,omitempty"`
+	ReasoningEffort       string              `json:"reasoning_effort,omitempty"`
+	TextVerbosity         string              `json:"text_verbosity,omitempty"`
+	ServiceTier           string              `json:"service_tier,omitempty"`
+	MaxTokens             int                 `json:"max_tokens,omitempty"`
+	StatefulResponses     *bool               `json:"stateful_responses,omitempty"`
+	FallbackChain         []string            `json:"fallback_chain,omitempty"` // Legacy provider-only fallback nodes.
+	FallbackChainNodes    []FallbackChainNode `json:"fallback_chain_nodes,omitempty"`
+	RouterProvider        string              `json:"router_provider,omitempty"` // Provider reference used by automatic router (direct provider or fallback chain).
+	RouterModel           string              `json:"router_model,omitempty"`    // Optional model override for direct router provider.
+	RouterReasoningEffort string              `json:"router_reasoning_effort,omitempty"`
+	RouterRules           []RouterRule        `json:"router_rules,omitempty"`
+	ContextWindow         int                 `json:"context_window,omitempty"` // in tokens
 
 	// Claude CLI instance fields (anthropic and anthropic:<id> providers).
 	BinaryPath       string            `json:"binary_path,omitempty"`
@@ -62,8 +63,9 @@ type OAuthConfig struct {
 
 // FallbackChainNode stores a single fallback step with explicit provider+model.
 type FallbackChainNode struct {
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
+	Provider        string `json:"provider"`
+	Model           string `json:"model"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 // FallbackAggregate stores a named fallback chain that can be selected like a provider.
@@ -75,9 +77,10 @@ type FallbackAggregate struct {
 
 // RouterRule maps a textual task context to a target model/provider.
 type RouterRule struct {
-	Match    string `json:"match"`
-	Provider string `json:"provider"`
-	Model    string `json:"model,omitempty"`
+	Match           string `json:"match"`
+	Provider        string `json:"provider"`
+	Model           string `json:"model,omitempty"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 // ProviderType identifies the type of provider
@@ -262,11 +265,11 @@ func DefaultConfig() *Config {
 		DefaultModel:   "kimi-k2.5",
 		ActiveProvider: string(ProviderKimi),
 		// Complex coding runs routinely exceed the old 50-step budget.
-		MaxSteps:       100,
-		Temperature:    0.0,
-		LLMRetries:     3,
-		DataPath:       resolveDataPath(),
-		WorkDir:        workDir,
+		MaxSteps:    100,
+		Temperature: 0.0,
+		LLMRetries:  3,
+		DataPath:    resolveDataPath(),
+		WorkDir:     workDir,
 		CORSAllowedOrigins: []string{
 			"*",
 		},

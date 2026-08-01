@@ -64,6 +64,7 @@ type localDockerAgentYAMLProject struct {
 type localDockerAgentYAMLLLM struct {
 	Provider        string `yaml:"provider" json:"provider,omitempty"`
 	Model           string `yaml:"model" json:"model,omitempty"`
+	ReasoningEffort string `yaml:"reasoning_effort" json:"reasoning_effort,omitempty"`
 	BaseURL         string `yaml:"base_url" json:"base_url,omitempty"`
 	LMStudioBaseURL string `yaml:"lm_studio_base_url" json:"lm_studio_base_url,omitempty"`
 }

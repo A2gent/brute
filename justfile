@@ -42,6 +42,10 @@ test: test-unit
 test-unit:
     go test -v -race ./...
 
+# Configure repository-managed Git hooks for this clone
+install-hooks:
+    git config core.hooksPath .githooks
+
 # Run integration tests (files with //go:build integration)
 test-integration:
     go test -v -tags=integration ./...

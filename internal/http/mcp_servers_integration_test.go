@@ -16,11 +16,13 @@ func TestMCPStdioFetchServer(t *testing.T) {
 
 	s := &Server{}
 	cfg := &mcpServerConfig{
-		Name:           "mcp-server-fetch",
-		Transport:      mcpTransportStdio,
-		Enabled:        true,
-		Command:        "uvx",
-		Args:           []string{"mcp-server-fetch"},
+		Name:      "mcp-server-fetch",
+		Transport: mcpTransportStdio,
+		Enabled:   true,
+		Command:   "uvx",
+		// Pin the compatible MCP v1 line because mcp-server-fetch currently allows
+		// the API-incompatible mcp v2 release.
+		Args:           []string{"--with", "mcp==1.29.0", "mcp-server-fetch==2026.7.10"},
 		TimeoutSeconds: 120,
 	}
 

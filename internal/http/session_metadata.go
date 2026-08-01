@@ -257,6 +257,14 @@ func sessionProviderAndModel(sess *session.Session) (string, string) {
 	return provider, model
 }
 
+func sessionReasoningEffort(sess *session.Session) string {
+	if sess == nil || sess.Metadata == nil {
+		return ""
+	}
+	effort, _ := sess.Metadata["reasoning_effort"].(string)
+	return strings.TrimSpace(effort)
+}
+
 func normalizeSessionLinkType(raw string) (string, error) {
 	normalized := strings.TrimSpace(strings.ToLower(raw))
 	if normalized == "" {

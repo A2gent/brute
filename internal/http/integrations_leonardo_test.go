@@ -17,8 +17,7 @@ import (
 )
 
 func TestHandleListLeonardoModels_UsesV2Endpoint(t *testing.T) {
-	t.Parallel()
-
+	// This test changes a package-global endpoint, so it must not run in parallel.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/models", func(w http.ResponseWriter, r *http.Request) {
 		if auth := r.Header.Get("Authorization"); !strings.HasPrefix(auth, "Bearer ") {
@@ -88,8 +87,7 @@ func TestCollectLeonardoModels_V2DataArray(t *testing.T) {
 // integration_id is sent instead of api_key, the handler fetches the real
 // (unmasked) key from the store and proxies it to Leonardo.
 func TestHandleListLeonardoModels_IntegrationIDResolvesKey(t *testing.T) {
-	t.Parallel()
-
+	// This test changes a package-global endpoint, so it must not run in parallel.
 	// Mock Leonardo API that verifies the real key is received.
 	var receivedAuth string
 	mux := http.NewServeMux()
@@ -115,12 +113,12 @@ func TestHandleListLeonardoModels_IntegrationIDResolvesKey(t *testing.T) {
 	realKey := "leonardo-real-api-key-12345"
 	now := time.Now().UTC()
 	if err := store.SaveIntegration(&storage.Integration{
-		ID:       "leo-1",
-		Provider: "leonardo",
-		Name:     "Test Leonardo",
-		Mode:     "notify_only",
-		Enabled:  true,
-		Config:   map[string]string{"api_key": realKey},
+		ID:        "leo-1",
+		Provider:  "leonardo",
+		Name:      "Test Leonardo",
+		Mode:      "notify_only",
+		Enabled:   true,
+		Config:    map[string]string{"api_key": realKey},
 		CreatedAt: now,
 		UpdatedAt: now,
 	}); err != nil {

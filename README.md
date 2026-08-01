@@ -451,6 +451,7 @@ just run         # run with go run
 just dev         # API hot reload (air)
 just build       # build binary
 just test        # run tests
+just install-hooks # run unit tests before commits and pushes
 just fmt         # go fmt
 just lint        # go vet
 ```
@@ -472,6 +473,14 @@ just test-coverage
 
 # one package
 go test -v ./internal/tools/...
+
+Install the repository-managed Git hooks once per clone:
+
+```bash
+just install-hooks
+```
+
+Both `pre-commit` and `pre-push` run the race-enabled unit test suite. Git hook configuration is local to each clone, so contributors must run the install command after cloning.
 ```
 
 ## 11. Troubleshooting

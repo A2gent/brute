@@ -62,6 +62,7 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		ProjectID:              projectID,
 		Provider:               provider,
 		Model:                  model,
+		ReasoningEffort:        sessionReasoningEffort(sess),
 		RoutedProvider:         routedProvider,
 		RoutedModel:            routedModel,
 		RoutedRule:             routedRule,

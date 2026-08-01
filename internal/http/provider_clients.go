@@ -371,9 +371,10 @@ func (s *Server) createFallbackChainClient(providerRef config.ProviderType, sess
 			return nil, fmt.Errorf("fallback node %s/%s is not available: %w", node.Provider, model, err)
 		}
 		nodes = append(nodes, fallback.Node{
-			Name:   node.Provider,
-			Model:  model,
-			Client: client,
+			Name:            node.Provider,
+			Model:           model,
+			ReasoningEffort: node.ReasoningEffort,
+			Client:          client,
 		})
 	}
 	retries := s.config.LLMRetries
@@ -481,10 +482,11 @@ func normalizeFallbackChainNodes(raw []config.FallbackChainNode) []config.Fallba
 	for _, item := range raw {
 		provider := config.NormalizeProviderRef(item.Provider)
 		model := strings.TrimSpace(item.Model)
+		reasoningEffort := strings.TrimSpace(item.ReasoningEffort)
 		if provider == "" || model == "" {
 			continue
 		}
-		chain = append(chain, config.FallbackChainNode{Provider: provider, Model: model})
+		chain = append(chain, config.FallbackChainNode{Provider: provider, Model: model, ReasoningEffort: reasoningEffort})
 	}
 	return chain
 }

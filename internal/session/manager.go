@@ -172,6 +172,19 @@ func (m *Manager) List() ([]*Session, error) {
 	return sessions, nil
 }
 
+// SearchDialogueSessionIDs returns sessions matching user or assistant dialogue text.
+func (m *Manager) SearchDialogueSessionIDs(query, projectID string) (map[string]struct{}, error) {
+	ids, err := m.store.SearchSessionDialogues(query, projectID)
+	if err != nil {
+		return nil, err
+	}
+	matches := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		matches[id] = struct{}{}
+	}
+	return matches, nil
+}
+
 // Delete deletes a session
 func (m *Manager) Delete(id string) error {
 	return m.store.DeleteSession(id)

@@ -9,12 +9,14 @@ import (
 )
 
 type countingLLM struct {
-	calls int
-	err   error
+	calls       int
+	err         error
+	lastRequest *llm.ChatRequest
 }
 
 func (c *countingLLM) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatResponse, error) {
 	c.calls++
+	c.lastRequest = request
 	return nil, c.err
 }
 
@@ -79,6 +81,35 @@ func TestClientChat_SkipsNodeWhenUsageLimitKnown(t *testing.T) {
 	}
 	if secondary.calls != 1 {
 		t.Fatalf("expected secondary provider to be called once, got %d calls", secondary.calls)
+	}
+}
+
+func TestClientChatAppliesNodeReasoningEffort(t *testing.T) {
+	provider := &countingLLM{}
+	client := NewClient([]Node{{
+		Name:            "openai_codex",
+		Model:           "gpt-5.6-codex",
+		ReasoningEffort: "high",
+		Client:          provider,
+	}})
+
+	if _, err := client.Chat(context.Background(), &llm.ChatRequest{ReasoningEffort: "low"}); err != nil {
+		t.Fatalf("chat failed: %v", err)
+	}
+	if provider.lastRequest == nil || provider.lastRequest.ReasoningEffort != "high" {
+		t.Fatalf("node reasoning effort was not applied: %#v", provider.lastRequest)
+	}
+}
+
+func TestClientChatPreservesRequestReasoningEffortWhenNodeUnset(t *testing.T) {
+	provider := &countingLLM{}
+	client := NewClient([]Node{{Name: "openai_codex", Model: "gpt-5.6-codex", Client: provider}})
+
+	if _, err := client.Chat(context.Background(), &llm.ChatRequest{ReasoningEffort: "medium"}); err != nil {
+		t.Fatalf("chat failed: %v", err)
+	}
+	if provider.lastRequest == nil || provider.lastRequest.ReasoningEffort != "medium" {
+		t.Fatalf("request reasoning effort should be preserved: %#v", provider.lastRequest)
 	}
 }
 

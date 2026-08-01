@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // SaveSession saves a session to the database
@@ -288,6 +289,45 @@ func (s *SQLiteStore) ListSessions() ([]*Session, error) {
 	}
 
 	return sessions, nil
+}
+
+// SearchSessionDialogues returns sessions whose user or assistant message content contains query.
+// Tool payload columns are intentionally not selected so tool calls and file contents cannot match.
+func (s *SQLiteStore) SearchSessionDialogues(query, projectID string) ([]string, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
+
+	args := []interface{}{strings.ToLower(query)}
+	projectFilter := ""
+	if projectID != "" {
+		projectFilter = " AND sessions.project_id = ?"
+		args = append(args, projectID)
+	}
+	rows, err := s.db.Query(`
+		SELECT DISTINCT messages.session_id
+		FROM messages
+		JOIN sessions ON sessions.id = messages.session_id
+		WHERE messages.role IN ('user', 'assistant')
+		  AND INSTR(LOWER(messages.content), ?) > 0`+projectFilter, args...)
+	if err != nil {
+		return nil, fmt.Errorf("search session dialogues: %w", err)
+	}
+	defer rows.Close()
+
+	var sessionIDs []string
+	for rows.Next() {
+		var sessionID string
+		if err := rows.Scan(&sessionID); err != nil {
+			return nil, fmt.Errorf("scan session dialogue match: %w", err)
+		}
+		sessionIDs = append(sessionIDs, sessionID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate session dialogue matches: %w", err)
+	}
+	return sessionIDs, nil
 }
 
 // ListSessionsByJob returns all sessions associated with a specific job

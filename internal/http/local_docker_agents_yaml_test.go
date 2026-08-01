@@ -256,8 +256,9 @@ func TestLocalDockerAgentYAMLBuildsDockerArgsForToolsAndRuntimeOptions(t *testin
 	server := &Server{toolManager: nil}
 	req := createLocalDockerAgentRequest{
 		LLM: localDockerAgentYAMLLLM{
-			Provider: "openai",
-			Model:    "gpt-5.5",
+			Provider:        "openai",
+			Model:           "gpt-5.5",
+			ReasoningEffort: "high",
 		},
 		Tools: localDockerAgentYAMLTools{Mode: "all"},
 		Environment: map[string]string{
@@ -298,6 +299,7 @@ func TestLocalDockerAgentYAMLBuildsDockerArgsForToolsAndRuntimeOptions(t *testin
 		"TOKEN=secret",
 		"AAGENT_PROVIDER=openai",
 		"AAGENT_MODEL=gpt-5.5",
+		"AAGENT_OPENAI_CODEX_REASONING_EFFORT=high",
 		"a2gent-dev",
 		"host.docker.internal:host-gateway",
 		"19090:9090/tcp",

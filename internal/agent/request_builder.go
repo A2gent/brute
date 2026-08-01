@@ -73,6 +73,7 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 
 	request := &llm.ChatRequest{
 		Model:                 a.config.Model,
+		ReasoningEffort:       strings.TrimSpace(a.config.ReasoningEffort),
 		Messages:              messages,
 		Tools:                 a.toolManager.GetDefinitions(),
 		Temperature:           a.config.Temperature,

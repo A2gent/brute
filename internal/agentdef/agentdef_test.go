@@ -27,8 +27,9 @@ runtime:
     memory: 2g
 
 llm:
-  provider: openai
+  provider: openai_codex
   model: gpt-5.5
+  reasoning_effort: high
 
 instructions:
   system: |
@@ -68,6 +69,9 @@ publish:
 	}
 	if def.Runtime.Image != "a2gent-brute:latest" || def.Runtime.Resources.Memory != "2g" {
 		t.Fatalf("runtime not parsed: %+v", def.Runtime)
+	}
+	if def.LLM.Provider != "openai_codex" || def.LLM.ReasoningEffort != "high" {
+		t.Fatalf("llm selection not parsed: %+v", def.LLM)
 	}
 	if len(def.Instructions.Blocks) != 2 || def.Instructions.Blocks[1].Value != "Prefer concise actionable findings." {
 		t.Fatalf("instruction blocks not parsed: %+v", def.Instructions.Blocks)

@@ -10,19 +10,20 @@ import (
 
 // CreateSessionRequest represents a request to create a new session
 type CreateSessionRequest struct {
-	AgentID    string                `json:"agent_id"`
-	Task       string                `json:"task,omitempty"`
-	Images     []MessageImagePayload `json:"images,omitempty"`
-	ParentID   string                `json:"parent_id,omitempty"`
-	LinkType   string                `json:"link_type,omitempty"`
-	Provider   string                `json:"provider,omitempty"`
-	Model      string                `json:"model,omitempty"`
-	ProjectID  string                `json:"project_id,omitempty"`
-	SubAgentID string                `json:"sub_agent_id,omitempty"` // Optional sub-agent to use for this session
+	AgentID         string                `json:"agent_id"`
+	Task            string                `json:"task,omitempty"`
+	Images          []MessageImagePayload `json:"images,omitempty"`
+	ParentID        string                `json:"parent_id,omitempty"`
+	LinkType        string                `json:"link_type,omitempty"`
+	Provider        string                `json:"provider,omitempty"`
+	Model           string                `json:"model,omitempty"`
+	ReasoningEffort string                `json:"reasoning_effort,omitempty"`
+	ProjectID       string                `json:"project_id,omitempty"`
+	SubAgentID      string                `json:"sub_agent_id,omitempty"` // Optional sub-agent to use for this session
 	// Optional direct agent targets. Unified agents are saved sub-agents or YAML-backed agent definitions;
 	// Docker agents reference an already running local Brute container.
-	UnifiedAgentID string                 `json:"unified_agent_id,omitempty"`
-	DockerAgentID  string                 `json:"docker_agent_id,omitempty"`
+	UnifiedAgentID string `json:"unified_agent_id,omitempty"`
+	DockerAgentID  string `json:"docker_agent_id,omitempty"`
 	// Optional team launch target. When set, create a team_run header for the parent session.
 	TeamID    string                 `json:"team_id,omitempty"`
 	Queued    bool                   `json:"queued,omitempty"`     // If true, create session without starting it
@@ -32,15 +33,16 @@ type CreateSessionRequest struct {
 
 // CreateSessionResponse represents a response after creating a session
 type CreateSessionResponse struct {
-	ID        string    `json:"id"`
-	AgentID   string    `json:"agent_id"`
-	ParentID  string    `json:"parent_id,omitempty"`
-	LinkType  string    `json:"link_type,omitempty"`
-	ProjectID string    `json:"project_id,omitempty"`
-	Provider  string    `json:"provider,omitempty"`
-	Model     string    `json:"model,omitempty"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
+	ID              string    `json:"id"`
+	AgentID         string    `json:"agent_id"`
+	ParentID        string    `json:"parent_id,omitempty"`
+	LinkType        string    `json:"link_type,omitempty"`
+	ProjectID       string    `json:"project_id,omitempty"`
+	Provider        string    `json:"provider,omitempty"`
+	Model           string    `json:"model,omitempty"`
+	ReasoningEffort string    `json:"reasoning_effort,omitempty"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 type PromptCachePayload struct {
@@ -64,6 +66,7 @@ type SessionResponse struct {
 	ProjectID              string                       `json:"project_id,omitempty"`
 	Provider               string                       `json:"provider,omitempty"`
 	Model                  string                       `json:"model,omitempty"`
+	ReasoningEffort        string                       `json:"reasoning_effort,omitempty"`
 	RoutedProvider         string                       `json:"routed_provider,omitempty"`
 	RoutedModel            string                       `json:"routed_model,omitempty"`
 	RoutedRule             string                       `json:"routed_rule,omitempty"`
@@ -471,34 +474,35 @@ type UpdateSettingsRequest struct {
 }
 
 type ProviderConfigResponse struct {
-	Type                string                     `json:"type"`
-	DisplayName         string                     `json:"display_name"`
-	DefaultURL          string                     `json:"default_url"`
-	RequiresKey         bool                       `json:"requires_key"`
-	DefaultModel        string                     `json:"default_model"`
-	ContextWindow       int                        `json:"context_window"`
-	IsActive            bool                       `json:"is_active"`
-	Configured          bool                       `json:"configured"`
-	HasAPIKey           bool                       `json:"has_api_key"`
-	BaseURL             string                     `json:"base_url"`
-	Model               string                     `json:"model"`
-	PromptCacheKey      string                     `json:"prompt_cache_key,omitempty"`
-	ReasoningEffort     string                     `json:"reasoning_effort,omitempty"`
-	TextVerbosity       string                     `json:"text_verbosity,omitempty"`
-	ServiceTier         string                     `json:"service_tier,omitempty"`
-	MaxTokens           int                        `json:"max_tokens,omitempty"`
-	StatefulResponses   bool                       `json:"stateful_responses,omitempty"`
-	ProxyManaged        bool                       `json:"proxy_managed"`
-	ProxyBaseURL        string                     `json:"proxy_base_url,omitempty"`
-	FallbackChain       []config.FallbackChainNode `json:"fallback_chain,omitempty"`
-	RouterProvider      string                     `json:"router_provider,omitempty"`
-	RouterModel         string                     `json:"router_model,omitempty"`
-	RouterRules         []config.RouterRule        `json:"router_rules,omitempty"`
-	BinaryPath          string                     `json:"binary_path,omitempty"`
-	ConfigDir           string                     `json:"config_dir,omitempty"`
-	HomePath            string                     `json:"home_path,omitempty"`
-	EnvOverrides        map[string]string          `json:"env_overrides,omitempty"`
-	SensitiveSecretKeys []string                   `json:"sensitive_secret_keys,omitempty"`
+	Type                  string                     `json:"type"`
+	DisplayName           string                     `json:"display_name"`
+	DefaultURL            string                     `json:"default_url"`
+	RequiresKey           bool                       `json:"requires_key"`
+	DefaultModel          string                     `json:"default_model"`
+	ContextWindow         int                        `json:"context_window"`
+	IsActive              bool                       `json:"is_active"`
+	Configured            bool                       `json:"configured"`
+	HasAPIKey             bool                       `json:"has_api_key"`
+	BaseURL               string                     `json:"base_url"`
+	Model                 string                     `json:"model"`
+	PromptCacheKey        string                     `json:"prompt_cache_key,omitempty"`
+	ReasoningEffort       string                     `json:"reasoning_effort,omitempty"`
+	TextVerbosity         string                     `json:"text_verbosity,omitempty"`
+	ServiceTier           string                     `json:"service_tier,omitempty"`
+	MaxTokens             int                        `json:"max_tokens,omitempty"`
+	StatefulResponses     bool                       `json:"stateful_responses,omitempty"`
+	ProxyManaged          bool                       `json:"proxy_managed"`
+	ProxyBaseURL          string                     `json:"proxy_base_url,omitempty"`
+	FallbackChain         []config.FallbackChainNode `json:"fallback_chain,omitempty"`
+	RouterProvider        string                     `json:"router_provider,omitempty"`
+	RouterModel           string                     `json:"router_model,omitempty"`
+	RouterReasoningEffort string                     `json:"router_reasoning_effort,omitempty"`
+	RouterRules           []config.RouterRule        `json:"router_rules,omitempty"`
+	BinaryPath            string                     `json:"binary_path,omitempty"`
+	ConfigDir             string                     `json:"config_dir,omitempty"`
+	HomePath              string                     `json:"home_path,omitempty"`
+	EnvOverrides          map[string]string          `json:"env_overrides,omitempty"`
+	SensitiveSecretKeys   []string                   `json:"sensitive_secret_keys,omitempty"`
 }
 
 type ProviderUsageResponse struct {
@@ -521,21 +525,22 @@ type ProviderUsageBar struct {
 }
 
 type UpdateProviderRequest struct {
-	Name              *string                     `json:"name,omitempty"`
-	APIKey            *string                     `json:"api_key,omitempty"`
-	BaseURL           *string                     `json:"base_url,omitempty"`
-	Model             *string                     `json:"model,omitempty"`
-	PromptCacheKey    *string                     `json:"prompt_cache_key,omitempty"`
-	ReasoningEffort   *string                     `json:"reasoning_effort,omitempty"`
-	TextVerbosity     *string                     `json:"text_verbosity,omitempty"`
-	ServiceTier       *string                     `json:"service_tier,omitempty"`
-	MaxTokens         *int                        `json:"max_tokens,omitempty"`
-	StatefulResponses *bool                       `json:"stateful_responses,omitempty"`
-	FallbackChain     *[]config.FallbackChainNode `json:"fallback_chain,omitempty"`
-	RouterProvider    *string                     `json:"router_provider,omitempty"`
-	RouterModel       *string                     `json:"router_model,omitempty"`
-	RouterRules       *[]config.RouterRule        `json:"router_rules,omitempty"`
-	Active            *bool                       `json:"active,omitempty"`
+	Name                  *string                     `json:"name,omitempty"`
+	APIKey                *string                     `json:"api_key,omitempty"`
+	BaseURL               *string                     `json:"base_url,omitempty"`
+	Model                 *string                     `json:"model,omitempty"`
+	PromptCacheKey        *string                     `json:"prompt_cache_key,omitempty"`
+	ReasoningEffort       *string                     `json:"reasoning_effort,omitempty"`
+	TextVerbosity         *string                     `json:"text_verbosity,omitempty"`
+	ServiceTier           *string                     `json:"service_tier,omitempty"`
+	MaxTokens             *int                        `json:"max_tokens,omitempty"`
+	StatefulResponses     *bool                       `json:"stateful_responses,omitempty"`
+	FallbackChain         *[]config.FallbackChainNode `json:"fallback_chain,omitempty"`
+	RouterProvider        *string                     `json:"router_provider,omitempty"`
+	RouterModel           *string                     `json:"router_model,omitempty"`
+	RouterReasoningEffort *string                     `json:"router_reasoning_effort,omitempty"`
+	RouterRules           *[]config.RouterRule        `json:"router_rules,omitempty"`
+	Active                *bool                       `json:"active,omitempty"`
 }
 
 type SetActiveProviderRequest struct {

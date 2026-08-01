@@ -8,6 +8,7 @@ type Config struct {
 	Description              string
 	Provider                 string
 	Model                    string
+	ReasoningEffort          string
 	SystemPrompt             string
 	Temperature              float64
 	MaxSteps                 int

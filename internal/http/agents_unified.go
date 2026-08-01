@@ -775,8 +775,9 @@ func localDockerCreateRequestBaseFromDefinition(def *agentdef.Definition) create
 			"a2gent.agent_avatar_url":  firstNonEmptyLocalAgentString(def.Publish.Square.AvatarURL, def.Agent.AvatarURL),
 		},
 		LLM: localDockerAgentYAMLLLM{
-			Provider: def.LLM.Provider,
-			Model:    def.LLM.Model,
+			Provider:        def.LLM.Provider,
+			Model:           def.LLM.Model,
+			ReasoningEffort: def.LLM.ReasoningEffort,
 		},
 		Tools: localDockerAgentYAMLTools{
 			Mode:     def.Tools.Mode,

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/A2gent/brute/internal/config"
+	"github.com/A2gent/brute/internal/session"
 )
 
 func TestParseRouterChoiceRejectsTruncatedJSON(t *testing.T) {
@@ -91,5 +92,105 @@ func TestAutoRouterAcceptsCustomClaudeAsRouterProviderAndRule(t *testing.T) {
 	}
 	if len(rules) != 1 || rules[0].Provider != customRef || rules[0].Model != "claude-sonnet-4-6" {
 		t.Fatalf("unexpected normalized custom Claude rule: %+v", rules)
+	}
+}
+
+func TestNormalizeRouterRulesPreservesReasoningEffort(t *testing.T) {
+	rules := normalizeRouterRules([]config.RouterRule{{
+		Match:           " coding ",
+		Provider:        " openai_codex ",
+		Model:           " gpt-5.6-codex ",
+		ReasoningEffort: " high ",
+	}})
+
+	if len(rules) != 1 || rules[0].ReasoningEffort != "high" {
+		t.Fatalf("reasoning effort was not normalized: %+v", rules)
+	}
+}
+
+func TestNormalizeFallbackChainNodesPreservesReasoningEffort(t *testing.T) {
+	nodes := normalizeFallbackChainNodes([]config.FallbackChainNode{{
+		Provider:        " openai_codex ",
+		Model:           " gpt-5.6-codex ",
+		ReasoningEffort: " xhigh ",
+	}})
+
+	if len(nodes) != 1 || nodes[0].ReasoningEffort != "xhigh" {
+		t.Fatalf("reasoning effort was not normalized: %+v", nodes)
+	}
+}
+
+func TestResolveExecutionTargetCarriesRuleReasoningEffortToAgentConfig(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Providers[string(config.ProviderOpenAICodex)] = config.Provider{
+		Name:    string(config.ProviderOpenAICodex),
+		APIKey:  "test-key",
+		BaseURL: "http://127.0.0.1:1",
+		Model:   "gpt-5.6-codex",
+	}
+	cfg.Providers[string(config.ProviderAutoRouter)] = config.Provider{
+		RouterProvider: string(config.ProviderOpenAICodex),
+		RouterModel:    "gpt-5.6-codex",
+		RouterRules: []config.RouterRule{{
+			Match:           "coding",
+			Provider:        string(config.ProviderOpenAICodex),
+			Model:           "gpt-5.6-codex",
+			ReasoningEffort: "high",
+		}},
+	}
+	server := &Server{config: cfg}
+
+	target, err := server.resolveExecutionTarget(context.Background(), config.ProviderAutoRouter, "", "fix tests", nil)
+	if err != nil {
+		t.Fatalf("resolveExecutionTarget failed: %v", err)
+	}
+	if target.ReasoningEffort != "high" {
+		t.Fatalf("target reasoning effort = %q, want high", target.ReasoningEffort)
+	}
+	agentCfg := server.agentConfigFromTarget(nil, target, "", 1, 0)
+	if agentCfg.ReasoningEffort != "high" {
+		t.Fatalf("agent reasoning effort = %q, want high", agentCfg.ReasoningEffort)
+	}
+}
+
+func TestResolveExecutionTargetUsesSessionReasoningEffortOverride(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Providers[string(config.ProviderOpenAICodex)] = config.Provider{
+		Name:            string(config.ProviderOpenAICodex),
+		APIKey:          "test-key",
+		BaseURL:         "http://127.0.0.1:1",
+		Model:           "gpt-5.6-codex",
+		ReasoningEffort: "low",
+	}
+	server := &Server{config: cfg}
+	sess := session.New("build")
+	sess.Metadata["reasoning_effort"] = " high "
+
+	target, err := server.resolveExecutionTarget(context.Background(), config.ProviderOpenAICodex, "gpt-5.6-codex", "", sess)
+	if err != nil {
+		t.Fatalf("resolveExecutionTarget failed: %v", err)
+	}
+	if target.ReasoningEffort != "high" {
+		t.Fatalf("target reasoning effort = %q, want high", target.ReasoningEffort)
+	}
+}
+
+func TestResolveExecutionTargetPreservesProviderReasoningEffortWhenSessionUnset(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Providers[string(config.ProviderOpenAICodex)] = config.Provider{
+		Name:            string(config.ProviderOpenAICodex),
+		APIKey:          "test-key",
+		BaseURL:         "http://127.0.0.1:1",
+		Model:           "gpt-5.6-codex",
+		ReasoningEffort: "medium",
+	}
+	server := &Server{config: cfg}
+
+	target, err := server.resolveExecutionTarget(context.Background(), config.ProviderOpenAICodex, "gpt-5.6-codex", "", session.New("build"))
+	if err != nil {
+		t.Fatalf("resolveExecutionTarget failed: %v", err)
+	}
+	if target.ReasoningEffort != "medium" {
+		t.Fatalf("target reasoning effort = %q, want medium", target.ReasoningEffort)
 	}
 }

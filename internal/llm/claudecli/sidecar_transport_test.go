@@ -478,9 +478,15 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"argv-ok"}'
 	node := filepath.Join(tmp, "node")
 	writeExecutable(t, node, "#!/bin/sh\nprintf '%s\\n' \"$0\" >> \""+runCapture+"\"\nprintf '%s\\n' \"$1\" >> \""+runCapture+"\"\nexec \""+sidecar+"\"\n")
 
+	// The sidecar path still validates the configured Claude executable before
+	// starting Node, so provide a local fixture even though the test never runs it.
+	fakeClaude := filepath.Join(tmp, "claude")
+	writeExecutable(t, fakeClaude, "#!/bin/sh\nexit 0\n")
+
 	broker := approval.New(testApprovalLimits())
 	t.Setenv(envSidecarPath, sidecar)
 	client := NewClientWithOptions("claude-sonnet-4-6", Options{
+		Executable:           fakeClaude,
 		WorkDir:              tmp,
 		NoSessionPersistence: true,
 		Broker:               broker,

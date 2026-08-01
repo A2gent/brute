@@ -8,3 +8,4 @@
 - Git hooks that run `go test` must unset `GIT_DIR`/`GIT_INDEX_FILE`/`GIT_WORK_TREE` (and related) before tests; otherwise nested fixture repos inherit the outer commit index and fail with `invalid object` / `Error building trees`.
 - When a Docker sub-agent itself reproduces a provider bootstrap bug, expect delegation to fail before task execution; use the failure as manual reproduction evidence, then perform repository analysis locally until the bootstrap path is fixed.
 - Before inserting at a numbered line, confirm the current file length and that the line is outside any open function; use append or an exact structural replacement when placement is not safely known.
+- If delegation fails with a provider fallback configuration error, do not retry blindly; continue the scoped investigation locally and record the infrastructure failure separately from repository test results.

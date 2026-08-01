@@ -13,26 +13,28 @@ import (
 )
 
 type createTaskRequest struct {
-	Title      string               `json:"title"`
-	Body       string               `json:"body"`
-	Image      *MessageImagePayload `json:"image,omitempty"`
-	Status     string               `json:"status"`
-	Priority   *int                 `json:"priority"`
-	Complexity int                  `json:"complexity"`
-	Tags       []string             `json:"tags"`
-	Price      string               `json:"price"`
+	Title         string               `json:"title"`
+	Body          string               `json:"body"`
+	Image         *MessageImagePayload `json:"image,omitempty"`
+	Status        string               `json:"status"`
+	Priority      *int                 `json:"priority"`
+	Complexity    int                  `json:"complexity"`
+	DependencyIDs []string             `json:"dependency_ids"`
+	Tags          []string             `json:"tags"`
+	Price         string               `json:"price"`
 }
 
 type updateTaskRequest struct {
-	Title      *string               `json:"title"`
-	Body       *string               `json:"body"`
-	Image      **MessageImagePayload `json:"image"`
-	Status     *string               `json:"status"`
-	Priority   *int                  `json:"priority"`
-	Complexity *int                  `json:"complexity"`
-	Tags       *[]string             `json:"tags"`
-	Price      *string               `json:"price"`
-	Position   *float64              `json:"position"`
+	Title         *string               `json:"title"`
+	Body          *string               `json:"body"`
+	Image         **MessageImagePayload `json:"image"`
+	Status        *string               `json:"status"`
+	Priority      *int                  `json:"priority"`
+	Complexity    *int                  `json:"complexity"`
+	DependencyIDs *[]string             `json:"dependency_ids"`
+	Tags          *[]string             `json:"tags"`
+	Price         *string               `json:"price"`
+	Position      *float64              `json:"position"`
 }
 
 type taskImportRequest struct {
@@ -71,7 +73,7 @@ func (s *Server) handleCreateProjectTask(w http.ResponseWriter, r *http.Request)
 	}
 	task, err := s.store.CreateTask(chi.URLParam(r, "projectID"), storage.TaskCreate{
 		Title: req.Title, Body: req.Body, Image: image, Status: req.Status, Priority: priority,
-		Complexity: req.Complexity, Tags: req.Tags, Price: req.Price, CreatedBy: "user",
+		Complexity: req.Complexity, DependencyRefs: req.DependencyIDs, Tags: req.Tags, Price: req.Price, CreatedBy: "user",
 	})
 	if err != nil {
 		s.taskErrorResponse(w, err)
@@ -106,7 +108,7 @@ func (s *Server) handleUpdateProjectTask(w http.ResponseWriter, r *http.Request)
 	}
 	task, err := s.store.UpdateTask(chi.URLParam(r, "projectID"), chi.URLParam(r, "taskRef"), storage.TaskUpdate{
 		Title: req.Title, Body: req.Body, Image: image, Status: req.Status, Priority: req.Priority,
-		Complexity: req.Complexity, Tags: req.Tags, Price: req.Price, Position: req.Position,
+		Complexity: req.Complexity, DependencyRefs: req.DependencyIDs, Tags: req.Tags, Price: req.Price, Position: req.Position,
 	})
 	if err != nil {
 		s.taskErrorResponse(w, err)

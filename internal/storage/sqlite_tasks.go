@@ -88,6 +88,11 @@ func (s *SQLiteStore) CreateTask(projectID string, input TaskCreate) (*Task, err
 	if err != nil {
 		return nil, fmt.Errorf("create task: %w", err)
 	}
+	dependencyIDs, err := replaceTaskDependenciesTx(tx, projectID, task.ID, input.DependencyRefs)
+	if err != nil {
+		return nil, err
+	}
+	task.DependencyIDs = dependencyIDs
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit task: %w", err)
 	}
@@ -112,6 +117,9 @@ func (s *SQLiteStore) ListTasks(projectID string) ([]*Task, error) {
 		}
 		tasks = append(tasks, task)
 	}
+	if err := loadTaskDependencies(s.db, tasks); err != nil {
+		return nil, err
+	}
 	return tasks, rows.Err()
 }
 
@@ -123,7 +131,14 @@ func (s *SQLiteStore) GetTask(projectID, taskRef string) (*Task, error) {
 	if taskRef == "" {
 		return nil, fmt.Errorf("task id is required")
 	}
-	return scanTask(s.db.QueryRow(taskSelect+` WHERE project_id = ? AND (id = ? OR ref = ?)`, projectID, taskRef, taskRef))
+	task, err := scanTask(s.db.QueryRow(taskSelect+` WHERE project_id = ? AND (id = ? OR ref = ?)`, projectID, taskRef, taskRef))
+	if err != nil {
+		return nil, err
+	}
+	if err := loadTaskDependencies(s.db, []*Task{task}); err != nil {
+		return nil, err
+	}
+	return task, nil
 }
 
 func (s *SQLiteStore) UpdateTask(projectID, taskRef string, update TaskUpdate) (*Task, error) {
@@ -181,7 +196,12 @@ func (s *SQLiteStore) UpdateTask(projectID, taskRef string, update TaskUpdate) (
 	if task.Image != nil {
 		imageJSON, _ = json.Marshal(task.Image)
 	}
-	result, err := s.db.Exec(`UPDATE tasks SET title=?, body=?, image=?, session_id=?, status=?, priority=?, complexity=?, tags=?, price=?, position=?, updated_at=?, started_at=?, completed_at=? WHERE project_id=? AND id=?`,
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`UPDATE tasks SET title=?, body=?, image=?, session_id=?, status=?, priority=?, complexity=?, tags=?, price=?, position=?, updated_at=?, started_at=?, completed_at=? WHERE project_id=? AND id=?`,
 		task.Title, task.Body, string(imageJSON), task.SessionID, task.Status, task.Priority, task.Complexity, string(tagsJSON), task.Price, task.Position,
 		task.UpdatedAt, task.StartedAt, task.CompletedAt, projectID, task.ID)
 	if err != nil {
@@ -189,6 +209,16 @@ func (s *SQLiteStore) UpdateTask(projectID, taskRef string, update TaskUpdate) (
 	}
 	if affected, _ := result.RowsAffected(); affected == 0 {
 		return nil, ErrTaskNotFound
+	}
+	if update.DependencyRefs != nil {
+		dependencyIDs, err := replaceTaskDependenciesTx(tx, projectID, task.ID, *update.DependencyRefs)
+		if err != nil {
+			return nil, err
+		}
+		task.DependencyIDs = dependencyIDs
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit task update: %w", err)
 	}
 	return task, nil
 }
@@ -240,6 +270,84 @@ func scanTask(scanner taskScanner) (*Task, error) {
 	return &task, nil
 }
 
+type taskDependencyQueryer interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+func loadTaskDependencies(queryer taskDependencyQueryer, tasks []*Task) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	byID := make(map[string]*Task, len(tasks))
+	for _, task := range tasks {
+		task.DependencyIDs = []string{}
+		byID[task.ID] = task
+	}
+	rows, err := queryer.Query(`SELECT task_id, depends_on_task_id FROM task_dependencies WHERE project_id = ? ORDER BY rowid`, tasks[0].ProjectID)
+	if err != nil {
+		return fmt.Errorf("load task dependencies: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var taskID, dependencyID string
+		if err := rows.Scan(&taskID, &dependencyID); err != nil {
+			return err
+		}
+		if task := byID[taskID]; task != nil {
+			task.DependencyIDs = append(task.DependencyIDs, dependencyID)
+		}
+	}
+	return rows.Err()
+}
+
+func replaceTaskDependenciesTx(tx *sql.Tx, projectID, taskID string, refs []string) ([]string, error) {
+	dependencyIDs := make([]string, 0, len(refs))
+	seen := map[string]struct{}{}
+	for _, ref := range refs {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		var dependencyID string
+		if err := tx.QueryRow(`SELECT id FROM tasks WHERE project_id = ? AND (id = ? OR ref = ?)`, projectID, ref, ref).Scan(&dependencyID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, fmt.Errorf("dependency task %q not found in this project", ref)
+			}
+			return nil, err
+		}
+		if dependencyID == taskID {
+			return nil, fmt.Errorf("task cannot depend on itself")
+		}
+		if _, ok := seen[dependencyID]; ok {
+			continue
+		}
+		seen[dependencyID] = struct{}{}
+		dependencyIDs = append(dependencyIDs, dependencyID)
+	}
+	if _, err := tx.Exec(`DELETE FROM task_dependencies WHERE task_id = ?`, taskID); err != nil {
+		return nil, fmt.Errorf("replace task dependencies: %w", err)
+	}
+	for _, dependencyID := range dependencyIDs {
+		var createsCycle int
+		err := tx.QueryRow(`WITH RECURSIVE prerequisites(id) AS (
+			SELECT depends_on_task_id FROM task_dependencies WHERE task_id = ?
+			UNION
+			SELECT dependency.depends_on_task_id
+			FROM task_dependencies dependency
+			JOIN prerequisites ON dependency.task_id = prerequisites.id
+		) SELECT EXISTS(SELECT 1 FROM prerequisites WHERE id = ?)`, dependencyID, taskID).Scan(&createsCycle)
+		if err != nil {
+			return nil, fmt.Errorf("validate task dependency: %w", err)
+		}
+		if createsCycle != 0 {
+			return nil, fmt.Errorf("task dependency would create a cycle")
+		}
+		if _, err := tx.Exec(`INSERT INTO task_dependencies (task_id, depends_on_task_id, project_id) VALUES (?, ?, ?)`, taskID, dependencyID, projectID); err != nil {
+			return nil, fmt.Errorf("save task dependency: %w", err)
+		}
+	}
+	return dependencyIDs, nil
+}
 func getTaskBySourceKeyTx(tx *sql.Tx, projectID, sourceKey string) (*Task, error) {
 	return scanTask(tx.QueryRow(taskSelect+` WHERE project_id = ? AND source_key = ?`, projectID, sourceKey))
 }

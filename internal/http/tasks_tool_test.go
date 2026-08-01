@@ -105,6 +105,25 @@ func TestTasksToolNextPicksHighestPriorityOpenTask(t *testing.T) {
 	}
 }
 
+func TestTasksToolDependenciesBlockNextUntilPrerequisitesAreDone(t *testing.T) {
+	tool, ctx, _, _ := newTasksToolFixture(t)
+
+	runTasksTool(t, tool, ctx, map[string]any{"action": "create", "title": "Foundation", "priority": 3})
+	created := runTasksTool(t, tool, ctx, map[string]any{
+		"action": "create", "title": "Feature", "priority": 0, "depends_on": []string{"AG-1"},
+	})
+	if !strings.Contains(created, "depends on AG-1") {
+		t.Fatalf("create output = %q, want dependency refs", created)
+	}
+	if next := runTasksTool(t, tool, ctx, map[string]any{"action": "next"}); !strings.Contains(next, "Foundation") {
+		t.Fatalf("next = %q, want unblocked prerequisite", next)
+	}
+	runTasksTool(t, tool, ctx, map[string]any{"action": "update", "ref": "AG-1", "status": "done"})
+	if next := runTasksTool(t, tool, ctx, map[string]any{"action": "next"}); !strings.Contains(next, "Feature") {
+		t.Fatalf("next = %q, want feature after prerequisite completion", next)
+	}
+}
+
 func TestTasksToolUpdateGetAndDelete(t *testing.T) {
 	tool, ctx, store, projectID := newTasksToolFixture(t)
 

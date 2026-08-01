@@ -352,6 +352,17 @@ func (s *SQLiteStore) migrate() error {
 		`ALTER TABLE tasks ADD COLUMN image TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE tasks ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_session ON tasks(session_id) WHERE session_id <> ''`,
+		`CREATE TABLE IF NOT EXISTS task_dependencies (
+				task_id TEXT NOT NULL,
+				depends_on_task_id TEXT NOT NULL,
+				project_id TEXT NOT NULL,
+				PRIMARY KEY (task_id, depends_on_task_id),
+				CHECK (task_id <> depends_on_task_id),
+				FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+				FOREIGN KEY (depends_on_task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+				FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+			)`,
+		`CREATE INDEX IF NOT EXISTS idx_task_dependencies_prerequisite ON task_dependencies(depends_on_task_id)`,
 	}
 
 	for _, m := range migrations {

@@ -26,6 +26,7 @@ type tasksToolParams struct {
 	Status     string    `json:"status,omitempty"`
 	Priority   *int      `json:"priority,omitempty"`
 	Complexity *int      `json:"complexity,omitempty"`
+	DependsOn  *[]string `json:"depends_on,omitempty"`
 	Tags       *[]string `json:"tags,omitempty"`
 	Price      *string   `json:"price,omitempty"`
 	Query      string    `json:"q,omitempty"`
@@ -66,6 +67,10 @@ func (t *tasksTool) Schema() map[string]interface{} {
 			},
 			"complexity": map[string]interface{}{
 				"type": "integer", "description": "0 unknown, 1 trivial .. 5 hard.",
+			},
+			"depends_on": map[string]interface{}{
+				"type": "array", "items": map[string]interface{}{"type": "string"},
+				"description": "Existing task refs or UUIDs that must be completed first. Replaces dependencies on update.",
 			},
 			"tags":  map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Tags without '#'."},
 			"price": map[string]interface{}{"type": "string", "description": "Free-text price/estimate, as used on the board."},
@@ -181,7 +186,7 @@ func (t *tasksTool) next(projectID string, p tasksToolParams) (string, error) {
 	}
 	candidates := []*storage.Task{}
 	for _, task := range tasks {
-		if _, ok := statuses[task.Status]; ok && matchesTaskText(task, p) {
+		if _, ok := statuses[task.Status]; ok && matchesTaskText(task, p) && taskDependenciesDone(task, tasks) {
 			candidates = append(candidates, task)
 		}
 	}
@@ -244,6 +249,9 @@ func (t *tasksTool) create(projectID string, p tasksToolParams) (string, error) 
 	if p.Complexity != nil {
 		create.Complexity = *p.Complexity
 	}
+	if p.DependsOn != nil {
+		create.DependencyRefs = *p.DependsOn
+	}
 	if p.Tags != nil {
 		create.Tags = *p.Tags
 	}
@@ -254,14 +262,14 @@ func (t *tasksTool) create(projectID string, p tasksToolParams) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	return "Created " + formatTaskLine(task), nil
+	return "Created " + formatTaskLine(task) + formatDependencyRefs(p.DependsOn), nil
 }
 
 func (t *tasksTool) update(projectID string, p tasksToolParams) (string, error) {
 	if strings.TrimSpace(p.Ref) == "" {
 		return "", fmt.Errorf("ref is required for update")
 	}
-	update := storage.TaskUpdate{Body: p.Body, Priority: p.Priority, Complexity: p.Complexity, Tags: p.Tags, Price: p.Price}
+	update := storage.TaskUpdate{Body: p.Body, Priority: p.Priority, Complexity: p.Complexity, DependencyRefs: p.DependsOn, Tags: p.Tags, Price: p.Price}
 	if strings.TrimSpace(p.Title) != "" {
 		update.Title = &p.Title
 	}
@@ -339,6 +347,26 @@ func containsString(values []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+func taskDependenciesDone(task *storage.Task, tasks []*storage.Task) bool {
+	statusByID := make(map[string]string, len(tasks))
+	for _, candidate := range tasks {
+		statusByID[candidate.ID] = candidate.Status
+	}
+	for _, dependencyID := range task.DependencyIDs {
+		if statusByID[dependencyID] != storage.TaskStatusDone {
+			return false
+		}
+	}
+	return true
+}
+
+func formatDependencyRefs(refs *[]string) string {
+	if refs == nil || len(*refs) == 0 {
+		return ""
+	}
+	return " (depends on " + strings.Join(*refs, ", ") + ")"
 }
 
 func formatTaskLine(task *storage.Task) string {

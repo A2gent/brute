@@ -97,6 +97,39 @@ func TestSQLiteTaskPersistsImageAndLinkedSession(t *testing.T) {
 	}
 }
 
+func TestSQLiteTaskDependenciesPersistAndRejectCycles(t *testing.T) {
+	store, err := NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	project := saveTaskTestProject(t, store, "project", "Project")
+	foundation, err := store.CreateTask(project.ID, TaskCreate{Title: "Foundation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	feature, err := store.CreateTask(project.ID, TaskCreate{Title: "Feature", DependencyRefs: []string{foundation.Ref}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(feature.DependencyIDs) != 1 || feature.DependencyIDs[0] != foundation.ID {
+		t.Fatalf("feature dependencies = %#v, want %q", feature.DependencyIDs, foundation.ID)
+	}
+	loaded, err := store.GetTask(project.ID, feature.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.DependencyIDs) != 1 || loaded.DependencyIDs[0] != foundation.ID {
+		t.Fatalf("loaded dependencies = %#v", loaded.DependencyIDs)
+	}
+	if _, err := store.UpdateTask(project.ID, foundation.Ref, TaskUpdate{DependencyRefs: &[]string{feature.Ref}}); err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("cycle update error = %v, want cycle validation", err)
+	}
+	if _, err := store.UpdateTask(project.ID, feature.Ref, TaskUpdate{DependencyRefs: &[]string{feature.Ref}}); err == nil || !strings.Contains(err.Error(), "itself") {
+		t.Fatalf("self dependency error = %v, want self validation", err)
+	}
+}
+
 func saveTaskTestProject(t *testing.T, store *SQLiteStore, id, name string) *Project {
 	t.Helper()
 	now := time.Now().UTC()

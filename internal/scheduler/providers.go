@@ -163,6 +163,14 @@ func envBoolDefault(key string, fallback bool) bool {
 }
 
 func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model string, workDir string) (llm.Client, error) {
+	modelName := strings.TrimSpace(model)
+	if modelName == "" {
+		modelName = s.resolveModelForProvider(providerType)
+	}
+	if config.IsFallbackAggregateRef(string(providerType)) && s.parentProxyAvailable() {
+		return s.createParentProxyLLMClient(providerType, modelName), nil
+	}
+
 	def := config.GetProviderDefinitionForRef(string(providerType))
 	if def == nil {
 		return nil, fmt.Errorf("unknown provider: %s", providerType)
@@ -195,10 +203,6 @@ func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model 
 			baseURL = strings.TrimSpace(def.DefaultURL)
 		}
 	}
-	modelName := strings.TrimSpace(model)
-	if modelName == "" {
-		modelName = s.resolveModelForProvider(providerType)
-	}
 
 	if config.IsClaudeProviderRef(string(providerType)) {
 		opts := s.claudecliOptionsForRef(string(providerType), workDir)
@@ -214,13 +218,8 @@ func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model 
 		}), nil
 	}
 
-	if parentProxyURL := strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_URL")); parentProxyURL != "" {
-		proxyBaseURL := normalizeOpenAIBaseURL(strings.TrimRight(parentProxyURL, "/") + "/providers/" + string(providerType))
-		proxyAPIKey := strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_KEY"))
-		if proxyAPIKey == "" {
-			proxyAPIKey = "a2gent-proxy"
-		}
-		return lmstudio.NewClient(proxyAPIKey, modelName, proxyBaseURL), nil
+	if s.parentProxyAvailable() {
+		return s.createParentProxyLLMClient(providerType, modelName), nil
 	}
 
 	apiKey := strings.TrimSpace(provider.APIKey)
@@ -279,6 +278,11 @@ func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model 
 }
 
 func (s *Scheduler) createFallbackChainClient(providerRef config.ProviderType, workDir string) (llm.Client, error) {
+	if config.IsFallbackAggregateRef(string(providerRef)) && s.parentProxyAvailable() {
+		// Aggregate chains are host configuration, so recurring jobs in children
+		// pass the opaque ref to the parent rather than resolving it locally.
+		return s.createBaseLLMClient(providerRef, "", workDir)
+	}
 	chain, err := s.fallbackNodesForProvider(providerRef)
 	if err != nil {
 		return nil, err
@@ -373,6 +377,20 @@ func normalizeOpenAIBaseURL(raw string) string {
 	return strings.TrimSpace(baseURL)
 }
 
+func (s *Scheduler) parentProxyAvailable() bool {
+	return strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_URL")) != ""
+}
+
+func (s *Scheduler) createParentProxyLLMClient(providerType config.ProviderType, modelName string) llm.Client {
+	parentProxyURL := strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_URL"))
+	proxyBaseURL := normalizeOpenAIBaseURL(strings.TrimRight(parentProxyURL, "/") + "/providers/" + string(providerType))
+	proxyAPIKey := strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_KEY"))
+	if proxyAPIKey == "" {
+		proxyAPIKey = "a2gent-proxy"
+	}
+	return lmstudio.NewClient(proxyAPIKey, modelName, proxyBaseURL)
+}
+
 func legacyProvidersToFallbackNodes(raw []string, resolveModel func(config.ProviderType) string) []config.FallbackChainNode {
 	nodes := make([]config.FallbackChainNode, 0, len(raw))
 	for _, provider := range raw {
@@ -428,6 +446,9 @@ func (s *Scheduler) fallbackNodesForProvider(providerRef config.ProviderType) ([
 		return s.normalizeAndValidateFallbackChain(legacyProvidersToFallbackNodes(provider.FallbackChain, s.resolveModelForProvider))
 	}
 	if config.IsFallbackAggregateRef(ref) {
+		if s.parentProxyAvailable() {
+			return nil, nil
+		}
 		id := config.FallbackAggregateIDFromRef(ref)
 		for _, aggregate := range s.config.FallbackAggregates {
 			if config.NormalizeToken(aggregate.ID) == id {
@@ -441,7 +462,13 @@ func (s *Scheduler) fallbackNodesForProvider(providerRef config.ProviderType) ([
 
 func (s *Scheduler) providerConfiguredForUse(providerType config.ProviderType) bool {
 	ref := config.NormalizeProviderRef(string(providerType))
+	if config.IsFallbackAggregateRef(ref) {
+		return s.parentProxyAvailable()
+	}
 	if config.IsClaudeProviderRef(ref) {
+		if s.parentProxyAvailable() {
+			return true
+		}
 		opts := s.claudecliOptionsForRef(ref, s.config.WorkDir)
 		_, err := claudecli.ResolveExecutable(opts.Executable)
 		return err == nil

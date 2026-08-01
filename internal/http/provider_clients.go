@@ -193,6 +193,17 @@ func (s *Server) createLLMClient(providerType config.ProviderType, model string,
 	if providerType == config.ProviderAutoRouter {
 		return nil, fmt.Errorf("automatic router requires dynamic prompt routing")
 	}
+	if config.IsFallbackAggregateRef(string(providerType)) {
+		// WHY: aggregate definitions live only on the host. A child with a parent
+		// proxy must forward the opaque ref instead of expanding a missing chain.
+		modelName := strings.TrimSpace(model)
+		if modelName == "" {
+			modelName = s.resolveModelForProvider(providerType)
+		}
+		if client, ok := s.createParentProxyLLMClient(providerType, modelName); ok {
+			return client, nil
+		}
+	}
 	if config.IsFallbackAggregateRef(string(providerType)) || providerType == config.ProviderFallback {
 		return s.createFallbackChainClient(providerType, sess)
 	}
@@ -541,6 +552,9 @@ func (s *Server) fallbackNodesForProvider(providerRef config.ProviderType) ([]co
 		return s.normalizeAndValidateFallbackChain(legacyProvidersToFallbackNodes(provider.FallbackChain, s.resolveModelForProvider))
 	}
 	if config.IsFallbackAggregateRef(ref) {
+		if s.parentProxyAvailable() {
+			return nil, nil
+		}
 		aggregate, _ := s.findFallbackAggregateByRef(ref)
 		if aggregate == nil {
 			return nil, fmt.Errorf("fallback aggregate not found: %s", ref)
@@ -586,6 +600,9 @@ func (s *Server) providerRefExists(ref string) bool {
 		return true
 	}
 	if config.IsFallbackAggregateRef(normalized) {
+		if s.parentProxyAvailable() {
+			return true
+		}
 		aggregate, _ := s.findFallbackAggregateByRef(normalized)
 		return aggregate != nil
 	}
@@ -613,6 +630,9 @@ func (s *Server) validateProviderRefForExecution(ref string) error {
 		return nil
 	}
 	if config.IsFallbackAggregateRef(normalized) {
+		if s.parentProxyAvailable() {
+			return nil
+		}
 		_, err := s.fallbackNodesForProvider(ptype)
 		return err
 	}
@@ -620,7 +640,10 @@ func (s *Server) validateProviderRefForExecution(ref string) error {
 }
 
 func (s *Server) providerConfiguredForUse(providerType config.ProviderType) bool {
-	ref := string(providerType)
+	ref := config.NormalizeProviderRef(string(providerType))
+	if config.IsFallbackAggregateRef(ref) {
+		return s.parentProxyAvailable()
+	}
 	if config.IsClaudeProviderRef(ref) {
 		if s.parentProxyAvailable() {
 			return true

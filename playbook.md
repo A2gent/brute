@@ -6,3 +6,5 @@
 - When `storage.Store` gains methods, update every hand-rolled test stub (`memStore` and similar) in the same change; add `var _ storage.Store = (*stub)(nil)` so compile fails early.
 - For test-fix sessions, first run `go test ./...` without cache assumptions on packages that failed to compile; interface drift often surfaces as `[build failed]` before any assertion runs.
 - Git hooks that run `go test` must unset `GIT_DIR`/`GIT_INDEX_FILE`/`GIT_WORK_TREE` (and related) before tests; otherwise nested fixture repos inherit the outer commit index and fail with `invalid object` / `Error building trees`.
+- When a Docker sub-agent itself reproduces a provider bootstrap bug, expect delegation to fail before task execution; use the failure as manual reproduction evidence, then perform repository analysis locally until the bootstrap path is fixed.
+- Before inserting at a numbered line, confirm the current file length and that the line is outside any open function; use append or an exact structural replacement when placement is not safely known.

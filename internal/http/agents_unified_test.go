@@ -1305,3 +1305,25 @@ workspace:
 		t.Fatalf("global definition should not be project-bound, got %#v", record.ProjectID)
 	}
 }
+
+func TestAgentVisibleInProjectSession(t *testing.T) {
+	cases := []struct {
+		name             string
+		agentProjectID   string
+		sessionProjectID string
+		want             bool
+	}{
+		{name: "global in project session", agentProjectID: "", sessionProjectID: "proj-a", want: true},
+		{name: "global in unbound session", agentProjectID: "", sessionProjectID: "", want: true},
+		{name: "same project", agentProjectID: "proj-a", sessionProjectID: "proj-a", want: true},
+		{name: "other project", agentProjectID: "proj-b", sessionProjectID: "proj-a", want: false},
+		{name: "project agent in unbound session", agentProjectID: "proj-a", sessionProjectID: "", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := agentVisibleInProjectSession(tc.agentProjectID, tc.sessionProjectID); got != tc.want {
+				t.Fatalf("agentVisibleInProjectSession(%q, %q) = %v, want %v", tc.agentProjectID, tc.sessionProjectID, got, tc.want)
+			}
+		})
+	}
+}

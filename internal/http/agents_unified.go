@@ -218,6 +218,20 @@ func matchesUnifiedAgentProjectFilter(agentProjectID string, projectFilter strin
 	return agentProjectID == ""
 }
 
+// agentVisibleInProjectSession reports whether a configured agent may appear in a
+// session prompt or be delegated to from that session. Global agents (empty
+// project) stay visible everywhere; project-bound agents are limited to their
+// own project. This differs from matchesUnifiedAgentProjectFilter, which is for
+// Agents UI lists and excludes globals when a project filter is set.
+func agentVisibleInProjectSession(agentProjectID string, sessionProjectID string) bool {
+	agentProjectID = strings.TrimSpace(agentProjectID)
+	sessionProjectID = strings.TrimSpace(sessionProjectID)
+	if agentProjectID == "" {
+		return true
+	}
+	return agentProjectID == sessionProjectID
+}
+
 func storedAgentDefinitionMatchesProjectFilter(
 	record *storage.AgentDefinitionRecord,
 	def *agentdef.Definition,

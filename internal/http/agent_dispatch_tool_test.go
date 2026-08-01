@@ -257,3 +257,103 @@ func TestPostLocalDockerAgentChatStreamRequiresTerminalEvent(t *testing.T) {
 		t.Fatalf("expected last status to be retained, got %+v", resp)
 	}
 }
+
+func TestDelegateToAgentRejectsOtherProjectAgent(t *testing.T) {
+	server, store := newUnifiedAgentsTestServer(t)
+	now := time.Now()
+	currentProjectID := "project-current"
+	otherProjectID := "project-other"
+	for _, project := range []*storage.Project{
+		{ID: currentProjectID, Name: "Current", CreatedAt: now, UpdatedAt: now},
+		{ID: otherProjectID, Name: "Other", CreatedAt: now, UpdatedAt: now},
+	} {
+		if err := store.SaveProject(project); err != nil {
+			t.Fatalf("failed to save project %s: %v", project.ID, err)
+		}
+	}
+	if err := store.SaveSubAgent(&storage.SubAgent{
+		ID:                "other-project-agent",
+		Name:              "Other Project Agent",
+		ProjectID:         &otherProjectID,
+		Provider:          "openai",
+		Model:             "gpt-5.5",
+		EnabledTools:      []string{"read"},
+		InstructionBlocks: "[]",
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}); err != nil {
+		t.Fatalf("failed to save sub-agent: %v", err)
+	}
+
+	sess, err := server.sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	sess.ProjectID = &currentProjectID
+	if err := server.sessionManager.Save(sess); err != nil {
+		t.Fatalf("failed to save session: %v", err)
+	}
+
+	tool := newDelegateToAgentTool(server)
+	params, err := json.Marshal(delegateToAgentParams{AgentID: "other-project-agent", Task: "review"})
+	if err != nil {
+		t.Fatalf("failed to marshal params: %v", err)
+	}
+	ctx := context.WithValue(context.Background(), "session_id", sess.ID)
+	result, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("execute returned error: %v", err)
+	}
+	if result == nil || result.Success {
+		t.Fatalf("expected cross-project delegation to fail, got %+v", result)
+	}
+	if !strings.Contains(result.Error, "belongs to another project") {
+		t.Fatalf("expected project-scope error, got %q", result.Error)
+	}
+}
+
+func TestDelegateToAgentAllowsGlobalAgentInProjectSession(t *testing.T) {
+	server, store := newUnifiedAgentsTestServer(t)
+	now := time.Now()
+	currentProjectID := "project-current"
+	if err := store.SaveProject(&storage.Project{ID: currentProjectID, Name: "Current", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("failed to save project: %v", err)
+	}
+	if err := store.SaveSubAgent(&storage.SubAgent{
+		ID:                "global-agent",
+		Name:              "Global Agent",
+		Provider:          "openai",
+		Model:             "gpt-5.5",
+		EnabledTools:      []string{"read"},
+		InstructionBlocks: "[]",
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}); err != nil {
+		t.Fatalf("failed to save sub-agent: %v", err)
+	}
+
+	sess, err := server.sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	sess.ProjectID = &currentProjectID
+	if err := server.sessionManager.Save(sess); err != nil {
+		t.Fatalf("failed to save session: %v", err)
+	}
+
+	tool := newDelegateToAgentTool(server)
+	params, err := json.Marshal(delegateToAgentParams{AgentID: "global-agent", Task: "review"})
+	if err != nil {
+		t.Fatalf("failed to marshal params: %v", err)
+	}
+	ctx := context.WithValue(context.Background(), "session_id", sess.ID)
+	result, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("execute returned error: %v", err)
+	}
+	// Global agents are allowed past the project gate; failure may still happen later
+	// while preparing Docker, but must not be the cross-project rejection.
+	if result != nil && !result.Success && strings.Contains(result.Error, "belongs to another project") {
+		t.Fatalf("global agent must remain callable from a project session, got %q", result.Error)
+	}
+}

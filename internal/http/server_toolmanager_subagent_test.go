@@ -462,6 +462,18 @@ func TestBuildSystemPromptForSession_IncludesAvailableSavedSubAgents(t *testing.
 		{
 			ID:                "wrong-project-reviewer",
 			Name:              "Wrong Project Reviewer",
+			ProjectID:         &otherProjectID,
+			Provider:          "openai",
+			Model:             "gpt-5.5",
+			EnabledTools:      []string{"read"},
+			InstructionBlocks: "[]",
+			CreatedAt:         now,
+			UpdatedAt:         now,
+		},
+		{
+			ID:                "current-project-reviewer",
+			Name:              "Current Project Reviewer",
+			ProjectID:         &currentProjectID,
 			Provider:          "openai",
 			Model:             "gpt-5.5",
 			EnabledTools:      []string{"read"},
@@ -488,6 +500,7 @@ func TestBuildSystemPromptForSession_IncludesAvailableSavedSubAgents(t *testing.
 
 	runningReviewerHealthPort := healthyDockerAgentPortForTest(t)
 	wrongProjectReviewerHealthPort := healthyDockerAgentPortForTest(t)
+	currentProjectReviewerHealthPort := healthyDockerAgentPortForTest(t)
 	oldRunCommand := runCommand
 	runCommand = func(ctx context.Context, command string, args ...string) (string, error) {
 		if command != "docker" || len(args) == 0 || args[0] != "ps" {
@@ -521,6 +534,15 @@ func TestBuildSystemPromptForSession_IncludesAvailableSavedSubAgents(t *testing.
 				Ports:  "0.0.0.0:" + strconv.Itoa(wrongProjectReviewerHealthPort) + "->8080/tcp",
 				Labels: localAgentManagerLabelKey + "=" + localAgentManagerLabelValue + "," + dockerRuntimeManagedLabelKey + "=true," + dockerRuntimeAgentDefLabelKey + "=wrong-project-reviewer,a2gent.project_id=project-other",
 			},
+			{
+				ID:     "current-project-reviewer-id",
+				Image:  "a2gent-brute:latest",
+				State:  "running",
+				Status: "Up",
+				Names:  "agent-current-project-reviewer__project-project-current",
+				Ports:  "0.0.0.0:" + strconv.Itoa(currentProjectReviewerHealthPort) + "->8080/tcp",
+				Labels: localAgentManagerLabelKey + "=" + localAgentManagerLabelValue + "," + dockerRuntimeManagedLabelKey + "=true," + dockerRuntimeAgentDefLabelKey + "=current-project-reviewer,a2gent.project_id=project-current",
+			},
 		}
 		encoded := make([]string, 0, len(rows))
 		for _, row := range rows {
@@ -546,6 +568,9 @@ func TestBuildSystemPromptForSession_IncludesAvailableSavedSubAgents(t *testing.
 	subAgentsSection := systemPrompt[subAgentsSectionStart:]
 	if !strings.Contains(subAgentsSection, "- running-reviewer - Running Reviewer") {
 		t.Fatalf("expected running saved sub-agent in compact prompt, got: %q", systemPrompt)
+	}
+	if !strings.Contains(subAgentsSection, "- current-project-reviewer - Current Project Reviewer") {
+		t.Fatalf("expected current-project saved sub-agent in compact prompt, got: %q", systemPrompt)
 	}
 	if strings.Contains(subAgentsSection, "stopped-reviewer") || strings.Contains(subAgentsSection, "Stopped Reviewer") {
 		t.Fatalf("expected stopped saved sub-agent to be omitted from prompt, got: %q", systemPrompt)

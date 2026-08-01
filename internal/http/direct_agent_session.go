@@ -29,9 +29,12 @@ func (s *Server) unifiedAgentDefinitionForSession(sess *session.Session) (*agent
 	if sess.ProjectID != nil {
 		currentProjectID = strings.TrimSpace(*sess.ProjectID)
 	}
-	def, _, err := s.definitionForUnifiedAgent(agentID, currentProjectID)
+	def, discoveredProjectID, err := s.definitionForUnifiedAgent(agentID, currentProjectID)
 	if err != nil {
 		return nil, fmt.Errorf("unified agent %q not found", agentID)
+	}
+	if !agentVisibleInProjectSession(discoveredProjectID, currentProjectID) {
+		return nil, fmt.Errorf("unified agent %q belongs to another project", agentID)
 	}
 	return def, nil
 }

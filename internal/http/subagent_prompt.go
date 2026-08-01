@@ -44,6 +44,11 @@ func (s *Server) resolveSubAgentsSection(sess *session.Session) (string, int) {
 			if sa == nil {
 				continue
 			}
+			// WHY: configured_project agents resolve workspace to their own project,
+			// so a running container for project B would otherwise match in project A.
+			if !agentVisibleInProjectSession(subAgentProjectID(sa), currentProjectID) {
+				continue
+			}
 			def, defErr := agentdef.FromSubAgent(sa)
 			if defErr != nil {
 				logging.Warn("Failed to build sub-agent definition %s for system prompt: %v", sa.ID, defErr)
@@ -87,6 +92,13 @@ func (s *Server) resolveSubAgentsSection(sess *session.Session) (string, int) {
 				continue
 			}
 			if def.Runtime.Type != agentdef.RuntimeDocker {
+				continue
+			}
+			agentProjectID := agentDefinitionRecordProjectID(record)
+			if agentProjectID == "" {
+				agentProjectID = stringFromOptional(projectIDFromDefinition(def))
+			}
+			if !agentVisibleInProjectSession(agentProjectID, currentProjectID) {
 				continue
 			}
 			defAgentID := strings.TrimSpace(def.Agent.ID)

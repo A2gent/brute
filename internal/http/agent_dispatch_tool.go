@@ -104,7 +104,15 @@ func (t *delegateToAgentTool) Execute(ctx context.Context, params json.RawMessag
 	// Legacy sub-agent rows, stored definitions, and project-folder discoveries
 	// all resolve through definitionForUnifiedAgent before Docker delegation.
 	currentProjectID := delegationParentProjectID(ctx, t.server)
-	if def, _, err := t.server.definitionForUnifiedAgent(agentID, currentProjectID); err == nil {
+	if def, discoveredProjectID, err := t.server.definitionForUnifiedAgent(agentID, currentProjectID); err == nil {
+		// WHY: listing and dispatch must share the same project scope so a session
+		// cannot call a configured agent that belongs to another project.
+		if !agentVisibleInProjectSession(discoveredProjectID, currentProjectID) {
+			return &tools.Result{
+				Success: false,
+				Error:   fmt.Sprintf("agent %q belongs to another project and is not available in this session", agentID),
+			}, nil
+		}
 		return t.server.runDockerDefinitionDelegation(ctx, agentID, def, task)
 	}
 
@@ -160,6 +168,13 @@ func (s *Server) runStoredDefinitionDelegation(ctx context.Context, record *stor
 }
 
 func (s *Server) runSubAgentDockerDelegation(ctx context.Context, sa *storage.SubAgent, task string) (*tools.Result, error) {
+	currentProjectID := delegationParentProjectID(ctx, s)
+	if !agentVisibleInProjectSession(subAgentProjectID(sa), currentProjectID) {
+		return &tools.Result{
+			Success: false,
+			Error:   fmt.Sprintf("agent %q belongs to another project and is not available in this session", strings.TrimSpace(sa.ID)),
+		}, nil
+	}
 	def, err := agentdef.FromSubAgent(sa)
 	if err != nil {
 		return &tools.Result{Success: false, Error: "failed to build docker agent definition from saved agent: " + err.Error()}, nil

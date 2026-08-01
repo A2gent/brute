@@ -290,8 +290,23 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if directUnifiedAgentID != "" || directDockerAgentID != "" {
 		if directUnifiedAgentID != "" {
 			projectID := strings.TrimSpace(req.ProjectID)
-			if _, _, err := s.definitionForUnifiedAgent(directUnifiedAgentID, projectID); err != nil {
+			_, discoveredProjectID, err := s.definitionForUnifiedAgent(directUnifiedAgentID, projectID)
+			if err != nil {
 				s.errorResponse(w, http.StatusBadRequest, "Unified agent not found: "+directUnifiedAgentID)
+				return
+			}
+			// WHY: mirror sub-agent launch - bind the session to the agent's project when
+			// the caller omitted project_id, but never allow cross-project launches.
+			if projectID == "" && strings.TrimSpace(discoveredProjectID) != "" {
+				if _, projectErr := s.store.GetProject(discoveredProjectID); projectErr != nil {
+					s.errorResponse(w, http.StatusBadRequest, "Unified agent project not found: "+projectErr.Error())
+					return
+				}
+				req.ProjectID = discoveredProjectID
+				projectID = discoveredProjectID
+			}
+			if !agentVisibleInProjectSession(discoveredProjectID, projectID) {
+				s.errorResponse(w, http.StatusBadRequest, "Unified agent belongs to another project: "+directUnifiedAgentID)
 				return
 			}
 			sess.Metadata["unified_agent_id"] = directUnifiedAgentID
@@ -309,14 +324,6 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			s.errorResponse(w, http.StatusBadRequest, "Sub-agent not found: "+saErr.Error())
 			return
 		}
-		sess.Metadata["sub_agent_id"] = sa.ID
-		sess.Metadata["sub_agent_name"] = sa.Name
-		if sa.Provider != "" {
-			req.Provider = sa.Provider
-		}
-		if sa.Model != "" && req.Model == "" {
-			req.Model = sa.Model
-		}
 		if req.ProjectID == "" && sa.ProjectID != nil {
 			boundProjectID := strings.TrimSpace(*sa.ProjectID)
 			if boundProjectID != "" {
@@ -326,6 +333,18 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 				}
 				req.ProjectID = boundProjectID
 			}
+		}
+		if !agentVisibleInProjectSession(subAgentProjectID(sa), strings.TrimSpace(req.ProjectID)) {
+			s.errorResponse(w, http.StatusBadRequest, "Sub-agent belongs to another project: "+sa.ID)
+			return
+		}
+		sess.Metadata["sub_agent_id"] = sa.ID
+		sess.Metadata["sub_agent_name"] = sa.Name
+		if sa.Provider != "" {
+			req.Provider = sa.Provider
+		}
+		if sa.Model != "" && req.Model == "" {
+			req.Model = sa.Model
 		}
 	}
 

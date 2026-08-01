@@ -13,24 +13,26 @@ import (
 )
 
 type createTaskRequest struct {
-	Title      string   `json:"title"`
-	Body       string   `json:"body"`
-	Status     string   `json:"status"`
-	Priority   *int     `json:"priority"`
-	Complexity int      `json:"complexity"`
-	Tags       []string `json:"tags"`
-	Price      string   `json:"price"`
+	Title      string               `json:"title"`
+	Body       string               `json:"body"`
+	Image      *MessageImagePayload `json:"image,omitempty"`
+	Status     string               `json:"status"`
+	Priority   *int                 `json:"priority"`
+	Complexity int                  `json:"complexity"`
+	Tags       []string             `json:"tags"`
+	Price      string               `json:"price"`
 }
 
 type updateTaskRequest struct {
-	Title      *string   `json:"title"`
-	Body       *string   `json:"body"`
-	Status     *string   `json:"status"`
-	Priority   *int      `json:"priority"`
-	Complexity *int      `json:"complexity"`
-	Tags       *[]string `json:"tags"`
-	Price      *string   `json:"price"`
-	Position   *float64  `json:"position"`
+	Title      *string               `json:"title"`
+	Body       *string               `json:"body"`
+	Image      **MessageImagePayload `json:"image"`
+	Status     *string               `json:"status"`
+	Priority   *int                  `json:"priority"`
+	Complexity *int                  `json:"complexity"`
+	Tags       *[]string             `json:"tags"`
+	Price      *string               `json:"price"`
+	Position   *float64              `json:"position"`
 }
 
 type taskImportRequest struct {
@@ -62,8 +64,13 @@ func (s *Server) handleCreateProjectTask(w http.ResponseWriter, r *http.Request)
 	if req.Priority != nil {
 		priority = *req.Priority
 	}
+	image, err := normalizeTaskImage(req.Image)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid task image: "+err.Error())
+		return
+	}
 	task, err := s.store.CreateTask(chi.URLParam(r, "projectID"), storage.TaskCreate{
-		Title: req.Title, Body: req.Body, Status: req.Status, Priority: priority,
+		Title: req.Title, Body: req.Body, Image: image, Status: req.Status, Priority: priority,
 		Complexity: req.Complexity, Tags: req.Tags, Price: req.Price, CreatedBy: "user",
 	})
 	if err != nil {
@@ -88,8 +95,17 @@ func (s *Server) handleUpdateProjectTask(w http.ResponseWriter, r *http.Request)
 		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
 		return
 	}
+	var image **storage.TaskImage
+	if req.Image != nil {
+		normalized, err := normalizeTaskImage(*req.Image)
+		if err != nil {
+			s.errorResponse(w, http.StatusBadRequest, "Invalid task image: "+err.Error())
+			return
+		}
+		image = &normalized
+	}
 	task, err := s.store.UpdateTask(chi.URLParam(r, "projectID"), chi.URLParam(r, "taskRef"), storage.TaskUpdate{
-		Title: req.Title, Body: req.Body, Status: req.Status, Priority: req.Priority,
+		Title: req.Title, Body: req.Body, Image: image, Status: req.Status, Priority: req.Priority,
 		Complexity: req.Complexity, Tags: req.Tags, Price: req.Price, Position: req.Position,
 	})
 	if err != nil {
@@ -143,6 +159,22 @@ func (s *Server) handleImportNextProjectTask(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	s.jsonResponse(w, http.StatusOK, result)
+}
+
+func normalizeTaskImage(image *MessageImagePayload) (*storage.TaskImage, error) {
+	if image == nil {
+		return nil, nil
+	}
+	normalized, err := normalizeIncomingImages([]MessageImagePayload{*image})
+	if err != nil {
+		return nil, err
+	}
+	if len(normalized) != 1 || normalized[0].DataBase64 == "" {
+		return nil, errors.New("task screenshots must contain embedded image data")
+	}
+	return &storage.TaskImage{
+		Name: normalized[0].Name, MediaType: normalized[0].MediaType, DataBase64: normalized[0].DataBase64,
+	}, nil
 }
 
 func (s *Server) taskErrorResponse(w http.ResponseWriter, err error) {

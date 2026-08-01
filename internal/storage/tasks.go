@@ -17,6 +17,12 @@ var taskStatuses = map[string]struct{}{
 	TaskStatusTesting: {}, TaskStatusDone: {}, TaskStatusCancelled: {},
 }
 
+type TaskImage struct {
+	Name       string `json:"name,omitempty"`
+	MediaType  string `json:"media_type,omitempty"`
+	DataBase64 string `json:"data_base64,omitempty"`
+}
+
 // Task is always owned by exactly one project. Project-less tasks are intentionally unsupported.
 type Task struct {
 	ID          string     `json:"id"`
@@ -25,6 +31,8 @@ type Task struct {
 	Seq         int        `json:"seq"`
 	Title       string     `json:"title"`
 	Body        string     `json:"body"`
+	Image       *TaskImage `json:"image,omitempty"`
+	SessionID   string     `json:"session_id,omitempty"`
 	Status      string     `json:"status"`
 	Priority    int        `json:"priority"`
 	Complexity  int        `json:"complexity"`
@@ -42,6 +50,7 @@ type Task struct {
 type TaskCreate struct {
 	Title      string
 	Body       string
+	Image      *TaskImage
 	Status     string
 	Priority   int
 	Complexity int
@@ -55,6 +64,8 @@ type TaskCreate struct {
 type TaskUpdate struct {
 	Title      *string
 	Body       *string
+	Image      **TaskImage
+	SessionID  *string
 	Status     *string
 	Priority   *int
 	Complexity *int

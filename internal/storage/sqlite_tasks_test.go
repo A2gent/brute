@@ -73,6 +73,30 @@ func TestSQLiteTasksRejectMissingProjectAndCrossProjectMutation(t *testing.T) {
 	}
 }
 
+func TestSQLiteTaskPersistsImageAndLinkedSession(t *testing.T) {
+	store, err := NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	project := saveTaskTestProject(t, store, "project", "Project")
+	task, err := store.CreateTask(project.ID, TaskCreate{Title: "Visual task", Image: &TaskImage{Name: "shot.png", MediaType: "image/png", DataBase64: "aGVsbG8="}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID := "session-1"
+	if _, err = store.UpdateTask(project.ID, task.ID, TaskUpdate{SessionID: &sessionID}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.GetTask(project.ID, task.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Image == nil || loaded.Image.Name != "shot.png" || loaded.SessionID != sessionID {
+		t.Fatalf("loaded task = %#v", loaded)
+	}
+}
+
 func saveTaskTestProject(t *testing.T, store *SQLiteStore, id, name string) *Project {
 	t.Helper()
 	now := time.Now().UTC()

@@ -19,6 +19,7 @@ type CreateSessionRequest struct {
 	Model           string                `json:"model,omitempty"`
 	ReasoningEffort string                `json:"reasoning_effort,omitempty"`
 	ProjectID       string                `json:"project_id,omitempty"`
+	TaskID          string                `json:"task_id,omitempty"`
 	SubAgentID      string                `json:"sub_agent_id,omitempty"` // Optional sub-agent to use for this session
 	// Optional direct agent targets. Unified agents are saved sub-agents or YAML-backed agent definitions;
 	// Docker agents reference an already running local Brute container.

@@ -349,6 +349,9 @@ func (s *SQLiteStore) migrate() error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_project_ref ON tasks(project_id, ref)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_project_source ON tasks(project_id, source_key) WHERE source_key <> ''`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status)`,
+		`ALTER TABLE tasks ADD COLUMN image TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE tasks ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_session ON tasks(session_id) WHERE session_id <> ''`,
 	}
 
 	for _, m := range migrations {

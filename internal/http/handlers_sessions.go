@@ -14,6 +14,7 @@ import (
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
+	"github.com/A2gent/brute/internal/storage"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -194,6 +195,23 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.ProjectID = strings.TrimSpace(req.ProjectID)
+	req.TaskID = strings.TrimSpace(req.TaskID)
+	var linkedTask *storage.Task
+	if req.TaskID != "" {
+		if req.ProjectID == "" {
+			s.errorResponse(w, http.StatusBadRequest, "project_id is required when task_id is set")
+			return
+		}
+		linkedTask, err = s.store.GetTask(req.ProjectID, req.TaskID)
+		if err != nil {
+			s.errorResponse(w, http.StatusBadRequest, "Task not found: "+err.Error())
+			return
+		}
+		if linkedTask.SessionID != "" {
+			s.errorResponse(w, http.StatusConflict, "Task already has a linked session")
+			return
+		}
+	}
 	if req.ProjectID != "" {
 		if _, err := s.store.GetProject(req.ProjectID); err != nil {
 			s.errorResponse(w, http.StatusBadRequest, "Project not found: "+err.Error())
@@ -328,6 +346,18 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		sess.ProjectID = &req.ProjectID
 		if err := s.sessionManager.Save(sess); err != nil {
 			logging.Warn("Failed to persist session project metadata: %v", err)
+		}
+	}
+	if linkedTask != nil {
+		if _, err := s.store.UpdateTask(req.ProjectID, linkedTask.ID, storage.TaskUpdate{SessionID: &sess.ID}); err != nil {
+			_ = s.sessionManager.Delete(sess.ID)
+			s.errorResponse(w, http.StatusInternalServerError, "Failed to link task session: "+err.Error())
+			return
+		}
+		sess.Metadata["task_id"] = linkedTask.ID
+		sess.Metadata["task_ref"] = linkedTask.Ref
+		if err := s.sessionManager.Save(sess); err != nil {
+			logging.Warn("Failed to persist task session metadata: %v", err)
 		}
 	}
 	if err := s.attachTeamRunToCreatedSession(sess, strings.TrimSpace(req.TeamID)); err != nil {

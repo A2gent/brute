@@ -1,6 +1,9 @@
 package http
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseProjectGitReviewOverlayLineIndexReadsChangedLineNumbers(t *testing.T) {
 	diff := `diff --git a/src/app.ts b/src/app.ts
@@ -21,6 +24,27 @@ func TestParseProjectGitReviewOverlayLineIndexReadsChangedLineNumbers(t *testing
 	}
 	if index.Additions[10] || index.Deletions[10] {
 		t.Fatalf("context line 10 must not be accepted as changed: additions=%#v deletions=%#v", index.Additions, index.Deletions)
+	}
+}
+
+func TestDefaultGitReviewOverlayPromptRequiresDeletedFileReasoning(t *testing.T) {
+	checks := []string{
+		"For a fully deleted file",
+		"why the whole file was deleted",
+		"selected file's complete diff and the full changed-files list",
+		"replacement, consolidation, or obsolete flow",
+	}
+	for _, check := range checks {
+		if !strings.Contains(defaultGitReviewOverlayPromptTemplate, check) {
+			t.Fatalf("default review prompt must contain %q", check)
+		}
+	}
+}
+
+func TestBuildGitReviewOverlayPromptAppendsDeletedFileRuleToCustomTemplate(t *testing.T) {
+	prompt := buildGitReviewOverlayPrompt("Review {{files}} using {{diffs}}", "feature", "main", "D old.ts", "-old")
+	if strings.Count(prompt, gitReviewOverlayDeletedFileInstruction) != 1 {
+		t.Fatalf("custom prompt must include deleted-file rule once: %q", prompt)
 	}
 }
 

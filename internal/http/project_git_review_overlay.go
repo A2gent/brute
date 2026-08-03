@@ -14,6 +14,8 @@ import (
 	"github.com/A2gent/brute/internal/logging"
 )
 
+const gitReviewOverlayDeletedFileInstruction = `For a fully deleted file, always provide at least one deletions annotation that explains why the whole file was deleted. Infer the branch-level reason from the selected file's complete diff and the full changed-files list, such as a replacement, consolidation, or obsolete flow, rather than merely saying that the file or its code was removed.`
+
 const defaultGitReviewOverlayPromptTemplate = `You explain why each changed part of one file exists for a visual code-review overlay.
 Return JSON only. No markdown fences, prefaces, or commentary.
 Schema:
@@ -32,6 +34,7 @@ Schema:
 Rules:
 - The input is the currently selected review file. Cover every changed code block or isolated changed line that has meaningful behavior, including added, deleted, and updated/replaced code.
 - Treat adjacent deletion/addition groups as updated code. Explain the old behavior on deletions when it matters, and the new behavior on additions when it matters.
+- ` + gitReviewOverlayDeletedFileInstruction + `
 - Use one annotation per logical changed block. Use line-level annotations for isolated one-line changes. Split annotations when changed lines are separated or serve different purposes.
 - line_number and end_line_number must refer only to changed lines visible in the diff. Use additions for new lines and deletions for removed lines.
 - Explain behavior, intent, data flow, user-visible effects, risk, test impact, or integration impact in human-readable words.
@@ -130,6 +133,7 @@ func (s *Server) handleGenerateProjectGitReviewOverlay(w http.ResponseWriter, r 
 		s.errorResponse(w, http.StatusBadRequest, "Failed to read branch changes: "+err.Error())
 		return
 	}
+	branchFilesMarkdown := projectGitCommitFilesMarkdown(files)
 	files = filterProjectGitReviewOverlayFiles(targetRepoRoot, files, targetFilePath)
 	if len(files) == 0 {
 		s.jsonResponse(w, http.StatusOK, ProjectGitReviewOverlayResponse{
@@ -140,7 +144,7 @@ func (s *Server) handleGenerateProjectGitReviewOverlay(w http.ResponseWriter, r 
 		return
 	}
 
-	annotations := s.generateProjectGitReviewOverlayAnnotations(r.Context(), projectID, repoPath, targetRepoRoot, target, files, targetFilePath)
+	annotations := s.generateProjectGitReviewOverlayAnnotations(r.Context(), projectID, repoPath, targetRepoRoot, target, files, targetFilePath, branchFilesMarkdown)
 	s.jsonResponse(w, http.StatusOK, ProjectGitReviewOverlayResponse{
 		CurrentBranch: target.CurrentBranch,
 		BaseBranch:    target.BaseBranch,
@@ -148,7 +152,7 @@ func (s *Server) handleGenerateProjectGitReviewOverlay(w http.ResponseWriter, r 
 	})
 }
 
-func (s *Server) generateProjectGitReviewOverlayAnnotations(ctx context.Context, projectID string, repoPath string, repoRoot string, target projectGitBranchChangesTargetInfo, files []ProjectGitCommitFile, targetFilePath string) []ProjectGitReviewOverlayAnnotation {
+func (s *Server) generateProjectGitReviewOverlayAnnotations(ctx context.Context, projectID string, repoPath string, repoRoot string, target projectGitBranchChangesTargetInfo, files []ProjectGitCommitFile, targetFilePath string, branchFilesMarkdown string) []ProjectGitReviewOverlayAnnotation {
 	diffContext := buildProjectGitReviewOverlayDiffContext(repoRoot, target, files, targetFilePath, 1)
 	if len(diffContext.Sections) == 0 {
 		return []ProjectGitReviewOverlayAnnotation{}
@@ -165,7 +169,7 @@ func (s *Server) generateProjectGitReviewOverlayAnnotations(ctx context.Context,
 		templates.GitReviewOverlayPromptTemplate,
 		target.CurrentBranch,
 		target.BaseBranch,
-		projectGitCommitFilesMarkdown(files),
+		branchFilesMarkdown,
 		strings.Join(diffContext.Sections, "\n\n"),
 	)
 
@@ -221,5 +225,8 @@ func buildGitReviewOverlayPrompt(template string, branch string, baseBranch stri
 	prompt = strings.ReplaceAll(prompt, "{{base_branch}}", strings.TrimSpace(baseBranch))
 	prompt = strings.ReplaceAll(prompt, "{{files}}", strings.TrimSpace(files))
 	prompt = strings.ReplaceAll(prompt, "{{diffs}}", strings.TrimSpace(diffs))
+	if !strings.Contains(prompt, gitReviewOverlayDeletedFileInstruction) {
+		prompt += "\n\nRequired deleted-file rule:\n- " + gitReviewOverlayDeletedFileInstruction
+	}
 	return strings.TrimSpace(prompt)
 }

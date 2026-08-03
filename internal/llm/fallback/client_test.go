@@ -59,6 +59,15 @@ func TestIsRetryableError_UnsafeForRetryMarker(t *testing.T) {
 	}
 }
 
+func TestIsFallbackableError_UnsafeAuthenticationFailure(t *testing.T) {
+	ctx := context.Background()
+	err := llm.UnsafeForRetry(errors.New("Claude CLI failed: Failed to authenticate: OAuth session expired and could not be refreshed"))
+
+	if !isFallbackableError(ctx, err) {
+		t.Fatal("expected authentication failure to fall back even when retrying the same provider is unsafe")
+	}
+}
+
 func TestClientChat_SkipsNodeWhenUsageLimitKnown(t *testing.T) {
 	primary := &countingLLM{err: errors.New("primary should not run")}
 	secondary := &countingLLM{}
@@ -148,5 +157,25 @@ func TestClientChat_DoesNotRetryOrFallbackOnUnsafeError(t *testing.T) {
 	}
 	if secondary.calls != 0 {
 		t.Fatalf("expected secondary provider to be skipped for unsafe error, got %d calls", secondary.calls)
+	}
+}
+
+func TestClientChatStream_FallsBackOnUnsafeAuthenticationFailure(t *testing.T) {
+	primary := &countingLLM{err: llm.UnsafeForRetry(errors.New("Claude CLI failed: Failed to authenticate: OAuth session expired and could not be refreshed"))}
+	secondary := &countingLLM{}
+	client := NewClient([]Node{
+		{Name: "anthropic", Client: primary},
+		{Name: "openai_codex", Client: secondary},
+	}, WithMaxRetries(3))
+
+	_, err := client.ChatStream(context.Background(), &llm.ChatRequest{}, nil)
+	if err != nil {
+		t.Fatalf("expected secondary provider to succeed, got %v", err)
+	}
+	if primary.calls != 1 {
+		t.Fatalf("expected unsafe auth failure not to retry primary, got %d calls", primary.calls)
+	}
+	if secondary.calls != 1 {
+		t.Fatalf("expected fallback provider to be called once, got %d calls", secondary.calls)
 	}
 }

@@ -554,9 +554,6 @@ func isFallbackableError(ctx context.Context, err error) bool {
 	if err == nil {
 		return false
 	}
-	if llm.IsUnsafeForRetry(err) {
-		return false
-	}
 	if ctx != nil && ctx.Err() != nil {
 		return false
 	}
@@ -565,21 +562,35 @@ func isFallbackableError(ctx context.Context, err error) bool {
 	if msg == "" {
 		return false
 	}
+	// Authentication fails before a provider can execute the request, so trying a
+	// different provider is safe even when the original client forbids same-node retries.
+	if isAuthenticationError(msg) {
+		return true
+	}
+	if llm.IsUnsafeForRetry(err) {
+		return false
+	}
 
 	// All retryable errors are also fallbackable
 	if isRetryableError(ctx, err) {
 		return true
 	}
 
-	// Auth/billing errors - fallback to next provider
-	if strings.Contains(msg, "unauthorized") || strings.Contains(msg, "authentication") ||
-		strings.Contains(msg, "invalid api key") || strings.Contains(msg, "billing") ||
+	// Billing errors - fallback to next provider
+	if strings.Contains(msg, "invalid api key") || strings.Contains(msg, "billing") ||
 		strings.Contains(msg, "insufficient") || strings.Contains(msg, "quota") ||
-		strings.Contains(msg, "401") || strings.Contains(msg, "403") {
+		strings.Contains(msg, "403") {
 		return true
 	}
 
 	return false
+}
+
+func isAuthenticationError(msg string) bool {
+	return strings.Contains(msg, "unauthorized") || strings.Contains(msg, "authentication") ||
+		strings.Contains(msg, "authenticate") || strings.Contains(msg, "not logged in") ||
+		strings.Contains(msg, "login required") || strings.Contains(msg, "oauth") ||
+		strings.Contains(msg, "invalid api key") || strings.Contains(msg, "401")
 }
 
 func hasStatusCodeInRange(message string, min int, max int) bool {

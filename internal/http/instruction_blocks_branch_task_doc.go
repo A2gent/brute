@@ -35,6 +35,29 @@ func parseBranchTaskDocConfig(raw string) branchTaskDocConfig {
 	return config
 }
 
+func (s *Server) loadBranchTaskDocConfig(projectID string, projectSettings map[string]string) (branchTaskDocConfig, error) {
+	projectDirectory, hasProjectDirectorySetting := projectSettings[projectBranchTaskDocDirectorySettingKey]
+	config := branchTaskDocConfig{
+		Directory: strings.TrimSpace(projectDirectory),
+		Mode:      strings.TrimSpace(projectSettings[projectBranchTaskDocModeSettingKey]),
+	}
+	if !hasProjectDirectorySetting {
+		// WHY: older Caesar versions stored branch-doc settings in global app settings
+		// with a project-id suffix. Project settings are authoritative now, but keep a
+		// fallback so existing installations continue to resolve their documentation.
+		settings, err := s.store.GetSettings()
+		if err != nil {
+			return branchTaskDocConfig{}, err
+		}
+		config.Directory = strings.TrimSpace(settings[legacyBranchTaskDocDirectorySettingPrefix+projectID])
+		config.Mode = strings.TrimSpace(settings[legacyBranchTaskDocModeSettingPrefix+projectID])
+	}
+	if config.Mode != "path" {
+		config.Mode = "content"
+	}
+	return config, nil
+}
+
 func (s *Server) resolveBranchTaskDocSection(sess *session.Session, _ string, blockNumber int) (string, string, int, string) {
 	if sess == nil || sess.ProjectID == nil || strings.TrimSpace(*sess.ProjectID) == "" {
 		return "", "", 0, "No project is associated with this session."
@@ -56,24 +79,9 @@ func (s *Server) resolveBranchTaskDocSection(sess *session.Session, _ string, bl
 
 	projectSettings := normalizeProjectSettings(project.Settings)
 	projectID := strings.TrimSpace(*sess.ProjectID)
-	projectDirectory, hasProjectDirectorySetting := projectSettings[projectBranchTaskDocDirectorySettingKey]
-	config := branchTaskDocConfig{
-		Directory: strings.TrimSpace(projectDirectory),
-		Mode:      strings.TrimSpace(projectSettings[projectBranchTaskDocModeSettingKey]),
-	}
-	if !hasProjectDirectorySetting {
-		// WHY: older Caesar versions stored branch-doc settings in global app settings
-		// with a project-id suffix. Project settings are authoritative now, but keep a
-		// fallback so existing installations continue to resolve their documentation.
-		settings, err := s.store.GetSettings()
-		if err != nil {
-			return "", "", 0, "Failed to load legacy branch documentation settings: " + err.Error()
-		}
-		config.Directory = strings.TrimSpace(settings[legacyBranchTaskDocDirectorySettingPrefix+projectID])
-		config.Mode = strings.TrimSpace(settings[legacyBranchTaskDocModeSettingPrefix+projectID])
-	}
-	if config.Mode != "path" {
-		config.Mode = "content"
+	config, err := s.loadBranchTaskDocConfig(projectID, projectSettings)
+	if err != nil {
+		return "", "", 0, "Failed to load legacy branch documentation settings: " + err.Error()
 	}
 	if config.Directory == "" {
 		return "", "", 0, "Branch task documentation directory is not configured for this project."

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -31,6 +33,9 @@ One short paragraph or a short markdown list describing relevant verification. I
 
 Current branch: {{branch}}
 Base branch: {{base_branch}}
+
+Branch documentation:
+{{branch_documentation}}
 
 Changed files:
 {{files}}
@@ -149,7 +154,7 @@ func (s *Server) handleGenerateProjectGitPRDescription(w http.ResponseWriter, r 
 		return
 	}
 
-	content := s.generateProjectGitPRDescription(r.Context(), targetRepoRoot, target, files)
+	content := s.generateProjectGitPRDescription(r.Context(), projectID, targetRepoRoot, target, files)
 	now := time.Now()
 	description := &storage.ProjectPRDescription{
 		ProjectID:  projectID,
@@ -237,9 +242,10 @@ func loadProjectGitBranchChangedFiles(repoRoot string, target projectGitBranchCh
 	return mergeProjectGitCommitFiles(statuses, statsOutput), nil
 }
 
-func (s *Server) generateProjectGitPRDescription(ctx context.Context, repoRoot string, target projectGitBranchChangesTargetInfo, files []ProjectGitCommitFile) string {
+func (s *Server) generateProjectGitPRDescription(ctx context.Context, projectID string, repoRoot string, target projectGitBranchChangesTargetInfo, files []ProjectGitCommitFile) string {
 	history := readProjectGitPRDescriptionHistory(repoRoot, target)
 	fallback := buildFallbackProjectGitPRDescription(target, files, history)
+	branchDocumentation := s.readProjectGitPRDescriptionBranchDocumentation(projectID, target.CurrentBranch)
 
 	stat, _ := runGitCommandPreserveLeading(repoRoot, "diff", "--stat=80", "--find-renames", target.BaseRef+"...HEAD")
 	diff, _ := runGitCommandPreserveLeading(repoRoot, "diff", "--no-color", "--find-renames", "--unified=3", target.BaseRef+"...HEAD")
@@ -257,6 +263,7 @@ func (s *Server) generateProjectGitPRDescription(ctx context.Context, repoRoot s
 		templates.GitPRDescriptionPromptTemplate,
 		target.CurrentBranch,
 		target.BaseBranch,
+		branchDocumentation,
 		projectGitCommitFilesMarkdown(files),
 		history,
 		stat,
@@ -322,10 +329,55 @@ func readProjectGitPRDescriptionHistory(repoRoot string, target projectGitBranch
 	return strings.TrimSpace(history)
 }
 
-func buildGitPRDescriptionPrompt(template string, branch string, baseBranch string, files string, history string, stat string, diffs string) string {
+func (s *Server) readProjectGitPRDescriptionBranchDocumentation(projectID string, branch string) string {
+	trimmedProjectID := strings.TrimSpace(projectID)
+	trimmedBranch := strings.TrimSpace(branch)
+	if trimmedProjectID == "" || trimmedBranch == "" || trimmedBranch == "main" || trimmedBranch == "master" {
+		return ""
+	}
+
+	project, err := s.store.GetProject(trimmedProjectID)
+	if err != nil || project == nil {
+		if err != nil {
+			logging.Warn("Failed to load project for PR branch documentation: %v", err)
+		}
+		return ""
+	}
+	config, err := s.loadBranchTaskDocConfig(trimmedProjectID, normalizeProjectSettings(project.Settings))
+	if err != nil {
+		logging.Warn("Failed to load PR branch documentation settings: %v", err)
+		return ""
+	}
+	if config.Directory == "" {
+		return ""
+	}
+
+	relPath, err := branchTaskDocRelativePath(trimmedBranch)
+	if err != nil {
+		logging.Warn("Failed to resolve PR branch documentation path: %v", err)
+		return ""
+	}
+	baseDir := absoluteCleanPath(config.Directory, strings.TrimSpace(s.config.WorkDir))
+	data, err := os.ReadFile(filepath.Join(baseDir, relPath))
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			logging.Warn("Failed to read PR branch documentation: %v", err)
+		}
+		return ""
+	}
+
+	content := strings.TrimSpace(string(data))
+	if len(content) > maxDynamicInstructionBytes {
+		content = content[:maxDynamicInstructionBytes] + "\n\n[truncated]"
+	}
+	return content
+}
+
+func buildGitPRDescriptionPrompt(template string, branch string, baseBranch string, branchDocumentation string, files string, history string, stat string, diffs string) string {
 	prompt := template
 	prompt = strings.ReplaceAll(prompt, "{{branch}}", strings.TrimSpace(branch))
 	prompt = strings.ReplaceAll(prompt, "{{base_branch}}", strings.TrimSpace(baseBranch))
+	prompt = strings.ReplaceAll(prompt, "{{branch_documentation}}", strings.TrimSpace(branchDocumentation))
 	prompt = strings.ReplaceAll(prompt, "{{files}}", strings.TrimSpace(files))
 	prompt = strings.ReplaceAll(prompt, "{{history}}", fallbackText(strings.TrimSpace(history), "- No branch-only commits found."))
 	prompt = strings.ReplaceAll(prompt, "{{stat}}", fallbackText(strings.TrimSpace(stat), "No diff stat available."))

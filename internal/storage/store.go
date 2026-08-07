@@ -201,19 +201,6 @@ type ProjectTestCache struct {
 	UpdatedAt            time.Time
 }
 
-// ProjectGitReviewOverlayCache stores generated line-level review explanations per changed file.
-type ProjectGitReviewOverlayCache struct {
-	ProjectID       string
-	RepoPath        string
-	Branch          string
-	BaseBranch      string
-	FilePath        string
-	DiffHash        string
-	AnnotationsJSON string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-}
-
 type ProjectDatabase struct {
 	ID          string
 	ProjectID   string
@@ -252,8 +239,6 @@ type Store interface {
 	GetProjectPRDescription(projectID string, repoPath string, branch string, baseBranch string) (*ProjectPRDescription, error)
 	SaveProjectTestCache(cache *ProjectTestCache) error
 	GetProjectTestCache(projectID string, repoPath string, branch string, baseBranch string, scopeHash string) (*ProjectTestCache, error)
-	SaveProjectGitReviewOverlayCache(cache *ProjectGitReviewOverlayCache) error
-	ListProjectGitReviewOverlayCache(projectID string, repoPath string, branch string, baseBranch string) ([]*ProjectGitReviewOverlayCache, error)
 
 	// Project task operations. Every operation requires an explicit project scope.
 	CreateTask(projectID string, input TaskCreate) (*Task, error)

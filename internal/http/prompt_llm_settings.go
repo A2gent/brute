@@ -12,7 +12,6 @@ const promptLLMSettingsSettingKey = "A2GENT_PROMPT_LLM_SETTINGS"
 const (
 	promptLLMCaseGitCommit        = "git_commit"
 	promptLLMCaseGitPRDescription = "git_pr_description"
-	promptLLMCaseGitReviewOverlay = "git_review_overlay"
 	promptLLMCaseScheduleToCron   = "schedule_to_cron"
 	promptLLMCaseSessionSummary   = "session_summary"
 	promptLLMCaseMeetingSummary   = "meeting_summary"

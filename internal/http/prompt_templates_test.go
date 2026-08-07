@@ -22,11 +22,11 @@ func TestServerPromptTemplatesFromSettingsUsesCustomValues(t *testing.T) {
 
 func TestServerPromptTemplatesFromSettingsFallsBackOnBlankValues(t *testing.T) {
 	templates := serverPromptTemplatesFromSettings(map[string]string{
-		gitReviewOverlayPromptTemplateSettingKey: "   ",
+		gitPRDescriptionPromptTemplateSettingKey: "   ",
 	})
 
-	if templates.GitReviewOverlayPromptTemplate != defaultGitReviewOverlayPromptTemplate {
-		t.Fatalf("expected default review overlay template")
+	if templates.GitPRDescriptionPromptTemplate != defaultGitPRDescriptionPromptTemplate {
+		t.Fatalf("expected default PR description template")
 	}
 }
 
@@ -59,7 +59,7 @@ func TestResolvePromptLLMTargetUsesPerPromptProviderAndModel(t *testing.T) {
 	settings := map[string]string{
 		promptLLMSettingsSettingKey: `{
 			"git_pr_description": {"provider":"google", "model":"gemini-custom"},
-			"git_review_overlay": {"provider":"cursor"}
+			"session_summary": {"provider":"cursor"}
 		}`,
 	}
 
@@ -68,9 +68,9 @@ func TestResolvePromptLLMTargetUsesPerPromptProviderAndModel(t *testing.T) {
 		t.Fatalf("unexpected PR target: %#v", prTarget)
 	}
 
-	reviewTarget := server.resolvePromptLLMTarget(settings, promptLLMCaseGitReviewOverlay)
-	if reviewTarget.ProviderType != config.ProviderCursor || reviewTarget.Model != "composer-2.5" {
-		t.Fatalf("unexpected review target: %#v", reviewTarget)
+	summaryTarget := server.resolvePromptLLMTarget(settings, promptLLMCaseSessionSummary)
+	if summaryTarget.ProviderType != config.ProviderCursor || summaryTarget.Model != "composer-2.5" {
+		t.Fatalf("unexpected session summary target: %#v", summaryTarget)
 	}
 }
 

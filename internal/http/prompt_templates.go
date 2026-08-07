@@ -7,7 +7,6 @@ import (
 )
 
 const gitPRDescriptionPromptTemplateSettingKey = "AAGENT_GIT_PR_DESCRIPTION_PROMPT_TEMPLATE"
-const gitReviewOverlayPromptTemplateSettingKey = "AAGENT_GIT_REVIEW_OVERLAY_PROMPT_TEMPLATE"
 const scheduleToCronPromptTemplateSettingKey = "AAGENT_SCHEDULE_TO_CRON_PROMPT_TEMPLATE"
 const scheduleToCronSystemPromptSettingKey = "AAGENT_SCHEDULE_TO_CRON_SYSTEM_PROMPT"
 const sessionSummaryPromptTemplateSettingKey = "AAGENT_SESSION_SUMMARY_PROMPT_TEMPLATE"
@@ -16,7 +15,6 @@ const meetingSummaryPromptTemplateSettingKey = "AAGENT_MEETING_SUMMARY_PROMPT_TE
 type serverPromptTemplates struct {
 	GitCommitPromptTemplate        string
 	GitPRDescriptionPromptTemplate string
-	GitReviewOverlayPromptTemplate string
 	ScheduleToCronPromptTemplate   string
 	ScheduleToCronSystemPrompt     string
 	SessionSummaryPromptTemplate   string
@@ -27,7 +25,6 @@ func defaultServerPromptTemplates() serverPromptTemplates {
 	return serverPromptTemplates{
 		GitCommitPromptTemplate:        defaultGitCommitPromptTemplate,
 		GitPRDescriptionPromptTemplate: defaultGitPRDescriptionPromptTemplate,
-		GitReviewOverlayPromptTemplate: defaultGitReviewOverlayPromptTemplate,
 		ScheduleToCronPromptTemplate:   defaultScheduleToCronPromptTemplate,
 		ScheduleToCronSystemPrompt:     defaultScheduleToCronSystemPrompt,
 		SessionSummaryPromptTemplate:   defaultSessionSummaryPromptTemplate,
@@ -40,7 +37,6 @@ func serverPromptTemplatesFromSettings(settings map[string]string) serverPromptT
 	return serverPromptTemplates{
 		GitCommitPromptTemplate:        promptTemplateValue(settings, gitCommitPromptTemplateSettingKey, defaults.GitCommitPromptTemplate),
 		GitPRDescriptionPromptTemplate: promptTemplateValue(settings, gitPRDescriptionPromptTemplateSettingKey, defaults.GitPRDescriptionPromptTemplate),
-		GitReviewOverlayPromptTemplate: promptTemplateValue(settings, gitReviewOverlayPromptTemplateSettingKey, defaults.GitReviewOverlayPromptTemplate),
 		ScheduleToCronPromptTemplate:   promptTemplateValue(settings, scheduleToCronPromptTemplateSettingKey, defaults.ScheduleToCronPromptTemplate),
 		ScheduleToCronSystemPrompt:     promptTemplateValue(settings, scheduleToCronSystemPromptSettingKey, defaults.ScheduleToCronSystemPrompt),
 		SessionSummaryPromptTemplate:   promptTemplateValue(settings, sessionSummaryPromptTemplateSettingKey, defaults.SessionSummaryPromptTemplate),
@@ -74,7 +70,6 @@ func defaultPromptTemplateSettings() map[string]string {
 	return map[string]string{
 		gitCommitPromptTemplateSettingKey:        defaults.GitCommitPromptTemplate,
 		gitPRDescriptionPromptTemplateSettingKey: defaults.GitPRDescriptionPromptTemplate,
-		gitReviewOverlayPromptTemplateSettingKey: defaults.GitReviewOverlayPromptTemplate,
 		scheduleToCronPromptTemplateSettingKey:   defaults.ScheduleToCronPromptTemplate,
 		scheduleToCronSystemPromptSettingKey:     defaults.ScheduleToCronSystemPrompt,
 		sessionSummaryPromptTemplateSettingKey:   defaults.SessionSummaryPromptTemplate,

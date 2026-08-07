@@ -59,12 +59,6 @@ func (m *memStore) SaveProjectTestCache(*storage.ProjectTestCache) error { retur
 func (m *memStore) GetProjectTestCache(string, string, string, string, string) (*storage.ProjectTestCache, error) {
 	return nil, nil
 }
-func (m *memStore) SaveProjectGitReviewOverlayCache(*storage.ProjectGitReviewOverlayCache) error {
-	return nil
-}
-func (m *memStore) ListProjectGitReviewOverlayCache(string, string, string, string) ([]*storage.ProjectGitReviewOverlayCache, error) {
-	return nil, nil
-}
 
 // Task stubs keep memStore aligned with storage.Store; session tests do not exercise tasks.
 func (m *memStore) CreateTask(string, storage.TaskCreate) (*storage.Task, error) {

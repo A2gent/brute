@@ -345,6 +345,10 @@ func (s *Server) registerProjectRoutes(r chi.Router) {
 		r.Get("/{projectID}/databases/{dbID}/tables/{tableName}/columns/{columnName}/analytics", s.handleProjectDatabaseColumnAnalytics)
 		r.Post("/{projectID}/databases/{dbID}/query", s.handleProjectDatabaseQuery)
 
+		r.Get("/{projectID}/people", s.handleListProjectPeople)
+		r.Post("/{projectID}/people", s.handleCreateProjectPerson)
+		r.Put("/{projectID}/people", s.handleSaveProjectPerson)
+
 		r.Get("/{projectID}/tasks", s.handleListProjectTasks)
 		r.Post("/{projectID}/tasks", s.handleCreateProjectTask)
 		r.Get("/{projectID}/tasks/import", s.handleProjectTaskImportStatus)

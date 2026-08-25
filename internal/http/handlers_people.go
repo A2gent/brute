@@ -32,6 +32,8 @@ var (
 	legacyPersonBlocklist     = regexp.MustCompile(`(?i)(^|[ _-])(meeting|report|analysis|critique|timetable|procedure|project|проект|отчет|отчёт|анализ|обучение|школа|учителя|работа|заказ|книжк|дерево)([ _-]|$)`)
 	markdownImagePattern      = regexp.MustCompile(`!\[[^\]]*\]\(([^)]+)\)`)
 	obsidianImagePattern      = regexp.MustCompile(`!\[\[([^\]|]+)(?:\|[^\]]+)?\]\]`)
+	markdownLinkPattern       = regexp.MustCompile(`(^|[^!])\[[^\]]*\]\(([^)]+)\)`)
+	obsidianLinkPattern       = regexp.MustCompile(`(^|[^!])\[\[([^\]|]+)(?:\|[^\]]+)?\]\]`)
 	legacyGroupPrefixPattern  = regexp.MustCompile(`^\s*(\d+)\s*[-–—]\s*(.+?)\s*$`)
 )
 
@@ -59,6 +61,7 @@ type projectPerson struct {
 	Tags          []string          `json:"tags"`
 	Status        string            `json:"status"`
 	Legacy        bool              `json:"legacy"`
+	Links         []string          `json:"links"`
 }
 
 type projectPeopleResponse struct {
@@ -131,6 +134,7 @@ func (s *Server) handleListProjectPeople(w http.ResponseWriter, r *http.Request)
 	}
 
 	people := make([]projectPerson, 0)
+	personContents := make(map[string]string)
 	walkErr := filepath.WalkDir(peopleRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -158,7 +162,9 @@ func (s *Server) handleListProjectPeople(w http.ResponseWriter, r *http.Request)
 		}
 		person, ok := parseProjectPerson(filepath.ToSlash(relPath), directory, string(content))
 		if ok {
+			person.Links = []string{}
 			people = append(people, person)
+			personContents[person.Path] = bodyWithoutFrontmatter(string(content))
 		}
 		return nil
 	})
@@ -166,6 +172,7 @@ func (s *Server) handleListProjectPeople(w http.ResponseWriter, r *http.Request)
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to scan people: "+walkErr.Error())
 		return
 	}
+	resolvePersonLinks(people, personContents)
 
 	sort.SliceStable(people, func(i, j int) bool {
 		if people[i].Importance != people[j].Importance {
@@ -404,6 +411,90 @@ func splitPersonFrontmatter(content string) (map[interface{}]interface{}, string
 		return nil, "", fmt.Errorf("invalid person frontmatter: %w", err)
 	}
 	return frontmatter, body, nil
+}
+
+func bodyWithoutFrontmatter(content string) string {
+	_, body, err := splitPersonFrontmatter(content)
+	if err != nil {
+		return content
+	}
+	return body
+}
+
+func resolvePersonLinks(people []projectPerson, contents map[string]string) {
+	paths := make(map[string]string, len(people))
+	stems := make(map[string]string, len(people))
+	for _, person := range people {
+		normalizedPath := filepath.ToSlash(filepath.Clean(person.Path))
+		paths[strings.ToLower(normalizedPath)] = person.Path
+		stem := strings.TrimSuffix(filepath.Base(normalizedPath), filepath.Ext(normalizedPath))
+		stems[strings.ToLower(stem)] = person.Path
+		stems[strings.ToLower(person.Name)] = person.Path
+		for _, alias := range person.Aliases {
+			stems[strings.ToLower(alias)] = person.Path
+		}
+	}
+
+	for index := range people {
+		seen := make(map[string]struct{})
+		for _, target := range extractPersonLinkTargets(people[index].Path, contents[people[index].Path]) {
+			resolved := paths[strings.ToLower(target)]
+			if resolved == "" {
+				stem := strings.TrimSuffix(filepath.Base(target), filepath.Ext(target))
+				resolved = stems[strings.ToLower(stem)]
+			}
+			if resolved == "" || resolved == people[index].Path {
+				continue
+			}
+			if _, exists := seen[resolved]; exists {
+				continue
+			}
+			seen[resolved] = struct{}{}
+			people[index].Links = append(people[index].Links, resolved)
+		}
+		sort.Strings(people[index].Links)
+	}
+}
+
+func extractPersonLinkTargets(sourcePath, body string) []string {
+	targets := make([]string, 0)
+	for _, match := range markdownLinkPattern.FindAllStringSubmatch(body, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		if target := normalizePersonLinkTarget(sourcePath, match[2], true); target != "" {
+			targets = append(targets, target)
+		}
+	}
+	for _, match := range obsidianLinkPattern.FindAllStringSubmatch(body, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		if target := normalizePersonLinkTarget(sourcePath, match[2], false); target != "" {
+			targets = append(targets, target)
+		}
+	}
+	return targets
+}
+
+func normalizePersonLinkTarget(sourcePath, rawTarget string, relative bool) string {
+	target := strings.TrimSpace(strings.Trim(rawTarget, "<>"))
+	if index := strings.IndexAny(target, "#?"); index >= 0 {
+		target = target[:index]
+	}
+	if target == "" || strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") {
+		return ""
+	}
+	if decoded, err := url.PathUnescape(target); err == nil {
+		target = decoded
+	}
+	if !strings.EqualFold(filepath.Ext(target), ".md") {
+		target += ".md"
+	}
+	if relative && !strings.HasPrefix(target, "/") {
+		target = filepath.Join(filepath.Dir(sourcePath), filepath.FromSlash(target))
+	}
+	return filepath.ToSlash(filepath.Clean(strings.TrimPrefix(target, "/")))
 }
 
 func renderPersonMarkdown(existing map[interface{}]interface{}, req projectPersonRequest, body string) (string, error) {

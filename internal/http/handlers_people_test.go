@@ -107,6 +107,55 @@ Met at work.
 	}
 }
 
+func TestListProjectPeopleUsesConfiguredDirectoryRecursively(t *testing.T) {
+	server, store := newUnifiedAgentsTestServer(t)
+	root := t.TempDir()
+	configuredRoot := filepath.Join(root, "Knowledge", "Contacts")
+	if err := os.MkdirAll(filepath.Join(configuredRoot, "Friends", "Close"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "People"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	personCard := "---\ntype: person\nname: Nested Person\nimportance: 7\n---\n"
+	if err := os.WriteFile(filepath.Join(configuredRoot, "Friends", "Close", "Nested Person.md"), []byte(personCard), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outsideCard := "---\ntype: person\nname: Outside Person\nimportance: 10\n---\n"
+	if err := os.WriteFile(filepath.Join(root, "People", "Outside Person.md"), []byte(outsideCard), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	project := createTestProject(t, store, "people-project", "People", root)
+	project.Settings = map[string]string{peopleDirectorySetting: "Knowledge/Contacts"}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatalf("save project settings: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/projects/people-project/people", nil)
+	routeCtx := chi.NewRouteContext()
+	routeCtx.URLParams.Add("projectID", project.ID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
+	rec := httptest.NewRecorder()
+	server.handleListProjectPeople(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var response projectPeopleResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Directory != "Knowledge/Contacts" {
+		t.Fatalf("directory = %q, want Knowledge/Contacts", response.Directory)
+	}
+	if len(response.People) != 1 || response.People[0].Name != "Nested Person" {
+		t.Fatalf("configured recursive people = %+v", response.People)
+	}
+	if response.People[0].Path != "Knowledge/Contacts/Friends/Close/Nested Person.md" {
+		t.Fatalf("path = %q", response.People[0].Path)
+	}
+}
+
 func TestSaveProjectPersonPreservesMarkdownAndUnknownFrontmatter(t *testing.T) {
 	server, store := newUnifiedAgentsTestServer(t)
 	root := t.TempDir()

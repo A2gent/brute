@@ -10,3 +10,5 @@
 - Run Git commands from the actual component repository (for example `brute/`), not from the multi-component project container root.
 - Before inserting at a numbered line, confirm the current file length and that the line is outside any open function; use append or an exact structural replacement when placement is not safely known.
 - If delegation fails with a provider fallback configuration error, do not retry blindly; continue the scoped investigation locally and record the infrastructure failure separately from repository test results.
+- A Go auto-toolchain may report `go: no such tool "covdata"` only for coverage runs of packages without test files; verify plain and race tests separately before changing repository code.
+- A non-fast-forward push requires fetching and rebasing the local commits onto the updated remote branch before retrying the push.

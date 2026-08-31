@@ -56,8 +56,11 @@ func TestResolveTargetFailsOnTruncatedRouterResponse(t *testing.T) {
 	if router.request.MaxTokens != 2048 {
 		t.Fatalf("router max tokens = %d, want 2048", router.request.MaxTokens)
 	}
-	if router.request.Messages[0].Content != automaticRouterSystemPrompt {
-		t.Fatal("router did not receive the hardened system prompt")
+	if router.request.SystemPrompt != automaticRouterSystemPrompt {
+		t.Fatal("router did not receive the hardened system prompt as provider instructions")
+	}
+	if len(router.request.Messages) != 1 || router.request.Messages[0].Role != "user" {
+		t.Fatalf("router messages = %#v, want one user message and no system message", router.request.Messages)
 	}
 }
 

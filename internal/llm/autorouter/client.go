@@ -222,8 +222,8 @@ func (c *Client) selectRoutingRuleViaLLM(ctx context.Context, userPrompt string,
 	rulesJSON, _ := json.Marshal(indexed)
 
 	req := &llm.ChatRequest{
+		SystemPrompt: automaticRouterSystemPrompt,
 		Messages: []llm.Message{
-			{Role: "system", Content: automaticRouterSystemPrompt},
 			{Role: "user", Content: fmt.Sprintf("Rules: %s\n\nUser prompt: %s", string(rulesJSON), userPrompt)},
 		},
 		Temperature: 0,

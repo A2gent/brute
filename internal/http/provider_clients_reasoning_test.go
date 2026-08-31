@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/A2gent/brute/internal/config"
@@ -37,6 +38,7 @@ func TestSelectRoutingRuleViaLLMAppliesRouterReasoningEffort(t *testing.T) {
 		t.Fatalf("selectRoutingRuleViaLLM failed: %v", err)
 	}
 	assertReasoningEffort(t, requestBody, "high")
+	assertRouterPromptUsesInstructions(t, requestBody)
 }
 
 func TestCreateFallbackChainClientAppliesNodeReasoningEffort(t *testing.T) {
@@ -107,5 +109,21 @@ func assertReasoningEffort(t *testing.T, requestBody map[string]interface{}, wan
 	reasoning, _ := requestBody["reasoning"].(map[string]interface{})
 	if got, _ := reasoning["effort"].(string); got != want {
 		t.Fatalf("reasoning effort = %q, want %q; request=%#v", got, want, requestBody)
+	}
+}
+
+func assertRouterPromptUsesInstructions(t *testing.T, requestBody map[string]interface{}) {
+	t.Helper()
+	instructions, _ := requestBody["instructions"].(string)
+	if !strings.Contains(instructions, automaticRouterSystemPrompt) {
+		t.Fatalf("router instructions omit the classification prompt; request=%#v", requestBody)
+	}
+	input, _ := requestBody["input"].([]interface{})
+	if len(input) != 1 {
+		t.Fatalf("router input has %d items, want one user message; request=%#v", len(input), requestBody)
+	}
+	message, _ := input[0].(map[string]interface{})
+	if message["role"] != "user" {
+		t.Fatalf("router input role = %v, want user; request=%#v", message["role"], requestBody)
 	}
 }

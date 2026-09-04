@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	stdhttp "net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -81,6 +84,98 @@ func TestProjectURLPatternsRoundTripThroughProjectAPI(t *testing.T) {
 	if !reflect.DeepEqual(got.URLPatterns, updatePatterns) {
 		t.Fatalf("got URLPatterns = %#v, want %#v", got.URLPatterns, updatePatterns)
 	}
+}
+
+func TestCreateProjectClonesRepositoryIntoSelectedFolder(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is not available")
+	}
+
+	server, store := newProjectsAPITestServer(t)
+	defer store.Close()
+
+	remoteDir := createProjectCloneRemote(t)
+	projectDir := filepath.Join(t.TempDir(), "cloned-project")
+	createRec := requestProjectJSON(t, server, stdhttp.MethodPost, "/projects", CreateProjectRequest{
+		Name:          "Cloned Project",
+		Folder:        stringPtr(projectDir),
+		RepositoryURL: remoteDir,
+	})
+	if createRec.Code != stdhttp.StatusCreated {
+		t.Fatalf("create project status = %d, body = %s", createRec.Code, createRec.Body.String())
+	}
+
+	readme, err := os.ReadFile(filepath.Join(projectDir, "README.md"))
+	if err != nil {
+		t.Fatalf("read cloned file: %v", err)
+	}
+	if string(readme) != "cloned content\n" {
+		t.Fatalf("README.md = %q, want cloned content", string(readme))
+	}
+	origin, err := runGitCommand(projectDir, "remote", "get-url", "origin")
+	if err != nil {
+		t.Fatalf("read cloned origin: %v", err)
+	}
+	if origin != remoteDir {
+		t.Fatalf("origin = %q, want %q", origin, remoteDir)
+	}
+}
+
+func TestCreateProjectRejectsCloneIntoNonEmptyFolderWithoutSavingProject(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is not available")
+	}
+
+	server, store := newProjectsAPITestServer(t)
+	defer store.Close()
+
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "keep.txt"), []byte("keep\n"), 0o644); err != nil {
+		t.Fatalf("write existing file: %v", err)
+	}
+	createRec := requestProjectJSON(t, server, stdhttp.MethodPost, "/projects", CreateProjectRequest{
+		Name:          "Unsafe Clone",
+		Folder:        stringPtr(projectDir),
+		RepositoryURL: createProjectCloneRemote(t),
+	})
+	if createRec.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("create project status = %d, want %d; body = %s", createRec.Code, stdhttp.StatusBadRequest, createRec.Body.String())
+	}
+	projects, err := store.ListProjects()
+	if err != nil {
+		t.Fatalf("list projects: %v", err)
+	}
+	for _, project := range projects {
+		if project.Name == "Unsafe Clone" {
+			t.Fatalf("project was saved after clone validation failed")
+		}
+	}
+}
+
+func createProjectCloneRemote(t *testing.T) string {
+	t.Helper()
+
+	remoteDir := filepath.Join(t.TempDir(), "remote.git")
+	workDir := filepath.Join(t.TempDir(), "source")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatalf("create source folder: %v", err)
+	}
+	if _, err := runGitCommand(workDir, "init"); err != nil {
+		t.Fatalf("init source repository: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, "README.md"), []byte("cloned content\n"), 0o644); err != nil {
+		t.Fatalf("write source file: %v", err)
+	}
+	if _, err := runGitCommand(workDir, "add", "README.md"); err != nil {
+		t.Fatalf("stage source file: %v", err)
+	}
+	if _, err := runGitCommand(workDir, "-c", "user.name=A2gent Test", "-c", "user.email=test@a2gent.local", "commit", "-m", "Initial commit"); err != nil {
+		t.Fatalf("commit source file: %v", err)
+	}
+	if _, err := runGitCommand(workDir, "clone", "--bare", ".", remoteDir); err != nil {
+		t.Fatalf("create bare remote: %v", err)
+	}
+	return remoteDir
 }
 
 func newProjectsAPITestServer(t *testing.T) (*Server, *storage.SQLiteStore) {

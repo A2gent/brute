@@ -3,10 +3,15 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"github.com/A2gent/brute/internal/storage"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -43,12 +48,24 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	folder := normalizeFolder(req.Folder)
+	repositoryURL := strings.TrimSpace(req.RepositoryURL)
+	if repositoryURL != "" {
+		if folder == nil {
+			s.errorResponse(w, http.StatusBadRequest, "Folder is required when cloning a repository")
+			return
+		}
+		if err := cloneProjectRepository(r, repositoryURL, *folder); err != nil {
+			s.errorResponse(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 
 	now := time.Now()
 	project := &storage.Project{
 		ID:          uuid.New().String(),
 		Name:        name,
-		Folder:      normalizeFolder(req.Folder),
+		Folder:      folder,
 		Settings:    normalizeProjectSettings(req.Settings),
 		URLPatterns: urlPatterns,
 		IsSystem:    false,
@@ -62,6 +79,45 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.jsonResponse(w, http.StatusCreated, projectToResponse(project))
+}
+
+func cloneProjectRepository(r *http.Request, repositoryURL string, folder string) error {
+	target, err := filepath.Abs(folder)
+	if err != nil {
+		return fmt.Errorf("Invalid project folder: %w", err)
+	}
+
+	info, statErr := os.Stat(target)
+	switch {
+	case statErr == nil && !info.IsDir():
+		return errors.New("Project folder must be a directory")
+	case statErr == nil:
+		entries, err := os.ReadDir(target)
+		if err != nil {
+			return fmt.Errorf("Failed to inspect project folder: %w", err)
+		}
+		if len(entries) > 0 {
+			return errors.New("Project folder must be empty when cloning a repository")
+		}
+	case !errors.Is(statErr, os.ErrNotExist):
+		return fmt.Errorf("Failed to inspect project folder: %w", statErr)
+	}
+
+	// Clone without interactive credential prompts so an HTTP request cannot hang waiting for terminal input.
+	cmd := exec.CommandContext(r.Context(), "git", "clone", "--", repositoryURL, target)
+	cmd.Env = append(scrubInheritedGitEnv(os.Environ()), "GIT_TERMINAL_PROMPT=0")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if errors.Is(statErr, os.ErrNotExist) {
+			_ = os.RemoveAll(target)
+		}
+		message := strings.TrimSpace(string(output))
+		if message == "" {
+			message = err.Error()
+		}
+		return errors.New("Failed to clone repository: " + message)
+	}
+	return nil
 }
 
 func (s *Server) handleGetProject(w http.ResponseWriter, r *http.Request) {

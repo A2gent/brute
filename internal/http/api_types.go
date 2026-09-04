@@ -606,10 +606,11 @@ type ProjectResponse struct {
 }
 
 type CreateProjectRequest struct {
-	Name        string            `json:"name"`
-	Folder      *string           `json:"folder,omitempty"`
-	Settings    map[string]string `json:"settings,omitempty"`
-	URLPatterns []string          `json:"url_patterns,omitempty"`
+	Name          string            `json:"name"`
+	Folder        *string           `json:"folder,omitempty"`
+	RepositoryURL string            `json:"repository_url,omitempty"`
+	Settings      map[string]string `json:"settings,omitempty"`
+	URLPatterns   []string          `json:"url_patterns,omitempty"`
 }
 
 type UpdateProjectRequest struct {

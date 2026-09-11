@@ -29,7 +29,11 @@ func (s *Server) handleProjectGitBranchChanges(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	branchChangesTarget := projectGitBranchChangesTarget(targetRepoRoot)
+	branchChangesTarget, err := projectGitBranchChangesTargetForBase(targetRepoRoot, strings.TrimSpace(r.URL.Query().Get("baseBranch")))
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	response := ProjectGitBranchChangesResponse{
 		RootFolder:    targetRepoRoot,
 		CurrentBranch: branchChangesTarget.CurrentBranch,
@@ -86,7 +90,11 @@ func (s *Server) handleProjectGitBranchDiff(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	branchChangesTarget := projectGitBranchChangesTarget(targetRepoRoot)
+	branchChangesTarget, err := projectGitBranchChangesTargetForBase(targetRepoRoot, strings.TrimSpace(r.URL.Query().Get("baseBranch")))
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if !branchChangesTarget.Available {
 		s.errorResponse(w, http.StatusBadRequest, "Branch changes are available only on feature branches with a master or main branch")
 		return

@@ -108,12 +108,14 @@ type ProjectGitCommitMessageRequest struct {
 }
 
 type ProjectGitPRDescriptionRequest struct {
-	RepoPath string `json:"repo_path,omitempty"`
+	RepoPath   string `json:"repo_path,omitempty"`
+	BaseBranch string `json:"base_branch,omitempty"`
 }
 
 type ProjectGitPRDescriptionSaveRequest struct {
-	RepoPath string `json:"repo_path,omitempty"`
-	Content  string `json:"content"`
+	RepoPath   string `json:"repo_path,omitempty"`
+	BaseBranch string `json:"base_branch,omitempty"`
+	Content    string `json:"content"`
 }
 
 type ProjectGitFileDiffResponse struct {

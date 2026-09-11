@@ -50,7 +50,7 @@ Diff snippets:
 {{diffs}}`
 
 func (s *Server) handleGetProjectGitPRDescription(w http.ResponseWriter, r *http.Request) {
-	projectID, repoPath, _, target, ok := s.resolveProjectGitPRDescriptionTarget(w, r, strings.TrimSpace(r.URL.Query().Get("repoPath")))
+	projectID, repoPath, _, target, ok := s.resolveProjectGitPRDescriptionTarget(w, r, strings.TrimSpace(r.URL.Query().Get("repoPath")), strings.TrimSpace(r.URL.Query().Get("baseBranch")))
 	if !ok {
 		return
 	}
@@ -99,7 +99,7 @@ func (s *Server) handleSaveProjectGitPRDescription(w http.ResponseWriter, r *htt
 		return
 	}
 
-	_, repoPath, _, target, ok := s.resolveProjectGitPRDescriptionTarget(w, r, strings.TrimSpace(req.RepoPath))
+	_, repoPath, _, target, ok := s.resolveProjectGitPRDescriptionTarget(w, r, strings.TrimSpace(req.RepoPath), strings.TrimSpace(firstNonEmpty(req.BaseBranch, r.URL.Query().Get("baseBranch"))))
 	if !ok {
 		return
 	}
@@ -139,7 +139,7 @@ func (s *Server) handleGenerateProjectGitPRDescription(w http.ResponseWriter, r 
 		return
 	}
 
-	_, repoPath, targetRepoRoot, target, ok := s.resolveProjectGitPRDescriptionTarget(w, r, strings.TrimSpace(req.RepoPath))
+	_, repoPath, targetRepoRoot, target, ok := s.resolveProjectGitPRDescriptionTarget(w, r, strings.TrimSpace(req.RepoPath), strings.TrimSpace(firstNonEmpty(req.BaseBranch, r.URL.Query().Get("baseBranch"))))
 	if !ok {
 		return
 	}
@@ -173,7 +173,7 @@ func (s *Server) handleGenerateProjectGitPRDescription(w http.ResponseWriter, r 
 	s.jsonResponse(w, http.StatusOK, projectPRDescriptionToResponse(description, target.Available))
 }
 
-func (s *Server) resolveProjectGitPRDescriptionTarget(w http.ResponseWriter, r *http.Request, repoPathParam string) (string, string, string, projectGitBranchChangesTargetInfo, bool) {
+func (s *Server) resolveProjectGitPRDescriptionTarget(w http.ResponseWriter, r *http.Request, repoPathParam string, requestedBase string) (string, string, string, projectGitBranchChangesTargetInfo, bool) {
 	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
 	if projectID == "" {
 		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
@@ -196,7 +196,11 @@ func (s *Server) resolveProjectGitPRDescriptionTarget(w http.ResponseWriter, r *
 		return "", "", "", projectGitBranchChangesTargetInfo{}, false
 	}
 
-	target := projectGitBranchChangesTarget(targetRepoRoot)
+	target, err := projectGitBranchChangesTargetForBase(targetRepoRoot, requestedBase)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return "", "", "", projectGitBranchChangesTargetInfo{}, false
+	}
 	return projectID, normalizeProjectGitPRDescriptionRepoPath(repoPathParam), targetRepoRoot, target, true
 }
 

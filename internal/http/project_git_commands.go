@@ -22,6 +22,54 @@ func projectGitBranchChangesAvailability(repoRoot string) (string, string, bool)
 	return target.CurrentBranch, target.BaseBranch, target.Available
 }
 
+func projectGitBranchChangesTargetForBase(repoRoot string, requestedBase string) (projectGitBranchChangesTargetInfo, error) {
+	// WHY: Review can compare HEAD against a user-selected target instead of only
+	// auto-detected main/master. An empty requested base keeps the default.
+	target := projectGitBranchChangesTarget(repoRoot)
+	requestedBase = strings.TrimSpace(requestedBase)
+	if requestedBase == "" {
+		return target, nil
+	}
+
+	label, ref, err := resolveRequestedGitBaseBranch(repoRoot, requestedBase)
+	if err != nil {
+		return projectGitBranchChangesTargetInfo{CurrentBranch: target.CurrentBranch}, err
+	}
+
+	currentBranch := strings.TrimSpace(target.CurrentBranch)
+	if currentBranch == "" || currentBranch == "HEAD" {
+		return projectGitBranchChangesTargetInfo{CurrentBranch: currentBranch}, nil
+	}
+
+	return projectGitBranchChangesTargetInfo{
+		CurrentBranch: currentBranch,
+		BaseBranch:    label,
+		BaseRef:       ref,
+		Available:     true,
+	}, nil
+}
+
+func resolveRequestedGitBaseBranch(repoRoot string, requestedBase string) (string, string, error) {
+	name := strings.TrimSpace(requestedBase)
+	if name == "" || strings.Contains(name, "..") || strings.HasPrefix(name, "/") {
+		return "", "", errors.New("invalid base branch")
+	}
+
+	candidates := []struct {
+		label string
+		ref   string
+	}{
+		{label: name, ref: "refs/heads/" + name},
+		{label: name, ref: "refs/remotes/" + name},
+	}
+	for _, candidate := range candidates {
+		if _, err := runGitCommand(repoRoot, "show-ref", "--verify", "--quiet", candidate.ref); err == nil {
+			return candidate.label, candidate.ref, nil
+		}
+	}
+	return "", "", fmt.Errorf("unknown base branch %q", name)
+}
+
 func projectGitBranchChangesTarget(repoRoot string) projectGitBranchChangesTargetInfo {
 	currentBranchOutput, err := runGitCommand(repoRoot, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {

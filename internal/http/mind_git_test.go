@@ -167,6 +167,56 @@ func TestProjectGitBranchChangesTargetInfersDetachedLocalBranch(t *testing.T) {
 	}
 }
 
+func TestProjectGitBranchChangesTargetForRequestedBase(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is not available")
+	}
+
+	repoRoot := t.TempDir()
+	initMindGitTestRepo(t, repoRoot)
+	runGitForMindTest(t, repoRoot, "checkout", "-b", "feature/custom-base")
+	runGitForMindTest(t, repoRoot, "branch", "develop")
+
+	target, err := projectGitBranchChangesTargetForBase(repoRoot, "develop")
+	if err != nil {
+		t.Fatalf("expected requested develop base, got error: %v", err)
+	}
+	if !target.Available {
+		t.Fatalf("expected requested base comparison to be available, got %#v", target)
+	}
+	if target.BaseBranch != "develop" || target.BaseRef != "refs/heads/develop" {
+		t.Fatalf("expected local develop base, got %#v", target)
+	}
+
+	target, err = projectGitBranchChangesTargetForBase(repoRoot, "missing-branch")
+	if err == nil {
+		t.Fatalf("expected unknown base branch error, got %#v", target)
+	}
+}
+
+func TestProjectGitBranchChangesTargetForRequestedRemoteBase(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is not available")
+	}
+
+	repoRoot := t.TempDir()
+	initMindGitTestRepo(t, repoRoot)
+	runGitForMindTest(t, repoRoot, "update-ref", "refs/remotes/origin/develop", "HEAD")
+	runGitForMindTest(t, repoRoot, "checkout", "-b", "feature/remote-target")
+
+	target, err := projectGitBranchChangesTargetForBase(repoRoot, "origin/develop")
+	if err != nil {
+		t.Fatalf("expected requested origin/develop base, got error: %v", err)
+	}
+	if target.BaseBranch != "origin/develop" || target.BaseRef != "refs/remotes/origin/develop" {
+		t.Fatalf("expected origin/develop base, got %#v", target)
+	}
+}
+
 func initMindGitTestRepo(t *testing.T, repoRoot string) {
 	t.Helper()
 

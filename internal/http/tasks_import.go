@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/A2gent/brute/internal/storage"
@@ -17,6 +18,7 @@ var (
 	markdownHeadingPattern = regexp.MustCompile(`^#{1,6}\s+(.+?)\s*$`)
 	markdownTagPattern     = regexp.MustCompile(`(?:^|\s)#([[:alnum:]_-]+)`)
 	markdownPricePattern   = regexp.MustCompile(`(?i)(?:[$€]\s*[0-9][0-9,. ]*|[0-9][0-9,. ]*\s*(?:[$€]|USD\b|EUR\b)|\b(?:USD|EUR)\s+[0-9][0-9,. ]*)`)
+	markdownHoursPattern   = regexp.MustCompile(`(?i)\b(\d+)h\b`)
 )
 
 type markdownTask struct {
@@ -26,6 +28,7 @@ type markdownTask struct {
 	Status    string
 	Tags      []string
 	Price     string
+	Hours     int
 	Body      string
 	SourceKey string
 }
@@ -89,7 +92,7 @@ func (s *Server) importNextMarkdownTask(projectID, sourcePath string) (*taskImpo
 
 	next := tasks[0]
 	created, err := s.store.CreateTask(projectID, storage.TaskCreate{
-		Title: next.Title, Body: next.Body, Status: next.Status, Priority: 2, Tags: next.Tags, Price: next.Price,
+		Title: next.Title, Body: next.Body, Status: next.Status, Priority: 2, Tags: next.Tags, Price: next.Price, Hours: next.Hours,
 		Position: float64Ptr(float64(next.LineIndex + 1)), CreatedBy: "user", SourceKey: next.SourceKey,
 	})
 	if err != nil {
@@ -150,7 +153,7 @@ func parseMarkdownTasks(content, root string) []markdownTask {
 		hash := sha256.Sum256([]byte(line))
 		tasks = append(tasks, markdownTask{
 			LineIndex: index, RawLine: line, Title: title, Status: taskStatus,
-			Tags: extractMarkdownTags(title), Price: extractMarkdownPrice(title), Body: body,
+			Tags: extractMarkdownTags(title), Price: extractMarkdownPrice(title), Hours: extractMarkdownHours(title), Body: body,
 			SourceKey: "markdown:" + hex.EncodeToString(hash[:]),
 		})
 	}
@@ -196,6 +199,15 @@ func extractMarkdownTags(title string) []string {
 
 func extractMarkdownPrice(title string) string {
 	return strings.Join(strings.Fields(markdownPricePattern.FindString(title)), " ")
+}
+
+func extractMarkdownHours(title string) int {
+	match := markdownHoursPattern.FindStringSubmatch(title)
+	if match == nil {
+		return 0
+	}
+	hours, _ := strconv.Atoi(match[1])
+	return hours
 }
 
 func removeMarkdownLine(content string, index int) string {

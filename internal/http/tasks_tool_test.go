@@ -160,3 +160,25 @@ func TestTasksToolRequiresProjectScopedSession(t *testing.T) {
 		t.Fatalf("result = %#v, want project scope error", result)
 	}
 }
+
+func TestTasksToolCreateAndUpdateHours(t *testing.T) {
+	tool, ctx, store, projectID := newTasksToolFixture(t)
+
+	created := runTasksTool(t, tool, ctx, map[string]any{
+		"action": "create", "title": "Write adapter", "hours": 23,
+	})
+	if !strings.Contains(created, "23h") {
+		t.Fatalf("create output = %q, want 23h", created)
+	}
+	tasks, err := store.ListTasks(projectID)
+	if err != nil || len(tasks) != 1 || tasks[0].Hours != 23 {
+		t.Fatalf("stored tasks = %#v, err = %v", tasks, err)
+	}
+
+	updated := runTasksTool(t, tool, ctx, map[string]any{
+		"action": "update", "ref": "AG-1", "hours": 1,
+	})
+	if !strings.Contains(updated, "1h") || strings.Contains(updated, "23h") {
+		t.Fatalf("update output = %q, want 1h", updated)
+	}
+}

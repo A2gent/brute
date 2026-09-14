@@ -39,6 +39,7 @@ type Task struct {
 	DependencyIDs []string   `json:"dependency_ids"`
 	Tags          []string   `json:"tags"`
 	Price         string     `json:"price"`
+	Hours         int        `json:"hours"`
 	Position      float64    `json:"position"`
 	CreatedBy     string     `json:"created_by"`
 	CreatedAt     time.Time  `json:"created_at"`
@@ -58,6 +59,7 @@ type TaskCreate struct {
 	DependencyRefs []string
 	Tags           []string
 	Price          string
+	Hours          int
 	Position       *float64
 	CreatedBy      string
 	SourceKey      string
@@ -74,5 +76,6 @@ type TaskUpdate struct {
 	DependencyRefs *[]string
 	Tags           *[]string
 	Price          *string
+	Hours          *int
 	Position       *float64
 }

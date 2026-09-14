@@ -22,6 +22,7 @@ type createTaskRequest struct {
 	DependencyIDs []string             `json:"dependency_ids"`
 	Tags          []string             `json:"tags"`
 	Price         string               `json:"price"`
+	Hours         int                  `json:"hours"`
 }
 
 type updateTaskRequest struct {
@@ -34,6 +35,7 @@ type updateTaskRequest struct {
 	DependencyIDs *[]string             `json:"dependency_ids"`
 	Tags          *[]string             `json:"tags"`
 	Price         *string               `json:"price"`
+	Hours         *int                  `json:"hours"`
 	Position      *float64              `json:"position"`
 }
 
@@ -73,7 +75,7 @@ func (s *Server) handleCreateProjectTask(w http.ResponseWriter, r *http.Request)
 	}
 	task, err := s.store.CreateTask(chi.URLParam(r, "projectID"), storage.TaskCreate{
 		Title: req.Title, Body: req.Body, Image: image, Status: req.Status, Priority: priority,
-		Complexity: req.Complexity, DependencyRefs: req.DependencyIDs, Tags: req.Tags, Price: req.Price, CreatedBy: "user",
+		Complexity: req.Complexity, DependencyRefs: req.DependencyIDs, Tags: req.Tags, Price: req.Price, Hours: req.Hours, CreatedBy: "user",
 	})
 	if err != nil {
 		s.taskErrorResponse(w, err)
@@ -108,7 +110,7 @@ func (s *Server) handleUpdateProjectTask(w http.ResponseWriter, r *http.Request)
 	}
 	task, err := s.store.UpdateTask(chi.URLParam(r, "projectID"), chi.URLParam(r, "taskRef"), storage.TaskUpdate{
 		Title: req.Title, Body: req.Body, Image: image, Status: req.Status, Priority: req.Priority,
-		Complexity: req.Complexity, DependencyRefs: req.DependencyIDs, Tags: req.Tags, Price: req.Price, Position: req.Position,
+		Complexity: req.Complexity, DependencyRefs: req.DependencyIDs, Tags: req.Tags, Price: req.Price, Hours: req.Hours, Position: req.Position,
 	})
 	if err != nil {
 		s.taskErrorResponse(w, err)

@@ -103,6 +103,19 @@ func TestImportNextMarkdownTaskKeepsLineWhenCleanupFails(t *testing.T) {
 	}
 }
 
+func TestParseMarkdownTasksExtractsCompactHours(t *testing.T) {
+	tasks := parseMarkdownTasks("- [ ] Write adapter 23h #backend\n- [ ] Untimed task\n", t.TempDir())
+	if len(tasks) != 2 {
+		t.Fatalf("parsed %d tasks, want 2", len(tasks))
+	}
+	if tasks[0].Hours != 23 || tasks[0].Title != "Write adapter 23h #backend" {
+		t.Fatalf("timed task = %#v, want hours 23 with original title", tasks[0])
+	}
+	if tasks[1].Hours != 0 {
+		t.Fatalf("untimed task hours = %d, want 0", tasks[1].Hours)
+	}
+}
+
 func saveImportTestProject(t *testing.T, store *storage.SQLiteStore, root string) *storage.Project {
 	t.Helper()
 	folder := root

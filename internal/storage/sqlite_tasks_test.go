@@ -130,6 +130,37 @@ func TestSQLiteTaskDependenciesPersistAndRejectCycles(t *testing.T) {
 	}
 }
 
+func TestSQLiteTaskPersistsHours(t *testing.T) {
+	store, err := NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	project := saveTaskTestProject(t, store, "project", "Project")
+	task, err := store.CreateTask(project.ID, TaskCreate{Title: "Timed task", Hours: 23})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Hours != 23 {
+		t.Fatalf("created hours = %d, want 23", task.Hours)
+	}
+	loaded, err := store.GetTask(project.ID, task.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Hours != 23 {
+		t.Fatalf("loaded hours = %d, want 23", loaded.Hours)
+	}
+	hours := 1
+	updated, err := store.UpdateTask(project.ID, task.Ref, TaskUpdate{Hours: &hours})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Hours != 1 {
+		t.Fatalf("updated hours = %d, want 1", updated.Hours)
+	}
+}
+
 func saveTaskTestProject(t *testing.T, store *SQLiteStore, id, name string) *Project {
 	t.Helper()
 	now := time.Now().UTC()

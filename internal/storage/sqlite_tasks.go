@@ -33,6 +33,9 @@ func (s *SQLiteStore) CreateTask(projectID string, input TaskCreate) (*Task, err
 	if input.Complexity < 0 || input.Complexity > 5 {
 		return nil, fmt.Errorf("complexity must be between 0 and 5")
 	}
+	if input.Hours < 0 {
+		return nil, fmt.Errorf("hours must be zero or greater")
+	}
 	project, err := s.GetProject(projectID)
 	if err != nil {
 		return nil, err
@@ -70,7 +73,7 @@ func (s *SQLiteStore) CreateTask(projectID string, input TaskCreate) (*Task, err
 	task := &Task{
 		ID: uuid.New().String(), ProjectID: projectID, Ref: taskRefPrefix(project) + fmt.Sprintf("-%d", seq), Seq: seq,
 		Title: title, Body: input.Body, Image: input.Image, Status: status, Priority: input.Priority, Complexity: input.Complexity,
-		Tags: normalizeTaskTags(input.Tags), Price: strings.TrimSpace(input.Price), Position: position,
+		Tags: normalizeTaskTags(input.Tags), Price: strings.TrimSpace(input.Price), Hours: input.Hours, Position: position,
 		CreatedBy: createdBy, CreatedAt: now, UpdatedAt: now, SourceKey: strings.TrimSpace(input.SourceKey),
 	}
 	stampTaskStatus(task, "", status, now)
@@ -80,10 +83,10 @@ func (s *SQLiteStore) CreateTask(projectID string, input TaskCreate) (*Task, err
 	}
 	tagsJSON, _ := json.Marshal(task.Tags)
 	_, err = tx.Exec(`INSERT INTO tasks
-		(id, project_id, ref, seq, title, body, image, session_id, status, priority, complexity, tags, price, position, created_by, source_key, created_at, updated_at, started_at, completed_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, project_id, ref, seq, title, body, image, session_id, status, priority, complexity, tags, price, hours, position, created_by, source_key, created_at, updated_at, started_at, completed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		task.ID, task.ProjectID, task.Ref, task.Seq, task.Title, task.Body, string(imageJSON), task.SessionID, task.Status, task.Priority, task.Complexity,
-		string(tagsJSON), task.Price, task.Position, task.CreatedBy, task.SourceKey, task.CreatedAt, task.UpdatedAt,
+		string(tagsJSON), task.Price, task.Hours, task.Position, task.CreatedBy, task.SourceKey, task.CreatedAt, task.UpdatedAt,
 		task.StartedAt, task.CompletedAt)
 	if err != nil {
 		return nil, fmt.Errorf("create task: %w", err)
@@ -186,6 +189,12 @@ func (s *SQLiteStore) UpdateTask(projectID, taskRef string, update TaskUpdate) (
 	if update.Price != nil {
 		task.Price = strings.TrimSpace(*update.Price)
 	}
+	if update.Hours != nil {
+		if *update.Hours < 0 {
+			return nil, fmt.Errorf("hours must be zero or greater")
+		}
+		task.Hours = *update.Hours
+	}
 	if update.Position != nil {
 		task.Position = *update.Position
 	}
@@ -201,8 +210,8 @@ func (s *SQLiteStore) UpdateTask(projectID, taskRef string, update TaskUpdate) (
 		return nil, err
 	}
 	defer tx.Rollback()
-	result, err := tx.Exec(`UPDATE tasks SET title=?, body=?, image=?, session_id=?, status=?, priority=?, complexity=?, tags=?, price=?, position=?, updated_at=?, started_at=?, completed_at=? WHERE project_id=? AND id=?`,
-		task.Title, task.Body, string(imageJSON), task.SessionID, task.Status, task.Priority, task.Complexity, string(tagsJSON), task.Price, task.Position,
+	result, err := tx.Exec(`UPDATE tasks SET title=?, body=?, image=?, session_id=?, status=?, priority=?, complexity=?, tags=?, price=?, hours=?, position=?, updated_at=?, started_at=?, completed_at=? WHERE project_id=? AND id=?`,
+		task.Title, task.Body, string(imageJSON), task.SessionID, task.Status, task.Priority, task.Complexity, string(tagsJSON), task.Price, task.Hours, task.Position,
 		task.UpdatedAt, task.StartedAt, task.CompletedAt, projectID, task.ID)
 	if err != nil {
 		return nil, fmt.Errorf("update task: %w", err)
@@ -238,7 +247,7 @@ func (s *SQLiteStore) DeleteTask(projectID, taskRef string) error {
 	return nil
 }
 
-const taskSelect = `SELECT id, project_id, ref, seq, title, body, image, session_id, status, priority, complexity, tags, price, position, created_by, source_key, created_at, updated_at, started_at, completed_at FROM tasks`
+const taskSelect = `SELECT id, project_id, ref, seq, title, body, image, session_id, status, priority, complexity, tags, price, hours, position, created_by, source_key, created_at, updated_at, started_at, completed_at FROM tasks`
 
 type taskScanner interface{ Scan(dest ...any) error }
 
@@ -247,7 +256,7 @@ func scanTask(scanner taskScanner) (*Task, error) {
 	var tagsJSON, imageJSON string
 	var startedAt, completedAt sql.NullTime
 	if err := scanner.Scan(&task.ID, &task.ProjectID, &task.Ref, &task.Seq, &task.Title, &task.Body, &imageJSON, &task.SessionID, &task.Status,
-		&task.Priority, &task.Complexity, &tagsJSON, &task.Price, &task.Position, &task.CreatedBy, &task.SourceKey,
+		&task.Priority, &task.Complexity, &tagsJSON, &task.Price, &task.Hours, &task.Position, &task.CreatedBy, &task.SourceKey,
 		&task.CreatedAt, &task.UpdatedAt, &startedAt, &completedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrTaskNotFound

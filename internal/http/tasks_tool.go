@@ -29,6 +29,7 @@ type tasksToolParams struct {
 	DependsOn  *[]string `json:"depends_on,omitempty"`
 	Tags       *[]string `json:"tags,omitempty"`
 	Price      *string   `json:"price,omitempty"`
+	Hours      *int      `json:"hours,omitempty"`
 	Query      string    `json:"q,omitempty"`
 	Tag        string    `json:"tag,omitempty"`
 	Limit      int       `json:"limit,omitempty"`
@@ -74,6 +75,7 @@ func (t *tasksTool) Schema() map[string]interface{} {
 			},
 			"tags":  map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Tags without '#'."},
 			"price": map[string]interface{}{"type": "string", "description": "Free-text price/estimate, as used on the board."},
+			"hours": map[string]interface{}{"type": "integer", "description": "Time estimate in whole hours, parsed from compact tokens like 1h or 23h."},
 			"q":     map[string]interface{}{"type": "string", "description": "Free-text filter over title and body (list only)."},
 			"tag":   map[string]interface{}{"type": "string", "description": "Filter by a single tag (list only)."},
 			"limit": map[string]interface{}{"type": "integer", "description": "Max rows for list (default 20)."},
@@ -258,6 +260,9 @@ func (t *tasksTool) create(projectID string, p tasksToolParams) (string, error) 
 	if p.Price != nil {
 		create.Price = *p.Price
 	}
+	if p.Hours != nil {
+		create.Hours = *p.Hours
+	}
 	task, err := t.server.store.CreateTask(projectID, create)
 	if err != nil {
 		return "", err
@@ -269,7 +274,7 @@ func (t *tasksTool) update(projectID string, p tasksToolParams) (string, error) 
 	if strings.TrimSpace(p.Ref) == "" {
 		return "", fmt.Errorf("ref is required for update")
 	}
-	update := storage.TaskUpdate{Body: p.Body, Priority: p.Priority, Complexity: p.Complexity, DependencyRefs: p.DependsOn, Tags: p.Tags, Price: p.Price}
+	update := storage.TaskUpdate{Body: p.Body, Priority: p.Priority, Complexity: p.Complexity, DependencyRefs: p.DependsOn, Tags: p.Tags, Price: p.Price, Hours: p.Hours}
 	if strings.TrimSpace(p.Title) != "" {
 		update.Title = &p.Title
 	}
@@ -380,6 +385,9 @@ func formatTaskLine(task *storage.Task) string {
 	}
 	if task.Price != "" {
 		line += " (" + task.Price + ")"
+	}
+	if task.Hours > 0 {
+		line += fmt.Sprintf(" %dh", task.Hours)
 	}
 	return line
 }

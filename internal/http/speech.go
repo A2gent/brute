@@ -39,7 +39,8 @@ var recommendedPiperVoices = []string{
 }
 
 type speechCompletionRequest struct {
-	Text string `json:"text"`
+	Text     string `json:"text"`
+	Language string `json:"language,omitempty"`
 }
 
 type speechTranscribeResponse struct {
@@ -182,6 +183,14 @@ func (s *Server) handleCompletionSpeech(w http.ResponseWriter, r *http.Request) 
 		s.errorResponse(w, http.StatusBadRequest, "text is required")
 		return
 	}
+	reqBody.Language = strings.ToLower(strings.TrimSpace(reqBody.Language))
+	switch reqBody.Language {
+	case "", "ru", "ru-ru", "en", "en-us":
+	default:
+		s.errorResponse(w, http.StatusBadRequest, "language must be ru or en")
+		return
+	}
+	reqBody.Text = text
 	if s.toolManager == nil {
 		s.errorResponse(w, http.StatusServiceUnavailable, "Built-in speech tools are unavailable")
 		return
@@ -191,22 +200,17 @@ func (s *Server) handleCompletionSpeech(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	payload, err := json.Marshal(map[string]interface{}{
-		"text":            text,
-		"output_mode":     "stream",
-		"auto_play_audio": false,
-	})
-	if err != nil {
-		s.errorResponse(w, http.StatusInternalServerError, "Failed to build speech request payload: "+err.Error())
-		return
-	}
-
 	// WHY: Review playback should use Brute's built-in local TTS tools instead of
 	// requiring an ElevenLabs integration. Try the lightweight web-friendly tools
 	// first, then fall back to the local Piper runtime when available.
 	toolNames := []string{"edge_tts", "macos_say_tts", "piper_tts"}
 	errorsByTool := make([]string, 0, len(toolNames))
 	for _, toolName := range toolNames {
+		payload, err := completionSpeechPayload(reqBody, toolName)
+		if err != nil {
+			s.errorResponse(w, http.StatusInternalServerError, "Failed to build speech request payload: "+err.Error())
+			return
+		}
 		result, execErr := s.toolManager.Execute(r.Context(), toolName, payload)
 		if execErr != nil {
 			errorsByTool = append(errorsByTool, fmt.Sprintf("%s: %v", toolName, execErr))

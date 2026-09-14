@@ -41,6 +41,7 @@ var recommendedPiperVoices = []string{
 type speechCompletionRequest struct {
 	Text     string `json:"text"`
 	Language string `json:"language,omitempty"`
+	Model    string `json:"model,omitempty"`
 }
 
 type speechTranscribeResponse struct {
@@ -110,7 +111,7 @@ func (s *Server) handleListSpeechVoices(w http.ResponseWriter, r *http.Request) 
 	s.jsonResponse(w, http.StatusOK, payload.Voices)
 }
 
-func (s *Server) handleListPiperVoices(w http.ResponseWriter, r *http.Request) {
+func piperVoiceOptions() []piperVoiceOption {
 	dataDir := resolveAAgentDataDirForHTTP()
 	modelsDir := filepath.Join(dataDir, "tts", "piper", "models")
 
@@ -139,8 +140,7 @@ func (s *Server) handleListPiperVoices(w http.ResponseWriter, r *http.Request) {
 		if trimmed == "" {
 			continue
 		}
-		_, already := seen[trimmed]
-		if already {
+		if _, already := seen[trimmed]; already {
 			continue
 		}
 		modelPath, ok := installed[trimmed]
@@ -167,8 +167,11 @@ func (s *Server) handleListPiperVoices(w http.ResponseWriter, r *http.Request) {
 			ModelPath: installed[id],
 		})
 	}
+	return out
+}
 
-	s.jsonResponse(w, http.StatusOK, out)
+func (s *Server) handleListPiperVoices(w http.ResponseWriter, r *http.Request) {
+	s.jsonResponse(w, http.StatusOK, piperVoiceOptions())
 }
 
 func (s *Server) handleCompletionSpeech(w http.ResponseWriter, r *http.Request) {
@@ -191,6 +194,12 @@ func (s *Server) handleCompletionSpeech(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	reqBody.Text = text
+	reqBody.Model = strings.TrimSpace(reqBody.Model)
+	toolNames, err := completionSpeechTools(reqBody.Model)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if s.toolManager == nil {
 		s.errorResponse(w, http.StatusServiceUnavailable, "Built-in speech tools are unavailable")
 		return
@@ -200,12 +209,11 @@ func (s *Server) handleCompletionSpeech(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// WHY: Review playback should use Brute's built-in local TTS tools instead of
-	// requiring an ElevenLabs integration. Try the lightweight web-friendly tools
-	// first, then fall back to the local Piper runtime when available.
-	toolNames := []string{"edge_tts", "macos_say_tts", "piper_tts"}
 	errorsByTool := make([]string, 0, len(toolNames))
 	for _, toolName := range toolNames {
+		if s.shouldSkipSpeechTool(toolName, reqBody.Model) {
+			continue
+		}
 		payload, err := completionSpeechPayload(reqBody, toolName)
 		if err != nil {
 			s.errorResponse(w, http.StatusInternalServerError, "Failed to build speech request payload: "+err.Error())
@@ -406,15 +414,17 @@ func sanitizeAudioUploadExtension(filename string) string {
 }
 
 func (s *Server) resolveElevenLabsAPIKey() string {
-	integrations, err := s.store.ListIntegrations()
-	if err == nil {
-		for _, integration := range integrations {
-			if integration == nil || !integration.Enabled || integration.Provider != "elevenlabs" {
-				continue
-			}
-			apiKey := strings.TrimSpace(integration.Config["api_key"])
-			if apiKey != "" {
-				return apiKey
+	if s != nil && s.store != nil {
+		integrations, err := s.store.ListIntegrations()
+		if err == nil {
+			for _, integration := range integrations {
+				if integration == nil || !integration.Enabled || integration.Provider != "elevenlabs" {
+					continue
+				}
+				apiKey := strings.TrimSpace(integration.Config["api_key"])
+				if apiKey != "" {
+					return apiKey
+				}
 			}
 		}
 	}

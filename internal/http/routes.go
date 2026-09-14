@@ -203,6 +203,7 @@ func (s *Server) registerSpeechRoutes(r chi.Router) {
 	r.Route("/speech", func(r chi.Router) {
 		r.Get("/voices", s.handleListSpeechVoices)
 		r.Get("/piper/voices", s.handleListPiperVoices)
+		r.Get("/models", s.handleListSpeechModels)
 		r.Post("/completion", s.handleCompletionSpeech)
 		r.Post("/transcribe", s.handleTranscribeSpeech)
 		r.Get("/clips/{clipID}", s.handleGetSpeechClip)

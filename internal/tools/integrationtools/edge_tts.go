@@ -251,6 +251,11 @@ func (t *EdgeTTSTool) Execute(ctx context.Context, params json.RawMessage) (*too
 	}, nil
 }
 
+func EdgeTTSAvailable() bool {
+	_, err := resolveEdgeTTSBinary("")
+	return err == nil
+}
+
 func resolveEdgeTTSBinary(requested string) (string, error) {
 	candidates := make([]string, 0, 12)
 	if requested != "" {

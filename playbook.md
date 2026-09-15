@@ -12,3 +12,4 @@
 - If delegation fails with a provider fallback configuration error, do not retry blindly; continue the scoped investigation locally and record the infrastructure failure separately from repository test results.
 - A Go auto-toolchain may report `go: no such tool "covdata"` only for coverage runs of packages without test files; verify plain and race tests separately before changing repository code.
 - A non-fast-forward push requires fetching and rebasing the local commits onto the updated remote branch before retrying the push.
+- Git `--numstat --find-renames` prints `prefix/{old => new}suffix`. Parsing only the right-hand side drops the shared prefix, so merge with `--name-status` fails and the file looks like a plain `M`. Expand the brace form to the destination path and keep `old_path`.

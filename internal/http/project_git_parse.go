@@ -1,10 +1,21 @@
 package http
 
 import (
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 )
+
+type gitCommitFileMeta struct {
+	Status  string
+	OldPath string
+}
+
+// Git compact rename forms: prefix/{old => new}suffix and "old => new".
+// Also accept "->" because some git UIs and wrapped --stat lines use that arrow.
+var gitRenameBracePattern = regexp.MustCompile(`^(.*)\{(.*?) *(?:=>|->) *(.*)\}(.*)$`)
+var gitRenamePlainPattern = regexp.MustCompile(`^(.*) (?:=>|->) (.*)$`)
 
 func parseGitAheadBehind(track string) (int, int) {
 	trimmed := strings.TrimSpace(track)
@@ -129,8 +140,8 @@ func pickProjectGitPrimaryRef(refs []string, currentBranch string) string {
 	return ""
 }
 
-func parseProjectGitCommitFileStatuses(output string) map[string]string {
-	statuses := make(map[string]string)
+func parseProjectGitCommitFileStatuses(output string) map[string]gitCommitFileMeta {
+	statuses := make(map[string]gitCommitFileMeta)
 	lines := strings.Split(output, "\n")
 	for _, line := range lines {
 		trimmedLine := strings.TrimSpace(line)
@@ -145,26 +156,32 @@ func parseProjectGitCommitFileStatuses(output string) map[string]string {
 		if status == "" {
 			continue
 		}
-		path := strings.TrimSpace(parts[len(parts)-1])
+
+		path := ""
+		oldPath := ""
+		statusKind := strings.ToUpper(status)
+		if (strings.HasPrefix(statusKind, "R") || strings.HasPrefix(statusKind, "C")) && len(parts) >= 3 {
+			oldPath = decodeGitPath(strings.TrimSpace(parts[1]))
+			path = decodeGitPath(strings.TrimSpace(parts[2]))
+		} else {
+			path = decodeGitPath(strings.TrimSpace(parts[len(parts)-1]))
+		}
 		if path == "" {
 			continue
 		}
-		path = decodeGitPath(path)
-		if path == "" {
-			continue
-		}
-		statuses[path] = status
+		statuses[path] = gitCommitFileMeta{Status: status, OldPath: oldPath}
 	}
 	return statuses
 }
 
-func mergeProjectGitCommitFiles(statuses map[string]string, statsOutput string) []ProjectGitCommitFile {
+func mergeProjectGitCommitFiles(statuses map[string]gitCommitFileMeta, statsOutput string) []ProjectGitCommitFile {
 	merged := make(map[string]*ProjectGitCommitFile, len(statuses))
 
-	for path, status := range statuses {
+	for path, meta := range statuses {
 		merged[path] = &ProjectGitCommitFile{
-			Path:   path,
-			Status: status,
+			Path:    path,
+			OldPath: meta.OldPath,
+			Status:  meta.Status,
 		}
 	}
 
@@ -179,22 +196,29 @@ func mergeProjectGitCommitFiles(statuses map[string]string, statsOutput string) 
 			continue
 		}
 
-		path := strings.TrimSpace(parts[2])
-		if path == "" {
+		rawPath := strings.TrimSpace(parts[2])
+		if rawPath == "" {
 			continue
 		}
-		path = normalizeGitNumstatPath(path)
+		oldPath, path, renamed := expandGitRenamePath(rawPath)
 		if path == "" {
 			continue
 		}
 
 		file := merged[path]
 		if file == nil {
+			status := "M"
+			if renamed {
+				status = "R"
+			}
 			file = &ProjectGitCommitFile{
-				Path:   path,
-				Status: "M",
+				Path:    path,
+				OldPath: oldPath,
+				Status:  status,
 			}
 			merged[path] = file
+		} else if file.OldPath == "" && oldPath != "" {
+			file.OldPath = oldPath
 		}
 
 		additionsRaw := strings.TrimSpace(parts[0])
@@ -223,24 +247,30 @@ func mergeProjectGitCommitFiles(statuses map[string]string, statsOutput string) 
 	return files
 }
 
-func normalizeGitNumstatPath(path string) string {
-	trimmed := strings.TrimSpace(path)
+func expandGitRenamePath(path string) (oldPath string, newPath string, renamed bool) {
+	trimmed := decodeGitPath(strings.TrimSpace(path))
 	if trimmed == "" {
-		return ""
+		return "", "", false
 	}
-	if strings.Contains(trimmed, "=>") {
-		parts := strings.Split(trimmed, "=>")
-		if len(parts) > 1 {
-			candidate := strings.TrimSpace(parts[len(parts)-1])
-			candidate = strings.TrimPrefix(candidate, "{")
-			candidate = strings.TrimSuffix(candidate, "}")
-			candidate = strings.TrimSpace(candidate)
-			if candidate != "" {
-				return decodeGitPath(candidate)
-			}
+	if matches := gitRenameBracePattern.FindStringSubmatch(trimmed); len(matches) == 5 {
+		prefix := matches[1]
+		oldMid := strings.TrimSpace(matches[2])
+		newMid := strings.TrimSpace(matches[3])
+		suffix := matches[4]
+		oldPath = decodeGitPath(prefix + oldMid + suffix)
+		newPath = decodeGitPath(prefix + newMid + suffix)
+		if oldPath != "" && newPath != "" {
+			return oldPath, newPath, true
 		}
 	}
-	return decodeGitPath(trimmed)
+	if matches := gitRenamePlainPattern.FindStringSubmatch(trimmed); len(matches) == 3 {
+		oldPath = decodeGitPath(strings.TrimSpace(matches[1]))
+		newPath = decodeGitPath(strings.TrimSpace(matches[2]))
+		if oldPath != "" && newPath != "" {
+			return oldPath, newPath, true
+		}
+	}
+	return "", trimmed, false
 }
 
 func parseGitPorcelain(output string) []ProjectGitChangedFile {

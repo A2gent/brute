@@ -483,7 +483,11 @@ func projectGitCommitFilesMarkdown(files []ProjectGitCommitFile) string {
 		if !file.Binary {
 			stats = fmt.Sprintf("+%d -%d", file.Additions, file.Deletions)
 		}
-		lines = append(lines, fmt.Sprintf("- %s (%s, %s)", file.Path, fallbackText(file.Status, "changed"), stats))
+		path := file.Path
+		if strings.TrimSpace(file.OldPath) != "" {
+			path = file.OldPath + " -> " + file.Path
+		}
+		lines = append(lines, fmt.Sprintf("- %s (%s, %s)", path, fallbackText(file.Status, "changed"), stats))
 	}
 	return strings.Join(lines, "\n")
 }

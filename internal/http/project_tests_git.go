@@ -53,13 +53,13 @@ func loadProjectGitWorkingTreeChangedFiles(repoRoot string) ([]ProjectGitCommitF
 	if err != nil {
 		return nil, err
 	}
-	statuses := map[string]string{}
+	statuses := map[string]gitCommitFileMeta{}
 	for _, file := range parseGitPorcelain(statusOutput) {
 		status := projectGitTestingScopeStatusFromPorcelain(file)
 		if status == "" {
 			continue
 		}
-		statuses[file.Path] = status
+		statuses[file.Path] = gitCommitFileMeta{Status: status}
 	}
 	if len(statuses) == 0 {
 		return []ProjectGitCommitFile{}, nil

@@ -152,6 +152,7 @@ type ProjectGitHistoryResponse struct {
 
 type ProjectGitCommitFile struct {
 	Path      string `json:"path"`
+	OldPath   string `json:"old_path,omitempty"`
 	Status    string `json:"status"`
 	Additions int    `json:"additions"`
 	Deletions int    `json:"deletions"`

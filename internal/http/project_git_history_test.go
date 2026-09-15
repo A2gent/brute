@@ -89,3 +89,57 @@ func TestHandleProjectGitStatusRejectsOutsideAbsoluteRepoPathWithProjectRootMess
 		t.Fatalf("project git validation should not mention My Mind, got %s", body)
 	}
 }
+
+func TestHandleProjectGitBranchChangesReportsMovedFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is not available")
+	}
+
+	server, projectID, repoDir := newProjectFileTestServer(t)
+	initMindGitTestRepo(t, repoDir)
+
+	oldRel := filepath.Join("app", "assets", "javascripts", "store", "all.js")
+	newRel := filepath.Join("app", "javascript", "src", "store", "index.js")
+	if err := os.MkdirAll(filepath.Join(repoDir, filepath.Dir(oldRel)), 0o755); err != nil {
+		t.Fatalf("failed to create old directory: %v", err)
+	}
+	writeGitTestFile(t, repoDir, oldRel, "export default {}\n")
+	runGitForMindTest(t, repoDir, "add", "--", oldRel)
+	runGitForMindTest(t, repoDir, "-c", "commit.gpgsign=false", "commit", "-m", "add store")
+	runGitForMindTest(t, repoDir, "checkout", "-b", "move-store")
+	if err := os.MkdirAll(filepath.Join(repoDir, filepath.Dir(newRel)), 0o755); err != nil {
+		t.Fatalf("failed to create new directory: %v", err)
+	}
+	runGitForMindTest(t, repoDir, "mv", oldRel, newRel)
+	runGitForMindTest(t, repoDir, "-c", "commit.gpgsign=false", "commit", "-m", "move store")
+
+	target := "/projects/git/branch-changes?projectID=" + url.QueryEscape(projectID) + "&baseBranch=master"
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected OK for branch changes, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var response ProjectGitBranchChangesResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("failed to decode branch changes: %v", err)
+	}
+
+	var moved *ProjectGitCommitFile
+	for i := range response.Files {
+		if strings.HasPrefix(strings.ToUpper(response.Files[i].Status), "R") {
+			moved = &response.Files[i]
+			break
+		}
+	}
+	if moved == nil {
+		t.Fatalf("expected a renamed file in %#v", response.Files)
+	}
+	if moved.Path != "app/javascript/src/store/index.js" {
+		t.Fatalf("moved path = %q", moved.Path)
+	}
+	if moved.OldPath != "app/assets/javascripts/store/all.js" {
+		t.Fatalf("moved old_path = %q", moved.OldPath)
+	}
+}

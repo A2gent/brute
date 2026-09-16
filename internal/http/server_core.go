@@ -128,6 +128,7 @@ func NewServer(
 	}
 
 	if settings, err := store.GetSettings(); err == nil {
+		syncSpeechSettings(nil, settings)
 		filesearch.SetIndexingEnabledFromSettings(settings)
 		folder := strings.TrimSpace(settings[sessionsFolderSettingKey])
 		if folder == "" {

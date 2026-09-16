@@ -353,6 +353,8 @@ Common optional variables:
 
 Speech transcription variables:
 
+**Local speech engines:** [setup and engine selection](docs/local-speech.md). Parakeet (NVIDIA) is now the default STT for microphone and meetings; Moonshine, WhisperKit (Argmax), and legacy whisper.cpp are selectable. Local TTS adds Kokoro v1.0 and Qwen3 TTS. The Whisper variables below apply when selecting whisper.cpp.
+
 | Variable | Default | Description |
 |---|---|---|
 | `AAGENT_WHISPER_MODEL` | - | explicit local whisper.cpp model path; overrides model-name selection |

@@ -11,6 +11,7 @@ import (
 )
 
 func TestSpeechTranscribeEndpointReturnsStructuredErrorWhenSTTUnavailable(t *testing.T) {
+	t.Setenv("AAGENT_STT_ENGINE", "whisper_cpp")
 	t.Setenv("AAGENT_DATA_PATH", t.TempDir())
 	t.Setenv("AAGENT_WHISPER_AUTO_SETUP", "0")
 	t.Setenv("AAGENT_WHISPER_AUTO_DOWNLOAD", "0")

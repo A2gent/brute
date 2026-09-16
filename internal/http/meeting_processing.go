@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/A2gent/brute/internal/llm"
-	"github.com/A2gent/brute/internal/stt/whispercpp"
+	"github.com/A2gent/brute/internal/speechengine"
 )
 
 const (
@@ -90,7 +90,7 @@ func (s *Server) transcribeMeetingAudio(ctx context.Context, meeting meetingHist
 		if err != nil {
 			return "", fmt.Errorf("prepare %s for transcription: %w", filepath.Base(absPath), err)
 		}
-		text, transcribeErr := whispercpp.TranscribeWithConfig(ctx, whisperPath, whispercpp.TranscribeOptions{Profile: "meeting"})
+		text, transcribeErr := speechengine.TranscribeSelected(ctx, "", whisperPath, speechengine.TranscribeOptions{Profile: "meeting"})
 		if cleanup != nil {
 			cleanup()
 		}

@@ -2,7 +2,9 @@ package http
 
 import (
 	"fmt"
+	"github.com/A2gent/brute/internal/speechengine"
 	"net/http"
+	"os"
 	"runtime"
 	"strings"
 
@@ -24,7 +26,9 @@ type speechModelsResponse struct {
 }
 
 var recommendedSpeechModels = []speechModel{
-	{ID: "auto", Label: "Auto (best available)", Languages: []string{"en", "ru"}, Quality: "auto", Available: true},
+	{ID: "kokoro", Label: "Kokoro v1.0", Engine: "kokoro_tts", Quality: "high", Languages: []string{"en", "es", "fr", "hi", "it", "ja", "pt", "zh"}},
+	{ID: "qwen3_tts", Label: "Qwen3 TTS", Engine: "qwen3_tts", Quality: "high", Languages: []string{"en", "ru", "zh", "ja", "ko", "de", "fr", "es", "it", "pt"}},
+	{ID: "auto", Label: "Auto (local only)", Languages: []string{"en", "ru"}, Quality: "auto", Available: true},
 	{ID: "edge_tts:en-US-EmmaMultilingualNeural", Label: "Edge Emma multilingual", Engine: "edge_tts", Voice: "en-US-EmmaMultilingualNeural", Languages: []string{"en", "ru"}, Quality: "high"},
 	{ID: "edge_tts:en-US-AndrewMultilingualNeural", Label: "Edge Andrew multilingual", Engine: "edge_tts", Voice: "en-US-AndrewMultilingualNeural", Languages: []string{"en", "ru"}, Quality: "high"},
 	{ID: "edge_tts:en-US-AvaMultilingualNeural", Label: "Edge Ava multilingual", Engine: "edge_tts", Voice: "en-US-AvaMultilingualNeural", Languages: []string{"en", "ru"}, Quality: "high"},
@@ -44,6 +48,12 @@ func parseSpeechModel(id string) (string, string, error) {
 	if trimmed == "" || strings.EqualFold(trimmed, "auto") {
 		return "", "", nil
 	}
+	switch trimmed {
+	case "kokoro", "kokoro_tts":
+		return "kokoro_tts", "", nil
+	case "qwen3_tts", "piper_tts", "macos_say_tts":
+		return trimmed, "", nil
+	}
 	engine, voice, ok := strings.Cut(trimmed, ":")
 	engine = strings.TrimSpace(engine)
 	voice = strings.TrimSpace(voice)
@@ -58,24 +68,26 @@ func parseSpeechModel(id string) (string, string, error) {
 	}
 }
 
+func effectiveCompletionModel(model string) string {
+	if value := strings.TrimSpace(model); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(os.Getenv("AAGENT_TTS_ENGINE")); value != "" {
+		return value
+	}
+	return "piper_tts"
+}
+
 func completionSpeechTools(modelID string) ([]string, error) {
-	engine, _, err := parseSpeechModel(modelID)
+	engine, _, err := parseSpeechModel(effectiveCompletionModel(modelID))
 	if err != nil {
 		return nil, err
 	}
-	// WHY: Compact macOS voices are much worse than Edge/Piper neural models.
-	// Prefer those first; Piper can auto-download a language model on first use.
-	ranked := []string{"elevenlabs_tts", "edge_tts", "piper_tts", "macos_say_tts"}
-	if engine == "" {
-		return ranked, nil
+	// Explicit choices never silently send local text to a cloud fallback.
+	if engine != "" {
+		return []string{engine}, nil
 	}
-	out := []string{engine}
-	for _, name := range ranked {
-		if name != engine {
-			out = append(out, name)
-		}
-	}
-	return out, nil
+	return []string{"piper_tts", "macos_say_tts"}, nil
 }
 
 func (s *Server) shouldSkipSpeechTool(toolName, modelID string) bool {
@@ -111,6 +123,8 @@ func (s *Server) handleListSpeechModels(w http.ResponseWriter, r *http.Request) 
 
 	available := map[string]bool{
 		"":               true,
+		"kokoro_tts":     registered("kokoro_tts") && speechengine.Available("kokoro"),
+		"qwen3_tts":      registered("qwen3_tts") && speechengine.Available("qwen3_tts"),
 		"edge_tts":       edgeOK,
 		"piper_tts":      piperOK,
 		"macos_say_tts":  macosOK,
@@ -120,10 +134,10 @@ func (s *Server) handleListSpeechModels(w http.ResponseWriter, r *http.Request) 
 	seen := map[string]struct{}{}
 	out := make([]speechModel, 0, len(recommendedSpeechModels)+8)
 	for _, model := range recommendedSpeechModels {
-		if !available[model.Engine] {
+		if !available[model.Engine] && model.Engine != "kokoro_tts" && model.Engine != "qwen3_tts" {
 			continue
 		}
-		model.Available = true
+		model.Available = available[model.Engine]
 		out = append(out, model)
 		seen[model.ID] = struct{}{}
 	}

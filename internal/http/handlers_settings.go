@@ -51,6 +51,12 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		req.Settings = map[string]string{}
 	}
 
+	previousSettings, err := s.store.GetSettings()
+	if err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to load existing settings: "+err.Error())
+		return
+	}
+
 	oldCustomEnv, err := loadCustomEnv(s.store)
 	if err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to load existing custom env: "+err.Error())
@@ -75,6 +81,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	syncCustomEnvToEnv(oldCustomEnv, nextCustomEnv)
+	syncSpeechSettings(previousSettings, req.Settings)
 	filesearch.SetIndexingEnabledFromSettings(req.Settings)
 	folder := strings.TrimSpace(req.Settings[sessionsFolderSettingKey])
 	if folder == "" {

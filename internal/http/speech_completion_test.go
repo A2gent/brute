@@ -54,10 +54,10 @@ func TestCompletionSpeechUsesBuiltInTTSTool(t *testing.T) {
 
 	clipStore := speechcache.New(0)
 	manager := tools.NewManager(".")
-	fake := &fakeSpeechTool{store: clipStore}
+	fake := &fakeSpeechTool{name: "piper_tts", store: clipStore}
 	manager.Register(fake)
 	server := NewServer(config.DefaultConfig(), nil, manager, session.NewManager(store), store, clipStore, 0)
-	// Override the registered edge_tts tool after NewServer adds the real built-ins.
+	// Override the local default tool after NewServer adds the real built-ins.
 	server.toolManager.Register(fake)
 
 	req := httptest.NewRequest(http.MethodPost, "/speech/completion", strings.NewReader(`{"text":"Explain the change"}`))
@@ -89,7 +89,7 @@ func TestCompletionSpeechUsesBuiltInTTSTool(t *testing.T) {
 	if err := json.Unmarshal(fake.params, &params); err != nil {
 		t.Fatal(err)
 	}
-	if params["voice"] != "en-US-EmmaMultilingualNeural" {
+	if params["model_path"] != "ru_RU-ruslan-medium" {
 		t.Fatalf("Russian voice not forwarded: %s", fake.params)
 	}
 

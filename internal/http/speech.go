@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/A2gent/brute/internal/stt/whispercpp"
+	"github.com/A2gent/brute/internal/speechengine"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -194,7 +194,7 @@ func (s *Server) handleCompletionSpeech(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	reqBody.Text = text
-	reqBody.Model = strings.TrimSpace(reqBody.Model)
+	reqBody.Model = effectiveCompletionModel(reqBody.Model)
 	toolNames, err := completionSpeechTools(reqBody.Model)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
@@ -305,8 +305,18 @@ func (s *Server) handleTranscribeSpeech(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), defaultTranscribeTimeout)
 	defer cancel()
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxTranscribeAudioBytes+1024*1024)
 	if err := r.ParseMultipartForm(maxTranscribeAudioBytes); err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Invalid multipart request: "+err.Error())
+		return
+	}
+
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	engine, err := speechengine.ResolveSTTEngine(r.FormValue("engine"))
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -348,7 +358,7 @@ func (s *Server) handleTranscribeSpeech(w http.ResponseWriter, r *http.Request) 
 		defer whisperCleanup()
 	}
 
-	transcript, err := whispercpp.TranscribeWithConfig(ctx, whisperAudioPath, whispercpp.TranscribeOptions{
+	transcript, err := speechengine.TranscribeSelected(ctx, engine, whisperAudioPath, speechengine.TranscribeOptions{
 		Language:           r.FormValue("language"),
 		TranslateToEnglish: parseOptionalBool(r.FormValue("translate_to_english")),
 		Prompt:             r.FormValue("prompt"),

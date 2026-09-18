@@ -18,7 +18,7 @@ func Transcribe(ctx context.Context, engine string, audioPath string, opts Trans
 		return "", err
 	}
 
-	cfg := loadRuntimeConfig(strings.TrimSpace(opts.Profile))
+	cfg := loadRuntimeConfig(ctx, strings.TrimSpace(opts.Profile))
 	switch engine {
 	case EngineParakeet:
 		return transcribeMLX(ctx, cfg, EngineParakeet, audioPath, opts)
@@ -48,7 +48,7 @@ func SynthesizeWithLanguage(ctx context.Context, engine string, text string, lan
 		return nil, ErrEmptyText
 	}
 
-	cfg := loadRuntimeConfig("")
+	cfg := loadRuntimeConfig(ctx, "")
 	switch engine {
 	case EngineKokoro:
 		return synthesizeMLX(ctx, cfg, EngineKokoro, text, language)

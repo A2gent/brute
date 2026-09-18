@@ -12,6 +12,23 @@ import (
 	"time"
 )
 
+func isolateHostSpeechRuntime(t *testing.T) {
+	t.Helper()
+	t.Setenv("AAGENT_DATA_PATH", t.TempDir())
+	t.Setenv("AAGENT_SPEECH_PYTHON", "")
+	t.Setenv("AAGENT_SPEECH_WHISPERKIT_BIN", "")
+	t.Setenv("AAGENT_WHISPERKIT_BIN", "")
+	p := &platformEnv{
+		goos:     runtime.GOOS,
+		goarch:   runtime.GOARCH,
+		dataPath: os.Getenv("AAGENT_DATA_PATH"),
+		brewDirs: []string{t.TempDir()},
+		lookPath: func(string) (string, error) { return "", exec.ErrNotFound },
+		runner:   &fakeRunner{},
+	}
+	withTestPlatform(t, p)
+}
+
 func writeFakePythonHelper(t *testing.T, dir string) string {
 	t.Helper()
 	path := filepath.Join(dir, "fake-local-speech-mlx.py")
@@ -384,10 +401,7 @@ func TestTranscribeRequiresConfiguredPython(t *testing.T) {
 		t.Fatalf("write audio: %v", err)
 	}
 
-	t.Setenv("AAGENT_SPEECH_PYTHON", "")
-	oldLookPath := lookPath
-	lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
-	t.Cleanup(func() { lookPath = oldLookPath })
+	isolateHostSpeechRuntime(t)
 
 	_, err := Transcribe(context.Background(), EngineParakeet, audioPath, TranscribeOptions{})
 	if !errors.Is(err, ErrPythonNotConfigured) {
@@ -402,10 +416,7 @@ func TestTranscribeWhisperKitRequiresCLI(t *testing.T) {
 		t.Fatalf("write audio: %v", err)
 	}
 
-	t.Setenv("AAGENT_SPEECH_WHISPERKIT_BIN", "")
-	oldLookPath := lookPath
-	lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
-	t.Cleanup(func() { lookPath = oldLookPath })
+	isolateHostSpeechRuntime(t)
 
 	_, err := Transcribe(context.Background(), EngineWhisperKit, audioPath, TranscribeOptions{})
 	if !errors.Is(err, ErrWhisperKitNotConfigured) {
@@ -494,11 +505,7 @@ func TestAvailable(t *testing.T) {
 		}
 		return
 	}
-	oldLookPath := lookPath
-	lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
-	t.Cleanup(func() { lookPath = oldLookPath })
-	t.Setenv("AAGENT_SPEECH_PYTHON", "")
-	t.Setenv("AAGENT_SPEECH_WHISPERKIT_BIN", "")
+	isolateHostSpeechRuntime(t)
 
 	if Available(EngineParakeet) || Available(EngineWhisperKit) {
 		t.Fatal("expected unavailable without configured runtimes")

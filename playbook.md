@@ -13,3 +13,4 @@
 - A Go auto-toolchain may report `go: no such tool "covdata"` only for coverage runs of packages without test files; verify plain and race tests separately before changing repository code.
 - A non-fast-forward push requires fetching and rebasing the local commits onto the updated remote branch before retrying the push.
 - Git `--numstat --find-renames` prints `prefix/{old => new}suffix`. Parsing only the right-hand side drops the shared prefix, so merge with `--name-status` fails and the file looks like a plain `M`. Expand the brace form to the destination path and keep `old_path`.
+- Python snippets executed with `python -c` must use `True`/`False`. JSON `true`/`false` is a runtime NameError, and Go fakes that return `{"ok":true}` will not catch it. Execute the real script against a stub package. On macOS, `python3` may be 3.9; prefer `python3.11+` for 3.10+ probes.

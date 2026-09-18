@@ -21,6 +21,7 @@ import (
 
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
+	"github.com/A2gent/brute/internal/speechengine"
 )
 
 func (s *Server) telegramInboundAudioMetadataForMessage(audioPath string, mediaKind string) (map[string]interface{}, error) {
@@ -272,8 +273,8 @@ func convertAudioToWAVForWhisper(ctx context.Context, inputPath string) (string,
 		return inputPath, nil, nil
 	}
 
-	ffmpegPath, err := exec.LookPath("ffmpeg")
-	if err != nil {
+	ffmpegPath := speechengine.FFmpegPath()
+	if ffmpegPath == "" {
 		logging.Warn("ffmpeg not found in PATH; passing original audio file to whisper: %s", inputPath)
 		return inputPath, nil, nil
 	}

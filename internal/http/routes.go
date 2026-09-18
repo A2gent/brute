@@ -201,6 +201,9 @@ func (s *Server) registerMCPRoutes(r chi.Router) {
 func (s *Server) registerSpeechRoutes(r chi.Router) {
 	// Speech/TTS helpers (proxied through backend)
 	r.Route("/speech", func(r chi.Router) {
+		r.Get("/runtime", s.handleSpeechRuntime)
+		r.Get("/runtime/install", s.handleSpeechRuntimeInstallJob)
+		r.Post("/runtime/install", s.handleInstallSpeechRuntime)
 		r.Get("/voices", s.handleListSpeechVoices)
 		r.Get("/piper/voices", s.handleListPiperVoices)
 		r.Get("/models", s.handleListSpeechModels)

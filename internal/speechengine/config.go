@@ -1,10 +1,11 @@
 package speechengine
 
 import (
+	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
+	"time"
 )
 
 const (
@@ -34,9 +35,30 @@ type runtimeConfig struct {
 	qwen3TTSLangCode string
 }
 
-func loadRuntimeConfig(profile string) runtimeConfig {
+func loadRuntimeConfig(ctx context.Context, profile string) runtimeConfig {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, pythonProbeTimeout*time.Second)
+	defer cancel()
 	return runtimeConfig{
-		pythonPath:       resolvePythonPath(),
+		pythonPath:       resolvePythonForPlatform(probeCtx, currentPlatform()).Path,
+		mlxScriptPath:    resolveMLXScriptPath(),
+		whisperKitBin:    resolveWhisperKitBin(),
+		parakeetModel:    envOrDefault("AAGENT_SPEECH_PARAKEET_MODEL", defaultParakeetModel),
+		moonshineModel:   envOrDefault("AAGENT_SPEECH_MOONSHINE_MODEL", defaultMoonshineModel),
+		whisperKitModel:  resolveWhisperKitModel(profile),
+		kokoroModel:      envOrDefault("AAGENT_SPEECH_KOKORO_MODEL", defaultKokoroModel),
+		kokoroVoice:      envOrDefault("AAGENT_SPEECH_KOKORO_VOICE", defaultKokoroVoice),
+		kokoroLangCode:   envOrDefault("AAGENT_SPEECH_KOKORO_LANG_CODE", defaultKokoroLangCode),
+		qwen3TTSModel:    envOrDefault("AAGENT_SPEECH_QWEN3_TTS_MODEL", defaultQwen3TTSModel),
+		qwen3TTSVoice:    envOrDefault("AAGENT_SPEECH_QWEN3_TTS_VOICE", defaultQwen3TTSVoice),
+		qwen3TTSLangCode: envOrDefault("AAGENT_SPEECH_QWEN3_TTS_LANG_CODE", defaultQwen3TTSLang),
+	}
+}
+
+func loadRuntimeConfigModels(profile string) runtimeConfig {
+	return runtimeConfig{
 		mlxScriptPath:    resolveMLXScriptPath(),
 		whisperKitBin:    resolveWhisperKitBin(),
 		parakeetModel:    envOrDefault("AAGENT_SPEECH_PARAKEET_MODEL", defaultParakeetModel),
@@ -63,24 +85,6 @@ func pathExists(path string) bool {
 	return !info.IsDir()
 }
 
-func resolvePythonPath() string {
-	if raw := strings.TrimSpace(os.Getenv("AAGENT_SPEECH_PYTHON")); raw != "" {
-		path := filepath.Clean(raw)
-		if pathExists(path) {
-			return path
-		}
-		return ""
-	}
-	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
-		for _, candidate := range []string{"python3", "python"} {
-			if path, err := lookPath(candidate); err == nil {
-				return path
-			}
-		}
-	}
-	return ""
-}
-
 func resolveMLXScriptPath() string {
 	if raw := strings.TrimSpace(os.Getenv("AAGENT_SPEECH_MLX_SCRIPT")); raw != "" {
 		path := filepath.Clean(raw)
@@ -92,21 +96,7 @@ func resolveMLXScriptPath() string {
 }
 
 func resolveWhisperKitBin() string {
-	for _, key := range []string{"AAGENT_SPEECH_WHISPERKIT_BIN", "AAGENT_WHISPERKIT_BIN"} {
-		if raw := strings.TrimSpace(os.Getenv(key)); raw != "" {
-			path := filepath.Clean(raw)
-			if pathExists(path) {
-				return path
-			}
-			return ""
-		}
-	}
-	for _, candidate := range []string{"whisperkit-cli", "argmax-cli"} {
-		if path, err := lookPath(candidate); err == nil {
-			return path
-		}
-	}
-	return ""
+	return resolveWhisperKitBinForPlatform(currentPlatform())
 }
 
 func resolveWhisperKitModel(profile string) string {

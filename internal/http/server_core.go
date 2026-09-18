@@ -32,6 +32,9 @@ import (
 
 // Server represents the HTTP API server
 type Server struct {
+	speechRuntimeMu          sync.Mutex
+	speechRuntimeInstaller   speechRuntimeInstaller
+	inspectSpeechRuntime     speechRuntimeInspector
 	config                   *config.Config
 	llmClient                llm.Client
 	openRouterModelsClient   openRouterModelsHTTPClient

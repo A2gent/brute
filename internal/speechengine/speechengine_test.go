@@ -18,6 +18,7 @@ func isolateHostSpeechRuntime(t *testing.T) {
 	t.Setenv("AAGENT_SPEECH_PYTHON", "")
 	t.Setenv("AAGENT_SPEECH_WHISPERKIT_BIN", "")
 	t.Setenv("AAGENT_WHISPERKIT_BIN", "")
+	t.Setenv("AAGENT_WHISPER_BIN", "")
 	p := &platformEnv{
 		goos:     runtime.GOOS,
 		goarch:   runtime.GOARCH,
@@ -507,7 +508,7 @@ func TestAvailable(t *testing.T) {
 	}
 	isolateHostSpeechRuntime(t)
 
-	if Available(EngineParakeet) || Available(EngineWhisperKit) {
+	if Available(EngineParakeet) || Available(EngineWhisperKit) || Available(EngineWhisperCPP) {
 		t.Fatal("expected unavailable without configured runtimes")
 	}
 
@@ -525,6 +526,17 @@ func TestAvailable(t *testing.T) {
 		if !Available(EngineKokoro) {
 			t.Fatal("expected kokoro available when python path exists on darwin arm64")
 		}
+	}
+
+	managed := filepath.Join(os.Getenv("AAGENT_DATA_PATH"), "speech", "whisper", "build", "bin", "whisper-cli")
+	if err := os.MkdirAll(filepath.Dir(managed), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managed, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !Available(EngineWhisperCPP) {
+		t.Fatal("expected whisper.cpp available when managed whisper-cli exists")
 	}
 }
 

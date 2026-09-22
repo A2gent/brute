@@ -17,6 +17,8 @@ func Available(engine string) bool {
 			return false
 		}
 		return strings.TrimSpace(resolveWhisperKitBin()) != ""
+	case EngineWhisperCPP:
+		return strings.TrimSpace(resolveWhisperCPPBin()) != ""
 	default:
 		return false
 	}

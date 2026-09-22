@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/A2gent/brute/internal/stt/whispercpp"
 )
 
 // mlxProbeScript is executed by python -c. JSON true/false are NameErrors here; use Python True/False.
@@ -374,17 +376,55 @@ func legacyWhisperCPPEngine(p *platformEnv) EngineStatus {
 		Supported: true,
 		Detail:    "Legacy engine; auto-setup and model weights are not fully probed here",
 	}
-	if raw := strings.TrimSpace(os.Getenv("AAGENT_WHISPER_BIN")); raw != "" && pathExists(raw) {
-		eng.RuntimeReady = true
-		eng.Detail = "Configured via AAGENT_WHISPER_BIN at " + raw
+	path, source := resolveWhisperCPPBinForPlatform(p)
+	if path == "" {
 		return eng
 	}
-	if path, err := p.lookPath("whisper-cli"); err == nil {
-		eng.RuntimeReady = true
+	eng.RuntimeReady = true
+	switch source {
+	case "env":
+		eng.Detail = "Configured via AAGENT_WHISPER_BIN at " + path
+	case "managed":
+		eng.Detail = "Managed whisper-cli found at " + path
+	default:
 		eng.Detail = "whisper-cli found at " + path
-		return eng
 	}
 	return eng
+}
+
+func resolveWhisperCPPBin() string {
+	path, _ := resolveWhisperCPPBinForPlatform(currentPlatform())
+	return path
+}
+
+// Same order as whispercpp.resolveBinaryPath, plus Homebrew dirs when PATH is incomplete.
+func resolveWhisperCPPBinForPlatform(p *platformEnv) (path string, source string) {
+	if raw := strings.TrimSpace(os.Getenv("AAGENT_WHISPER_BIN")); raw != "" {
+		cleaned := filepath.Clean(raw)
+		if pathExists(cleaned) {
+			return cleaned, "env"
+		}
+		return "", ""
+	}
+	if found, err := p.lookPath("whisper-cli"); err == nil && pathIsExecutable(found) {
+		return found, "path"
+	}
+	for _, dir := range brewBinDirsForPlatform(p) {
+		candidate := filepath.Join(dir, "whisper-cli")
+		if pathIsExecutable(candidate) {
+			return candidate, "brew"
+		}
+	}
+	dataDir := strings.TrimSpace(p.dataPath)
+	if dataDir == "" {
+		dataDir = resolveSpeechDataPath()
+	}
+	for _, candidate := range whispercpp.ManagedBinaryCandidates(dataDir) {
+		if pathIsExecutable(candidate) || pathExists(candidate) {
+			return candidate, "managed"
+		}
+	}
+	return "", ""
 }
 
 func legacyPiperEngine(p *platformEnv) EngineStatus {

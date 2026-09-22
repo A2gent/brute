@@ -214,6 +214,25 @@ func TestNormalizePromptKeepsRecentContext(t *testing.T) {
 	}
 }
 
+func TestResolveBinaryPathFindsManagedDataDirBinary(t *testing.T) {
+	dataDir := t.TempDir()
+	want := filepath.Join(dataDir, "speech", "whisper", "build", "bin", "whisper-cli")
+	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(want, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("AAGENT_WHISPER_BIN", "")
+	t.Setenv("AAGENT_DATA_PATH", dataDir)
+
+	got := resolveBinaryPath()
+	if got != want {
+		t.Fatalf("resolveBinaryPath = %q, want managed %q", got, want)
+	}
+}
+
 func TestResolveCMakeBinaryUsesExplicitEnvPath(t *testing.T) {
 	tmpDir := t.TempDir()
 	cmakePath := filepath.Join(tmpDir, "cmake")

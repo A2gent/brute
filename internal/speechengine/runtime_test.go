@@ -393,6 +393,51 @@ func TestProbeMLXRuntimeRejectsInvalidOverride(t *testing.T) {
 	}
 }
 
+func TestInspectRuntimeFindsManagedWhisperCPPBinary(t *testing.T) {
+	runner := &fakeRunner{handlers: map[string]func([]string) (stdout, stderr []byte, err error){}}
+	p := testPlatform(t, runner)
+	p.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	want := filepath.Join(p.dataPath, "speech", "whisper", "build", "bin", "whisper-cli")
+	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(want, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AAGENT_WHISPER_BIN", "")
+	withTestPlatform(t, p)
+
+	status := InspectRuntime(context.Background())
+	eng := findEngine(status.Engines, EngineWhisperCPP)
+	if !eng.RuntimeReady {
+		t.Fatalf("expected whisper.cpp ready from managed binary, got %+v", eng)
+	}
+	if !strings.Contains(eng.Detail, want) {
+		t.Fatalf("expected managed binary path in detail, got %q", eng.Detail)
+	}
+}
+
+func TestInspectRuntimeFindsBrewWhisperCPPBinary(t *testing.T) {
+	runner := &fakeRunner{handlers: map[string]func([]string) (stdout, stderr []byte, err error){}}
+	p := testPlatform(t, runner)
+	p.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	want := filepath.Join(p.brewDirs[0], "whisper-cli")
+	if err := os.WriteFile(want, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AAGENT_WHISPER_BIN", "")
+	withTestPlatform(t, p)
+
+	status := InspectRuntime(context.Background())
+	eng := findEngine(status.Engines, EngineWhisperCPP)
+	if !eng.RuntimeReady {
+		t.Fatalf("expected whisper.cpp ready from brew binary, got %+v", eng)
+	}
+	if !strings.Contains(eng.Detail, want) {
+		t.Fatalf("expected brew binary path in detail, got %q", eng.Detail)
+	}
+}
+
 func TestResolveWhisperKitBinUsesHomebrewFallback(t *testing.T) {
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")

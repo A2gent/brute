@@ -90,18 +90,29 @@ func resolveBinaryPath() string {
 	if v, err := exec.LookPath("whisper-cli"); err == nil {
 		return v
 	}
-	dataDir := resolveDataDir()
-	candidates := []string{
-		filepath.Join(dataDir, "speech", "whisper", "build", "bin", "whisper-cli"),
-		filepath.Join(dataDir, "speech", "whisper", "whisper-cli"),
-		filepath.Join(dataDir, "speech", "whisper", "bin", "whisper-cli"),
+	// Homebrew installs whisper-cli here; launchd PATH often omits these dirs.
+	for _, dir := range []string{"/opt/homebrew/bin", "/usr/local/bin"} {
+		candidate := filepath.Join(dir, "whisper-cli")
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
 	}
-	for _, candidate := range candidates {
+	for _, candidate := range ManagedBinaryCandidates(resolveDataDir()) {
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 			return candidate
 		}
 	}
 	return ""
+}
+
+// ManagedBinaryCandidates lists auto-built whisper-cli locations under the data dir.
+// Diagnostics and transcribe must use the same list so a previously built binary counts as available.
+func ManagedBinaryCandidates(dataDir string) []string {
+	return []string{
+		filepath.Join(dataDir, "speech", "whisper", "build", "bin", "whisper-cli"),
+		filepath.Join(dataDir, "speech", "whisper", "whisper-cli"),
+		filepath.Join(dataDir, "speech", "whisper", "bin", "whisper-cli"),
+	}
 }
 
 func resolveModelPath(modelName string) string {

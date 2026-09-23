@@ -98,6 +98,7 @@ const (
 	ProviderOpenAI      ProviderType = "openai"
 	ProviderOpenAICodex ProviderType = "openai_codex"
 	ProviderGrok        ProviderType = "grok"
+	ProviderMeta        ProviderType = "meta"
 	ProviderJev         ProviderType = "jev"
 	ProviderFallback    ProviderType = "fallback_chain"
 	ProviderAutoRouter  ProviderType = "automatic_router"
@@ -219,6 +220,15 @@ func SupportedProviders() []ProviderDefinition {
 			RequiresKey:   true,
 			DefaultModel:  "grok-4.5",
 			ContextWindow: 131072,
+		},
+		{
+			// Muse Spark is served on the OpenAI Chat Completions API at /v1.
+			Type:          ProviderMeta,
+			DisplayName:   "Meta Model API",
+			DefaultURL:    "https://api.meta.ai/v1",
+			RequiresKey:   true,
+			DefaultModel:  "muse-spark-1.3",
+			ContextWindow: 1048576,
 		},
 		{
 			Type:          ProviderJev,

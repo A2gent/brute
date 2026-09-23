@@ -483,6 +483,9 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 			return []string{"OPENAI_API_KEY"}
 		case config.ProviderGrok:
 			return []string{"XAI_API_KEY"}
+		case config.ProviderMeta:
+			// Meta's docs export MODEL_API_KEY; META_API_KEY matches the other provider env names.
+			return []string{"META_API_KEY", "MODEL_API_KEY"}
 		case config.ProviderJev:
 			return []string{"TYPESAFE_API_KEY"}
 		default:
@@ -574,7 +577,7 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 			return kimicli.NewClient(model, cfg.WorkDir), model, nil
 		case config.ProviderCursor:
 			return cursorcli.NewClientWithOptions(model, cursorcli.Options{WorkDir: cfg.WorkDir, APIKey: apiKey}), model, nil
-		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle, config.ProviderOpenAI, config.ProviderOpenCodeZen, config.ProviderGrok:
+		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle, config.ProviderOpenAI, config.ProviderOpenCodeZen, config.ProviderGrok, config.ProviderMeta:
 			return lmstudio.NewClient(apiKey, model, baseURL), model, nil
 		case config.ProviderOpenAICodex:
 			options := openaicodex.Options{

@@ -43,6 +43,8 @@ func (c *Client) providerName() string {
 		return "OpenRouter"
 	case strings.Contains(base, "kimi.com"), strings.Contains(base, "moonshot"):
 		return "Kimi"
+	case strings.Contains(base, "api.meta.ai"):
+		return "Meta"
 	}
 	return "LM Studio"
 }

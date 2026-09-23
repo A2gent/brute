@@ -297,7 +297,7 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.BaseURL != nil {
 			baseURL := strings.TrimSpace(*req.BaseURL)
-			if providerType == config.ProviderLMStudio || providerType == config.ProviderOpenRouter || providerType == config.ProviderGoogle || providerType == config.ProviderOpenAI || providerType == config.ProviderGrok {
+			if providerType == config.ProviderLMStudio || providerType == config.ProviderOpenRouter || providerType == config.ProviderGoogle || providerType == config.ProviderOpenAI || providerType == config.ProviderGrok || providerType == config.ProviderMeta {
 				baseURL = normalizeOpenAIBaseURL(baseURL)
 			}
 			provider.BaseURL = baseURL
@@ -598,6 +598,10 @@ func (s *Server) handleListGrokModels(w http.ResponseWriter, r *http.Request) {
 	s.handleListOpenAICompatibleModels(w, r, config.ProviderGrok, "Grok")
 }
 
+func (s *Server) handleListMetaModels(w http.ResponseWriter, r *http.Request) {
+	s.handleListOpenAICompatibleModels(w, r, config.ProviderMeta, "Meta")
+}
+
 func (s *Server) handleListJevModels(w http.ResponseWriter, r *http.Request) {
 	def := config.GetProviderDefinition(config.ProviderJev)
 	baseURL := jev.NormalizeBaseURL(r.URL.Query().Get("base_url"))
@@ -755,9 +759,15 @@ func (s *Server) handleListOpenAICompatibleModels(w http.ResponseWriter, r *http
 	modelIDs := make([]string, 0, len(models))
 	for _, model := range models {
 		modelID := strings.TrimSpace(model.ID)
-		if modelID != "" {
-			modelIDs = append(modelIDs, modelID)
+		if modelID == "" {
+			continue
 		}
+		// The Meta catalog also lists image, speech, and segmentation models.
+		// The agent loop can only drive Muse Spark chat models.
+		if providerType == config.ProviderMeta && !strings.HasPrefix(modelID, "muse-spark") {
+			continue
+		}
+		modelIDs = append(modelIDs, modelID)
 	}
 	sort.Strings(modelIDs)
 

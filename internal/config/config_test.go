@@ -133,6 +133,33 @@ func TestGrokProviderDefinition(t *testing.T) {
 	}
 }
 
+func TestMetaProviderDefinition(t *testing.T) {
+	t.Parallel()
+
+	def := GetProviderDefinition(ProviderMeta)
+	if def == nil {
+		t.Fatal("GetProviderDefinition(meta) returned nil")
+	}
+	if def.Type != ProviderMeta {
+		t.Fatalf("type = %q, want %q", def.Type, ProviderMeta)
+	}
+	if def.DisplayName != "Meta Model API" {
+		t.Fatalf("display name = %q", def.DisplayName)
+	}
+	if def.DefaultURL != "https://api.meta.ai/v1" {
+		t.Fatalf("default URL = %q", def.DefaultURL)
+	}
+	if def.DefaultModel != "muse-spark-1.3" {
+		t.Fatalf("default model = %q", def.DefaultModel)
+	}
+	if def.ContextWindow != 1048576 {
+		t.Fatalf("context window = %d", def.ContextWindow)
+	}
+	if !def.RequiresKey {
+		t.Fatal("meta provider should require an API key")
+	}
+}
+
 func TestJevProviderDefinition(t *testing.T) {
 	t.Parallel()
 

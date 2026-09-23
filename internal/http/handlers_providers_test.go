@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/speechcache"
@@ -413,6 +415,42 @@ func TestOpenAICodexModelsRouteIgnoresBaseURLQuery(t *testing.T) {
 	}
 	if !oauthCalled {
 		t.Fatal("configured OAuth server should be called for model discovery")
+	}
+}
+
+func TestUpdateProviderClearsAPIKey(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Providers[string(config.ProviderMeta)] = config.Provider{
+		Name:    string(config.ProviderMeta),
+		APIKey:  "secret-meta-key",
+		Model:   "muse-spark-1.3-high",
+		BaseURL: "https://api.meta.example/v1",
+	}
+	server := &Server{config: cfg}
+
+	req := httptest.NewRequest(http.MethodPut, "/providers/meta", strings.NewReader(`{"api_key":""}`))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("providerType", "meta")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rec := httptest.NewRecorder()
+	server.handleUpdateProvider(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update provider status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if got := strings.TrimSpace(cfg.Providers[string(config.ProviderMeta)].APIKey); got != "" {
+		t.Fatalf("expected API key to be cleared, got %q", got)
+	}
+
+	var providers []ProviderConfigResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &providers); err != nil {
+		t.Fatalf("failed to decode provider response: %v", err)
+	}
+	for _, provider := range providers {
+		if provider.Type == string(config.ProviderMeta) && provider.HasAPIKey {
+			t.Fatalf("expected meta provider to report has_api_key=false after clear: %+v", provider)
+		}
 	}
 }
 

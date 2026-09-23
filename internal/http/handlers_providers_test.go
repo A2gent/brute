@@ -1,10 +1,12 @@
 package http
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -259,6 +261,158 @@ func TestOpenAIModelsRouteKeepsGPT6AstraWhenLiveOmitsIt(t *testing.T) {
 	}
 	if !foundLive {
 		t.Fatalf("live /models id missing from merged catalog: %v", response.Models)
+	}
+}
+
+func testOpenAICodexOAuthToken(accountID string) string {
+	payload, _ := json.Marshal(map[string]string{"chatgpt_account_id": accountID})
+	return "header." + base64.RawURLEncoding.EncodeToString(payload) + ".sig"
+}
+
+func TestOpenAICodexModelsRouteReturnsOAuthDiscoveredSlug(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	const accountID = "acct-http-test"
+	token := testOpenAICodexOAuthToken(accountID)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/models") {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if auth := r.Header.Get("Authorization"); auth != "Bearer "+token {
+			t.Fatalf("unexpected Authorization header")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"models": []map[string]any{
+				{"slug": "gpt-6-terra", "visibility": "list"},
+			},
+		})
+	}))
+	t.Cleanup(upstream.Close)
+
+	cfg := config.DefaultConfig()
+	cfg.Providers[string(config.ProviderOpenAICodex)] = config.Provider{
+		BaseURL: upstream.URL + "/backend-api/codex",
+		OAuth: &config.OAuthConfig{
+			AccessToken: token,
+		},
+	}
+	server := &Server{config: cfg}
+
+	req := httptest.NewRequest(http.MethodGet, "/providers/openai_codex/models", nil)
+	rec := httptest.NewRecorder()
+	server.handleListOpenAICodexModels(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("OpenAI Codex models status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), token) {
+		t.Fatalf("response must not expose OAuth token")
+	}
+	var response ListProviderModelsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode OpenAI Codex models response: %v", err)
+	}
+	foundLive := false
+	for _, model := range response.Models {
+		if model == "gpt-6-terra" {
+			foundLive = true
+			break
+		}
+	}
+	if !foundLive {
+		t.Fatalf("OAuth-discovered slug missing from handler catalog: %v", response.Models)
+	}
+}
+
+func TestOpenAICodexModelsRoutePrefersOAuthOverEnvAPIKey(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-env-should-not-be-used")
+	const accountID = "acct-oauth-over-env"
+	token := testOpenAICodexOAuthToken(accountID)
+
+	oauthCalled := false
+	oauthServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		oauthCalled = true
+		if !strings.HasSuffix(r.URL.Path, "/models") {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if auth := r.Header.Get("Authorization"); auth != "Bearer "+token {
+			t.Fatalf("OAuth server must receive provider token, got %q", auth)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"models": []map[string]any{{"slug": "gpt-6-terra", "visibility": "list"}},
+		})
+	}))
+	t.Cleanup(oauthServer.Close)
+
+	cfg := config.DefaultConfig()
+	cfg.Providers[string(config.ProviderOpenAICodex)] = config.Provider{
+		BaseURL: oauthServer.URL + "/backend-api/codex",
+		OAuth: &config.OAuthConfig{
+			AccessToken: token,
+		},
+	}
+	server := &Server{config: cfg}
+
+	req := httptest.NewRequest(http.MethodGet, "/providers/openai_codex/models", nil)
+	rec := httptest.NewRecorder()
+	server.handleListOpenAICodexModels(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("OpenAI Codex models status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if !oauthCalled {
+		t.Fatal("configured OAuth server should be called for model discovery")
+	}
+}
+
+func TestOpenAICodexModelsRouteIgnoresBaseURLQuery(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	const accountID = "acct-oauth-secure"
+	token := testOpenAICodexOAuthToken(accountID)
+
+	evilCalled := false
+	evilServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		evilCalled = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(evilServer.Close)
+
+	oauthCalled := false
+	oauthServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		oauthCalled = true
+		if !strings.HasSuffix(r.URL.Path, "/models") {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if auth := r.Header.Get("Authorization"); auth != "Bearer "+token {
+			t.Fatalf("configured OAuth server must receive provider token, got %q", auth)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"models": []map[string]any{{"slug": "gpt-6-terra", "visibility": "list"}},
+		})
+	}))
+	t.Cleanup(oauthServer.Close)
+
+	cfg := config.DefaultConfig()
+	cfg.Providers[string(config.ProviderOpenAICodex)] = config.Provider{
+		BaseURL: oauthServer.URL + "/backend-api/codex",
+		OAuth: &config.OAuthConfig{
+			AccessToken: token,
+		},
+	}
+	server := &Server{config: cfg}
+
+	query := url.QueryEscape(evilServer.URL + "/backend-api/codex")
+	req := httptest.NewRequest(http.MethodGet, "/providers/openai_codex/models?base_url="+query, nil)
+	rec := httptest.NewRecorder()
+	server.handleListOpenAICodexModels(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("OpenAI Codex models status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if evilCalled {
+		t.Fatal("base_url query must not redirect OAuth token to attacker-controlled host")
+	}
+	if !oauthCalled {
+		t.Fatal("configured OAuth server should be called for model discovery")
 	}
 }
 

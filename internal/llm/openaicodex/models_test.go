@@ -2,12 +2,18 @@ package openaicodex
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func testOAuthToken(accountID string) string {
+	payload, _ := json.Marshal(map[string]string{"chatgpt_account_id": accountID})
+	return "header." + base64.RawURLEncoding.EncodeToString(payload) + ".sig"
+}
 
 func contains(models []string, target string) bool {
 	for _, m := range models {
@@ -47,7 +53,12 @@ func TestListModelCatalogReturnsCuratedWithoutCredentials(t *testing.T) {
 	if models[0] != "gpt-6-astra" {
 		t.Fatalf("newest Codex/OpenAI flagship should lead the catalog, got %q", models[0])
 	}
-	for _, want := range []string{"gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
+	for i, want := range []string{"gpt-6-astra", "gpt-6-sol", "gpt-6-luna"} {
+		if models[i] != want {
+			t.Fatalf("official flagship order at %d: want %q got %q", i, want, models[i])
+		}
+	}
+	for _, want := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
 		if !contains(models, want) {
 			t.Fatalf("verified OAuth model %q missing from curated catalog: %v", want, models)
 		}
@@ -78,21 +89,124 @@ func TestListModelCatalogIgnoresOAuthOnlyCredentials(t *testing.T) {
 	}
 }
 
-func TestListModelCatalogDoesNotDiscoverFromOAuthUsageEndpoint(t *testing.T) {
-	called := false
+func TestListModelCatalogOAuthNormalizesResponsesBaseURL(t *testing.T) {
+	const accountID = "acct-test-123"
+	token := testOAuthToken(accountID)
+	var requestedPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
-		if !strings.HasSuffix(r.URL.Path, "/wham/usage") {
-			t.Errorf("unexpected usage path: %s", r.URL.Path)
+		requestedPath = r.URL.Path
+		if !strings.HasSuffix(r.URL.Path, "/models") {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"additional_rate_limits": []map[string]any{
-				{"limit_name": "gpt-5.6-sol-medium"},
-				{"limit_name": "gpt-5.6-terra-medium"},
-				{"limit_name": "gpt-5.3-codex-spark"},
-				{"limit_name": "Codex"},
+			"models": []map[string]any{{"slug": "gpt-6-terra"}},
+		})
+	}))
+	defer server.Close()
+
+	models := ListModelCatalog(context.Background(), ModelCatalogOptions{
+		BaseURL:     server.URL + "/backend-api/codex/responses",
+		AccessToken: token,
+		HTTPClient:  server.Client(),
+	})
+	if requestedPath != "/backend-api/codex/models" {
+		t.Fatalf("OAuth discovery path = %q, want /backend-api/codex/models", requestedPath)
+	}
+	if !contains(models, "gpt-6-terra") {
+		t.Fatalf("OAuth-discovered model gpt-6-terra missing from catalog: %v", models)
+	}
+}
+
+func TestListModelCatalogDiscoversFromOAuthModelsEndpoint(t *testing.T) {
+	const accountID = "acct-test-123"
+	token := testOAuthToken(accountID)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/models") {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("client_version") != ClientVersion {
+			t.Fatalf("unexpected client_version: %q", r.URL.Query().Get("client_version"))
+		}
+		if auth := r.Header.Get("Authorization"); auth != "Bearer "+token {
+			t.Fatalf("unexpected Authorization: %q", auth)
+		}
+		if r.Header.Get("Accept") != "application/json" {
+			t.Fatalf("unexpected Accept: %q", r.Header.Get("Accept"))
+		}
+		if r.Header.Get("Originator") != "codex_cli_rs" {
+			t.Fatalf("unexpected Originator: %q", r.Header.Get("Originator"))
+		}
+		if r.Header.Get("User-Agent") != UserAgent() {
+			t.Fatalf("unexpected User-Agent: %q", r.Header.Get("User-Agent"))
+		}
+		if r.Header.Get("ChatGPT-Account-Id") != accountID {
+			t.Fatalf("unexpected ChatGPT-Account-Id: %q", r.Header.Get("ChatGPT-Account-Id"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"models": []map[string]any{
+				{"slug": "gpt-6-terra"},
+				{"slug": "gpt-5.6-codex"},
+				{"slug": "text-embedding-3-large"},
+				{"slug": "Codex"},
 			},
 		})
+	}))
+	defer server.Close()
+
+	models := ListModelCatalog(context.Background(), ModelCatalogOptions{
+		BaseURL:     server.URL + "/backend-api/codex",
+		AccessToken: token,
+		HTTPClient:  server.Client(),
+	})
+
+	if !contains(models, "gpt-6-terra") {
+		t.Fatalf("OAuth-discovered model gpt-6-terra missing from catalog: %v", models)
+	}
+	if !contains(models, "gpt-5.6-codex") {
+		t.Fatalf("OAuth-discovered model gpt-5.6-codex missing from catalog: %v", models)
+	}
+	for _, blocked := range []string{"text-embedding-3-large", "Codex"} {
+		if contains(models, blocked) {
+			t.Fatalf("filtered slug %q must not appear, got %v", blocked, models)
+		}
+	}
+}
+
+func TestListModelCatalogOAuthFiltersHiddenModels(t *testing.T) {
+	token := testOAuthToken("acct-test-123")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"models": []map[string]any{
+				{"slug": "gpt-6-terra", "visibility": "list"},
+				{"slug": "gpt-6-shadow", "visibility": "hide"},
+				{"slug": "gpt-6-ghost", "visibility": "none"},
+				{"slug": "gpt-6-plain"},
+				{"slug": "gpt-6-api", "visibility": "list", "supported_in_api": false},
+			},
+		})
+	}))
+	defer server.Close()
+
+	models := ListModelCatalog(context.Background(), ModelCatalogOptions{
+		BaseURL:     server.URL + "/backend-api/codex",
+		AccessToken: token,
+		HTTPClient:  server.Client(),
+	})
+	for _, want := range []string{"gpt-6-terra", "gpt-6-plain", "gpt-6-api"} {
+		if !contains(models, want) {
+			t.Fatalf("expected OAuth model %q in catalog, got %v", want, models)
+		}
+	}
+	for _, blocked := range []string{"gpt-6-shadow", "gpt-6-ghost"} {
+		if contains(models, blocked) {
+			t.Fatalf("hidden OAuth model %q must not appear, got %v", blocked, models)
+		}
+	}
+}
+
+func TestListModelCatalogFallsBackToCuratedOnOAuthDiscoveryFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer server.Close()
 
@@ -101,22 +215,43 @@ func TestListModelCatalogDoesNotDiscoverFromOAuthUsageEndpoint(t *testing.T) {
 		AccessToken: "oauth-token",
 		HTTPClient:  server.Client(),
 	})
-
-	if called {
-		t.Fatalf("OAuth usage buckets are not authoritative for callable models and should not be queried")
-	}
-	for _, blocked := range []string{"gpt-5.6-sol-medium", "gpt-5.6-terra-medium", "gpt-5.3-codex-spark", "Codex"} {
-		if contains(models, blocked) {
-			t.Fatalf("unverified OAuth usage-bucket name %q must not appear, got %v", blocked, models)
-		}
-	}
-	for _, want := range []string{"gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
-		if !contains(models, want) {
-			t.Fatalf("verified OAuth model %q missing from catalog: %v", want, models)
-		}
-	}
 	if len(models) != len(CuratedModels) {
-		t.Fatalf("OAuth mode should return curated callable catalog only, got %v", models)
+		t.Fatalf("OAuth discovery failure should fall back to curated, got %v", models)
+	}
+	if models[0] != "gpt-6-astra" {
+		t.Fatalf("fallback catalog should still lead with gpt-6-astra, got %v", models)
+	}
+}
+
+func TestListModelCatalogAPIKeyModeDoesNotUseOAuthModelsEndpoint(t *testing.T) {
+	oauthCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/backend-api") {
+			oauthCalled = true
+		}
+		if !strings.HasSuffix(r.URL.Path, "/models") {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("client_version") != "" {
+			t.Fatalf("API-key discovery must not send client_version, got %q", r.URL.Query().Get("client_version"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"id": "gpt-5.6-codex"}},
+		})
+	}))
+	defer server.Close()
+
+	models := ListModelCatalog(context.Background(), ModelCatalogOptions{
+		BaseURL:     server.URL + "/v1",
+		APIKey:      "sk-test",
+		AccessToken: "oauth-token",
+		HTTPClient:  server.Client(),
+	})
+	if oauthCalled {
+		t.Fatalf("API-key mode must not query OAuth backend")
+	}
+	if !contains(models, "gpt-5.6-codex") {
+		t.Fatalf("expected API-key discovered model, got %v", models)
 	}
 }
 

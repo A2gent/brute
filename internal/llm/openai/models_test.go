@@ -26,6 +26,11 @@ func TestListModelCatalogLeadsWithGPT6AstraWithoutCredentials(t *testing.T) {
 	if models[0] != "gpt-6-astra" {
 		t.Fatalf("newest OpenAI flagship should lead the catalog, got %q", models[0])
 	}
+	for i, want := range []string{"gpt-6-astra", "gpt-6-sol", "gpt-6-luna"} {
+		if models[i] != want {
+			t.Fatalf("official flagship order at %d: want %q got %q", i, want, models[i])
+		}
+	}
 	for i, want := range CuratedModels {
 		if models[i] != want {
 			t.Fatalf("curated order changed at %d: want %q got %q", i, want, models[i])

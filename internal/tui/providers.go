@@ -79,8 +79,7 @@ func (m Model) showModelsSelection() (tea.Model, tea.Cmd) {
 }
 
 // fetchOpenAICodexModels loads the Codex model catalog using the same shared
-// discovery the web API uses: curated fallback plus live /models (API key) or
-// usage-bucket discovery (OAuth).
+// discovery the web API uses: curated fallback plus live /models (API key or OAuth).
 func (m Model) fetchOpenAICodexModels() (tea.Model, tea.Cmd) {
 	opts := openaicodex.ModelCatalogOptions{}
 	if provider := m.appConfig.GetActiveProvider(); provider != nil {

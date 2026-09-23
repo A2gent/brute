@@ -565,29 +565,34 @@ func (s *Server) handleListOpenAICodexModels(w http.ResponseWriter, r *http.Requ
 }
 
 // openAICodexModelCatalogOptions resolves credentials used for the Codex model
-// catalog. API-key mode uses /models; OAuth mode uses the verified curated list.
+// catalog. Credential priority matches createBaseLLMClientForSession: configured
+// API key, then configured OAuth token, then env API key. API-key mode uses
+// OpenAI-compatible /models; OAuth mode uses the Codex backend /models endpoint.
+// Request query params must not override the saved provider BaseURL/default.
 func (s *Server) openAICodexModelCatalogOptions() openaicodex.ModelCatalogOptions {
 	provider := s.config.Providers[string(config.ProviderOpenAICodex)]
-	baseURL := strings.TrimSpace(provider.BaseURL)
-	if baseURL == "" {
-		if def := config.GetProviderDefinition(config.ProviderOpenAICodex); def != nil {
-			baseURL = def.DefaultURL
-		}
-	}
 
 	apiKey := strings.TrimSpace(provider.APIKey)
-	if apiKey == "" {
+	accessToken := ""
+	if apiKey == "" && provider.OAuth != nil {
+		accessToken = strings.TrimSpace(provider.OAuth.AccessToken)
+	}
+	if apiKey == "" && accessToken == "" {
 		apiKey = s.apiKeyFromEnv(config.ProviderOpenAICodex)
 	}
 
-	opts := openaicodex.ModelCatalogOptions{
-		BaseURL: baseURL,
-		APIKey:  apiKey,
+	baseURL := openaicodex.NormalizeBaseURL(provider.BaseURL)
+	if baseURL == "" {
+		if def := config.GetProviderDefinition(config.ProviderOpenAICodex); def != nil {
+			baseURL = openaicodex.NormalizeBaseURL(def.DefaultURL)
+		}
 	}
-	if apiKey == "" && provider.OAuth != nil {
-		opts.AccessToken = strings.TrimSpace(provider.OAuth.AccessToken)
+
+	return openaicodex.ModelCatalogOptions{
+		BaseURL:     baseURL,
+		APIKey:      apiKey,
+		AccessToken: accessToken,
 	}
-	return opts
 }
 
 func (s *Server) handleListOpenCodeZenModels(w http.ResponseWriter, r *http.Request) {

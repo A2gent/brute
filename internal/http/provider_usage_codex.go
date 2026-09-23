@@ -133,7 +133,7 @@ func fetchOpenAICodexUsage(ctx context.Context, client codexUsageHTTPClient, cod
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Originator", "codex_cli_rs")
-	req.Header.Set("User-agent", "codex_cli_rs/0.143.0")
+	req.Header.Set("User-agent", openaicodex.UserAgent())
 	if accountID := extractCodexAccountID(accessToken); accountID != "" {
 		req.Header.Set("ChatGPT-Account-Id", accountID)
 	}

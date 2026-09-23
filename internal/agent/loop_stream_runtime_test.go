@@ -245,6 +245,7 @@ func TestRunWithEventsDoesNotExecuteNativeRuntimeTools(t *testing.T) {
 
 	mock := &mockStreamingLLM{
 		streamEvents: []llm.StreamEvent{
+			{Type: llm.StreamEventContentDelta, ContentDelta: "Полный отчёт.\n\n"},
 			{Type: llm.StreamEventToolStarted, ToolCallID: "toolu_1", ToolCallName: "Read"},
 			{Type: llm.StreamEventToolInputCompleted, ToolCallID: "toolu_1", ToolCallName: "Read", ToolInputDelta: `{"file_path":"foo.go"}`},
 			{Type: llm.StreamEventToolOutput, ToolCallID: "toolu_1", ToolCallName: "Read", ToolOutput: "package main\n"},
@@ -252,7 +253,7 @@ func TestRunWithEventsDoesNotExecuteNativeRuntimeTools(t *testing.T) {
 			{Type: llm.StreamEventContentDelta, ContentDelta: "Read foo.go successfully."},
 		},
 		response: &llm.ChatResponse{
-			Content:   "Read foo.go successfully.",
+			Content:   "Полный отчёт.\n\nRead foo.go successfully.",
 			ToolCalls: nil,
 		},
 	}
@@ -265,8 +266,11 @@ func TestRunWithEventsDoesNotExecuteNativeRuntimeTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunWithEvents returned error: %v", err)
 	}
-	if content != "Read foo.go successfully." {
-		t.Fatalf("content = %q, want success message", content)
+	if last := sess.Messages[len(sess.Messages)-1]; last.Content != content {
+		t.Fatalf("persisted assistant content = %q, want complete response %q", last.Content, content)
+	}
+	if content != "Полный отчёт.\n\nRead foo.go successfully." {
+		t.Fatalf("content = %q, want complete native assistant text", content)
 	}
 	for _, ev := range events {
 		if ev.Type == EventToolExecuting {

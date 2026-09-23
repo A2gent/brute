@@ -46,6 +46,7 @@ func (t *fakeSpeechTool) Execute(ctx context.Context, params json.RawMessage) (*
 }
 
 func TestCompletionSpeechUsesBuiltInTTSTool(t *testing.T) {
+	t.Setenv("AAGENT_TTS_ENGINE", "piper_tts")
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create sqlite store: %v", err)
@@ -184,7 +185,7 @@ func TestCompletionSpeechAutoPrefersPiperOverMacOS(t *testing.T) {
 	manager.Register(piper)
 	server := &Server{toolManager: manager, speechClips: clipStore}
 
-	req := httptest.NewRequest(http.MethodPost, "/speech/completion", strings.NewReader(`{"text":"Hello","language":"en"}`))
+	req := httptest.NewRequest(http.MethodPost, "/speech/completion", strings.NewReader(`{"text":"Hello","language":"en","model":"auto"}`))
 	w := httptest.NewRecorder()
 	server.handleCompletionSpeech(w, req)
 	if w.Code != http.StatusOK {

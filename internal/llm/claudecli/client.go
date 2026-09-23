@@ -301,12 +301,9 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		return nil, unsafeAfterStart(fmt.Errorf("Claude CLI failed: %s", normalizeClaudeCLIErrorMessage(cliErrorMessage(err, stdout.String(), stderr.String()))))
 	}
 
-	finalContent := strings.TrimSpace(processor.finalResult.Result)
+	finalContent := processor.finalContent()
 	if finalContent == "" {
 		finalContent = strings.TrimSpace(processor.content.String())
-	}
-	if finalContent == "" {
-		finalContent = strings.TrimSpace(processor.assistantContent)
 	}
 	if finalContent == "" {
 		finalContent = strings.TrimSpace(processor.finalResult.Message)

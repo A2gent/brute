@@ -86,8 +86,8 @@ func TestClientChatStreamStructuredRuntimeEventsFromFixture(t *testing.T) {
 		t.Fatalf("runtime contract mismatch: %v\ngot events: %s", err, formatStreamEvents(events))
 	}
 
-	if resp.Content != "Read foo.go successfully." {
-		t.Fatalf("content = %q, want %q", resp.Content, "Read foo.go successfully.")
+	if resp.Content != "I'll read it.\n\nRead foo.go successfully." {
+		t.Fatalf("content = %q, want complete chronological native assistant text", resp.Content)
 	}
 	if len(resp.ToolCalls) != 0 {
 		t.Fatalf("ToolCalls = %#v, want empty because Claude native tool was already executed", resp.ToolCalls)

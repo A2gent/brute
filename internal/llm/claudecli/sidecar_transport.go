@@ -190,12 +190,9 @@ func (c *Client) chatViaSidecar(
 		return nil, unsafeAfterStart(fmt.Errorf("Claude Agent SDK sidecar failed: %s", normalizeClaudeCLIErrorMessage(cliErrorMessage(err, stdout.String(), stderr.String()))))
 	}
 
-	finalContent := strings.TrimSpace(processor.finalResult.Result)
+	finalContent := processor.finalContent()
 	if finalContent == "" {
 		finalContent = strings.TrimSpace(processor.content.String())
-	}
-	if finalContent == "" {
-		finalContent = strings.TrimSpace(processor.assistantContent)
 	}
 	if finalContent == "" {
 		finalContent = strings.TrimSpace(processor.finalResult.Message)

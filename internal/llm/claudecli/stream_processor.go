@@ -25,7 +25,9 @@ type streamProcessor struct {
 	providerSessionCursor string
 	finalResult           cliResult
 	sawResult             bool
-	assistantContent      string
+	assistantContent      strings.Builder
+	legacyAssistantText   strings.Builder
+	legacyTextMatched     int
 
 	blocksByIndex             map[int]*toolBlockState
 	toolsByID                 map[string]*toolBlockState
@@ -172,6 +174,7 @@ func (p *streamProcessor) handleContentBlockDelta(stream cliStreamEvent) error {
 			return nil
 		}
 		p.content.WriteString(delta.Text)
+		p.legacyAssistantText.WriteString(delta.Text)
 		return p.emit(llm.StreamEvent{
 			Type:         llm.StreamEventContentDelta,
 			ContentDelta: delta.Text,
@@ -219,7 +222,12 @@ func (p *streamProcessor) handleAssistant(event cliStreamEnvelope) error {
 		return p.handleUserMessage(message)
 	}
 
-	p.assistantContent = streamMessageText(message)
+	assistantText := streamMessageText(message)
+	if assistantText != "" {
+		if err := p.appendAssistantText(assistantText); err != nil {
+			return err
+		}
+	}
 	if message.Usage != nil {
 		p.usage = mergeUsage(p.usage, usageFromRaw(message.Usage))
 	}
@@ -240,6 +248,47 @@ func (p *streamProcessor) handleAssistant(event cliStreamEnvelope) error {
 		}
 	}
 	return nil
+}
+
+// appendAssistantText preserves terminal assistant envelopes in chronological order.
+// Partial stream text is already emitted, so only emit an envelope suffix the client
+// has not seen through legacy text_delta events.
+func (p *streamProcessor) appendAssistantText(text string) error {
+	if text == "" {
+		return nil
+	}
+	alreadyEmitted := p.legacyAssistantText.String()[p.legacyTextMatched:]
+	p.assistantContent.WriteString(text)
+	if strings.HasPrefix(text, alreadyEmitted) {
+		p.legacyTextMatched += len(alreadyEmitted)
+		text = strings.TrimPrefix(text, alreadyEmitted)
+	}
+	if text == "" {
+		return nil
+	}
+	p.content.WriteString(text)
+	return p.emit(llm.StreamEvent{
+		Type:         llm.StreamEventContentDelta,
+		ContentDelta: text,
+	})
+}
+
+func (p *streamProcessor) finalContent() string {
+	parts := []string{
+		strings.TrimSpace(p.assistantContent.String()),
+		strings.TrimSpace(p.finalResult.Result),
+	}
+	return strings.TrimSpace(strings.Join(nonEmptyStrings(parts), "\n\n"))
+}
+
+func nonEmptyStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value != "" {
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 func (p *streamProcessor) handleUserMessage(message cliStreamMessage) error {

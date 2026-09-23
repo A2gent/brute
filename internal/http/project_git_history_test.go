@@ -143,3 +143,67 @@ func TestHandleProjectGitBranchChangesReportsMovedFiles(t *testing.T) {
 		t.Fatalf("moved old_path = %q", moved.OldPath)
 	}
 }
+
+func TestHandleProjectGitBranchDiffIncludesFileSidesForHunkContext(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is not available")
+	}
+
+	server, projectID, repoDir := newProjectFileTestServer(t)
+	initMindGitTestRepo(t, repoDir)
+
+	oldContent := strings.Join([]string{
+		"line one",
+		"line two",
+		"line three",
+		"line four",
+		"line five",
+		"line six",
+		"line seven",
+		"line eight",
+		"",
+	}, "\n")
+	newContent := strings.Join([]string{
+		"line one",
+		"line two",
+		"line three",
+		"line four changed",
+		"line five",
+		"line six",
+		"line seven",
+		"line eight",
+		"",
+	}, "\n")
+	if err := os.MkdirAll(filepath.Join(repoDir, "src"), 0o755); err != nil {
+		t.Fatalf("failed to create src directory: %v", err)
+	}
+	writeGitTestFile(t, repoDir, "src/app.ts", oldContent)
+	runGitForMindTest(t, repoDir, "add", "--", "src/app.ts")
+	runGitForMindTest(t, repoDir, "-c", "commit.gpgsign=false", "commit", "-m", "add app")
+	runGitForMindTest(t, repoDir, "checkout", "-b", "context-expand")
+	writeGitTestFile(t, repoDir, "src/app.ts", newContent)
+	runGitForMindTest(t, repoDir, "add", "--", "src/app.ts")
+	runGitForMindTest(t, repoDir, "-c", "commit.gpgsign=false", "commit", "-m", "change middle")
+
+	target := "/projects/git/branch-diff?projectID=" + url.QueryEscape(projectID) + "&path=" + url.QueryEscape("src/app.ts") + "&baseBranch=master"
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected OK for branch diff, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var response ProjectGitBranchDiffResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("failed to decode branch diff: %v", err)
+	}
+	if !strings.Contains(response.Preview, "@@") {
+		t.Fatalf("expected a hunk header in preview, got %q", response.Preview)
+	}
+	if response.OldContent == nil || *response.OldContent != oldContent {
+		t.Fatalf("old_content = %#v, want exact master file", response.OldContent)
+	}
+	if response.NewContent == nil || *response.NewContent != newContent {
+		t.Fatalf("new_content = %#v, want exact HEAD file", response.NewContent)
+	}
+}

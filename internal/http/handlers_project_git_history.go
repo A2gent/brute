@@ -112,12 +112,19 @@ func (s *Server) handleProjectGitBranchDiff(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	s.jsonResponse(w, http.StatusOK, ProjectGitBranchDiffResponse{
+	response := ProjectGitBranchDiffResponse{
 		CurrentBranch: branchChangesTarget.CurrentBranch,
 		BaseBranch:    branchChangesTarget.BaseBranch,
 		Path:          normalizedPath,
 		Preview:       preview,
-	})
+	}
+	// WHY: @pierre/diffs can expand hunk context only when it has both file sides.
+	// Triple-dot diffs compare the merge-base, so load blobs from that commit and HEAD.
+	if mergeBase, mergeErr := runGitCommand(targetRepoRoot, "merge-base", branchChangesTarget.BaseRef, "HEAD"); mergeErr == nil {
+		response.OldContent, response.NewContent = loadGitDiffFileSides(targetRepoRoot, mergeBase, preview, normalizedPath)
+	}
+
+	s.jsonResponse(w, http.StatusOK, response)
 }
 
 func (s *Server) handleProjectGitHistory(w http.ResponseWriter, r *http.Request) {

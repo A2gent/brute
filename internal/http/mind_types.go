@@ -179,10 +179,12 @@ type ProjectGitBranchChangesResponse struct {
 }
 
 type ProjectGitBranchDiffResponse struct {
-	CurrentBranch string `json:"current_branch"`
-	BaseBranch    string `json:"base_branch"`
-	Path          string `json:"path"`
-	Preview       string `json:"preview"`
+	CurrentBranch string  `json:"current_branch"`
+	BaseBranch    string  `json:"base_branch"`
+	Path          string  `json:"path"`
+	Preview       string  `json:"preview"`
+	OldContent    *string `json:"old_content,omitempty"`
+	NewContent    *string `json:"new_content,omitempty"`
 }
 
 type ProjectGitCommitMessageResponse struct {

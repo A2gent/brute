@@ -133,6 +133,36 @@ func TestGrokProviderDefinition(t *testing.T) {
 	}
 }
 
+func TestJevProviderDefinition(t *testing.T) {
+	t.Parallel()
+
+	def := GetProviderDefinition(ProviderJev)
+	if def == nil {
+		t.Fatal("GetProviderDefinition(jev) returned nil")
+	}
+	if def.Type != ProviderJev {
+		t.Fatalf("type = %q, want %q", def.Type, ProviderJev)
+	}
+	if def.DisplayName != "Jev (TypeSafe AI)" {
+		t.Fatalf("display name = %q", def.DisplayName)
+	}
+	if def.DefaultURL != "https://api.typesafe.ai/v1" {
+		t.Fatalf("default URL = %q", def.DefaultURL)
+	}
+	if def.DefaultModel != "jev-latest" {
+		t.Fatalf("default model = %q", def.DefaultModel)
+	}
+	if !def.RequiresKey {
+		t.Fatal("jev provider should require an API key")
+	}
+	if !IsClassifierProvider(" Jev ") {
+		t.Fatal("expected jev to be a classifier provider")
+	}
+	if IsClassifierProvider("openai") {
+		t.Fatal("openai should not be a classifier provider")
+	}
+}
+
 func TestResolveContextWindowUsesModelSpecificOpenRouterLimits(t *testing.T) {
 	// Global OpenRouter context cache is shared; keep this test serial.
 	ResetOpenRouterModelContextCache()

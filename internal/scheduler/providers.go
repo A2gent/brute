@@ -14,6 +14,7 @@ import (
 	"github.com/A2gent/brute/internal/llm/cursorcli"
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/llm/gemini"
+	"github.com/A2gent/brute/internal/llm/jev"
 	"github.com/A2gent/brute/internal/llm/kimicli"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
 	"github.com/A2gent/brute/internal/llm/openaicodex"
@@ -218,7 +219,7 @@ func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model 
 		}), nil
 	}
 
-	if s.parentProxyAvailable() {
+	if s.parentProxyAvailable() && !config.IsClassifierProvider(string(providerType)) {
 		return s.createParentProxyLLMClient(providerType, modelName), nil
 	}
 
@@ -242,6 +243,8 @@ func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model 
 		return nil, fmt.Errorf("%s requires an API key (configure provider API key or set %s)", def.DisplayName, s.apiKeyEnvName(providerType))
 	}
 	switch providerType {
+	case config.ProviderJev:
+		return jev.NewClient(apiKey, modelName, jev.NormalizeBaseURL(baseURL)), nil
 	case config.ProviderGoogle:
 		// Google Gemini uses a dedicated client with OpenAI-compatible API + Gemini extensions
 		baseURL = normalizeOpenAIBaseURL(baseURL)
@@ -342,6 +345,8 @@ func (s *Scheduler) apiKeyEnvName(providerType config.ProviderType) string {
 		return "OPENAI_API_KEY"
 	case config.ProviderGrok:
 		return "XAI_API_KEY"
+	case config.ProviderJev:
+		return "TYPESAFE_API_KEY"
 	default:
 		return ""
 	}
@@ -424,6 +429,9 @@ func (s *Scheduler) normalizeAndValidateFallbackChain(raw []config.FallbackChain
 		ptype := config.ProviderType(node.Provider)
 		if ptype == config.ProviderFallback {
 			return nil, fmt.Errorf("fallback chain cannot include fallback_chain itself")
+		}
+		if config.IsClassifierProvider(node.Provider) {
+			return nil, fmt.Errorf("fallback chain cannot include classifier provider %s", node.Provider)
 		}
 		def := config.GetProviderDefinitionForRef(node.Provider)
 		if def == nil {

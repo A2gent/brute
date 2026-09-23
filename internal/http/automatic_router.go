@@ -80,6 +80,9 @@ func (s *Server) normalizeAndValidateRouterRules(raw []config.RouterRule) ([]con
 			}
 			continue
 		}
+		if config.IsClassifierProvider(rule.Provider) {
+			return nil, fmt.Errorf("routing rule %q cannot target classifier provider %s", rule.Match, rule.Provider)
+		}
 
 		def := config.GetProviderDefinitionForRef(rule.Provider)
 		if def == nil {

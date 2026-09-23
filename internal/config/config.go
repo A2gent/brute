@@ -98,6 +98,7 @@ const (
 	ProviderOpenAI      ProviderType = "openai"
 	ProviderOpenAICodex ProviderType = "openai_codex"
 	ProviderGrok        ProviderType = "grok"
+	ProviderJev         ProviderType = "jev"
 	ProviderFallback    ProviderType = "fallback_chain"
 	ProviderAutoRouter  ProviderType = "automatic_router"
 )
@@ -219,6 +220,14 @@ func SupportedProviders() []ProviderDefinition {
 			DefaultModel:  "grok-4.5",
 			ContextWindow: 131072,
 		},
+		{
+			Type:          ProviderJev,
+			DisplayName:   "Jev (TypeSafe AI)",
+			DefaultURL:    "https://api.typesafe.ai/v1",
+			RequiresKey:   true,
+			DefaultModel:  "jev-latest",
+			ContextWindow: 64000,
+		},
 	}
 }
 
@@ -234,6 +243,11 @@ func TestableProviders() []ProviderDefinition {
 		out = append(out, def)
 	}
 	return out
+}
+
+// IsClassifierProvider reports whether ref is a System One classifier (not a coding LLM).
+func IsClassifierProvider(ref string) bool {
+	return ProviderType(NormalizeProviderRef(ref)) == ProviderJev
 }
 
 // GetProviderDefinition returns the definition for a provider type

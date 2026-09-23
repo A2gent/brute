@@ -11,6 +11,7 @@ import (
 	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/llm/cursorcli"
 	"github.com/A2gent/brute/internal/llm/gemini"
+	"github.com/A2gent/brute/internal/llm/jev"
 	"github.com/A2gent/brute/internal/llm/kimicli"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
 	"github.com/A2gent/brute/internal/llm/openai"
@@ -368,6 +369,10 @@ func (s *Server) handleSetActiveProvider(w http.ResponseWriter, r *http.Request)
 		s.errorResponse(w, http.StatusBadRequest, "Unsupported provider: "+req.Provider)
 		return
 	}
+	if config.IsClassifierProvider(string(providerType)) {
+		s.errorResponse(w, http.StatusBadRequest, "Jev is a routing classifier and cannot be the active coding provider. Select it as the Automatic Router's router provider instead.")
+		return
+	}
 
 	s.config.ActiveProvider = string(providerType)
 	provider := s.config.Providers[string(providerType)]
@@ -591,6 +596,40 @@ func (s *Server) handleListOpenCodeZenModels(w http.ResponseWriter, r *http.Requ
 
 func (s *Server) handleListGrokModels(w http.ResponseWriter, r *http.Request) {
 	s.handleListOpenAICompatibleModels(w, r, config.ProviderGrok, "Grok")
+}
+
+func (s *Server) handleListJevModels(w http.ResponseWriter, r *http.Request) {
+	def := config.GetProviderDefinition(config.ProviderJev)
+	baseURL := jev.NormalizeBaseURL(r.URL.Query().Get("base_url"))
+	if strings.TrimSpace(r.URL.Query().Get("base_url")) == "" {
+		provider := s.config.Providers[string(config.ProviderJev)]
+		baseURL = jev.NormalizeBaseURL(provider.BaseURL)
+	}
+	if baseURL == "" && def != nil {
+		baseURL = jev.NormalizeBaseURL(def.DefaultURL)
+	}
+
+	provider := s.config.Providers[string(config.ProviderJev)]
+	apiKey := strings.TrimSpace(provider.APIKey)
+	if apiKey == "" {
+		apiKey = s.apiKeyFromEnv(config.ProviderJev)
+	}
+	if def != nil && def.RequiresKey && apiKey == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Jev API key is not configured")
+		return
+	}
+
+	client := jev.NewClient(apiKey, "", baseURL)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	models, err := client.ListModels(ctx)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadGateway, "Failed to fetch models from Jev: "+err.Error())
+		return
+	}
+	sort.Strings(models)
+	s.jsonResponse(w, http.StatusOK, ListProviderModelsResponse{Models: models})
 }
 
 func (s *Server) handleListKimiCLIModels(w http.ResponseWriter, r *http.Request) {

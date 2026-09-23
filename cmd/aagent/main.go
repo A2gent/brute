@@ -21,6 +21,7 @@ import (
 	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/llm/cursorcli"
 	"github.com/A2gent/brute/internal/llm/fallback"
+	"github.com/A2gent/brute/internal/llm/jev"
 	"github.com/A2gent/brute/internal/llm/kimicli"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
 	"github.com/A2gent/brute/internal/llm/openaicodex"
@@ -482,6 +483,8 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 			return []string{"OPENAI_API_KEY"}
 		case config.ProviderGrok:
 			return []string{"XAI_API_KEY"}
+		case config.ProviderJev:
+			return []string{"TYPESAFE_API_KEY"}
 		default:
 			return nil
 		}
@@ -565,6 +568,8 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 			return claudecli.NewClientWithOptions(model, claudecliOptionsFromConfig(ref, cfg)), model, nil
 		}
 		switch providerType {
+		case config.ProviderJev:
+			return jev.NewClient(apiKey, model, jev.NormalizeBaseURL(baseURL)), model, nil
 		case config.ProviderKimiCLI:
 			return kimicli.NewClient(model, cfg.WorkDir), model, nil
 		case config.ProviderCursor:

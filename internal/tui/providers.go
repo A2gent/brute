@@ -18,6 +18,7 @@ import (
 	"github.com/A2gent/brute/internal/llm/cursorcli"
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/llm/gemini"
+	"github.com/A2gent/brute/internal/llm/jev"
 	"github.com/A2gent/brute/internal/llm/kimicli"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
 	"github.com/A2gent/brute/internal/llm/openai"
@@ -266,6 +267,8 @@ func (m Model) showStaticModels() (tea.Model, tea.Cmd) {
 		}
 	case config.ProviderGrok:
 		m.availableModels = []string{"grok-4.5", "grok-4", "grok-3", "grok-3-mini"}
+	case config.ProviderJev:
+		m.availableModels = []string{"jev-latest", "jev-preview", "jev-1.13.0"}
 	default:
 		m.availableModels = []string{providerDef.DefaultModel}
 	}
@@ -436,6 +439,8 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 			}), model, nil
 		}
 		switch targetType {
+		case config.ProviderJev:
+			return jev.NewClient(apiKey, model, jev.NormalizeBaseURL(baseURL)), model, nil
 		case config.ProviderGoogle:
 			// Google Gemini uses a dedicated client with OpenAI-compatible API + Gemini extensions
 			return gemini.NewClient(apiKey, model, baseURL), model, nil
@@ -673,6 +678,8 @@ func providerAPIKeyEnvName(providerType config.ProviderType) string {
 		return "OPENAI_API_KEY"
 	case config.ProviderGrok:
 		return "XAI_API_KEY"
+	case config.ProviderJev:
+		return "TYPESAFE_API_KEY"
 	default:
 		return ""
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/A2gent/brute/internal/llm/cursorcli"
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/llm/gemini"
+	"github.com/A2gent/brute/internal/llm/jev"
 	"github.com/A2gent/brute/internal/llm/kimicli"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
 	"github.com/A2gent/brute/internal/llm/openaicodex"
@@ -321,6 +322,8 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 	}
 
 	switch providerType {
+	case config.ProviderJev:
+		return jev.NewClient(apiKey, modelName, jev.NormalizeBaseURL(baseURL)), nil
 	case config.ProviderGoogle:
 
 		baseURL = normalizeOpenAIBaseURL(baseURL)
@@ -409,6 +412,11 @@ func (s *Server) fallbackNodeUsageSkipper() fallback.NodeSkipFunc {
 }
 
 func (s *Server) createParentProxyLLMClient(providerType config.ProviderType, modelName string) (llm.Client, bool) {
+	if config.IsClassifierProvider(string(providerType)) {
+		// WHY: Jev talks System One, not OpenAI chat completions. Sending it
+		// through the parent proxy would break routing classification.
+		return nil, false
+	}
 	parentProxyURL := strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_URL"))
 	if parentProxyURL == "" {
 		return nil, false
@@ -472,6 +480,8 @@ func (s *Server) apiKeyEnvName(providerType config.ProviderType) string {
 		return "OPENAI_API_KEY"
 	case config.ProviderGrok:
 		return "XAI_API_KEY"
+	case config.ProviderJev:
+		return "TYPESAFE_API_KEY"
 	default:
 		return ""
 	}
@@ -524,6 +534,9 @@ func (s *Server) normalizeAndValidateFallbackChain(raw []config.FallbackChainNod
 		ptype := config.ProviderType(node.Provider)
 		if ptype == config.ProviderFallback {
 			return nil, fmt.Errorf("fallback chain cannot include fallback_chain itself")
+		}
+		if config.IsClassifierProvider(node.Provider) {
+			return nil, fmt.Errorf("fallback chain cannot include classifier provider %s", node.Provider)
 		}
 		def := config.GetProviderDefinitionForRef(node.Provider)
 		if def == nil {

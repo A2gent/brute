@@ -137,6 +137,9 @@ func validateAutoRouterProvider(provider config.Provider) error {
 		if (config.IsFallbackAggregateRef(targetProvider) || targetType == config.ProviderFallback) && strings.TrimSpace(rule.Model) != "" {
 			return fmt.Errorf("routing rule %q targets a fallback chain and must not set model", rule.Match)
 		}
+		if config.IsClassifierProvider(targetProvider) {
+			return fmt.Errorf("routing rule %q cannot target classifier provider %s", rule.Match, rule.Provider)
+		}
 		if !config.IsFallbackAggregateRef(targetProvider) && config.GetProviderDefinitionForRef(targetProvider) == nil {
 			return fmt.Errorf("routing rule %q has unsupported provider: %s", rule.Match, rule.Provider)
 		}

@@ -95,6 +95,45 @@ func TestAutoRouterAcceptsCustomClaudeAsRouterProviderAndRule(t *testing.T) {
 	}
 }
 
+func TestValidateAutoRouterAcceptsJevAsRouterAndRejectsJevAsTarget(t *testing.T) {
+	cfg := config.DefaultConfig()
+	googleDef := config.GetProviderDefinition(config.ProviderGoogle)
+	cfg.Providers[string(config.ProviderGoogle)] = config.Provider{
+		Name:    string(config.ProviderGoogle),
+		APIKey:  "google-key",
+		BaseURL: googleDef.DefaultURL,
+		Model:   googleDef.DefaultModel,
+	}
+	cfg.Providers[string(config.ProviderJev)] = config.Provider{
+		Name:    string(config.ProviderJev),
+		APIKey:  "jev-key",
+		BaseURL: "https://api.typesafe.ai/v1",
+		Model:   "jev-latest",
+	}
+	server := &Server{config: cfg}
+
+	if err := server.validateAutoRouterProvider(config.Provider{
+		RouterProvider: string(config.ProviderJev),
+		RouterModel:    "jev-latest",
+		RouterRules: []config.RouterRule{
+			{Match: "coding", Provider: string(config.ProviderGoogle), Model: googleDef.DefaultModel},
+		},
+	}); err != nil {
+		t.Fatalf("jev as router provider should be valid: %v", err)
+	}
+
+	err := server.validateAutoRouterProvider(config.Provider{
+		RouterProvider: string(config.ProviderGoogle),
+		RouterModel:    googleDef.DefaultModel,
+		RouterRules: []config.RouterRule{
+			{Match: "coding", Provider: string(config.ProviderJev), Model: "jev-latest"},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "classifier") {
+		t.Fatalf("error = %v, want classifier target rejection", err)
+	}
+}
+
 func TestNormalizeRouterRulesPreservesReasoningEffort(t *testing.T) {
 	rules := normalizeRouterRules([]config.RouterRule{{
 		Match:           " coding ",

@@ -93,3 +93,15 @@ func TestValidateAutoRouterProviderAcceptsCustomClaudeRefs(t *testing.T) {
 		t.Fatalf("validateAutoRouterProvider(custom Claude refs): %v", err)
 	}
 }
+
+func TestValidateAutoRouterProviderRejectsJevAsTarget(t *testing.T) {
+	err := validateAutoRouterProvider(config.Provider{
+		RouterProvider: string(config.ProviderJev),
+		RouterRules: []config.RouterRule{
+			{Match: "coding", Provider: string(config.ProviderJev), Model: "jev-latest"},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "classifier") {
+		t.Fatalf("error = %v, want classifier target rejection", err)
+	}
+}

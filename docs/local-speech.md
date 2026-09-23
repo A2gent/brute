@@ -12,7 +12,7 @@ Brute exposes a Go package at `internal/speechengine` for on-device speech-to-te
 | `kokoro` | TTS | mlx-audio (Python, macOS arm64) | `mlx-community/Kokoro-82M-bf16` / `af_heart` |
 | `qwen3_tts` | TTS | mlx-audio (Python, macOS arm64) | `mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit` / `Ryan` |
 
-Legacy `whisper_cpp` remains available through the same endpoint. In Caesar, open **Tools > Local speech**, select engines, configure the Python/CLI paths, and save. STT defaults to Parakeet for both microphone and meeting transcription. TTS defaults to Piper; explicit local selections never fall back to cloud services. Existing explicit `whisper_stt` tool calls continue to use whisper.cpp.
+Legacy `whisper_cpp` remains available through the same endpoint. In Caesar, open **Speech**, which splits **Local models** from **Cloud models (OpenRouter)**. Local STT defaults to Parakeet for both microphone and meeting transcription. TTS defaults to Piper; explicit local selections never fall back to cloud services. Cloud OpenRouter models appear only when an OpenRouter API key is configured in Providers, and they are used only when selected (`openrouter:<model-id>`). Existing explicit `whisper_stt` tool calls continue to use whisper.cpp.
 
 `POST /speech/transcribe` accepts optional multipart `engine`; omission uses `AAGENT_STT_ENGINE`. `POST /speech/completion` accepts `model: "kokoro"` or `"qwen3_tts"`; omission uses `AAGENT_TTS_ENGINE`. Agent tools: `stt`, `kokoro_tts`, `qwen3_tts`.
 

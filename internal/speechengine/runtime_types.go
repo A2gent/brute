@@ -8,6 +8,9 @@ const (
 	ComponentWhisperKit = "whisperkit"
 	ComponentMLX        = "mlx"
 
+	SourceLocal = "local"
+	SourceCloud = "cloud"
+
 	installJobStateRunning   = "running"
 	installJobStateSucceeded = "succeeded"
 	installJobStateFailed    = "failed"
@@ -56,6 +59,7 @@ type EngineStatus struct {
 	Detail       string `json:"detail"`
 	Supported    bool   `json:"supported"`
 	RuntimeReady bool   `json:"runtime_ready"`
+	Source       string `json:"source,omitempty"`
 }
 
 // InstallJob tracks one asynchronous install operation.

@@ -195,6 +195,24 @@ func (s *Server) handleCompletionSpeech(w http.ResponseWriter, r *http.Request) 
 	}
 	reqBody.Text = text
 	reqBody.Model = effectiveCompletionModel(reqBody.Model)
+	if engine, modelID, err := parseSpeechModel(reqBody.Model); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	} else if engine == "openrouter" {
+		audioPayload, contentType, synthErr := s.synthesizeOpenRouter(r.Context(), modelID, reqBody.Text)
+		if synthErr != nil {
+			status := http.StatusBadGateway
+			if errors.Is(synthErr, errOpenRouterAPIKeyMissing) {
+				status = http.StatusBadRequest
+			}
+			s.errorResponse(w, status, synthErr.Error())
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(audioPayload)
+		return
+	}
 	toolNames, err := completionSpeechTools(reqBody.Model)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
@@ -314,10 +332,12 @@ func (s *Server) handleTranscribeSpeech(w http.ResponseWriter, r *http.Request) 
 	if r.MultipartForm != nil {
 		defer r.MultipartForm.RemoveAll()
 	}
-	engine, err := speechengine.ResolveSTTEngine(r.FormValue("engine"))
-	if err != nil {
-		s.errorResponse(w, http.StatusBadRequest, err.Error())
-		return
+	requestedEngine := strings.TrimSpace(r.FormValue("engine"))
+	if _, useOpenRouter := resolveOpenRouterSTT(requestedEngine); !useOpenRouter {
+		if _, err := speechengine.ResolveSTTEngine(requestedEngine); err != nil {
+			s.errorResponse(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 
 	audioFile, audioHeader, err := r.FormFile("audio")
@@ -358,7 +378,7 @@ func (s *Server) handleTranscribeSpeech(w http.ResponseWriter, r *http.Request) 
 		defer whisperCleanup()
 	}
 
-	transcript, err := speechengine.TranscribeSelected(ctx, engine, whisperAudioPath, speechengine.TranscribeOptions{
+	transcript, err := s.transcribePreparedAudio(ctx, requestedEngine, whisperAudioPath, audioHeader.Filename, speechengine.TranscribeOptions{
 		Language:           r.FormValue("language"),
 		TranslateToEnglish: parseOptionalBool(r.FormValue("translate_to_english")),
 		Prompt:             r.FormValue("prompt"),

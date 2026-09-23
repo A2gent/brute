@@ -11,6 +11,7 @@ import (
 )
 
 func TestListSpeechModelsIncludesAvailableEngines(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "")
 	clipStore := speechcache.New(0)
 	manager := tools.NewManager(".")
 	manager.Register(&fakeSpeechTool{name: "piper_tts", store: clipStore})

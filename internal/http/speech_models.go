@@ -19,6 +19,7 @@ type speechModel struct {
 	Languages []string `json:"languages,omitempty"`
 	Quality   string   `json:"quality,omitempty"`
 	Available bool     `json:"available"`
+	Source    string   `json:"source,omitempty"`
 }
 
 type speechModelsResponse struct {
@@ -61,7 +62,7 @@ func parseSpeechModel(id string) (string, string, error) {
 		return "", "", fmt.Errorf("model must be auto or engine:voice")
 	}
 	switch engine {
-	case "edge_tts", "piper_tts", "macos_say_tts", "elevenlabs_tts":
+	case "edge_tts", "piper_tts", "macos_say_tts", "elevenlabs_tts", "openrouter":
 		return engine, voice, nil
 	default:
 		return "", "", fmt.Errorf("unsupported speech engine %q", engine)
@@ -138,6 +139,9 @@ func (s *Server) handleListSpeechModels(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 		model.Available = available[model.Engine]
+		if model.Source == "" {
+			model.Source = speechengine.SourceLocal
+		}
 		out = append(out, model)
 		seen[model.ID] = struct{}{}
 	}
@@ -156,8 +160,34 @@ func (s *Server) handleListSpeechModels(w http.ResponseWriter, r *http.Request) 
 				Languages: piperModelLanguages(voice.ID),
 				Quality:   "medium",
 				Available: true,
+				Source:    speechengine.SourceLocal,
 			})
 			seen[id] = struct{}{}
+		}
+	}
+
+	if s.resolveOpenRouterAPIKey() != "" {
+		if models, err := fetchOpenRouterCatalog(r.Context(), s.openRouterModelsClient, s.resolveOpenRouterAPIKey(), "speech"); err == nil {
+			for _, model := range models {
+				id := "openrouter:" + model.ID
+				if _, ok := seen[id]; ok {
+					continue
+				}
+				label := model.Name
+				if label == "" {
+					label = model.ID
+				}
+				out = append(out, speechModel{
+					ID:        id,
+					Label:     label,
+					Engine:    "openrouter",
+					Voice:     model.ID,
+					Quality:   "high",
+					Available: true,
+					Source:    speechengine.SourceCloud,
+				})
+				seen[id] = struct{}{}
+			}
 		}
 	}
 

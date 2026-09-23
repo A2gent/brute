@@ -31,6 +31,8 @@ func (s *Server) handleSpeechRuntime(w http.ResponseWriter, r *http.Request) {
 		inspect = speechengine.InspectRuntime
 	}
 	status := inspect(r.Context())
+	tagLocalSpeechEngines(status.Engines)
+	status.Engines = append(status.Engines, s.openRouterSpeechEngines(r.Context())...)
 	status.Job = s.speechInstaller().Job()
 	s.jsonResponse(w, http.StatusOK, status)
 }

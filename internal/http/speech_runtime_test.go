@@ -65,6 +65,7 @@ func TestSpeechRuntimeInstallConflict(t *testing.T) {
 }
 
 func TestSpeechRuntimeRoutesAndJob(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "")
 	installer := &fakeSpeechInstaller{job: &speechengine.InstallJob{ID: "1", State: "running"}}
 	s := &Server{speechRuntimeInstaller: installer, inspectSpeechRuntime: func(context.Context) speechengine.RuntimeStatus {
 		return speechengine.RuntimeStatus{OS: "darwin", Arch: "arm64", Engines: []speechengine.EngineStatus{{ID: "parakeet"}}}

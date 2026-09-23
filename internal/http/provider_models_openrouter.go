@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -22,9 +23,15 @@ type openRouterModelsHTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
+type openRouterCatalogEntry struct {
+	ID   string
+	Name string
+}
+
 type openRouterModelsResponse struct {
 	Data []struct {
 		ID            string `json:"id"`
+		Name          string `json:"name"`
 		ContextLength int    `json:"context_length"`
 	} `json:"data"`
 }
@@ -49,13 +56,30 @@ func (s *Server) handleListOpenRouterModels(w http.ResponseWriter, r *http.Reque
 }
 
 func fetchOpenRouterModels(ctx context.Context, client openRouterModelsHTTPClient, apiKey string) ([]string, error) {
+	catalog, err := fetchOpenRouterCatalog(ctx, client, apiKey, "")
+	if err != nil {
+		return nil, err
+	}
+	models := make([]string, 0, len(catalog))
+	for _, model := range catalog {
+		models = append(models, model.ID)
+	}
+	return models, nil
+}
+
+func fetchOpenRouterCatalog(ctx context.Context, client openRouterModelsHTTPClient, apiKey, outputModalities string) ([]openRouterCatalogEntry, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, openRouterModelsRequestTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, openRouterModelsURL, nil)
+	catalogURL := openRouterModelsURL
+	if modality := strings.TrimSpace(outputModalities); modality != "" {
+		catalogURL = openRouterModelsURL + "?output_modalities=" + url.QueryEscape(modality)
+	}
+
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, catalogURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -81,17 +105,24 @@ func fetchOpenRouterModels(ctx context.Context, client openRouterModelsHTTPClien
 		return nil, fmt.Errorf("failed to parse OpenRouter models response: %w", err)
 	}
 
-	models := make([]string, 0, len(payload.Data))
+	models := make([]openRouterCatalogEntry, 0, len(payload.Data))
 	contextCache := make(map[string]int, len(payload.Data))
 	for _, model := range payload.Data {
-		if id := strings.TrimSpace(model.ID); id != "" {
-			models = append(models, id)
-			if model.ContextLength > 0 {
-				contextCache[id] = model.ContextLength
-			}
+		id := strings.TrimSpace(model.ID)
+		if id == "" {
+			continue
+		}
+		models = append(models, openRouterCatalogEntry{
+			ID:   id,
+			Name: strings.TrimSpace(model.Name),
+		})
+		if model.ContextLength > 0 {
+			contextCache[id] = model.ContextLength
 		}
 	}
 	config.CacheOpenRouterModelContextWindows(contextCache)
-	sort.Strings(models)
+	sort.SliceStable(models, func(i, j int) bool {
+		return models[i].ID < models[j].ID
+	})
 	return models, nil
 }

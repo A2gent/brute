@@ -90,7 +90,7 @@ func (s *Server) transcribeMeetingAudio(ctx context.Context, meeting meetingHist
 		if err != nil {
 			return "", fmt.Errorf("prepare %s for transcription: %w", filepath.Base(absPath), err)
 		}
-		text, transcribeErr := speechengine.TranscribeSelected(ctx, "", whisperPath, speechengine.TranscribeOptions{Profile: "meeting"})
+		text, transcribeErr := s.transcribePreparedAudio(ctx, "", whisperPath, filepath.Base(absPath), speechengine.TranscribeOptions{Profile: "meeting"})
 		if cleanup != nil {
 			cleanup()
 		}

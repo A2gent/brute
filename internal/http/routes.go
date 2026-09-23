@@ -3,6 +3,7 @@
 package http
 
 import (
+	"net/http"
 	"strings"
 	"time"
 
@@ -19,7 +20,10 @@ func (s *Server) setupRoutes() {
 	// HTTP-only/server mode enables it explicitly before Run.
 	r.Use(s.httpAccessLogMiddleware)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(serverRequestTimeout()))
+	// WHY: GET /sessions/events and /sessions/{id}/events are long-lived SSE
+	// streams. The default request timeout is sized for agent runs, not catalog
+	// subscriptions that must stay open while Caesar is on the sessions page.
+	r.Use(timeoutExceptEventStreams)
 
 	// CORS configuration - allow all origins for flexibility
 	allowedOrigins := s.config.EffectiveCORSAllowedOrigins()
@@ -69,6 +73,17 @@ func (s *Server) setupRoutes() {
 	s.registerSkillRoutes(r)
 
 	s.router = r
+}
+
+func timeoutExceptEventStreams(next http.Handler) http.Handler {
+	timeout := middleware.Timeout(serverRequestTimeout())
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/events") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		timeout(next).ServeHTTP(w, r)
+	})
 }
 
 func serverRequestTimeout() time.Duration {
@@ -259,6 +274,8 @@ func (s *Server) registerSessionRoutes(r chi.Router) {
 		r.Post("/", s.handleCreateSession)
 		r.Post("/queue/pause", s.handlePauseQueuedSessions)
 		r.Post("/queue/resume", s.handleResumeQueuedSessions)
+		// Static /events must be registered before /{sessionID} so "events" is not a session id.
+		r.Get("/events", s.handleSessionCatalogEvents)
 		r.Get("/{sessionID}/log", s.handleDownloadSessionLog)
 		r.Get("/{sessionID}/events", s.handleSessionEvents)
 		r.Get("/{sessionID}", s.handleGetSession)

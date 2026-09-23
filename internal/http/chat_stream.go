@@ -148,6 +148,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		s.refreshSessionSummaryWithPrompt(runCtx, sess)
 		s.triggerSerialSessionQueueIfAdvanceable(sess)
 		_ = writeEvent(ChatStreamEvent{Type: "done", Content: chatResp.Content, Messages: s.messagesToResponse(sess.Messages), Status: string(sess.Status), Usage: &chatResp.Usage})
+		s.publishSessionCatalog("session_updated", sess)
 		return
 	}
 
@@ -228,6 +229,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			OutputTokens: usage.OutputTokens,
 		},
 	})
+	s.publishSessionCatalog("session_updated", sess)
 }
 
 func (s *Server) inputRequiredStreamEvent(sess *session.Session) *ChatStreamEvent {

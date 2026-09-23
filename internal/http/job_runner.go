@@ -159,6 +159,7 @@ func (s *Server) prepareJobExecution(job *storage.RecurringJob) (*preparedJobExe
 		logging.Warn("Failed to persist job session run config: %v", err)
 	}
 	_ = s.ensureSessionSystemPromptSnapshot(sess)
+	s.publishSessionCatalog("session_created", sess)
 
 	exec.SessionID = sess.ID
 	if err := s.store.SaveJobExecution(exec); err != nil {

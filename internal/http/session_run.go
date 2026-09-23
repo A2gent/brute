@@ -152,6 +152,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 			OutputTokens: result.Usage.OutputTokens,
 		},
 	})
+	s.publishSessionCatalog("session_updated", sess)
 	return nil
 }
 

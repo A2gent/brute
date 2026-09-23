@@ -394,6 +394,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}(sess.ID, req.Task)
 
 	logging.LogSession("created", sess.ID, fmt.Sprintf("agent=%s via HTTP", req.AgentID))
+	s.publishSessionCatalog("session_created", sess)
 
 	projectID := ""
 	if sess.ProjectID != nil {
@@ -447,6 +448,7 @@ func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		logging.LogSession("started", sess.ID, fmt.Sprintf("agent=%s manual override removed serial queue auto-start", sess.AgentID))
+		s.publishSessionCatalog("session_updated", sess)
 		s.jsonResponse(w, http.StatusOK, s.sessionToResponse(sess))
 		return
 	}
@@ -458,6 +460,7 @@ func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logging.LogSession("started", sess.ID, fmt.Sprintf("agent=%s via HTTP", sess.AgentID))
+	s.publishSessionCatalog("session_updated", sess)
 
 	s.jsonResponse(w, http.StatusOK, s.sessionToResponse(sess))
 }
@@ -493,6 +496,7 @@ func (s *Server) handleUpdateSessionProject(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	s.publishSessionCatalog("session_updated", sess)
 	s.jsonResponse(w, http.StatusOK, s.sessionToResponse(sess))
 }
 
@@ -685,20 +689,31 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		s.cancelActiveSessionRuns(id)
 	}
 
+	type catalogDelete struct {
+		sessionID string
+		projectID string
+	}
+	deletes := make([]catalogDelete, 0, len(sessionIDsToDelete))
+
 	sess, err := s.sessionManager.Get(sessionID)
 	if err == nil {
+		deletes = append(deletes, catalogDelete{sessionID: sessionID, projectID: sessionProjectID(sess)})
 		cleanupCtx, cleanupCancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cleanupCancel()
 		if cleanupErr := s.deleteTelegramTopicForSession(cleanupCtx, sess); cleanupErr != nil {
 			logging.Warn("Telegram topic cleanup failed for session %s: %s", sessionID, sanitizeTelegramError(cleanupErr))
 		}
+	} else {
+		deletes = append(deletes, catalogDelete{sessionID: sessionID})
 	}
 
 	for _, childSessionID := range sessionIDsToDelete[1:] {
 		childSess, getErr := s.sessionManager.Get(childSessionID)
 		if getErr != nil {
+			deletes = append(deletes, catalogDelete{sessionID: childSessionID})
 			continue
 		}
+		deletes = append(deletes, catalogDelete{sessionID: childSessionID, projectID: sessionProjectID(childSess)})
 		cleanupCtx, cleanupCancel := context.WithTimeout(r.Context(), 20*time.Second)
 		if cleanupErr := s.deleteTelegramTopicForSession(cleanupCtx, childSess); cleanupErr != nil {
 			logging.Warn("Telegram topic cleanup failed for session %s: %s", childSessionID, sanitizeTelegramError(cleanupErr))
@@ -709,6 +724,14 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	if err := s.sessionManager.Delete(sessionID); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete session: "+err.Error())
 		return
+	}
+
+	for _, item := range deletes {
+		s.publishSessionCatalogEvent(SessionCatalogEvent{
+			Type:      "session_deleted",
+			SessionID: item.sessionID,
+			ProjectID: item.projectID,
+		})
 	}
 
 	logging.LogSession("deleted", sessionID, "via HTTP")
@@ -733,6 +756,7 @@ func (s *Server) handleCancelSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	s.publishSessionCatalog("session_updated", sess)
 	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"session_id":      sessionID,
 		"cancelled_runs":  cancelledRuns,

@@ -341,6 +341,9 @@ func (s *Server) handleTelegramInboundMessage(
 	if err := s.assignTelegramSessionToProject(sess, chat.Title); err != nil {
 		logging.Warn("Failed to assign project for Telegram session %s: %v", sess.ID, err)
 	}
+	if newSession {
+		s.publishSessionCatalog("session_created", sess)
+	}
 
 	sess.AddUserMessageWithImages(userMessage, userImages)
 	if len(userMessageMetadata) > 0 && len(sess.Messages) > 0 {

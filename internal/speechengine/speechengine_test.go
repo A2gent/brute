@@ -55,6 +55,7 @@ tts.add_argument("--model")
 tts.add_argument("--voice")
 tts.add_argument("--lang-code")
 tts.add_argument("--language", default="")
+tts.add_argument("--instruct", default="")
 
 args = parser.parse_args()
 

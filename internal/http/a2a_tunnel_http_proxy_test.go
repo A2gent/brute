@@ -24,6 +24,9 @@ func newBruteHTTPProxyTestServer(t *testing.T) (*Server, storage.Store) {
 	if err != nil {
 		t.Fatalf("new sqlite store: %v", err)
 	}
+	// Close before TempDir cleanup. An open SQLite WAL can make
+	// RemoveAll fail with "directory not empty" on macOS.
+	t.Cleanup(func() { _ = store.Close() })
 	sessionManager := session.NewManager(store)
 	server := NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
 	return server, store

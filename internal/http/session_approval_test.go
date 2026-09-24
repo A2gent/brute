@@ -65,18 +65,14 @@ func TestHandleGetSessionApprovalReturnsPendingDTO(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 
-	input := json.RawMessage(`{"command":"ls -la"}`)
-	go func() {
-		_, _ = server.approvalBroker.Request(context.Background(), approval.RequestParams{
-			SessionID: sess.ID,
-			ToolUseID: "tu-1",
-			ToolName:  "bash",
-			Input:     input,
-			Reason:    "list files",
-			Timeout:   time.Minute,
-		})
-	}()
-	waitForApprovalPending(t, server.approvalBroker, 1)
+	startApprovalRequest(t, server, approval.RequestParams{
+		SessionID: sess.ID,
+		ToolUseID: "tu-1",
+		ToolName:  "bash",
+		Input:     json.RawMessage(`{"command":"ls -la"}`),
+		Reason:    "list files",
+		Timeout:   time.Minute,
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/sessions/"+sess.ID+"/approval", nil)
 	rec := httptest.NewRecorder()
@@ -415,17 +411,13 @@ func TestHandleGetSessionApprovalReturnsMultiQuestionDTO(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 
-	input := json.RawMessage(`{"questions":[{"question":"Color?","header":"Palette","multiSelect":true,"options":[{"label":"Red","description":"warm"}]},{"question":"Size?","header":"Fit","options":[{"label":"Large","description":"roomy"}]}]}`)
-	go func() {
-		_, _ = server.approvalBroker.Request(context.Background(), approval.RequestParams{
-			SessionID: sess.ID,
-			ToolUseID: "tu-multi-dto",
-			ToolName:  "AskUserQuestion",
-			Input:     input,
-			Timeout:   time.Minute,
-		})
-	}()
-	waitForApprovalPending(t, server.approvalBroker, 1)
+	startApprovalRequest(t, server, approval.RequestParams{
+		SessionID: sess.ID,
+		ToolUseID: "tu-multi-dto",
+		ToolName:  "AskUserQuestion",
+		Input:     json.RawMessage(`{"questions":[{"question":"Color?","header":"Palette","multiSelect":true,"options":[{"label":"Red","description":"warm"}]},{"question":"Size?","header":"Fit","options":[{"label":"Large","description":"roomy"}]}]}`),
+		Timeout:   time.Minute,
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/sessions/"+sess.ID+"/approval", nil)
 	rec := httptest.NewRecorder()
@@ -463,18 +455,14 @@ func TestHandleSubmitSessionApprovalRejectsAllowSessionForQuestion(t *testing.T)
 		t.Fatalf("create session: %v", err)
 	}
 
-	input := json.RawMessage(`{"questions":[{"question":"Pick?","options":[{"label":"A"}]}]}`)
-	go func() {
-		_, _ = server.approvalBroker.Request(context.Background(), approval.RequestParams{
-			SessionID: sess.ID,
-			ToolUseID: "tu-ask-session",
-			ToolName:  "AskUserQuestion",
-			Input:     input,
-			AskUser:   &approval.AskUserPayload{Question: "Pick?", Suggestions: []string{"A"}},
-			Timeout:   time.Minute,
-		})
-	}()
-	waitForApprovalPending(t, server.approvalBroker, 1)
+	startApprovalRequest(t, server, approval.RequestParams{
+		SessionID: sess.ID,
+		ToolUseID: "tu-ask-session",
+		ToolName:  "AskUserQuestion",
+		Input:     json.RawMessage(`{"questions":[{"question":"Pick?","options":[{"label":"A"}]}]}`),
+		AskUser:   &approval.AskUserPayload{Question: "Pick?", Suggestions: []string{"A"}},
+		Timeout:   time.Minute,
+	})
 	requestID := server.approvalBroker.PendingForSession(sess.ID)[0].ID
 
 	rec := postSessionApproval(t, server, sess.ID, requestID, `{"decision":"allow_session"}`)
@@ -498,17 +486,13 @@ func TestHandleSubmitSessionApprovalAnswersReachTransport(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 
-	input := json.RawMessage(`{"questions":[{"question":"Color?","options":[{"label":"Red"}]},{"question":"Size?","options":[{"label":"Large"}]}]}`)
-	go func() {
-		_, _ = server.approvalBroker.Request(context.Background(), approval.RequestParams{
-			SessionID: sess.ID,
-			ToolUseID: "tu-multi",
-			ToolName:  "AskUserQuestion",
-			Input:     input,
-			Timeout:   time.Minute,
-		})
-	}()
-	waitForApprovalPending(t, server.approvalBroker, 1)
+	startApprovalRequest(t, server, approval.RequestParams{
+		SessionID: sess.ID,
+		ToolUseID: "tu-multi",
+		ToolName:  "AskUserQuestion",
+		Input:     json.RawMessage(`{"questions":[{"question":"Color?","options":[{"label":"Red"}]},{"question":"Size?","options":[{"label":"Large"}]}]}`),
+		Timeout:   time.Minute,
+	})
 	requestID := server.approvalBroker.PendingForSession(sess.ID)[0].ID
 
 	want := map[string]string{"Color?": "Red", "Size?": "Large"}
@@ -653,15 +637,31 @@ func TestApprovalBrokerForSessionRequiresExistingSession(t *testing.T) {
 
 func startPendingApproval(t *testing.T, server *Server, sessionID, toolUseID string) {
 	t.Helper()
+	startApprovalRequest(t, server, approval.RequestParams{
+		SessionID: sessionID,
+		ToolUseID: toolUseID,
+		ToolName:  "bash",
+		Input:     json.RawMessage(`{"command":"ls -la"}`),
+		Timeout:   time.Minute,
+	})
+}
+
+func startApprovalRequest(t *testing.T, server *Server, params approval.RequestParams) {
+	t.Helper()
+	done := make(chan struct{})
 	go func() {
-		_, _ = server.approvalBroker.Request(context.Background(), approval.RequestParams{
-			SessionID: sessionID,
-			ToolUseID: toolUseID,
-			ToolName:  "bash",
-			Input:     json.RawMessage(`{"command":"ls -la"}`),
-			Timeout:   time.Minute,
-		})
+		defer close(done)
+		_, _ = server.approvalBroker.Request(t.Context(), params)
 	}()
+	// t.Context is canceled before Cleanup. Wait here so the Request
+	// goroutine exits before SQLite Close and TempDir RemoveAll.
+	t.Cleanup(func() {
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Errorf("approval request goroutine did not exit")
+		}
+	})
 	waitForApprovalPending(t, server.approvalBroker, 1)
 }
 

@@ -78,7 +78,7 @@ func (s *Server) handleGetMindFileRaw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !isProjectRawPreviewFile(normalizedRelPath) {
-		s.errorResponse(w, http.StatusBadRequest, "Only PDF and image files can be previewed")
+		s.errorResponse(w, http.StatusBadRequest, "Only PDF, image, and GLB files can be previewed")
 		return
 	}
 

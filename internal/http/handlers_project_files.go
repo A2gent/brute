@@ -155,6 +155,10 @@ func (s *Server) handleGetProjectFile(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusBadRequest, "PDF files can be opened in the project preview")
 		return
 	}
+	if isGLBFile(normalizedRelPath) {
+		s.errorResponse(w, http.StatusBadRequest, "GLB files can be opened in the project preview")
+		return
+	}
 
 	info, err := os.Stat(resolvedPath)
 	if err != nil {
@@ -227,7 +231,7 @@ func (s *Server) handleGetProjectFileRaw(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if !isProjectRawPreviewFile(normalizedRelPath) {
-		s.errorResponse(w, http.StatusBadRequest, "Only PDF and image files can be previewed")
+		s.errorResponse(w, http.StatusBadRequest, "Only PDF, image, and GLB files can be previewed")
 		return
 	}
 

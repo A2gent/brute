@@ -17,8 +17,12 @@ func isPDFFile(name string) bool {
 	return strings.EqualFold(filepath.Ext(name), ".pdf")
 }
 
+func isGLBFile(name string) bool {
+	return strings.EqualFold(filepath.Ext(name), ".glb")
+}
+
 func isProjectRawPreviewFile(name string) bool {
-	return isPDFFile(name) || isProjectBrowserImageFile(name)
+	return isPDFFile(name) || isProjectBrowserImageFile(name) || isGLBFile(name)
 }
 
 func isProjectBrowserImageFile(name string) bool {
@@ -33,6 +37,10 @@ func isProjectBrowserImageFile(name string) bool {
 func projectRawPreviewContentType(name string) string {
 	if isPDFFile(name) {
 		return "application/pdf"
+	}
+	if isGLBFile(name) {
+		// Go's mime table does not know .glb; browsers need this type for the model loader.
+		return "model/gltf-binary"
 	}
 	if contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(name))); contentType != "" {
 		return contentType

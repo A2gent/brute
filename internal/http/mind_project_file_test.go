@@ -276,6 +276,51 @@ func TestProjectFileRawAllowsLargePDF(t *testing.T) {
 	}
 }
 
+func TestProjectFileRawAllowsLargeGLB(t *testing.T) {
+	server, projectID, projectDir := newProjectFileTestServer(t)
+
+	glbPath := filepath.Join(projectDir, "assets", "chicken.glb")
+	if err := os.MkdirAll(filepath.Dir(glbPath), 0o755); err != nil {
+		t.Fatalf("failed to create assets directory: %v", err)
+	}
+	glbContent := append([]byte("glTF"), bytes.Repeat([]byte{0}, maxProjectEditableFileBytes+1)...)
+	if err := os.WriteFile(glbPath, glbContent, 0o644); err != nil {
+		t.Fatalf("failed to write glb file: %v", err)
+	}
+
+	rec := requestProjectFileRaw(t, server, projectID, "assets/chicken.glb")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "model/gltf-binary") {
+		t.Fatalf("expected model/gltf-binary content type, got %q", got)
+	}
+	if got := rec.Body.Bytes(); !bytes.Equal(got, glbContent) {
+		t.Fatalf("expected raw glb body length %d, got %d", len(glbContent), len(got))
+	}
+}
+
+func TestProjectTextFileEndpointDoesNotApplyTextSizeLimitToGLB(t *testing.T) {
+	server, projectID, projectDir := newProjectFileTestServer(t)
+
+	glbPath := filepath.Join(projectDir, "large.glb")
+	glbContent := append([]byte("glTF"), bytes.Repeat([]byte{0}, maxProjectEditableFileBytes+1)...)
+	if err := os.WriteFile(glbPath, glbContent, 0o644); err != nil {
+		t.Fatalf("failed to write glb file: %v", err)
+	}
+
+	rec := requestProjectFile(t, server, http.MethodGet, projectID, "large.glb", nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "File is too large to open") {
+		t.Fatalf("expected glb-specific response, got size-limit response: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "GLB files can be opened in the project preview") {
+		t.Fatalf("expected glb preview response, got %s", rec.Body.String())
+	}
+}
+
 func TestProjectFileRawAllowsImagePreview(t *testing.T) {
 	server, projectID, projectDir := newProjectFileTestServer(t)
 

@@ -30,9 +30,14 @@ type runtimeConfig struct {
 	kokoroModel      string
 	kokoroVoice      string
 	kokoroLangCode   string
-	qwen3TTSModel    string
-	qwen3TTSVoice    string
-	qwen3TTSLangCode string
+	qwen3TTSModel         string
+	qwen3TTSVoice         string
+	qwen3TTSLangCode      string
+	qwen3TTSStyleGender   string
+	qwen3TTSStylePitch    string
+	qwen3TTSStyleEmotion  string
+	qwen3TTSStyleSpeed    string
+	qwen3TTSStyleExtra    string
 }
 
 func loadRuntimeConfig(ctx context.Context, profile string) runtimeConfig {
@@ -51,9 +56,14 @@ func loadRuntimeConfig(ctx context.Context, profile string) runtimeConfig {
 		kokoroModel:      envOrDefault("AAGENT_SPEECH_KOKORO_MODEL", defaultKokoroModel),
 		kokoroVoice:      envOrDefault("AAGENT_SPEECH_KOKORO_VOICE", defaultKokoroVoice),
 		kokoroLangCode:   envOrDefault("AAGENT_SPEECH_KOKORO_LANG_CODE", defaultKokoroLangCode),
-		qwen3TTSModel:    envOrDefault("AAGENT_SPEECH_QWEN3_TTS_MODEL", defaultQwen3TTSModel),
-		qwen3TTSVoice:    envOrDefault("AAGENT_SPEECH_QWEN3_TTS_VOICE", defaultQwen3TTSVoice),
-		qwen3TTSLangCode: envOrDefault("AAGENT_SPEECH_QWEN3_TTS_LANG_CODE", defaultQwen3TTSLang),
+		qwen3TTSModel:        envOrDefault("AAGENT_SPEECH_QWEN3_TTS_MODEL", defaultQwen3TTSModel),
+		qwen3TTSVoice:        envOrDefault("AAGENT_SPEECH_QWEN3_TTS_VOICE", defaultQwen3TTSVoice),
+		qwen3TTSLangCode:     envOrDefault("AAGENT_SPEECH_QWEN3_TTS_LANG_CODE", defaultQwen3TTSLang),
+		qwen3TTSStyleGender:  strings.TrimSpace(os.Getenv("AAGENT_SPEECH_QWEN3_TTS_STYLE_GENDER")),
+		qwen3TTSStylePitch:   strings.TrimSpace(os.Getenv("AAGENT_SPEECH_QWEN3_TTS_STYLE_PITCH")),
+		qwen3TTSStyleEmotion: strings.TrimSpace(os.Getenv("AAGENT_SPEECH_QWEN3_TTS_STYLE_EMOTION")),
+		qwen3TTSStyleSpeed:   strings.TrimSpace(os.Getenv("AAGENT_SPEECH_QWEN3_TTS_STYLE_SPEED")),
+		qwen3TTSStyleExtra:   strings.TrimSpace(os.Getenv("AAGENT_SPEECH_QWEN3_TTS_STYLE_EXTRA")),
 	}
 }
 
@@ -67,9 +77,14 @@ func loadRuntimeConfigModels(profile string) runtimeConfig {
 		kokoroModel:      envOrDefault("AAGENT_SPEECH_KOKORO_MODEL", defaultKokoroModel),
 		kokoroVoice:      envOrDefault("AAGENT_SPEECH_KOKORO_VOICE", defaultKokoroVoice),
 		kokoroLangCode:   envOrDefault("AAGENT_SPEECH_KOKORO_LANG_CODE", defaultKokoroLangCode),
-		qwen3TTSModel:    envOrDefault("AAGENT_SPEECH_QWEN3_TTS_MODEL", defaultQwen3TTSModel),
-		qwen3TTSVoice:    envOrDefault("AAGENT_SPEECH_QWEN3_TTS_VOICE", defaultQwen3TTSVoice),
-		qwen3TTSLangCode: envOrDefault("AAGENT_SPEECH_QWEN3_TTS_LANG_CODE", defaultQwen3TTSLang),
+		qwen3TTSModel:        envOrDefault("AAGENT_SPEECH_QWEN3_TTS_MODEL", defaultQwen3TTSModel),
+		qwen3TTSVoice:        envOrDefault("AAGENT_SPEECH_QWEN3_TTS_VOICE", defaultQwen3TTSVoice),
+		qwen3TTSLangCode:     envOrDefault("AAGENT_SPEECH_QWEN3_TTS_LANG_CODE", defaultQwen3TTSLang),
+		qwen3TTSStyleGender:  strings.TrimSpace(os.Getenv("AAGENT_SPEECH_QWEN3_TTS_STYLE_GENDER")),
+		qwen3TTSStylePitch:   strings.TrimSpace(os.Getenv("AAGENT_SPEECH_QWEN3_TTS_STYLE_PITCH")),
+		qwen3TTSStyleEmotion: strings.TrimSpace(os.Getenv("AAGENT_SPEECH_QWEN3_TTS_STYLE_EMOTION")),
+		qwen3TTSStyleSpeed:   strings.TrimSpace(os.Getenv("AAGENT_SPEECH_QWEN3_TTS_STYLE_SPEED")),
+		qwen3TTSStyleExtra:   strings.TrimSpace(os.Getenv("AAGENT_SPEECH_QWEN3_TTS_STYLE_EXTRA")),
 	}
 }
 

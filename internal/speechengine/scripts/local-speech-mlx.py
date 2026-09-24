@@ -87,13 +87,15 @@ def cmd_tts(args: argparse.Namespace) -> None:
                 )
             )
         elif engine == "qwen3_tts":
-            results = list(
-                model.generate_custom_voice(
-                    text=text,
-                    speaker=args.voice,
-                    language=args.language,
-                )
-            )
+            voice_kwargs = {
+                "text": text,
+                "speaker": args.voice,
+                "language": args.language,
+            }
+            instruct = (args.instruct or "").strip()
+            if instruct:
+                voice_kwargs["instruct"] = instruct
+            results = list(model.generate_custom_voice(**voice_kwargs))
         else:
             _fail(f"unsupported tts engine: {engine}")
 
@@ -139,6 +141,11 @@ def build_parser() -> argparse.ArgumentParser:
     tts.add_argument("--voice", required=True)
     tts.add_argument("--lang-code", default="")
     tts.add_argument("--language", default="")
+    tts.add_argument(
+        "--instruct",
+        default="",
+        help="Optional natural-language style control for Qwen3 CustomVoice 1.7B",
+    )
     tts.set_defaults(func=cmd_tts)
 
     return parser

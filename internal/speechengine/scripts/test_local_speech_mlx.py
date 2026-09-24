@@ -191,6 +191,51 @@ class LocalSpeechMLXTests(unittest.TestCase):
         )
         fake_audio_io.write.assert_called_once()
 
+    def test_tts_qwen_passes_instruct_when_set(self):
+        fake_model = FakeQwenModel()
+        fake_load_model = mock.Mock(return_value=fake_model)
+        fake_mlx_audio = ModuleType("mlx_audio")
+        fake_tts_utils = ModuleType("mlx_audio.tts.utils")
+        fake_tts_utils.load_model = fake_load_model
+        fake_audio_io = ModuleType("mlx_audio.audio_io")
+        fake_audio_io.write = mock.Mock()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "out.wav"
+            args = self.helper.build_parser().parse_args(
+                [
+                    "tts",
+                    "--engine",
+                    "qwen3_tts",
+                    "--text",
+                    "hello",
+                    "--output",
+                    str(output),
+                    "--model",
+                    "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit",
+                    "--voice",
+                    "Ryan",
+                    "--language",
+                    "English",
+                    "--instruct",
+                    "female voice, high pitch, very angry tone",
+                ]
+            )
+            with mock.patch.dict(
+                sys.modules,
+                {
+                    "mlx_audio": fake_mlx_audio,
+                    "mlx_audio.tts.utils": fake_tts_utils,
+                    "mlx_audio.audio_io": fake_audio_io,
+                },
+            ):
+                self.helper.cmd_tts(args)
+        fake_model.generate_custom_voice.assert_called_once_with(
+            text="hello",
+            speaker="Ryan",
+            language="English",
+            instruct="female voice, high pitch, very angry tone",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

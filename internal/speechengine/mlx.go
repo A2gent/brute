@@ -95,6 +95,9 @@ func synthesizeMLX(ctx context.Context, cfg runtimeConfig, engine, text, languag
 			"--voice", cfg.qwen3TTSVoice,
 			"--language", qwenLang,
 		)
+		if instruct := buildQwen3TTSInstruct(cfg); instruct != "" {
+			args = append(args, "--instruct", instruct)
+		}
 	}
 
 	if _, err := runExternal(ctx, cfg.pythonPath, args...); err != nil {

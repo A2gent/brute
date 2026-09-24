@@ -77,6 +77,11 @@ if speechengine.Available("kokoro") {
 | `AAGENT_SPEECH_QWEN3_TTS_MODEL` | Qwen3-TTS CustomVoice model repo id |
 | `AAGENT_SPEECH_QWEN3_TTS_VOICE` | Qwen3-TTS speaker name (e.g. `Ryan`) |
 | `AAGENT_SPEECH_QWEN3_TTS_LANG_CODE` | Qwen3-TTS language hint (e.g. `English`) |
+| `AAGENT_SPEECH_QWEN3_TTS_STYLE_GENDER` | Optional style: `male` / `female` (1.7B CustomVoice instruct) |
+| `AAGENT_SPEECH_QWEN3_TTS_STYLE_PITCH` | Optional style: `low` / `medium` / `high` |
+| `AAGENT_SPEECH_QWEN3_TTS_STYLE_EMOTION` | Optional style: `calm`, `happy`, `excited`, `sad`, `angry`, `serious`, `whisper` |
+| `AAGENT_SPEECH_QWEN3_TTS_STYLE_SPEED` | Optional rate: `very_slow`, `slow`, `fast`, `very_fast` |
+| `AAGENT_SPEECH_QWEN3_TTS_STYLE_EXTRA` | Optional free-form text appended to the composed `instruct` string |
 
 Brute does **not** run `pip install` during requests. Install dependencies ahead of time.
 

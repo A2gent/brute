@@ -426,3 +426,5 @@ The HTTP bridge is shared. `Server.cursorcliOptions` passes the same `claudecliM
 Cursor does not namespace tools as `mcp__a2gent__*`. It discovers plugin MCP servers and calls them through its own MCP interface. The plugin id the model sees is `plugin-a2gent-bridge-a2gent` (server key `a2gent`). The same denylist applies: file and shell tools stay on Cursor's native tools; `question`, `tasks`, suggest widgets, and integrations stay on the bridge.
 
 User and project MCP servers configured in `mcp.json` still load. Cursor has no equivalent of `--strict-mcp-config`. Scheduler and TUI Cursor clients do not host the HTTP bridge, matching the Claude scheduler path, so they do not attach the plugin.
+
+Verified manually with Cursor Agent CLI `2026.09.23-86fc751`: a plugin manifest with inline `mcpServers` (`url` + `headers`, no `type`) loaded via `--plugin-dir ... --approve-mcps` completes `initialize` -> `tools/list` -> `tools/call` against a server answering protocol `2024-11-05`, and sends the bearer header on every request. `agent mcp list` does not show plugin servers, so it cannot be used to check the wiring.

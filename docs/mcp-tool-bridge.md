@@ -409,3 +409,20 @@ Caesar needs no new tests for phase 1; `ApprovalPanel.test.tsx` already covers q
 2. **Sidecar interaction.** When `AAGENT_CLAUDE_AGENT_SDK_SIDECAR_PATH` is set, every tool call already routes through the approval broker. An MCP `question` would then produce **two** broker entries: one from the sidecar asking permission to call `mcp__a2gent__question`, and one from the bridge asking the question itself. Decide whether bridge-exposed tools are auto-allowed at the sidecar layer (recommended) or genuinely need a permission prompt of their own.
 3. **Delegation re-entrancy.** Exposing `delegate_to_subagent` lets a CLI run spawn another CLI run. Needs a depth counter in session metadata before enabling.
 4. **Provider sessions.** `--resume` restores a CLI session whose MCP token has already been revoked. The bridge must mint a fresh token per invocation and the CLI must re-read `--mcp-config` on resume; verify this holds.
+
+## Cursor Agent CLI
+
+Cursor Agent CLI (`agent`) is the same shape of executor as Claude Code: Brute shells out, the CLI runs its own tool loop, and A2gent tool schemas are not sent as function definitions. Cursor has no `--mcp-config` or `--strict-mcp-config`. MCP servers come from `.cursor/mcp.json`, `~/.cursor/mcp.json`, and plugins (`--plugin-dir`).
+
+The HTTP bridge is shared. `Server.cursorcliOptions` passes the same `claudecliMCPBridgeHook` JSON (loopback URL + per-invocation bearer) into `cursorcli.MCPBridge`. The Cursor client writes that JSON into a `0600` temp plugin (`.cursor-plugin/plugin.json`, name `a2gent-bridge`) and adds:
+
+```
+--plugin-dir <temp>
+--approve-mcps
+```
+
+`--approve-mcps` is required because `--force` allows shell commands but does not skip Cursor's MCP approval prompt. The temp plugin is removed when the subprocess exits, together with the token revoke. The token is not written into the workspace.
+
+Cursor does not namespace tools as `mcp__a2gent__*`. It discovers plugin MCP servers and calls them through its own MCP interface. The plugin id the model sees is `plugin-a2gent-bridge-a2gent` (server key `a2gent`). The same denylist applies: file and shell tools stay on Cursor's native tools; `question`, `tasks`, suggest widgets, and integrations stay on the bridge.
+
+User and project MCP servers configured in `mcp.json` still load. Cursor has no equivalent of `--strict-mcp-config`. Scheduler and TUI Cursor clients do not host the HTTP bridge, matching the Claude scheduler path, so they do not attach the plugin.

@@ -219,6 +219,17 @@ func (s *Server) createLLMClient(providerType config.ProviderType, model string,
 	return retry.Wrap(client, retry.WithMaxRetries(retries)), nil
 }
 
+// cursorcliOptions wires the shared MCP bridge into Cursor Agent CLI.
+// The hook JSON is the Claude --mcp-config payload; cursorcli turns it into
+// a temp plugin because Cursor has no inline MCP config flag.
+func (s *Server) cursorcliOptions(workDir, apiKey string) cursorcli.Options {
+	return cursorcli.Options{
+		WorkDir:   workDir,
+		APIKey:    apiKey,
+		MCPBridge: s.claudecliMCPBridgeHook,
+	}
+}
+
 func (s *Server) createBaseLLMClientForSession(providerType config.ProviderType, model string, sess *session.Session) (llm.Client, error) {
 	modelName := strings.TrimSpace(model)
 	if modelName == "" {
@@ -237,10 +248,10 @@ func (s *Server) createBaseLLMClientForSession(providerType config.ProviderType,
 	}
 	if providerType == config.ProviderCursor {
 		provider := s.config.Providers[string(providerType)]
-		return cursorcli.NewClientWithOptions(modelName, cursorcli.Options{
-			WorkDir: s.resolveSessionWorkDir(sess),
-			APIKey:  firstNonEmpty(strings.TrimSpace(provider.APIKey), s.apiKeyFromEnv(providerType)),
-		}), nil
+		return cursorcli.NewClientWithOptions(modelName, s.cursorcliOptions(
+			s.resolveSessionWorkDir(sess),
+			firstNonEmpty(strings.TrimSpace(provider.APIKey), s.apiKeyFromEnv(providerType)),
+		)), nil
 	}
 	return s.createBaseLLMClient(providerType, modelName)
 }
@@ -295,10 +306,10 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 		return kimicli.NewClient(modelName, s.resolveSessionWorkDir(nil)), nil
 	}
 	if providerType == config.ProviderCursor {
-		return cursorcli.NewClientWithOptions(modelName, cursorcli.Options{
-			WorkDir: s.resolveSessionWorkDir(nil),
-			APIKey:  firstNonEmpty(strings.TrimSpace(provider.APIKey), s.apiKeyFromEnv(providerType)),
-		}), nil
+		return cursorcli.NewClientWithOptions(modelName, s.cursorcliOptions(
+			s.resolveSessionWorkDir(nil),
+			firstNonEmpty(strings.TrimSpace(provider.APIKey), s.apiKeyFromEnv(providerType)),
+		)), nil
 	}
 
 	apiKey := strings.TrimSpace(provider.APIKey)

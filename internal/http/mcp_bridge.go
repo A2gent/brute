@@ -1,5 +1,6 @@
 // mcp_bridge.go implements the session-scoped MCP server that exposes A2gent
-// tools (question, image generation, integrations) to the Claude Code CLI.
+// tools (question, tasks, suggest_*, image generation, integrations) to
+// Claude Code CLI and Cursor Agent CLI.
 // The CLI runs as a subprocess of brute and calls back over loopback HTTP, so
 // brute is both the parent (blocked on the subprocess) and the callee; the
 // per-invocation bearer token is what binds MCP requests to the owning session.

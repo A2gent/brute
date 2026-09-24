@@ -31,6 +31,10 @@ type Options struct {
 	Trust      bool
 	Sandbox    string
 	APIKey     string
+	// MCPBridge exposes A2gent tools (question, tasks, suggest_*, integrations)
+	// over the loopback MCP server. Cursor has no --mcp-config flag, so the
+	// client turns the returned JSON into a temporary plugin.
+	MCPBridge MCPBridgeHook
 }
 
 // Client implements llm.Client by shelling out to Cursor Agent CLI.
@@ -157,8 +161,10 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	}
 	logging.LogRequestWithContent(model, len(request.Messages), len(request.Tools) > 0, lastMsg)
 
-	prompt := buildPrompt(request)
-	args := c.buildArgs(model, prompt)
+	bridge := c.newMCPBridgeInvocation(ctx)
+	defer bridge.revoke()
+	prompt := buildPrompt(request, len(bridge.args) > 0)
+	args := c.buildArgs(model, prompt, bridge)
 
 	agentPath, err := findExecutable(c.options.Executable)
 	if err != nil {
@@ -222,8 +228,10 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	}
 	logging.LogRequestWithContent(model, len(request.Messages), len(request.Tools) > 0, lastMsg)
 
-	prompt := buildPrompt(request)
-	args := c.buildStreamArgs(model, prompt)
+	bridge := c.newMCPBridgeInvocation(ctx)
+	defer bridge.revoke()
+	prompt := buildPrompt(request, len(bridge.args) > 0)
+	args := c.buildStreamArgs(model, prompt, bridge)
 
 	agentPath, err := findExecutable(c.options.Executable)
 	if err != nil {
@@ -356,17 +364,17 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	}, nil
 }
 
-func (c *Client) buildArgs(model, prompt string) []string {
+func (c *Client) buildArgs(model, prompt string, bridge mcpBridgeInvocation) []string {
 	args := []string{"-p", prompt, "--output-format", "json", "--model", model}
-	return c.appendCommonArgs(args)
+	return c.appendCommonArgs(args, bridge)
 }
 
-func (c *Client) buildStreamArgs(model, prompt string) []string {
+func (c *Client) buildStreamArgs(model, prompt string, bridge mcpBridgeInvocation) []string {
 	args := []string{"-p", prompt, "--output-format", "stream-json", "--stream-partial-output", "--model", model}
-	return c.appendCommonArgs(args)
+	return c.appendCommonArgs(args, bridge)
 }
 
-func (c *Client) appendCommonArgs(args []string) []string {
+func (c *Client) appendCommonArgs(args []string, bridge mcpBridgeInvocation) []string {
 	args = append(args, "--workspace", c.options.WorkDir)
 	if c.options.Force {
 		args = append(args, "--force")
@@ -376,6 +384,12 @@ func (c *Client) appendCommonArgs(args []string) []string {
 	}
 	if c.options.Sandbox != "" {
 		args = append(args, "--sandbox", c.options.Sandbox)
+	}
+	// WHY: --force allows shell commands but does not approve MCP servers.
+	// Headless runs cannot answer Cursor's MCP approval prompt, so the bridge
+	// passes --approve-mcps for the temporary A2gent plugin.
+	if len(bridge.args) > 0 {
+		args = append(args, bridge.args...)
 	}
 	return args
 }
@@ -394,30 +408,34 @@ func (c *Client) commandEnv() []string {
 	return append(env, "CURSOR_API_KEY="+c.options.APIKey)
 }
 
-func buildSystemPrompt(systemPrompt string) string {
+func buildSystemPrompt(systemPrompt string, exposeA2gentMCP bool) string {
 	systemPrompt = strings.TrimSpace(systemPrompt)
-	if systemPrompt == "" {
-		return cursorPromptPrefix
+	prefix := cursorPromptPrefix
+	if exposeA2gentMCP {
+		prefix += "\n\n" + cursorMCPToolNote
 	}
-	return cursorPromptPrefix + "\n\n" + systemPrompt
+	if systemPrompt == "" {
+		return prefix
+	}
+	return prefix + "\n\n" + systemPrompt
 }
 
-func buildPrompt(request *llm.ChatRequest) string {
+func buildPrompt(request *llm.ChatRequest, exposeA2gentMCP bool) string {
 	if request == nil || len(request.Messages) == 0 {
-		return buildSystemPrompt("") + "\n\nContinue."
+		return buildSystemPrompt("", exposeA2gentMCP) + "\n\nContinue."
 	}
 	if len(request.Messages) == 1 && request.Messages[0].Role == "user" &&
 		len(request.Messages[0].ToolCalls) == 0 && len(request.Messages[0].ToolResults) == 0 &&
 		len(request.Messages[0].Images) == 0 {
 		prompt := strings.TrimSpace(request.Messages[0].Content)
-		if systemPrompt := buildSystemPrompt(request.SystemPrompt); systemPrompt != "" {
+		if systemPrompt := buildSystemPrompt(request.SystemPrompt, exposeA2gentMCP); systemPrompt != "" {
 			return strings.TrimSpace(systemPrompt + "\n\n" + prompt)
 		}
 		return prompt
 	}
 
 	var b strings.Builder
-	if systemPrompt := buildSystemPrompt(request.SystemPrompt); systemPrompt != "" {
+	if systemPrompt := buildSystemPrompt(request.SystemPrompt, exposeA2gentMCP); systemPrompt != "" {
 		b.WriteString(systemPrompt)
 		b.WriteString("\n\n")
 	}

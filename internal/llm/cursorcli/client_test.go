@@ -28,7 +28,7 @@ func TestBuildPromptIncludesConversationToolContext(t *testing.T) {
 			},
 			{Role: "user", Content: "Summarize."},
 		},
-	})
+	}, false)
 
 	for _, want := range []string{
 		"Continue the following A2gent conversation",
@@ -64,7 +64,7 @@ func TestClientArgsForceCommandsByDefault(t *testing.T) {
 	t.Setenv("AAGENT_CURSOR_CLI_TRUST", "")
 
 	client := NewClientWithOptions("composer-2.5", Options{WorkDir: t.TempDir()})
-	args := strings.Join(client.buildArgs("composer-2.5", "hello"), "\n")
+	args := strings.Join(client.buildArgs("composer-2.5", "hello", mcpBridgeInvocation{}), "\n")
 
 	if !strings.Contains(args, "--force") {
 		t.Fatalf("expected default args to include --force: %s", args)
@@ -79,7 +79,7 @@ func TestClientArgsCanDisableForceAndTrustWorkspaceViaEnv(t *testing.T) {
 	t.Setenv("AAGENT_CURSOR_CLI_TRUST", "")
 
 	client := NewClientWithOptions("composer-2.5", Options{WorkDir: t.TempDir()})
-	args := strings.Join(client.buildArgs("composer-2.5", "hello"), "\n")
+	args := strings.Join(client.buildArgs("composer-2.5", "hello", mcpBridgeInvocation{}), "\n")
 
 	if strings.Contains(args, "--force") {
 		t.Fatalf("expected AAGENT_CURSOR_CLI_FORCE=false to omit --force: %s", args)
@@ -94,7 +94,7 @@ func TestClientArgsCanDisableWorkspaceTrustViaEnv(t *testing.T) {
 	t.Setenv("AAGENT_CURSOR_CLI_TRUST", "false")
 
 	client := NewClientWithOptions("composer-2.5", Options{WorkDir: t.TempDir()})
-	args := strings.Join(client.buildArgs("composer-2.5", "hello"), "\n")
+	args := strings.Join(client.buildArgs("composer-2.5", "hello", mcpBridgeInvocation{}), "\n")
 
 	if strings.Contains(args, "--trust") {
 		t.Fatalf("expected AAGENT_CURSOR_CLI_TRUST=false to omit --trust: %s", args)
@@ -165,7 +165,7 @@ func TestClientDoesNotPutAPIKeyInArgs(t *testing.T) {
 		APIKey:  "cursor-secret-token",
 	})
 
-	args := strings.Join(client.buildArgs("composer-2.5", "hello"), "\n")
+	args := strings.Join(client.buildArgs("composer-2.5", "hello", mcpBridgeInvocation{}), "\n")
 	if strings.Contains(args, "cursor-secret-token") || strings.Contains(args, "--api-key") {
 		t.Fatalf("expected API key to be passed through environment only, got args: %s", args)
 	}

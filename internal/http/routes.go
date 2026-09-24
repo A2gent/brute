@@ -342,6 +342,7 @@ func (s *Server) registerProjectRoutes(r chi.Router) {
 		r.Post("/git/push", s.handleProjectGitPush)
 		r.Post("/git/pull", s.handleProjectGitPull)
 		r.Post("/git/checkout", s.handleProjectGitCheckout)
+		r.Post("/git/merge", s.handleProjectGitMerge)
 		r.Post("/git/commit", s.handleProjectGitCommit)
 		r.Get("/file", s.handleGetProjectFile)
 		r.Get("/file/raw", s.handleGetProjectFileRaw)

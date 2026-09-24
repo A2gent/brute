@@ -185,6 +185,61 @@ func (s *Server) handleProjectGitCheckout(w http.ResponseWriter, r *http.Request
 	s.jsonResponse(w, http.StatusOK, ProjectGitPullResponse{Output: output})
 }
 
+func (s *Server) handleProjectGitMerge(w http.ResponseWriter, r *http.Request) {
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
+	if projectID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "projectID is required")
+		return
+	}
+
+	resolvedRoot, err := s.resolveProjectRootFolder(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var req ProjectGitMergeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	branch := strings.TrimSpace(req.Branch)
+	if branch == "" {
+		s.errorResponse(w, http.StatusBadRequest, "branch is required")
+		return
+	}
+
+	targetRepoRoot, err := resolveProjectGitTargetRoot(resolvedRoot, strings.TrimSpace(req.RepoPath))
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !projectHasGitMetadata(targetRepoRoot) {
+		s.errorResponse(w, http.StatusBadRequest, "Target folder does not contain a .git directory")
+		return
+	}
+
+	currentBranch, err := runGitCommand(targetRepoRoot, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to read current branch: "+err.Error())
+		return
+	}
+	current := strings.TrimSpace(currentBranch)
+	if current != "" && current != "HEAD" && current == branch {
+		s.errorResponse(w, http.StatusBadRequest, "Cannot merge the current branch into itself")
+		return
+	}
+
+	output, err := runGitCommand(targetRepoRoot, "merge", branch)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Failed to merge "+branch+": "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, ProjectGitPullResponse{Output: output})
+}
+
 func (s *Server) handleProjectGitInit(w http.ResponseWriter, r *http.Request) {
 	projectID := strings.TrimSpace(r.URL.Query().Get("projectID"))
 	if projectID == "" {

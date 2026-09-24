@@ -216,6 +216,11 @@ type ProjectGitCheckoutRequest struct {
 	Create   bool   `json:"create,omitempty"`
 }
 
+type ProjectGitMergeRequest struct {
+	RepoPath string `json:"repo_path,omitempty"`
+	Branch   string `json:"branch"`
+}
+
 type ProjectGitInitRequest struct {
 	RepoPath  string `json:"repo_path,omitempty"`
 	RemoteURL string `json:"remote_url,omitempty"`

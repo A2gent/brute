@@ -40,25 +40,25 @@ func qwen3TTSLanguage(language string) (string, error) {
 		return "", nil
 	}
 	switch lang {
-	case "en":
+	case "en", "english":
 		return "English", nil
-	case "ru":
+	case "ru", "russian":
 		return "Russian", nil
-	case "zh":
+	case "zh", "chinese":
 		return "Chinese", nil
-	case "ja":
+	case "ja", "japanese":
 		return "Japanese", nil
-	case "ko":
+	case "ko", "korean":
 		return "Korean", nil
-	case "de":
+	case "de", "german":
 		return "German", nil
-	case "fr":
+	case "fr", "french":
 		return "French", nil
-	case "pt":
+	case "pt", "portuguese":
 		return "Portuguese", nil
-	case "es":
+	case "es", "spanish":
 		return "Spanish", nil
-	case "it":
+	case "it", "italian":
 		return "Italian", nil
 	default:
 		return "", fmt.Errorf("%w: qwen3_tts does not support %q", ErrUnsupportedLanguage, language)

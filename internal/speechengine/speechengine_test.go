@@ -452,6 +452,14 @@ func TestQwen3TTSLanguageMapping(t *testing.T) {
 	if err != nil || got != "English" {
 		t.Fatalf("qwen3TTSLanguage(en) = (%q, %v), want English", got, err)
 	}
+	got, err = qwen3TTSLanguage("Japanese")
+	if err != nil || got != "Japanese" {
+		t.Fatalf("qwen3TTSLanguage(Japanese) = (%q, %v), want Japanese", got, err)
+	}
+	got, err = qwen3TTSLanguage("chinese")
+	if err != nil || got != "Chinese" {
+		t.Fatalf("qwen3TTSLanguage(chinese) = (%q, %v), want Chinese", got, err)
+	}
 }
 
 func TestSynthesizeWithLanguageKokoroMapsEnglish(t *testing.T) {

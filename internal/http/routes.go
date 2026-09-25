@@ -359,6 +359,8 @@ func (s *Server) registerProjectRoutes(r chi.Router) {
 		r.Put("/{projectID}", s.handleUpdateProject)
 		r.Delete("/{projectID}", s.handleDeleteProject)
 
+		// Path-style so relative assets in an HTML preview resolve next to the file.
+		r.Get("/{projectID}/preview/*", s.handleGetProjectFilePreview)
 		r.Get("/{projectID}/databases", s.handleListProjectDatabases)
 		r.Post("/{projectID}/databases", s.handleCreateProjectDatabase)
 		r.Put("/{projectID}/databases/{dbID}", s.handleUpdateProjectDatabase)

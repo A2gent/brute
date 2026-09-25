@@ -21,6 +21,24 @@ func isGLBFile(name string) bool {
 	return strings.EqualFold(filepath.Ext(name), ".glb")
 }
 
+func isHTMLFile(name string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
+	return ext == ".html" || ext == ".htm"
+}
+
+// projectHTMLPreviewCSP keeps previewed HTML off the API origin while still running its scripts.
+const projectHTMLPreviewCSP = "sandbox allow-scripts allow-forms allow-popups allow-modals"
+
+func projectPreviewContentType(name string) string {
+	if isGLBFile(name) {
+		return "model/gltf-binary"
+	}
+	if contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(name))); contentType != "" {
+		return contentType
+	}
+	return "application/octet-stream"
+}
+
 func isProjectRawPreviewFile(name string) bool {
 	return isPDFFile(name) || isProjectBrowserImageFile(name) || isGLBFile(name)
 }

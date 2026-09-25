@@ -345,6 +345,70 @@ func TestProjectFileRawAllowsImagePreview(t *testing.T) {
 	}
 }
 
+func TestProjectPreviewServesHTMLAndSiblingAsset(t *testing.T) {
+	server, projectID, projectDir := newProjectFileTestServer(t)
+
+	modelDir := filepath.Join(projectDir, "robotic-beehive", "model")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatalf("failed to create model directory: %v", err)
+	}
+	htmlContent := []byte("<!doctype html><html><body>hive</body></html>")
+	jsContent := []byte("export const hive = 1;\n")
+	if err := os.WriteFile(filepath.Join(modelDir, "index.html"), htmlContent, 0o644); err != nil {
+		t.Fatalf("failed to write html file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "scene.js"), jsContent, 0o644); err != nil {
+		t.Fatalf("failed to write js file: %v", err)
+	}
+
+	htmlRec := requestProjectFilePreview(t, server, projectID, "robotic-beehive/model/index.html")
+	if htmlRec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d location %q body %s", http.StatusOK, htmlRec.Code, htmlRec.Header().Get("Location"), htmlRec.Body.String())
+	}
+	if got := htmlRec.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/html") {
+		t.Fatalf("expected text/html content type, got %q", got)
+	}
+	if csp := htmlRec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "sandbox") || strings.Contains(csp, "allow-same-origin") {
+		t.Fatalf("expected sandbox CSP without allow-same-origin, got %q", csp)
+	}
+	if htmlRec.Header().Get("Access-Control-Allow-Origin") != "*" {
+		t.Fatalf("expected CORS header on html preview")
+	}
+	if !bytes.Equal(htmlRec.Body.Bytes(), htmlContent) {
+		t.Fatalf("expected html body %q, got %q", htmlContent, htmlRec.Body.Bytes())
+	}
+
+	jsRec := requestProjectFilePreview(t, server, projectID, "robotic-beehive/model/scene.js")
+	if jsRec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, jsRec.Code, jsRec.Body.String())
+	}
+	if got := jsRec.Header().Get("Content-Type"); !strings.Contains(got, "javascript") {
+		t.Fatalf("expected javascript content type, got %q", got)
+	}
+	if jsRec.Header().Get("Access-Control-Allow-Origin") != "*" {
+		t.Fatalf("expected CORS header on sibling asset")
+	}
+	if !bytes.Equal(jsRec.Body.Bytes(), jsContent) {
+		t.Fatalf("expected js body %q, got %q", jsContent, jsRec.Body.Bytes())
+	}
+}
+
+func TestProjectPreviewRejectsPathEscape(t *testing.T) {
+	server, projectID, projectDir := newProjectFileTestServer(t)
+	outside := filepath.Join(filepath.Dir(projectDir), "secret.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0o644); err != nil {
+		t.Fatalf("failed to write outside file: %v", err)
+	}
+
+	rec := requestProjectFilePreview(t, server, projectID, "..%2Fsecret.txt")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "secret") && !strings.Contains(rec.Body.String(), "escapes") && !strings.Contains(rec.Body.String(), "invalid") && !strings.Contains(rec.Body.String(), "Failed to access") {
+		t.Fatalf("expected escape rejection, got %s", rec.Body.String())
+	}
+}
+
 func TestProjectTextFileEndpointDoesNotApplyTextSizeLimitToPDF(t *testing.T) {
 	server, projectID, projectDir := newProjectFileTestServer(t)
 
@@ -554,6 +618,16 @@ func requestProjectFile(t *testing.T, server *Server, method string, projectID s
 	if method == http.MethodPut || method == http.MethodPost {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+	return rec
+}
+
+func requestProjectFilePreview(t *testing.T, server *Server, projectID string, path string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	target := "/projects/" + url.PathEscape(projectID) + "/preview/" + path
+	req := httptest.NewRequest(http.MethodGet, target, nil)
 	rec := httptest.NewRecorder()
 	server.router.ServeHTTP(rec, req)
 	return rec

@@ -176,7 +176,7 @@ func readClaudeRateLimitCache(now time.Time) (ProviderUsageResponse, error) {
 	info, err := os.Stat(cachePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return ProviderUsageResponse{}, fmt.Errorf("Usage left unavailable — Claude Code statusLine cache not found at %s. Configure a statusLine script to write rate_limits JSON there or set %s.", cachePath, claudeRateLimitsCachePathEnv)
+		return ProviderUsageResponse{}, fmt.Errorf("Usage left unavailable — Claude Code statusLine cache not found at %s. Enable Claude usage in the provider card, configure a statusLine script to write rate_limits JSON there, or set %s.", cachePath, claudeRateLimitsCachePathEnv)
 		}
 		return ProviderUsageResponse{}, fmt.Errorf("Usage left unavailable — failed to read Claude Code statusLine cache at %s: %w", cachePath, err)
 	}

@@ -556,6 +556,7 @@ Make it executable and point Claude Code `statusLine.command` at it, for example
 
 Notes:
 
+- When the cache is missing for the default Claude provider, the Usage left card offers **Enable Claude usage**. This installs a statusLine collector into Claude Code settings without replacing any existing statusLine, custom Claude config directory, or unrelated settings. After the next Claude Code response, select Refresh to show the 5-hour and weekly percentages. If you already use a statusLine, configure its script manually as below.
 - Claude Code provides `rate_limits.five_hour` and `rate_limits.seven_day` only for Claude.ai subscriber sessions after the first API response.
 - Brute reads `AAGENT_CLAUDE_RATE_LIMITS_PATH` or defaults to `~/.a2gent/claude-rate-limits.json`.
 - Brute treats the cache as stale after `AAGENT_CLAUDE_RATE_LIMITS_MAX_AGE` (default `12h`) and falls back to an unavailable message until a newer snapshot is written.

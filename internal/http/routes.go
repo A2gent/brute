@@ -153,6 +153,7 @@ func (s *Server) registerProviderRoutes(r chi.Router) {
 		r.Get("/cursor/models", s.handleListCursorModels)
 		r.Get("/{providerType}/health", s.handleProviderHealth)
 		r.Post("/claude-instances", s.handleCreateClaudeInstance)
+		r.Post("/{providerType}/usage/enable", s.handleEnableClaudeUsage)
 		r.Get("/{providerType}/usage", s.handleProviderUsage)
 		r.Put("/{providerType}", s.handleUpdateProvider)
 		r.Delete("/{providerType}", s.handleDeleteProvider)

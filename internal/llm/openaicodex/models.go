@@ -18,6 +18,7 @@ import (
 // the Codex OAuth /models endpoint or the OpenAI-compatible /models endpoint.
 var CuratedModels = []string{
 	"gpt-6-astra",
+	"gpt-6.1-sol",
 	"gpt-6-sol",
 	"gpt-6-luna",
 	"gpt-5.6-sol",

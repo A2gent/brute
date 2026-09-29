@@ -60,11 +60,10 @@ class LocalSpeechMLXTests(unittest.TestCase):
         cls.helper = load_helper_module()
 
     def test_require_mlx_audio_reports_import_error_as_json(self):
-        with mock.patch.dict(sys.modules, {}, clear=True):
-            with mock.patch("builtins.__import__", side_effect=ImportError("missing")):
-                with mock.patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
-                    with self.assertRaises(SystemExit) as ctx:
-                        self.helper._require_mlx_audio()
+        with mock.patch.dict(sys.modules, {"mlx_audio": None}):
+            with mock.patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
+                with self.assertRaises(SystemExit) as ctx:
+                    self.helper._require_mlx_audio()
         self.assertEqual(ctx.exception.code, 1)
         payload = json.loads(stdout.getvalue().strip())
         self.assertIn("mlx-audio is not installed", payload["error"])

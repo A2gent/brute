@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -211,6 +212,9 @@ func TestBuildBrowserEvalScriptEmbedsScriptAsJSONString(t *testing.T) {
 func TestChromeProfileLaunchWhenNoChromeRunning(t *testing.T) {
 	if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") == "true" {
 		t.Skip("Skipping Chrome profile launch test in CI")
+	}
+	if runtime.GOOS != "darwin" {
+		t.Skip("Chrome AgentProfile launch test requires macOS")
 	}
 
 	// Test verifies that the browser_chrome tool connects to Chrome launched via UI button

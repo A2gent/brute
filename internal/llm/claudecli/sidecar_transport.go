@@ -190,6 +190,12 @@ func (c *Client) chatViaSidecar(
 		return nil, unsafeAfterStart(fmt.Errorf("Claude Agent SDK sidecar failed: %s", normalizeClaudeCLIErrorMessage(cliErrorMessage(err, stdout.String(), stderr.String()))))
 	}
 
+	// A sidecar can exit successfully after cancellation (for example, after a
+	// permission response). The caller still must observe the cancelled request.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	finalContent := processor.finalContent()
 	if finalContent == "" {
 		finalContent = strings.TrimSpace(processor.content.String())

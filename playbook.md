@@ -1,4 +1,6 @@
 # Playbook
+- If CI job logs require GitHub authentication and `gh` is unavailable, inspect public Actions job step timestamps through the GitHub API, then profile locally; avoid claiming unverified cache-hit status or CI speedups.
+- On a locally downloaded Go toolchain missing `pkg/tool/*/covdata`, a full `go test -coverprofile ./...` may fail only for packages without tests; verify coverage on tested packages and run the full suite without coverage before attributing the failure to project code.
 
 - Before delegating repository analysis, verify the selected agent is bound to the current project and can see the expected source tree under `/workspace`.
 - Before exact string replacement, read the target fragment and preserve its current tabs, spaces, and alignment.

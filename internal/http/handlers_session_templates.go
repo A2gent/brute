@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -86,7 +87,10 @@ func (s *Server) handleCreateSessionTemplate(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleGetSessionTemplate(w http.ResponseWriter, r *http.Request) {
-	templateID := chi.URLParam(r, "templateID")
+	templateID, ok := s.sessionTemplateIDFromRequest(w, r)
+	if !ok {
+		return
+	}
 	template, err := s.store.GetSessionTemplate(templateID)
 	if err != nil {
 		s.errorResponse(w, http.StatusNotFound, "Session template not found: "+err.Error())
@@ -96,7 +100,14 @@ func (s *Server) handleGetSessionTemplate(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleUpdateSessionTemplate(w http.ResponseWriter, r *http.Request) {
-	templateID := chi.URLParam(r, "templateID")
+	templateID, ok := s.sessionTemplateIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if _, builtIn := builtInSessionTemplateIdentities[templateID]; builtIn {
+		s.handleUpdateBuiltInSessionTemplate(w, r, templateID)
+		return
+	}
 	template, err := s.store.GetSessionTemplate(templateID)
 	if err != nil {
 		s.errorResponse(w, http.StatusNotFound, "Session template not found: "+err.Error())
@@ -126,7 +137,10 @@ func (s *Server) handleUpdateSessionTemplate(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleDeleteSessionTemplate(w http.ResponseWriter, r *http.Request) {
-	templateID := chi.URLParam(r, "templateID")
+	templateID, ok := s.sessionTemplateIDFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if err := s.store.DeleteSessionTemplate(templateID); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete session template: "+err.Error())
 		return
@@ -185,4 +199,14 @@ func (s *Server) sessionTemplateToResponse(template *storage.SessionTemplate) Se
 		CreatedAt:    template.CreatedAt,
 		UpdatedAt:    template.UpdatedAt,
 	}
+}
+
+func (s *Server) sessionTemplateIDFromRequest(w http.ResponseWriter, r *http.Request) (string, bool) {
+	// Chi may route against RawPath, so IDs containing colons arrive encoded.
+	id, err := url.PathUnescape(chi.URLParam(r, "templateID"))
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid session template ID")
+		return "", false
+	}
+	return id, true
 }

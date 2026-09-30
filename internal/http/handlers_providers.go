@@ -328,6 +328,10 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 			provider.StatefulResponses = req.StatefulResponses
 		}
 
+		if providerType == config.ProviderOpenAICodex {
+			// Codex OAuth uses a fixed backend endpoint, not a user-supplied URL.
+			provider.BaseURL = def.DefaultURL
+		}
 		if provider.BaseURL == "" {
 			provider.BaseURL = def.DefaultURL
 		}

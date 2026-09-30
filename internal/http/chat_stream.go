@@ -2,7 +2,6 @@
 package http
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/A2gent/brute/internal/agent"
@@ -63,7 +62,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runCtx, cancelRun := context.WithCancel(s.sessionRunParentContext())
+	runCtx, cancelRun := s.chatStreamRunContext(r.Context(), sess)
 	runID := s.registerActiveSessionRun(sessionID, cancelRun)
 	defer func() {
 		cancelRun()

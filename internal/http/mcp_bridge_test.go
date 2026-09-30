@@ -161,8 +161,8 @@ func TestMCPBridgeInitializeAndToolsList(t *testing.T) {
 	if names["bash"] {
 		t.Fatal("bash must not be exposed over the bridge")
 	}
-	if names["delegate_to_agent"] {
-		t.Fatal("delegation tools must not be exposed over the bridge")
+	if !names["delegate_to_agent"] {
+		t.Fatal("delegation tools must be exposed over the bridge")
 	}
 	if names["mcp_call"] {
 		t.Fatal("mcp meta tools must not be exposed over the bridge")

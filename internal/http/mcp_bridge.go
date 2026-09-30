@@ -33,12 +33,12 @@ const (
 )
 
 // mcpBridgeExcludedTools keeps the CLI on its own native equivalents and
-// blocks re-entrant categories such as delegation and MCP-through-MCP.
+// blocks compound calls and MCP-through-MCP. Delegation is filtered by the
+// session tool manager, which prevents delegated children from delegating again.
 var mcpBridgeExcludedTools = map[string]struct{}{
 	"bash": {}, "code_execution": {}, "read": {}, "write": {}, "edit": {},
 	"replace_lines": {}, "insert_lines": {}, "file_search": {}, "content_search": {},
 	"glob": {}, "find_files": {}, "grep": {}, "filter": {}, "man": {},
-	"delegate_to_subagent": {}, "delegate_to_agent": {}, "delegate_to_external_agent": {},
 	"parallel": {}, "pipeline": {},
 	"mcp_call": {}, "mcp_list_tools": {}, "mcp_manage": {},
 }
@@ -72,12 +72,16 @@ func newMCPBridgeState() *mcpBridgeState {
 }
 
 func (st *mcpBridgeState) mint(sessionID string) (string, func(), error) {
+	return st.mintWithContext(context.Background(), sessionID)
+}
+
+func (st *mcpBridgeState) mintWithContext(parent context.Context, sessionID string) (string, func(), error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", nil, err
 	}
 	token := hex.EncodeToString(buf)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(parent)
 
 	st.mu.Lock()
 	st.tokens[token] = &mcpBridgeToken{sessionID: sessionID, ctx: ctx, cancel: cancel}
@@ -99,7 +103,7 @@ func (st *mcpBridgeState) resolve(token string) (string, context.Context, bool) 
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	entry, ok := st.tokens[token]
-	if !ok || entry == nil {
+	if !ok || entry == nil || entry.ctx.Err() != nil {
 		return "", nil, false
 	}
 	return entry.sessionID, entry.ctx, true
@@ -132,7 +136,7 @@ func (st *mcpBridgeState) hasPendingQuestion(sessionID string) bool {
 
 // claudecliMCPBridgeHook implements claudecli.MCPBridgeHook: it mints a
 // per-invocation token and returns the inline --mcp-config JSON for the CLI.
-func (s *Server) claudecliMCPBridgeHook(_ context.Context, sessionID string) (string, func(), error) {
+func (s *Server) claudecliMCPBridgeHook(ctx context.Context, sessionID string) (string, func(), error) {
 	if s == nil || s.mcpBridge == nil {
 		return "", nil, nil
 	}
@@ -143,7 +147,7 @@ func (s *Server) claudecliMCPBridgeHook(_ context.Context, sessionID string) (st
 	if _, err := s.sessionManager.Get(sessionID); err != nil {
 		return "", nil, nil
 	}
-	token, revoke, err := s.mcpBridge.mint(sessionID)
+	token, revoke, err := s.mcpBridge.mintWithContext(ctx, sessionID)
 	if err != nil {
 		return "", nil, err
 	}
@@ -349,17 +353,17 @@ func (s *Server) mcpBridgeCallTool(tokenCtx context.Context, sess *session.Sessi
 		call.Arguments = json.RawMessage("{}")
 	}
 
-	if name == "question" {
-		text, isError := s.mcpBridgeAskQuestion(tokenCtx, sess.ID, call.Arguments)
-		return text, isError, nil
-	}
-
 	manager := s.toolManagerForSession(sess)
 	if manager == nil {
 		return "tool manager unavailable", true, nil
 	}
 	if _, ok := manager.Get(name); !ok {
 		return fmt.Sprintf("tool not found: %s", name), true, nil
+	}
+
+	if name == "question" {
+		text, isError := s.mcpBridgeAskQuestion(tokenCtx, sess.ID, call.Arguments)
+		return text, isError, nil
 	}
 
 	ctx := context.WithValue(tokenCtx, "session_id", sess.ID)
@@ -390,6 +394,19 @@ func (s *Server) mcpBridgeCallTool(tokenCtx context.Context, sess *session.Sessi
 		}
 		if message == "" {
 			message = "tool returned unsuccessful result"
+		}
+		// Preserve child identity in the text payload too: CLI tool_result events
+		// do not retain arbitrary MCP metadata on failures.
+		if len(result.Metadata) > 0 && isDelegationTool(name) {
+			payload := make(map[string]interface{}, len(result.Metadata)+2)
+			for key, value := range result.Metadata {
+				payload[key] = value
+			}
+			payload["success"] = false
+			payload["error"] = message
+			if encoded, err := json.Marshal(payload); err == nil {
+				return string(encoded), true, nil
+			}
 		}
 		return "Error: " + message, true, nil
 	}

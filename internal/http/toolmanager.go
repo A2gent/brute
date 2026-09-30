@@ -85,6 +85,14 @@ func (s *Server) toolManagerForSession(sess *session.Session) *tools.Manager {
 		disabledTools = map[string]struct{}{}
 	}
 
+	// A Docker child has a parent on another Brute instance, so ParentID alone
+	// cannot enforce the one-hop delegation boundary. Use the forwarded marker.
+	if isDelegatedSession(sess) {
+		for _, name := range delegationToolNames {
+			disabledTools[name] = struct{}{}
+		}
+	}
+
 	defaultDir := strings.TrimSpace(s.config.WorkDir)
 	if defaultDir == "" {
 		defaultDir = "."
@@ -141,6 +149,7 @@ func (s *Server) registerServerBackedTools(manager *tools.Manager) {
 	manager.Register(newMCPCallTool(s))
 	manager.Register(newDelegateToSubAgentTool(s))
 	manager.Register(newDelegateToAgentTool(s))
+	manager.Register(&listAgentsTool{server: s})
 	manager.Register(newDelegateToExternalAgentTool(s))
 	manager.Register(newDiscoverExternalAgentsTool(s))
 	manager.Register(newChromeExtensionTool(s))

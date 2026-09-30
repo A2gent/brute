@@ -18,7 +18,7 @@ const (
 	defaultExecutable      = "claude"
 	defaultMaxOutputBytes  = 4 * 1024 * 1024
 	defaultPermissionMode  = "acceptEdits"
-	claudeCodePromptPrefix = "You are running through Claude Code CLI. Use Claude Code's native tools directly when you need to inspect or modify files, then return the final answer to A2gent. Do not print JSON tool calls for A2gent to execute."
+	claudeCodePromptPrefix = "You are running through Claude Code CLI. Use Claude Code's native tools directly when you need to inspect or modify files, then return the final answer to A2gent. Use the a2gent MCP tools when available for integrations and delegation (mcp__a2gent__delegate_to_agent). Include relevant context, file paths, and the expected deliverable in the task; the child does not inherit this conversation. Read its returned response before continuing. Do not print JSON tool calls for A2gent to execute."
 )
 
 // MCPBridgeHook builds the per-invocation MCP bridge configuration for a

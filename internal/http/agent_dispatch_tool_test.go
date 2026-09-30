@@ -130,6 +130,7 @@ func TestDockerDelegationCreateSessionPayloadIncludesChildProviderAndModel(t *te
 	t.Setenv(dockerDelegationTaskTimeoutEnvVar, "2s")
 
 	var createPayload CreateSessionRequest
+	fullResponse := strings.TrimSpace(strings.Repeat("Detailed review ✓ ", 600))
 	child := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		switch r.URL.Path {
 		case "/health":
@@ -144,7 +145,7 @@ func TestDockerDelegationCreateSessionPayloadIncludesChildProviderAndModel(t *te
 			_, _ = w.Write([]byte(`{"id":"child-1","agent_id":"build","provider":"openai","model":"gpt-5.5","status":"idle","created_at":"2026-01-01T00:00:00Z"}`))
 		case "/sessions/child-1/chat/stream":
 			w.Header().Set("Content-Type", "application/x-ndjson")
-			_, _ = w.Write([]byte(`{"type":"done","content":"done","status":"completed"}` + "\n"))
+			_ = json.NewEncoder(w).Encode(map[string]string{"type": "done", "content": fullResponse, "status": "completed"})
 		default:
 			t.Fatalf("unexpected child path: %s", r.URL.Path)
 		}
@@ -167,6 +168,15 @@ func TestDockerDelegationCreateSessionPayloadIncludesChildProviderAndModel(t *te
 	}
 	if result == nil || !result.Success {
 		t.Fatalf("delegation failed: %+v", result)
+	}
+	var payload struct {
+		Response string `json:"response"`
+	}
+	if err := json.Unmarshal([]byte(result.Output), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Response != fullResponse {
+		t.Fatalf("child response was truncated: got %d bytes, want %d", len(payload.Response), len(fullResponse))
 	}
 	if createPayload.Provider != "openai" || createPayload.Model != "gpt-5.5" {
 		t.Fatalf("create session provider/model = %q/%q, want openai/gpt-5.5", createPayload.Provider, createPayload.Model)

@@ -53,6 +53,9 @@ func (t *delegateToSubAgentTool) Schema() map[string]interface{} {
 }
 
 func (t *delegateToSubAgentTool) Execute(ctx context.Context, params json.RawMessage) (*tools.Result, error) {
+	if denied := t.server.delegationDenied(ctx); denied != nil {
+		return denied, nil
+	}
 	var p delegateToSubAgentParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid parameters: %w", err)

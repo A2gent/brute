@@ -105,6 +105,9 @@ func (t *delegateToExternalAgentTool) Schema() map[string]interface{} {
 }
 
 func (t *delegateToExternalAgentTool) Execute(ctx context.Context, params json.RawMessage) (*tools.Result, error) {
+	if denied := t.server.delegationDenied(ctx); denied != nil {
+		return denied, nil
+	}
 	var p delegateToExternalAgentParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid parameters: %w", err)
@@ -174,9 +177,6 @@ func (t *delegateToExternalAgentTool) Execute(ctx context.Context, params json.R
 	}
 
 	responseText := strings.TrimSpace(chatResp.Content)
-	if len(responseText) > 4000 {
-		responseText = responseText[:4000] + "\n...(truncated)"
-	}
 
 	payload := map[string]interface{}{
 		"success":             true,

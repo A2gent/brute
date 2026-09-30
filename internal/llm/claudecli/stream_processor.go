@@ -137,7 +137,7 @@ func (p *streamProcessor) handleContentBlockStart(stream cliStreamEvent) error {
 		state := &toolBlockState{
 			index:   stream.Index,
 			id:      strings.TrimSpace(block.ID),
-			name:    strings.TrimSpace(block.Name),
+			name:    canonicalRuntimeToolName(block.Name),
 			started: true,
 		}
 		if input := toolInputString(block.Input); input != "" {
@@ -311,7 +311,7 @@ func (p *streamProcessor) fallbackToolUse(item cliStreamContent, index int) erro
 	if p.emittedToolInputCompleted[id] {
 		return nil
 	}
-	name := strings.TrimSpace(item.Name)
+	name := canonicalRuntimeToolName(item.Name)
 	input := toolInputString(item.Input)
 	state, ok := p.toolsByID[id]
 	if !ok {
@@ -471,4 +471,10 @@ func (p *streamProcessor) finalize(onEvent func(llm.StreamEvent) error) error {
 		}
 	}
 	return nil
+}
+
+// Only our bridge namespace maps to Brute tool names. These remain runtime
+// events: Claude already executed the calls, so Brute must not execute them again.
+func canonicalRuntimeToolName(name string) string {
+	return strings.TrimPrefix(strings.TrimSpace(name), "mcp__a2gent__")
 }

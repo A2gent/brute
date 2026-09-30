@@ -299,10 +299,12 @@ Do **not** expose all ~60 tools. Reasons: token cost in the CLI's own context, a
 | Image generation (`openai_generate_image`, `leonardo_*`, `comfyui_*`) | **Yes** | No native equivalent |
 | Integrations (`jira_query`, `appsignal_query`, `circleci_query`, search tools) | **Yes** | No native equivalent |
 | Widgets (`suggest_session`, `suggest_git_commit`, `session_task_progress`) | **Yes** | Produce Caesar-rendered blocks |
-| Delegation (`delegate_to_subagent`, `delegate_to_agent`, `parallel`, `pipeline`) | **No (phase 1)** | Re-entrancy risk: a delegated child could spawn another CLI that calls back again. Revisit with a depth guard. |
+| Delegation (`delegate_to_subagent`, `delegate_to_agent`, `delegate_to_external_agent`) | **Yes** | Session policy permits parent delegation but blocks nested delegation in local delegated children. |
+| Local discovery (`list_agents`) | **Yes** | Lists configured global and current-project agents without requiring Docker or A2 Registry availability. |
+| Compound execution (`parallel`, `pipeline`) | **No** | Keep recursive compound execution outside the bridge. |
 | MCP meta (`mcp_call`, `mcp_list_tools`) | **No** | Recursive MCP-through-MCP |
 
-Selection reuses the existing disabled-tools machinery (`A2GENT_DISABLED_TOOLS`, `resolveDisabledToolNames`) plus the bridge's fixed denylist for native, delegation, and MCP meta tools.
+Selection reuses the existing disabled-tools machinery (`A2GENT_DISABLED_TOOLS`, `resolveDisabledToolNames`) plus the bridge's fixed denylist for native, compound execution, and MCP meta tools. Disabled tools are checked before special handling, including `question`.
 
 ## Naming and tool policy
 
@@ -428,3 +430,38 @@ Cursor does not namespace tools as `mcp__a2gent__*`. It discovers plugin MCP ser
 User and project MCP servers configured in `mcp.json` still load. Cursor has no equivalent of `--strict-mcp-config`. Scheduler and TUI Cursor clients do not host the HTTP bridge, matching the Claude scheduler path, so they do not attach the plugin.
 
 Verified manually with Cursor Agent CLI `2026.09.23-86fc751`: a plugin manifest with inline `mcpServers` (`url` + `headers`, no `type`) loaded via `--plugin-dir ... --approve-mcps` completes `initialize` -> `tools/list` -> `tools/call` against a server answering protocol `2024-11-05`, and sends the bearer header on every request. `agent mcp list` does not show plugin servers, so it cannot be used to check the wiring.
+
+
+## Delegation round trip
+
+Claude calls `mcp__a2gent__list_agents` to resolve a local agent ID, then
+`mcp__a2gent__delegate_to_agent` with a self-contained task. Include relevant
+context, file paths, constraints, and expected output: the full parent transcript
+is not implicitly forwarded. Brute resolves the parent project from the bridge
+session and rewrites mounted workspace paths for the Docker child.
+
+The bridge returns the child response and session identity to Claude. Delegation
+no longer applies its old 4000-byte response truncation (normal transport limits
+and provider context limits still apply). Failed delegations preserve child
+identity in JSON text as well, so Caesar can link to the child session.
+
+The one-hop policy recognizes legacy `sub_agent_id` and the forwarded
+`source: delegate_to_agent` marker. It applies in the session manager and direct
+dispatch entry points, including aliases. This is a local orchestration guard,
+not a sandbox against arbitrary shell/HTTP calls or a cross-registry depth limit.
+Remote agents retain their own execution policies. Docker children must run a
+Brute version containing this policy before enabling delegation in their tool
+configuration.
+
+Bridge tokens inherit the invoking run's cancellation. When Docker delegation
+is canceled or times out after child creation, Brute sends a bounded best-effort
+child-session cancellation request without stopping the shared warm container.
+
+Claude runtime events normalize only the `mcp__a2gent__` namespace for Caesar;
+other MCP namespaces and native tool names are unchanged. These are observed
+runtime events, not requests for Brute to execute the tools again.
+
+After upgrading Brute (and any delegated Docker runtimes), start another Claude
+turn so its MCP connection refreshes the tool list. Existing in-flight CLI runs
+may retain their old discovery snapshot. Deploy Caesar's updated assets for
+error-result child links and delegation tool categorization.

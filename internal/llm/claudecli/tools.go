@@ -22,9 +22,8 @@ func claudeToolsArgs(request *llm.ChatRequest) (string, string, bool) {
 	}
 
 	// Map A2gent tool availability to Claude Code's native tool names. We do not
-	// include web/notification/sub-agent tools because Claude CLI cannot execute
-	// A2gent server-backed integrations; those remain available through other
-	// providers that support A2gent tool calls.
+	// include server-backed tools here: integrations and agent delegation are
+	// exposed separately through the session-scoped a2gent MCP bridge.
 	allowed := make([]string, 0, 10)
 	if hasAnyTool(toolNames, "bash") {
 		allowed = append(allowed, "Bash")

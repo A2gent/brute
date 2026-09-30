@@ -29,7 +29,6 @@ const (
 	dockerDelegationStartTimeout       = 30 * time.Second
 	defaultDockerDelegationTaskTimeout = 12 * time.Hour
 	dockerDelegationTaskTimeoutEnvVar  = "A2GENT_DOCKER_DELEGATION_TIMEOUT"
-	delegationResponseMaxChars         = 4000
 	dockerDelegationStreamBodyLimit    = 1024 * 1024
 )
 
@@ -75,11 +74,11 @@ func (t *delegateToAgentTool) Schema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"agent_id": map[string]interface{}{
 				"type":        "string",
-				"description": "ID of the agent to delegate to: a configured agent ID, or a local Docker agent container name/ID. Use the list available in your system prompt or ask the user.",
+				"description": "ID of the agent to delegate to: a configured agent ID, or a local Docker agent container name/ID. Use list_agents to find configured agent IDs, or the list in your system prompt.",
 			},
 			"task": map[string]interface{}{
 				"type":        "string",
-				"description": "Clear, specific task description for the agent to complete.",
+				"description": "Self-contained task with relevant context, file paths and expected output. The child does not inherit the parent conversation.",
 			},
 		},
 		"required": []string{"agent_id", "task"},
@@ -87,6 +86,9 @@ func (t *delegateToAgentTool) Schema() map[string]interface{} {
 }
 
 func (t *delegateToAgentTool) Execute(ctx context.Context, params json.RawMessage) (*tools.Result, error) {
+	if denied := t.server.delegationDenied(ctx); denied != nil {
+		return denied, nil
+	}
 	var p delegateToAgentParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid parameters: %w", err)
@@ -303,6 +305,14 @@ func (s *Server) runDockerAgentDelegationWithWorkspace(ctx context.Context, agen
 		return daErrorResult("failed to create session on docker agent: " + err.Error()), nil
 	}
 
+	// Child runs outlive HTTP disconnects. Cancel the session, not the shared
+	// warm container, when the caller stops waiting due to cancellation.
+	defer func() {
+		if taskCtx.Err() != nil {
+			cancelDockerDelegationChild(baseURL, created.ID)
+		}
+	}()
+
 	logging.Info("Docker agent delegation started: parent=%s container=%s child=%s task=%s",
 		parentSessionID, agent.Name, created.ID, truncateForLog(task, 100))
 	s.recordDockerDelegationChildSession(parentSessionID, agent, created.ID, workspace)
@@ -334,9 +344,6 @@ func (s *Server) runDockerAgentDelegationWithWorkspace(ctx context.Context, agen
 			"parent_session_id": parentSessionID,
 			"agent_api_url":     agent.APIURL,
 		}), nil
-	}
-	if len(responseText) > delegationResponseMaxChars {
-		responseText = responseText[:delegationResponseMaxChars] + "\n...(truncated)"
 	}
 
 	payload := map[string]interface{}{
@@ -741,62 +748,6 @@ func (s *Server) reportDockerDelegationToolProgress(ctx context.Context, agent *
 		Content:  strings.TrimSpace(content),
 		Metadata: metadata,
 	})
-}
-
-func streamToolCallNames(calls []StreamToolCallEvent) string {
-	if len(calls) == 0 {
-		return "none"
-	}
-	names := make([]string, 0, len(calls))
-	for i, call := range calls {
-		if i >= 4 {
-			names = append(names, "...")
-			break
-		}
-		names = append(names, firstNonEmptyLocalAgentString(strings.TrimSpace(call.Name), "unknown"))
-	}
-	return strings.Join(names, ",")
-}
-
-func emptyDockerDelegationMessage(agentName string, childSessionID string, chatResp ChatResponse) string {
-	status := strings.TrimSpace(chatResp.Status)
-	if status == "" {
-		status = "unknown"
-	}
-	message := fmt.Sprintf("docker agent %q returned empty response (child session %s, status=%s)", agentName, childSessionID, status)
-	if len(chatResp.Messages) == 0 {
-		return message
-	}
-
-	for i := len(chatResp.Messages) - 1; i >= 0; i-- {
-		msg := chatResp.Messages[i]
-		if strings.TrimSpace(msg.Content) == "" {
-			continue
-		}
-		content := truncateForLog(strings.TrimSpace(msg.Content), 500)
-		return message + "; last non-empty message: " + content
-	}
-
-	toolCalls := 0
-	toolResults := 0
-	lastToolName := ""
-	lastToolResultLen := 0
-	lastToolErrored := false
-	for _, msg := range chatResp.Messages {
-		toolCalls += len(msg.ToolCalls)
-		for _, result := range msg.ToolResults {
-			toolResults++
-			lastToolName = strings.TrimSpace(result.Name)
-			lastToolResultLen = len(result.Content)
-			lastToolErrored = result.IsError
-		}
-	}
-	if toolCalls > 0 || toolResults > 0 {
-		// WHAT: expose enough child-session diagnostics to identify a tool loop while
-		// avoiding raw tool output, which can be very large or user-sensitive.
-		return fmt.Sprintf("%s; child produced no final assistant text after %d tool call(s) and %d tool result(s); last_tool=%s last_tool_result_chars=%d last_tool_error=%t", message, toolCalls, toolResults, firstNonEmptyLocalAgentString(lastToolName, "unknown"), lastToolResultLen, lastToolErrored)
-	}
-	return message
 }
 
 var _ tools.Tool = (*delegateToAgentTool)(nil)

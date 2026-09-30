@@ -151,7 +151,8 @@ func (s *Server) generateGitCommitMessageWithProvider(ctx context.Context, provi
 			{Role: "user", Content: prompt},
 		},
 		Temperature: 0.2,
-		MaxTokens:   220,
+		// Detailed bodies need room beyond the short imperative subject.
+		MaxTokens: 2048,
 	})
 }
 
@@ -202,7 +203,8 @@ func sanitizeGeneratedCommitMessage(raw string) string {
 	if message == "" {
 		return ""
 	}
-	return truncateText(message, 480)
+	// Keep the complete body; only the prompt limits the subject's length.
+	return message
 }
 
 func buildGitCommitPrompt(template string, files string, diffs string) string {

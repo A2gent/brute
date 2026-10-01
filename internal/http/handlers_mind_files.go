@@ -78,7 +78,7 @@ func (s *Server) handleGetMindFileRaw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !isProjectRawPreviewFile(normalizedRelPath) {
-		s.errorResponse(w, http.StatusBadRequest, "Only PDF, image, and GLB files can be previewed")
+		s.errorResponse(w, http.StatusBadRequest, "Only PDF, image, GLB, and HTML files can be previewed")
 		return
 	}
 
@@ -93,6 +93,9 @@ func (s *Server) handleGetMindFileRaw(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", projectRawPreviewContentType(normalizedRelPath))
+	if isHTMLFile(normalizedRelPath) {
+		w.Header().Set("Content-Security-Policy", projectHTMLPreviewCSP)
+	}
 	w.Header().Set("Content-Disposition", "inline; filename=\""+strings.ReplaceAll(filepath.Base(normalizedRelPath), "\"", "")+"\"")
 	http.ServeFile(w, r, resolvedPath)
 }

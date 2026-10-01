@@ -27,7 +27,7 @@ func isHTMLFile(name string) bool {
 }
 
 // projectHTMLPreviewCSP keeps previewed HTML off the API origin while still running its scripts.
-const projectHTMLPreviewCSP = "sandbox allow-scripts allow-forms allow-popups allow-modals"
+const projectHTMLPreviewCSP = "sandbox allow-scripts"
 
 func projectPreviewContentType(name string) string {
 	if isGLBFile(name) {
@@ -40,7 +40,7 @@ func projectPreviewContentType(name string) string {
 }
 
 func isProjectRawPreviewFile(name string) bool {
-	return isPDFFile(name) || isProjectBrowserImageFile(name) || isGLBFile(name)
+	return isPDFFile(name) || isProjectBrowserImageFile(name) || isGLBFile(name) || isHTMLFile(name)
 }
 
 func isProjectBrowserImageFile(name string) bool {
@@ -53,6 +53,9 @@ func isProjectBrowserImageFile(name string) bool {
 }
 
 func projectRawPreviewContentType(name string) string {
+	if isHTMLFile(name) {
+		return "text/html; charset=utf-8"
+	}
 	if isPDFFile(name) {
 		return "application/pdf"
 	}

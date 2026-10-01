@@ -22,3 +22,4 @@
 - A stale `caesar/test_output.log` is not current brute status. Re-run `go test` in `brute/` before changing code. Coverage (`-coverprofile`) is the command that surfaces the TempDir flake more often than a cached `go test ./...`.
 - Public GitHub Actions pages expose only failure annotations, not private job logs; when `gh` or admin credentials are unavailable, reproduce the workflow in a Linux container with `CI=true` and `GITHUB_ACTIONS=true` rather than inferring the failure from the final exit code.
 - Long container test commands can outlive the tool's call timeout and lose their final output; run them detached with log and exit-code files, then inspect those files before claiming success.
+- Check the storage interface before setting fixture options: `storage.Store` exposes `SaveSettings(map[string]string)`, not `SetSetting`.

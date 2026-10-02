@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -362,7 +361,7 @@ func (s *Server) readProjectGitPRDescriptionBranchDocumentation(projectID string
 		return ""
 	}
 	baseDir := absoluteCleanPath(config.Directory, strings.TrimSpace(s.config.WorkDir))
-	data, err := os.ReadFile(filepath.Join(baseDir, relPath))
+	_, data, err := readBranchTaskDocumentation(baseDir, relPath)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			logging.Warn("Failed to read PR branch documentation: %v", err)

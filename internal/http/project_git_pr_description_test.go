@@ -73,4 +73,11 @@ func TestReadProjectGitPRDescriptionBranchDocumentationUsesProjectSettings(t *te
 	if got != "Branch goal and acceptance criteria." {
 		t.Fatalf("unexpected branch documentation: %q", got)
 	}
+	if err := os.WriteFile(filepath.Join(docsDir, "PR-42-better-summary.html"), []byte(" <h1>Interactive specification</h1> \n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got = server.readProjectGitPRDescriptionBranchDocumentation(project.ID, "kurapov/PR-42-better-summary")
+	if got != "<h1>Interactive specification</h1>" {
+		t.Fatalf("expected HTML to take precedence over Markdown, got %q", got)
+	}
 }

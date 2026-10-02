@@ -731,6 +731,27 @@ func TestBuildSystemPromptForSession_UsesProjectBranchTaskDocSettings(t *testing
 	if strings.Contains(systemPrompt, "Branch task documentation directory is not configured") {
 		t.Fatalf("did not expect legacy global settings error, got: %q", systemPrompt)
 	}
+
+	htmlPath := filepath.Join(docsDir, "PROJECT-123-custom-prompt.html")
+	if err := os.WriteFile(htmlPath, []byte("<h1>Interactive task instructions</h1>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"content", "path"} {
+		project.Settings[projectBranchTaskDocModeSettingKey] = mode
+		if err := store.SaveProject(project); err != nil {
+			t.Fatal(err)
+		}
+		rendered, path, _, message := server.resolveBranchTaskDocSection(sess, "", 1)
+		if message != "" || path != htmlPath || !strings.Contains(rendered, htmlPath) {
+			t.Fatalf("HTML reference not selected in %s mode: %q %q %q", mode, path, rendered, message)
+		}
+		if mode == "content" && !strings.Contains(rendered, "<h1>Interactive task instructions</h1>") {
+			t.Fatalf("HTML content missing: %q", rendered)
+		}
+		if strings.Contains(rendered, "Branch-specific project instructions.") {
+			t.Fatalf("stale Markdown selected in %s mode: %q", mode, rendered)
+		}
+	}
 }
 
 func TestServerRegistersCreateLocalDockerAgentsTools(t *testing.T) {

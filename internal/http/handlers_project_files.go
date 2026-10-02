@@ -162,7 +162,11 @@ func (s *Server) handleGetProjectFile(w http.ResponseWriter, r *http.Request) {
 
 	info, err := os.Stat(resolvedPath)
 	if err != nil {
-		s.errorResponse(w, http.StatusBadRequest, "Failed to access file: "+err.Error())
+		status := http.StatusBadRequest
+		if os.IsNotExist(err) {
+			status = http.StatusNotFound
+		}
+		s.errorResponse(w, status, "Failed to access file: "+err.Error())
 		return
 	}
 	if info.IsDir() {

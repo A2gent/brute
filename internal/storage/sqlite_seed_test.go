@@ -9,6 +9,8 @@ func TestBuiltInSpecificationSubAgentMaintainsBilingualFiles(t *testing.T) {
 	for _, expected := range []string{
 		"English source of truth",
 		".ru.md",
+		".ru.html",
+		"Prefer .html over .md",
 		"Keep both language versions synchronized",
 	} {
 		if !strings.Contains(builtInSpecificationSubAgentPrompt, expected) {

@@ -95,10 +95,10 @@ func (s *Server) resolveBranchTaskDocSection(sess *session.Session, _ string, bl
 	if err != nil {
 		return "", "", 0, "Invalid branch name for documentation path: " + err.Error()
 	}
-	expectedPath := filepath.Join(baseDir, relPath)
+	expectedPath, data, readErr := readBranchTaskDocumentation(baseDir, relPath)
 
 	var rendered string
-	if data, readErr := os.ReadFile(expectedPath); readErr != nil {
+	if readErr != nil {
 		rendered = fmt.Sprintf("Instruction block %d (branch task documentation):\nCurrent git branch: %s\nExpected task documentation path: %s\nDocumentation for the current branch task is expected at the path above, but the file does not exist yet.", blockNumber, branch, expectedPath)
 	} else if config.Mode == "path" {
 		rendered = fmt.Sprintf("Instruction block %d (branch task documentation reference):\nCurrent git branch: %s\nTask documentation file path: %s\nLoad and use this file as task/session documentation reference when needed.", blockNumber, branch, expectedPath)
@@ -139,4 +139,17 @@ func branchTaskDocRelativePath(branch string) (string, error) {
 		return "", fmt.Errorf("unsafe branch filename %q", fileStem)
 	}
 	return fileStem + ".md", nil
+}
+
+// Prefer the interactive specification consistently in agent instructions and PR context.
+// Only a missing HTML file permits falling back; unreadable HTML must not select stale Markdown.
+func readBranchTaskDocumentation(baseDir, markdownPath string) (string, []byte, error) {
+	htmlPath := filepath.Join(baseDir, strings.TrimSuffix(markdownPath, ".md")+".html")
+	data, err := os.ReadFile(htmlPath)
+	if !errors.Is(err, os.ErrNotExist) {
+		return htmlPath, data, err
+	}
+	path := filepath.Join(baseDir, markdownPath)
+	data, err = os.ReadFile(path)
+	return path, data, err
 }

@@ -202,6 +202,16 @@ func TestTranscribeSpeechUsesOpenRouter(t *testing.T) {
 func TestCompletionSpeechUsesOpenRouter(t *testing.T) {
 	var gotBody map[string]any
 	client := openRouterModelsDoFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodGet && req.URL.Path == "/api/v1/models" {
+			if req.URL.Query().Get("output_modalities") != "speech" {
+				t.Fatalf("output_modalities = %q", req.URL.Query().Get("output_modalities"))
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"data":[{"id":"openai/gpt-4o-mini-tts-2025-12-15","supported_voices":["alloy","nova"]}]}`)),
+				Request:    req,
+			}, nil
+		}
 		if req.URL.Path != "/api/v1/audio/speech" {
 			t.Fatalf("path = %s", req.URL.Path)
 		}

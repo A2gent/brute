@@ -24,15 +24,17 @@ type openRouterModelsHTTPClient interface {
 }
 
 type openRouterCatalogEntry struct {
-	ID   string
-	Name string
+	ID              string
+	Name            string
+	SupportedVoices []string
 }
 
 type openRouterModelsResponse struct {
 	Data []struct {
-		ID            string `json:"id"`
-		Name          string `json:"name"`
-		ContextLength int    `json:"context_length"`
+		ID              string   `json:"id"`
+		Name            string   `json:"name"`
+		ContextLength   int      `json:"context_length"`
+		SupportedVoices []string `json:"supported_voices"`
 	} `json:"data"`
 }
 
@@ -113,8 +115,9 @@ func fetchOpenRouterCatalog(ctx context.Context, client openRouterModelsHTTPClie
 			continue
 		}
 		models = append(models, openRouterCatalogEntry{
-			ID:   id,
-			Name: strings.TrimSpace(model.Name),
+			ID:              id,
+			Name:            strings.TrimSpace(model.Name),
+			SupportedVoices: model.SupportedVoices,
 		})
 		if model.ContextLength > 0 {
 			contextCache[id] = model.ContextLength

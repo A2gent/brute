@@ -22,7 +22,6 @@ const (
 	openRouterTranscriptionsURL = "https://openrouter.ai/api/v1/audio/transcriptions"
 	openRouterSpeechURL         = "https://openrouter.ai/api/v1/audio/speech"
 	openRouterSpeechTimeout     = 60 * time.Second
-	openRouterDefaultTTSVoice   = "alloy"
 )
 
 var errOpenRouterAPIKeyMissing = errors.New("OpenRouter API key is not configured")
@@ -211,7 +210,7 @@ func (s *Server) transcribeOpenRouter(ctx context.Context, model string, audio [
 	return text, nil
 }
 
-func (s *Server) synthesizeOpenRouter(ctx context.Context, model, text string) ([]byte, string, error) {
+func (s *Server) synthesizeOpenRouter(ctx context.Context, model, text, language string) ([]byte, string, error) {
 	apiKey := s.resolveOpenRouterAPIKey()
 	if apiKey == "" {
 		return nil, "", errOpenRouterAPIKeyMissing
@@ -219,12 +218,35 @@ func (s *Server) synthesizeOpenRouter(ctx context.Context, model, text string) (
 	requestCtx, cancel := context.WithTimeout(ctx, openRouterSpeechTimeout)
 	defer cancel()
 
-	body, err := json.Marshal(map[string]any{
+	// Voices are model-specific; sending OpenAI's alloy to other providers can return 400 or 404.
+	catalog, err := fetchOpenRouterCatalog(requestCtx, s.openRouterModelsClient, apiKey, "speech")
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to resolve voice for OpenRouter speech model %q from catalog; try again when the catalog is available: %w", model, err)
+	}
+	var selected *openRouterCatalogEntry
+	for i := range catalog {
+		if catalog[i].ID == model {
+			selected = &catalog[i]
+			break
+		}
+	}
+	if selected == nil {
+		return nil, "", fmt.Errorf("OpenRouter speech model %q not found in speech catalog; refresh the speech model list and choose an available model", model)
+	}
+	voice := selectOpenRouterSpeechVoice(selected.SupportedVoices, language)
+	payload := map[string]any{
 		"model":           model,
 		"input":           text,
-		"voice":           openRouterDefaultTTSVoice,
 		"response_format": "mp3",
-	})
+	}
+	if voice != "" {
+		payload["voice"] = voice
+	}
+	voiceContext := voice
+	if voiceContext == "" {
+		voiceContext = "provider default (omitted)"
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, "", err
 	}
@@ -238,24 +260,52 @@ func (s *Server) synthesizeOpenRouter(ctx context.Context, model, text string) (
 
 	resp, err := s.openRouterDo(req)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to reach OpenRouter speech: %w", err)
+		return nil, "", fmt.Errorf("failed to reach OpenRouter speech (model %q, voice %q): %w", model, voiceContext, err)
 	}
 	defer resp.Body.Close()
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to read OpenRouter speech response: %w", err)
+		return nil, "", fmt.Errorf("failed to read OpenRouter speech response (model %q, voice %q): %w", model, voiceContext, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, "", fmt.Errorf("OpenRouter speech failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return nil, "", fmt.Errorf("OpenRouter speech failed (%d, model %q, voice %q): %s", resp.StatusCode, model, voiceContext, strings.TrimSpace(string(respBody)))
 	}
 	if len(respBody) == 0 {
-		return nil, "", fmt.Errorf("OpenRouter returned empty speech audio")
+		return nil, "", fmt.Errorf("OpenRouter returned empty speech audio (model %q, voice %q)", model, voiceContext)
 	}
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
 	if contentType == "" {
 		contentType = "audio/mpeg"
 	}
 	return respBody, contentType, nil
+}
+
+func selectOpenRouterSpeechVoice(voices []string, language string) string {
+	lang := normalizeOpenRouterLanguage(language)
+	if lang == "" {
+		lang = "en"
+	}
+	var first, matching string
+	for _, raw := range voices {
+		voice := strings.TrimSpace(raw)
+		if voice == "" {
+			continue
+		}
+		if voice == "alloy" {
+			return voice
+		}
+		if first == "" {
+			first = voice
+		}
+		lower := strings.ToLower(voice)
+		if matching == "" && (strings.HasPrefix(lower, lang+"-") || strings.HasPrefix(lower, lang+"_")) {
+			matching = voice
+		}
+	}
+	if matching != "" {
+		return matching
+	}
+	return first
 }
 
 func normalizeOpenRouterLanguage(raw string) string {

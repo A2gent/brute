@@ -187,6 +187,9 @@ func (s *Server) handleCompletionSpeech(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	reqBody.Language = strings.ToLower(strings.TrimSpace(reqBody.Language))
+	if _, ok := openRouterSpeechModelID(effectiveCompletionModel(reqBody.Model)); ok && reqBody.Language == "auto" {
+		reqBody.Language = ""
+	}
 	switch reqBody.Language {
 	case "", "ru", "ru-ru", "en", "en-us":
 	default:
@@ -199,7 +202,7 @@ func (s *Server) handleCompletionSpeech(w http.ResponseWriter, r *http.Request) 
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	} else if engine == "openrouter" {
-		audioPayload, contentType, synthErr := s.synthesizeOpenRouter(r.Context(), modelID, reqBody.Text)
+		audioPayload, contentType, synthErr := s.synthesizeOpenRouter(r.Context(), modelID, reqBody.Text, reqBody.Language)
 		if synthErr != nil {
 			status := http.StatusBadGateway
 			if errors.Is(synthErr, errOpenRouterAPIKeyMissing) {

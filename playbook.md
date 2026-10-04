@@ -23,3 +23,7 @@
 - Public GitHub Actions pages expose only failure annotations, not private job logs; when `gh` or admin credentials are unavailable, reproduce the workflow in a Linux container with `CI=true` and `GITHUB_ACTIONS=true` rather than inferring the failure from the final exit code.
 - Long container test commands can outlive the tool's call timeout and lose their final output; run them detached with log and exit-code files, then inspect those files before claiming success.
 - Check the storage interface before setting fixture options: `storage.Store` exposes `SaveSettings(map[string]string)`, not `SetSetting`.
+
+- Preview status must inspect both Chrome product and User-Agent: headless Chrome may report the ordinary Chrome product string. Keep target lifecycle waits scoped per target and cancellation-aware.
+- When splitting Go tests into a new file, carry over the imports used by that fragment and compile the focused package immediately.
+- A real headless Chrome smoke check found no initial screencast frame within four seconds on an already-loaded static page with everyNthFrame=2. Preserve explicit protocol parameters, report this limitation, and investigate a read-only initial snapshot without resizing the viewport.

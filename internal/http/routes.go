@@ -20,7 +20,7 @@ func (s *Server) setupRoutes() {
 	// HTTP-only/server mode enables it explicitly before Run.
 	r.Use(s.httpAccessLogMiddleware)
 	r.Use(middleware.Recoverer)
-	// WHY: GET /sessions/events and /sessions/{id}/events are long-lived SSE
+	// WHY: Session events and browser preview frames are long-lived SSE
 	// streams. The default request timeout is sized for agent runs, not catalog
 	// subscriptions that must stay open while Caesar is on the sessions page.
 	r.Use(timeoutExceptEventStreams)
@@ -78,7 +78,7 @@ func (s *Server) setupRoutes() {
 func timeoutExceptEventStreams(next http.Handler) http.Handler {
 	timeout := middleware.Timeout(serverRequestTimeout())
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/events") {
+		if r.Method == http.MethodGet && (strings.HasSuffix(r.URL.Path, "/events") || r.URL.Path == "/browser-chrome/preview/frames") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -262,6 +262,8 @@ func (s *Server) registerDeviceRoutes(r chi.Router) {
 func (s *Server) registerBrowserChromeRoutes(r chi.Router) {
 	// Browser Chrome tool management
 	r.Route("/browser-chrome", func(r chi.Router) {
+		r.Get("/preview/status", s.handleBrowserChromePreviewStatus)
+		r.Get("/preview/frames", s.handleBrowserChromePreviewFrames)
 		r.Get("/profile-status", s.handleBrowserChromeProfileStatus)
 		r.Post("/create-profile", s.handleBrowserChromeCreateProfile)
 		r.Post("/launch", s.handleBrowserChromeLaunch)

@@ -75,18 +75,8 @@ func (t *BrowserChromeTool) ensureBrowser(probeCtx, connectionCtx context.Contex
 	headless := t.headlessEnabled()
 	logging.Info("Headless mode: %v", headless)
 
-	args := []string{
-		"--user-data-dir=" + t.userDataDir,
-		"--profile-directory=" + t.profileDirectory,
-		"--remote-debugging-port=" + t.debugPort,
-		"--remote-debugging-address=127.0.0.1",
-		"--no-first-run",
-		"--no-default-browser-check",
-		"--new-window",
-	}
-
+	args := t.launchArgs(headless)
 	if headless {
-		args = append(args, "--headless=new")
 		logging.Info("Running in headless mode")
 	}
 
@@ -236,4 +226,21 @@ func waitForBrowserChromeRetry(ctx context.Context, delay time.Duration) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (t *BrowserChromeTool) launchArgs(headless bool) []string {
+	args := []string{
+		"--user-data-dir=" + t.userDataDir,
+		"--profile-directory=" + t.profileDirectory,
+		"--remote-debugging-port=" + t.debugPort,
+		"--remote-debugging-address=127.0.0.1",
+		"--no-first-run",
+		"--no-default-browser-check",
+		"--new-window",
+	}
+	if headless {
+		// Keep the agent viewport stable; preview clients only scale encoded frames.
+		args = append(args, "--headless=new", "--window-size=1280,800")
+	}
+	return args
 }

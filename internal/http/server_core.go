@@ -56,6 +56,8 @@ type Server struct {
 	serialQueueMu            sync.Mutex
 	serialQueueWorkers       map[string]struct{}
 	chromeExtensionBridge    *chromeExtensionBridge
+	browserChromePreviewMu   sync.Mutex
+	browserChromePreview     *browserChromePreview
 	httpAccessLogMu          sync.RWMutex
 	httpAccessLogWriter      io.Writer
 	httpAccessLogEnabled     bool

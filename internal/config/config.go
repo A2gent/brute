@@ -270,16 +270,29 @@ func GetProviderDefinition(ptype ProviderType) *ProviderDefinition {
 	return nil
 }
 
-// ToolsConfig configures tool permissions
+// WebRelevanceConfig opts in to bounded, confidence-gated web post-processing.
+type WebRelevanceConfig struct {
+	Enabled       bool    `json:"enabled,omitempty"`
+	Threshold     float64 `json:"threshold,omitempty"`
+	TopN          int     `json:"top_n,omitempty"`
+	MinConfidence float64 `json:"min_confidence,omitempty"`
+	MaxPageBytes  int     `json:"max_page_bytes,omitempty"`
+}
+
+// ToolsConfig configures tool permissions.
 type ToolsConfig struct {
-	RelevanceGateDisabled bool   `json:"relevance_gate_disabled,omitempty"`
-	Bash                  string `json:"bash"` // "allow", "deny", "ask"
-	Read                  string `json:"read"`
-	Write                 string `json:"write"`
-	Edit                  string `json:"edit"`
-	Glob                  string `json:"glob"`
-	Grep                  string `json:"grep"`
-	Task                  string `json:"task"`
+	WebRelevance          WebRelevanceConfig `json:"web_relevance,omitempty"`
+	RelevanceGateDisabled bool               `json:"relevance_gate_disabled,omitempty"`
+	// BrowserActEnabled opts in to the Jev-driven browser loop. Off by default: it is a prototype and
+	// it holds the shared Chrome lock for the duration of a multi-step run.
+	BrowserActEnabled bool   `json:"browser_act_enabled,omitempty"`
+	Bash              string `json:"bash"` // "allow", "deny", "ask"
+	Read              string `json:"read"`
+	Write             string `json:"write"`
+	Edit              string `json:"edit"`
+	Glob              string `json:"glob"`
+	Grep              string `json:"grep"`
+	Task              string `json:"task"`
 }
 
 // DefaultConfig returns the default configuration

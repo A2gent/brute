@@ -214,12 +214,14 @@ func (t *BraveSearchQueryTool) Execute(ctx context.Context, params json.RawMessa
 	fmt.Fprintf(&out, "Brave Search results for %q\n", originalQuery)
 
 	results := payload.Web.Results
+	webCapturePrefix(ctx, out.String())
 	if len(results) == 0 {
 		out.WriteString("No web results returned.\n")
 		return &tools.Result{Success: true, Output: out.String()}, nil
 	}
 
 	for idx, item := range results {
+		itemStart := out.Len()
 		title := strings.TrimSpace(item.Title)
 		if title == "" {
 			title = "(untitled)"
@@ -241,6 +243,7 @@ func (t *BraveSearchQueryTool) Execute(ctx context.Context, params json.RawMessa
 		if age != "" {
 			fmt.Fprintf(&out, "Age: %s\n", age)
 		}
+		webCaptureItem(ctx, title, link, out.String()[itemStart:])
 	}
 
 	return &tools.Result{Success: true, Output: out.String()}, nil

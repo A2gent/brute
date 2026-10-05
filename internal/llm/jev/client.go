@@ -52,32 +52,62 @@ func NormalizeBaseURL(raw string) string {
 	return strings.TrimRight(baseURL, "/")
 }
 
-type systemOneRequest struct {
-	State     string                `json:"state"`
-	Model     string                `json:"model,omitempty"`
-	Questions map[string]systemOneQ `json:"questions"`
+// State and Instructions are `any` because System One accepts structured values, not just text:
+// browser_act sends an object state (page + element table) and object instructions (goal + rules).
+// Existing string callers are unaffected - a string in an `any` field marshals identically.
+type SystemOneRequest struct {
+	State     any                 `json:"state"`
+	Model     string              `json:"model,omitempty"`
+	Questions map[string]Question `json:"questions"`
 }
 
-type systemOneQ struct {
-	Type         string            `json:"type"`
-	Instructions string            `json:"instructions"`
-	Criteria     map[string]string `json:"criteria,omitempty"`
+type Question struct {
+	Type         string `json:"type"`
+	Instructions any    `json:"instructions"`
+	Criteria     any    `json:"criteria,omitempty"`
 }
 
-type systemOneResponse struct {
-	Model   string                     `json:"model"`
-	Answers map[string]systemOneAnswer `json:"answers"`
-	Usage   systemOneUsage             `json:"usage"`
+// InstructionsString renders the instructions as text, for the same reason as StateString.
+func (q Question) InstructionsString() string {
+	if text, ok := q.Instructions.(string); ok {
+		return text
+	}
+	raw, err := json.Marshal(q.Instructions)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }
 
-type systemOneAnswer struct {
-	Type       string  `json:"type"`
-	Choice     string  `json:"choice,omitempty"`
-	Noul       float64 `json:"noul,omitempty"`
-	Confidence float64 `json:"confidence,omitempty"`
+// StateString renders the state as text. Text-state callers (classify, relevance_gate) and their
+// tests use this instead of asserting on the field type, which structured senders also populate.
+func (r SystemOneRequest) StateString() string {
+	if text, ok := r.State.(string); ok {
+		return text
+	}
+	raw, err := json.Marshal(r.State)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }
 
-type systemOneUsage struct {
+type SystemOneResponse struct {
+	Model   string            `json:"model"`
+	Answers map[string]Answer `json:"answers"`
+	Usage   Usage             `json:"usage"`
+}
+
+type Answer struct {
+	Type          string             `json:"type"`
+	Choice        string             `json:"choice,omitempty"`
+	Score         *float64           `json:"score,omitempty"`
+	Noul          *float64           `json:"noul,omitempty"`
+	Confidence    float64            `json:"confidence,omitempty"`
+	Probabilities map[string]float64 `json:"probabilities,omitempty"`
+}
+
+type Usage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
 }
@@ -163,10 +193,10 @@ func (c *Client) classifyRoute(ctx context.Context, model, instructions, userPro
 	if strings.TrimSpace(instructions) == "" {
 		instructions = "Choose the routing rule that best matches the user's primary requested action. Classify by deliverable and action, not incidental words."
 	}
-	resp, err := c.systemOne(ctx, systemOneRequest{
+	resp, err := c.SystemOne(ctx, SystemOneRequest{
 		State: userPrompt,
 		Model: model,
-		Questions: map[string]systemOneQ{
+		Questions: map[string]Question{
 			"route": {
 				Type:         "choice",
 				Instructions: instructions,
@@ -200,10 +230,10 @@ func (c *Client) connectivityCheck(ctx context.Context, model, state string) (*l
 	if strings.TrimSpace(state) == "" {
 		state = "hello"
 	}
-	resp, err := c.systemOne(ctx, systemOneRequest{
+	resp, err := c.SystemOne(ctx, SystemOneRequest{
 		State: state,
 		Model: model,
-		Questions: map[string]systemOneQ{
+		Questions: map[string]Question{
 			"ok": {
 				Type:         "noul",
 				Instructions: "Is this a greeting or a simple connectivity check?",
@@ -215,7 +245,7 @@ func (c *Client) connectivityCheck(ctx context.Context, model, state string) (*l
 	}
 	answer := resp.Answers["ok"]
 	return &llm.ChatResponse{
-		Content: fmt.Sprintf("connected (noul=%.2f)", answer.Noul),
+		Content: fmt.Sprintf("connected (noul=%.2f)", noulValue(answer.Noul)),
 		Usage: llm.TokenUsage{
 			InputTokens:  resp.Usage.InputTokens,
 			OutputTokens: resp.Usage.OutputTokens,
@@ -223,10 +253,15 @@ func (c *Client) connectivityCheck(ctx context.Context, model, state string) (*l
 	}, nil
 }
 
-func (c *Client) systemOne(ctx context.Context, payload systemOneRequest) (*systemOneResponse, error) {
+// SystemOne calls the classifier directly without the chat router adapter.
+func (c *Client) SystemOne(ctx context.Context, payload SystemOneRequest) (*SystemOneResponse, error) {
 	if strings.TrimSpace(c.apiKey) == "" {
 		return nil, llm.UnsafeForRetry(fmt.Errorf("jev requires an API key"))
 	}
+	if strings.TrimSpace(payload.Model) == "" {
+		payload.Model = c.model
+	}
+
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -252,7 +287,7 @@ func (c *Client) systemOne(ctx context.Context, payload systemOneRequest) (*syst
 		return nil, err
 	}
 
-	var parsed systemOneResponse
+	var parsed SystemOneResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return nil, fmt.Errorf("jev returned invalid JSON: %w", err)
 	}
@@ -320,3 +355,10 @@ func parseRouterUserMessage(content string) (string, map[string]string, bool) {
 }
 
 var _ llm.Client = (*Client)(nil)
+
+func noulValue(value *float64) float64 {
+	if value == nil {
+		return 0
+	}
+	return *value
+}

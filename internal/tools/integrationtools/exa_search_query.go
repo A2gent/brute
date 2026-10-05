@@ -220,12 +220,14 @@ func (t *ExaSearchQueryTool) Execute(ctx context.Context, params json.RawMessage
 	var out bytes.Buffer
 	fmt.Fprintf(&out, "Exa Search results for %q\n", query)
 
+	webCapturePrefix(ctx, out.String())
 	if len(payload.Results) == 0 {
 		out.WriteString("No results returned.\n")
 		return &tools.Result{Success: true, Output: out.String()}, nil
 	}
 
 	for idx, item := range payload.Results {
+		itemStart := out.Len()
 		title := strings.TrimSpace(item.Title)
 		if title == "" {
 			title = "(untitled)"
@@ -243,6 +245,7 @@ func (t *ExaSearchQueryTool) Execute(ctx context.Context, params json.RawMessage
 			}
 			fmt.Fprintf(&out, "Content: %s\n", text)
 		}
+		webCaptureItem(ctx, title, url, out.String()[itemStart:])
 	}
 
 	return &tools.Result{Success: true, Output: out.String()}, nil

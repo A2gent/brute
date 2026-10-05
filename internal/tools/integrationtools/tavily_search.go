@@ -226,11 +226,13 @@ func (t *TavilySearchTool) Execute(ctx context.Context, params json.RawMessage) 
 	if answer := strings.TrimSpace(payload.Answer); answer != "" {
 		fmt.Fprintf(&out, "\nAnswer: %s\n", answer)
 	}
+	webCapturePrefix(ctx, out.String())
 	if len(payload.Results) == 0 {
 		out.WriteString("No results returned.\n")
 		return &tools.Result{Success: true, Output: out.String()}, nil
 	}
 	for idx, item := range payload.Results {
+		itemStart := out.Len()
 		title := strings.TrimSpace(item.Title)
 		if title == "" {
 			title = "(untitled)"
@@ -253,6 +255,7 @@ func (t *TavilySearchTool) Execute(ctx context.Context, params json.RawMessage) 
 		if item.Score > 0 {
 			fmt.Fprintf(&out, "Score: %.3f\n", item.Score)
 		}
+		webCaptureItem(ctx, title, url, out.String()[itemStart:])
 	}
 
 	return &tools.Result{Success: true, Output: out.String()}, nil

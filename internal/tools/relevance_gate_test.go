@@ -199,7 +199,7 @@ func TestRelevanceGateSingleBatchRequestAndOrder(t *testing.T) {
 	for i := range paths {
 		name := fmt.Sprintf("file_%d", i)
 		q, ok := request.Questions[name]
-		if !ok || q.Type != "choice" || strings.TrimSpace(q.Instructions) == "" {
+		if !ok || q.Type != "choice" || strings.TrimSpace(q.InstructionsString()) == "" {
 			t.Errorf("question %s missing or invalid: %+v", name, q)
 		}
 		criteria, ok := q.Criteria.(map[string]any)
@@ -214,7 +214,7 @@ func TestRelevanceGateSingleBatchRequestAndOrder(t *testing.T) {
 		}
 	}
 	for _, want := range []string{task, "z.txt", "a.txt", "z-preview-content", "a-preview-content"} {
-		if !strings.Contains(request.State, want) {
+		if !strings.Contains(request.StateString(), want) {
 			t.Errorf("shared state missing %q", want)
 		}
 	}
@@ -491,10 +491,10 @@ func TestRelevanceGatePreviewBudget(t *testing.T) {
 			}
 			for _, captured := range captured {
 				request := captured.Request
-				if len(request.State) > 64*1024 || !utf8.ValidString(request.State) {
-					t.Errorf("shared API state exceeds 64KiB or is invalid UTF-8: bytes=%d", len(request.State))
+				if len(request.StateString()) > 64*1024 || !utf8.ValidString(request.StateString()) {
+					t.Errorf("shared API state exceeds 64KiB or is invalid UTF-8: bytes=%d", len(request.StateString()))
 				}
-				if !strings.Contains(request.State, task) {
+				if !strings.Contains(request.StateString(), task) {
 					t.Error("bounded batch dropped task context")
 				}
 				for name := range request.Questions {
@@ -504,7 +504,7 @@ func TestRelevanceGatePreviewBudget(t *testing.T) {
 						t.Errorf("invalid original-index question %q", name)
 						continue
 					}
-					if !strings.Contains(request.State, paths[i]) || !strings.Contains(request.State, fmt.Sprintf("FILE-PREVIEW-%03d", i)) {
+					if !strings.Contains(request.StateString(), paths[i]) || !strings.Contains(request.StateString(), fmt.Sprintf("FILE-PREVIEW-%03d", i)) {
 						t.Errorf("question %s has no matching path/file preview in shared state", name)
 					}
 				}

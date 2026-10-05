@@ -63,7 +63,11 @@ func (s *Server) ToolManagerForSession(sess *session.Session) *tools.Manager {
 }
 
 func (s *Server) toolManagerForSession(sess *session.Session) *tools.Manager {
+	// Credentials can be added, rotated or removed after server startup.
+	s.registerClassifyTool(s.toolManager)
 	s.registerRelevanceGateTool(s.toolManager)
+	s.registerWebRelevanceTools(s.toolManager)
+	s.registerBrowserActTool(s.toolManager)
 	workDir := s.resolveSessionWorkDir(sess)
 	settings, err := s.store.GetSettings()
 	if err != nil {
@@ -144,7 +148,10 @@ func (s *Server) registerServerBackedTools(manager *tools.Manager) {
 		return
 	}
 	logging.Debug("Registering server-backed tools...")
+	s.registerClassifyTool(manager)
 	s.registerRelevanceGateTool(manager)
+	s.registerWebRelevanceTools(manager)
+	s.registerBrowserActTool(manager)
 	manager.Register(newRecurringJobsTool(s))
 	manager.Register(newMCPManageTool(s))
 	manager.Register(newMCPListToolsTool(s))

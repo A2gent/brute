@@ -1,3 +1,6 @@
+- Before delegating edits, check the agent workspace mount mode: read-only agents can review or propose patches but cannot implement them. Use a writable coding agent or apply the reviewed patch locally.
+- Scope file discovery to the component repository and verify files/recipes exist before reading them; this workspace root is not a Git repository.
+- Discover component repositories and source filenames before Git commands or reads; the workspace root is not a Git worktree and tool interfaces live in `internal/tools/manager.go`, not `tool.go`. Verify delegated compression claims against actual request construction and nested tool outputs.
 # Playbook
 - If CI job logs require GitHub authentication and `gh` is unavailable, inspect public Actions job step timestamps through the GitHub API, then profile locally; avoid claiming unverified cache-hit status or CI speedups.
 - On a locally downloaded Go toolchain missing `pkg/tool/*/covdata`, a full `go test -coverprofile ./...` may fail only for packages without tests; verify coverage on tested packages and run the full suite without coverage before attributing the failure to project code.
@@ -28,10 +31,30 @@
 - When splitting Go tests into a new file, carry over the imports used by that fragment and compile the focused package immediately.
 - A real headless Chrome smoke check found no initial screencast frame within four seconds on an already-loaded static page with everyNthFrame=2. Preserve explicit protocol parameters, report this limitation, and investigate a read-only initial snapshot without resizing the viewport.
 - Docker delegation tests that use a fake OpenAI provider must clear both `A2GENT_PARENT_PROXY_URL` and `OPENAI_BASE_URL` with `t.Setenv`; either inherited override redirects requests away from the fixture. If unrelated staged code prevents package compilation, leave it untouched and report any explicit-file test exclusion.
-- Discover component repositories and source filenames before Git commands or reads; the workspace root is not a Git worktree and tool interfaces live in `internal/tools/manager.go`, not `tool.go`. Verify delegated compression claims against actual request construction and nested tool outputs.
+
+## Jev classify tool
+- Locate the component repository before Git commands; the multi-component workspace root has no Git metadata.
+- Discover file paths before reads and avoid optional-path shell probes that hide useful output behind a nonzero exit.
+- Verify agent research against current API docs: System One score now uses an ordered criteria array, not a levels field; noul does not expose separate confidence.
+- Conditional tools must refresh credentials after settings changes. Test integrations through HTTP validation, not only direct database inserts.
+- Reject special file descriptors without blocking: a FIFO can hang in os.Open before IsRegular checks or context timeout handling.
+- Before removing a tool-local constant, search package-wide users: maxOutputSize in bash.go is also used by code_execution.go.
 - Read-cache references need outgoing-request validation after compaction, not just cache invalidation. Keep a recovery snapshot in non-model metadata and strip it from parallel JSON; a result can be compacted between emitting a stub and sending the next request.
 - Long full-suite validation can outlive the parallel wrapper's 90-second limit. Use a direct bash call or inspect the completed log before claiming a timeout or rerunning tests. Concurrent test-first edits may temporarily break unrelated package compilation; verify the scoped patch against HEAD.
-- Before delegating edits, check the agent workspace mount mode: read-only agents can review or propose patches but cannot implement them. Use a writable coding agent or apply the reviewed patch locally.
-- Scope file discovery to the component repository and verify files/recipes exist before reading them; this workspace root is not a Git repository.
-- Before removing a tool-local constant, search package-wide users: maxOutputSize in bash.go is also used by code_execution.go.
 - During concurrent edits, shared test failures can be transient incomplete code. Re-read the current diff and run focused tests instead of overwriting the other session's files. Run lengthy suites detached with explicit exit files; a tool timeout is not a test result.
+
+## Jev browser_act loop
+- `delegate_to_agent` to `dev-code-reviewer` timed out twice on multi-file read-and-report tasks. Do not retry the same shape; survey the code directly with targeted `grep '^func \|^type '` declaration listings plus narrow `Read` offsets, which is cheaper than a full-file dump and did not need the subagent at all.
+- Verify third-party API shapes with `go doc` before writing code against them: `gson.JSON.Unmarshal` fails with "value has been parsed" on a value rod already decoded, so `MarshalJSON()` then `json.Unmarshal` is the working path for `page.Eval` results.
+- Widening a shared struct field to `any` (jev `SystemOneRequest.State`, `Question.Instructions`) compiles for all string callers but breaks test assertions that use `len`/`strings` on the field. Add `StateString()`/`InstructionsString()` helpers and update only the tests that decode into the real type - a blanket sed also hits tests that declare their own local struct.
+- A JS freshness marker must not be captured in a closure on `window`. Closing over the observation's own text/actions makes every later check compare equal; re-run the whole snapshot and read only `.marker`.
+- Mutation-check guard tests before trusting them: a `sed` pattern that does not match silently leaves the code unmutated, so the test passes for the wrong reason. Confirm the mutation applied (grep for it) before reading the result.
+- Reuse the registered `browser_chrome` instance via `manager.Get("browser_chrome")` rather than constructing a second one; the operation gate is per-instance, so a fresh instance would not serialize against plain browser calls.
+
+## Jev web relevance
+- Classifier candidates must fit the state budget in full; a high-confidence verdict on a partial preview cannot justify dropping unseen text.
+- Preserve native search boundaries before formatting: snippets can forge numbered headings and URL lines.
+- Credential guards must include OAuth, sensitive secrets and credential-bearing environment overrides; failed inventory refresh must replace stale clients with a no-egress fallback.
+- Reject malformed UTF-8 before section splitting to guarantee progress, and inspect complete source inputs for secrets before truncation.
+- A delegated benchmark prepared before the implementation exists is only a reference renderer. Replace it with the production wrapper and regenerate measurements before reporting savings.
+- Scope scripted text replacements to an exact declaration; replacing a field fragment globally can also corrupt function parameter lists. Compile the focused package immediately after structural edits.

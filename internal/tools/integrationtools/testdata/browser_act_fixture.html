@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>browser_act fixture</title></head>
+<body>
+  <h1>Fixture search</h1>
+  <form id="f" onsubmit="return false">
+    <label for="q">Search query</label>
+    <input id="q" name="q" type="text" placeholder="Search query">
+
+    <!-- Credential and upload controls must never appear in the action space. -->
+    <input id="pw" type="password" aria-label="Password">
+    <input id="secret" type="hidden" value="nope">
+    <input id="upload" type="file" aria-label="Attach file">
+
+    <select id="sort" aria-label="Sort by">
+      <option value="rel" selected>Relevance</option>
+      <option value="new">Newest</option>
+    </select>
+
+    <input id="agree" type="checkbox" aria-label="Agree to terms">
+    <button id="go" type="button" onclick="document.getElementById('out').textContent = 'Results for ' + document.getElementById('q').value">Search</button>
+    <button id="off" type="button" disabled>Disabled action</button>
+  </form>
+
+  <div id="out">No results yet</div>
+
+  <!-- Pushed far below the fold: viewport clipping must keep this out of the table. -->
+  <div style="margin-top: 4000px"><a id="belowfold" href="https://example.com/deep">Below the fold link</a></div>
+</body>
+</html>

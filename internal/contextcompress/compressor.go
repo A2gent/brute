@@ -316,6 +316,10 @@ func storeKey(sessionID, hash string) string {
 }
 
 func shouldCompressToolResult(tr llm.ToolResult, minChars int) bool {
+	// Admission excerpts already reference the full original.
+	if strings.HasPrefix(tr.Content, "[brute-compressed ") {
+		return false
+	}
 	if len(tr.Content) < minChars {
 		return false
 	}
@@ -554,4 +558,14 @@ func cloneMap(in map[string]interface{}) map[string]interface{} {
 		out[k] = v
 	}
 	return out
+}
+
+// EnableRetrieval adds guidance for admission excerpts even when request-time
+// compression is disabled.
+func EnableRetrieval(req *llm.ChatRequest) {
+	if req == nil {
+		return
+	}
+	req.SystemPrompt = appendRetrievalInstructions(req.SystemPrompt)
+	req.Tools = ensureRetrievalTool(req.Tools)
 }

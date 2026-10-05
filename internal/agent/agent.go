@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/A2gent/brute/internal/contextcompress"
@@ -45,10 +46,23 @@ func NewWithCompressor(config Config, llmClient llm.Client, toolManager *tools.M
 	if !config.CompressToolResults {
 		config.CompressToolResults = strings.EqualFold(strings.TrimSpace(os.Getenv(envCompressToolResults)), "true")
 	}
-	if compressor == nil && sessionManager != nil {
-		compressor = contextcompress.NewCompressorWithSessionStore(contextcompress.Config{Enabled: true}, sessionManager)
+	if config.ToolResultMaxTokens <= 0 {
+		config.ToolResultMaxTokens, _ = strconv.Atoi(strings.TrimSpace(os.Getenv("A2GENT_TOOL_RESULT_MAX_TOKENS")))
 	}
-	if config.CompressToolResults && compressor != nil && toolManager != nil {
+	if config.ToolResultMaxTokens <= 0 {
+		config.ToolResultMaxTokens = contextcompress.DefaultAdmissionMaxTokens
+	}
+	if config.ToolResultMaxTokens < contextcompress.MinAdmissionMaxTokens {
+		config.ToolResultMaxTokens = contextcompress.MinAdmissionMaxTokens
+	}
+	if compressor == nil {
+		if sessionManager != nil {
+			compressor = contextcompress.NewCompressorWithSessionStore(contextcompress.Config{Enabled: true}, sessionManager)
+		} else {
+			compressor = contextcompress.NewCompressor(contextcompress.Config{Enabled: true})
+		}
+	}
+	if toolManager != nil {
 		if _, ok := toolManager.Get(contextcompress.RetrievalToolName); !ok {
 			toolManager.Register(contextcompress.NewRetrieveTool(compressor))
 		}

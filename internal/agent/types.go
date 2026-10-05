@@ -18,6 +18,7 @@ type Config struct {
 	UsePreviousResponse      bool
 	UseProviderSession       bool
 	ProviderSessionIdentity  string
+	ToolResultMaxTokens      int
 	CompressToolResults      bool
 	PersistRuntimeReasoning  bool
 }

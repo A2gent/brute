@@ -350,6 +350,7 @@ Common optional variables:
 | `AAGENT_DATA_PATH` | `~/.local/share/aagent` | data directory |
 | `AAGENT_FALLBACK_PROVIDERS` | - | fallback chain list |
 | `A2GENT_TOOL_RESULT_COMPRESSION_ENABLED` | `true` | enable session-scoped compression of large LLM-bound tool results by default; compressed requests keep deterministic markers and allow `context_retrieve` lookup by hash while leaving exact `read`/`write`/`edit` outputs unchanged by default |
+| `A2GENT_TOOL_RESULT_MAX_TOKENS` | `8000` | hard per-call text admission cap before recording tool results, independent of request-time compression; uses `ceil(runes/4)` (an estimate, not provider BPE), includes the notice, and clamps values below 128 to 128. Oversized results retain head/tail excerpts; full originals use the existing session-scoped `context_retrieve` hash + query store. Applies to all tools, including retrieval responses. Base64 screenshots use image metadata and do not count as text. Agent `Config.ToolResultMaxTokens` overrides the environment. |
 
 Speech transcription variables:
 

@@ -252,6 +252,19 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 		results[i].Output = truncateToChars(results[i].Output, maxPerStep)
 	}
 
+	var images []interface{}
+	for i := range results {
+		if childImages, ok := results[i].Metadata["admission_images"].([]interface{}); ok {
+			images = append(images, childImages...)
+			metadata := make(map[string]interface{}, len(results[i].Metadata))
+			for key, value := range results[i].Metadata {
+				if key != "admission_images" && key != "image_inline" && key != "image_original_text" {
+					metadata[key] = value
+				}
+			}
+			results[i].Metadata = metadata
+		}
+	}
 	outputBytes, err := json.MarshalIndent(results, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode parallel results: %w", err)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/A2gent/brute/internal/contextcompress"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/session"
@@ -69,6 +70,30 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 		}
 
 		messages = append(messages, msg)
+		// Tool-role image metadata is not supported by every provider. Normalize
+		// extracted screenshots into the shared user-image channel after the batch.
+		var screenshots []llm.Image
+		for i, tr := range msg.ToolResults {
+			images, _ := tr.Metadata["admission_images"].([]interface{})
+			for _, raw := range images {
+				image, _ := raw.(map[string]interface{})
+				mediaType, _ := image["media_type"].(string)
+				data, _ := image["data_base64"].(string)
+				screenshots = append(screenshots, llm.Image{MediaType: mediaType, DataBase64: data})
+			}
+			if len(images) > 0 {
+				metadata := make(map[string]interface{}, len(tr.Metadata))
+				for key, value := range tr.Metadata {
+					metadata[key] = value
+				}
+				delete(metadata, "image_inline") // Avoid sending the first image twice to Anthropic.
+				delete(metadata, "admission_images")
+				messages[len(messages)-1].ToolResults[i].Metadata = metadata
+			}
+		}
+		if len(screenshots) > 0 {
+			messages = append(messages, llm.Message{Role: "user", Content: "Screenshots from the preceding tool results.", Images: screenshots})
+		}
 	}
 
 	request := &llm.ChatRequest{
@@ -82,10 +107,18 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 		PreviousResponseID:    previousResponseID,
 		ProviderSessionCursor: providerSessionCursor,
 	}
-	if a.config.CompressToolResults && a.compressor != nil {
-		compressed, _ := a.compressor.CompressRequest(context.Background(), sess.ID, request)
-		return compressed
+	for _, msg := range messages {
+		for _, tr := range msg.ToolResults {
+			if strings.HasPrefix(tr.Content, "[brute-compressed ") {
+				contextcompress.EnableRetrieval(request)
+			}
+		}
 	}
+	if a.config.CompressToolResults && a.compressor != nil {
+		request, _ = a.compressor.CompressRequest(context.Background(), sess.ID, request)
+		a.compressor.SyncSessionEntries(sess)
+	}
+	a.admitExpandedRequestResults(sess, request)
 	return request
 }
 

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/A2gent/brute/internal/contextcompress"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/logging"
@@ -241,6 +242,9 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			})
 		}
 		toolResults := a.toolManager.ExecuteParallel(toolCtx, response.ToolCalls)
+		for i, tr := range toolResults {
+			toolResults[i] = a.compressor.AdmitToolResult(sess, tr, a.config.ToolResultMaxTokens)
+		}
 
 		// Convert results
 		sessionResults := make([]session.ToolResult, len(toolResults))
@@ -271,6 +275,14 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		// IMPORTANT: Do this BEFORE Save() so we can detect status changes made by tools
 		freshSess, reloadErr := a.sessionManager.Get(sess.ID)
 		if reloadErr == nil {
+			if freshSess.Status == session.StatusInputRequired || freshSess.Status == session.StatusWaitingExternal || hasExternalWaitResult(sessionResults) {
+				// Parking tools own the fresh transcript/status, but admission owns
+				// new originals. Persist their union before returning to the caller.
+				contextcompress.MergeSessionEntries(freshSess, sess)
+				if err := a.sessionManager.Save(freshSess); err != nil {
+					return "", totalUsage, fmt.Errorf("persist admitted originals: %w", err)
+				}
+			}
 			// Sync task_progress from DB (may have been updated by session_task_progress tool)
 			sess.TaskProgress = freshSess.TaskProgress
 
@@ -484,6 +496,7 @@ func (a *Agent) mergeFreshSessionState(sess *session.Session) bool {
 		}
 	}
 	if fresh.Metadata != nil {
+		contextcompress.MergeSessionEntries(fresh, sess)
 		merged := make(map[string]interface{}, len(fresh.Metadata)+len(sess.Metadata))
 		for key, value := range fresh.Metadata {
 			merged[key] = value
@@ -499,6 +512,7 @@ func (a *Agent) mergeFreshSessionState(sess *session.Session) bool {
 			merged[key] = value
 		}
 		sess.Metadata = merged
+		contextcompress.MergeSessionEntries(sess, fresh)
 	}
 	sess.TaskProgress = fresh.TaskProgress
 	if fresh.Status == session.StatusInputRequired || fresh.Status == session.StatusWaitingExternal {

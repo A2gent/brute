@@ -204,7 +204,12 @@ func (m *Manager) Execute(ctx context.Context, name string, params json.RawMessa
 	if !ok {
 		return nil, fmt.Errorf("tool not found: %s", toolName)
 	}
-	return tool.Execute(ctx, params)
+	result, err := tool.Execute(ctx, params)
+	if result != nil {
+		separated := llm.SeparateToolResultImages(llm.ToolResult{Content: result.Output, Metadata: result.Metadata})
+		result.Output, result.Metadata = separated.Content, separated.Metadata
+	}
+	return result, err
 }
 
 func normalizeToolName(name string) string {

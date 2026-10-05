@@ -122,6 +122,7 @@ func (t *PipelineTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 
 	prevOutput := ""
 	stageMeta := make([]map[string]interface{}, 0, len(p.Steps))
+	var images []interface{}
 
 	for i, stage := range p.Steps {
 		toolName := normalizeToolName(stage.Tool)
@@ -181,6 +182,9 @@ func (t *PipelineTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 				},
 			}, nil
 		}
+		if childImages, ok := stageResult.Metadata["admission_images"].([]interface{}); ok {
+			images = append(images, childImages...)
+		}
 		if !stageResult.Success {
 			stageInfo["success"] = false
 			stageInfo["output_chars"] = len(stageResult.Output)
@@ -213,6 +217,7 @@ func (t *PipelineTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 			"pipeline_steps":         stageMeta,
 			"final_output_chars":     len(prevOutput),
 			"final_output_truncated": truncated,
+			"admission_images":       images,
 		},
 	}, nil
 }

@@ -61,6 +61,7 @@ func (s *Server) setupRoutes() {
 	s.registerAssetRoutes(r)
 	s.registerDeviceRoutes(r)
 	s.registerBrowserChromeRoutes(r)
+	s.registerBrowserActRoutes(r)
 	s.registerBrowserExtensionRoutes(r)
 	s.registerSessionRoutes(r)
 	s.registerSessionTemplateRoutes(r)
@@ -268,6 +269,11 @@ func (s *Server) registerBrowserChromeRoutes(r chi.Router) {
 		r.Post("/create-profile", s.handleBrowserChromeCreateProfile)
 		r.Post("/launch", s.handleBrowserChromeLaunch)
 	})
+}
+
+func (s *Server) registerBrowserActRoutes(r chi.Router) {
+	r.Get("/browser-act/settings", s.handleGetBrowserActSettings)
+	r.Put("/browser-act/settings", s.handleUpdateBrowserActSettings)
 }
 
 func (s *Server) registerSessionRoutes(r chi.Router) {

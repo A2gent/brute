@@ -100,6 +100,56 @@ func TestActSnapshotOffersOnlySafeVisibleControls(t *testing.T) {
 	}
 }
 
+func TestActSnapshotControlValues(t *testing.T) {
+	browser := newFixtureActBrowser(t)
+	ctx := context.Background()
+	for _, checked := range []string{"false", "true", "false"} {
+		snap, err := browser.Observe(ctx)
+		if err != nil {
+			t.Fatalf("Observe failed: %v", err)
+		}
+		checkbox := findActAction(t, snap, "click", "Agree to terms")
+		if checkbox.Checked != checked || checkbox.Value != "" {
+			t.Errorf("checkbox: checked=%q value=%q, want checked=%s and no submission value", checkbox.Checked, checkbox.Value, checked)
+		}
+		button := findActAction(t, snap, "click", "Search")
+		if button.Value != "" {
+			t.Errorf("button exposed its submission value: %q", button.Value)
+		}
+		field := findActAction(t, snap, "fill", "Search query")
+		if field.Value != "" {
+			t.Errorf("expected an empty editable field, got %q", field.Value)
+		}
+		rows := renderActElements(buildActSpace(snap.Actions), 20)
+		if !strings.Contains(rows, "Agree to terms · checked="+checked+" (CLICK)") ||
+			!strings.Contains(rows, "Search (CLICK)") ||
+			!strings.Contains(rows, "Search query · empty (TYPE_TEXT,CLICK)") {
+			t.Errorf("incorrect control state rendering:\n%s", rows)
+		}
+		// Check the raw JS shape too: empty is a real field value, not a button value.
+		result, err := browser.eval(ctx, `() => {
+			const actions = (`+browserActSnapshotJS+`)().actions;
+			return actions.filter(a => ['checkbox', 'button'].includes(a.role)).every(a => !('value' in a)) &&
+				actions.some(a => a.kind === 'fill' && a.label === 'Search query' && a.value === '');
+		}`)
+		if err != nil || !result.Value.Bool() {
+			t.Errorf("snapshot must omit non-field values and retain empty field values: result=%v err=%v", result, err)
+		}
+		// Exercise the actual native checkbox click in both directions.
+		if err := browser.Click(ctx, checkbox.Node); err != nil {
+			t.Fatalf("checkbox Click failed: %v", err)
+		}
+		// A button's optional submission value must also be ignored, even when non-empty.
+		if _, err := browser.eval(ctx, `() => {
+			const button = document.getElementById('go');
+			button.setAttribute('aria-label', 'Search');
+			button.value = 'submit-search';
+		}`); err != nil {
+			t.Fatalf("setting button submission value failed: %v", err)
+		}
+	}
+}
+
 func TestActExecutionTypesAndClicksOnTheFixture(t *testing.T) {
 	browser := newFixtureActBrowser(t)
 	ctx := context.Background()

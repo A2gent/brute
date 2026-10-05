@@ -107,10 +107,13 @@
       const editable = !e.readOnly && e.getAttribute('aria-readonly') !== 'true' &&
         (['textbox', 'searchbox', 'spinbutton'].includes(rname) ||
           (rname === 'combobox' && ['INPUT', 'TEXTAREA'].includes(e.tagName)));
-      const value = 'value' in e ? String(e.value)
-        : e.isContentEditable || rname === 'combobox' ? e.innerText.trim() : '';
-      actions.push({ ...base, kind: editable ? 'fill' : 'click', value });
-      if (editable) actions.push({ ...base, kind: 'click', value, label: 'Open ' + base.label });
+      // Submission values (e.g. a checkbox's default "on") are not current field state.
+      if (['textbox', 'searchbox', 'spinbutton', 'combobox'].includes(rname)) {
+        base.value = 'value' in e ? String(e.value)
+          : e.isContentEditable || rname === 'combobox' ? e.innerText.trim() : '';
+      }
+      actions.push({ ...base, kind: editable ? 'fill' : 'click' });
+      if (editable) actions.push({ ...base, kind: 'click', label: 'Open ' + base.label });
     }
   }
 

@@ -1,0 +1,1 @@
+body { font: 18px system-ui; margin: 32px; max-width: 950px; } button,input,select { font: inherit; padding: 10px; margin: 8px; } label { display: block; } [hidden] { display: none !important; } output { display: block; padding: 16px; } .spacer { height: 1050px; }

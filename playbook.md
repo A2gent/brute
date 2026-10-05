@@ -58,3 +58,4 @@
 - Reject malformed UTF-8 before section splitting to guarantee progress, and inspect complete source inputs for secrets before truncation.
 - A delegated benchmark prepared before the implementation exists is only a reference renderer. Replace it with the production wrapper and regenerate measurements before reporting savings.
 - Scope scripted text replacements to an exact declaration; replacing a field fragment globally can also corrupt function parameter lists. Compile the focused package immediately after structural edits.
+- macOS BSD sed needs `sed -i ""`; a bare `sed -i` fails silently in a pipeline and the "mutated" run is really the original. Use python or perl for in-place edits and grep to confirm.

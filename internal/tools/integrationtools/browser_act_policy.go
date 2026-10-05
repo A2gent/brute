@@ -87,6 +87,16 @@ type actSpace struct {
 
 var actOperationForKind = map[string]string{"click": "CLICK", "fill": "TYPE_TEXT", "select": "SELECT"}
 
+// Only fields have a current value; buttons and toggles can have unrelated submission values.
+func actRoleHasValue(role string) bool {
+	switch role {
+	case "textbox", "searchbox", "spinbutton", "combobox":
+		return true
+	default:
+		return false
+	}
+}
+
 // buildActSpace assigns one index per observed node and groups targets per operation.
 func buildActSpace(actions []actAction) actSpace {
 	space := actSpace{Targets: map[string]map[string]actAction{}, Controls: map[string]actAction{}}
@@ -111,9 +121,12 @@ func buildActSpace(actions []actAction) actSpace {
 			}
 			index = strconv.Itoa(len(space.Elements) + 1)
 			indexByNode[action.Node] = index
-			element := actElement{Index: index, Role: action.Role, Value: action.Value,
+			element := actElement{Index: index, Role: action.Role,
 				Checked: action.Checked, Selected: action.Selected, Expanded: action.Expanded,
 				Label: strings.Split(action.Label, " -> ")[0], Operations: []string{}}
+			if actRoleHasValue(action.Role) {
+				element.Value = action.Value
+			}
 			if action.Kind == "select" {
 				element.Value = action.CurrentValue
 				element.Options = []actOption{}
@@ -165,11 +178,13 @@ func buildActQuestions(space actSpace, goal string) (map[string]jev.Question, ma
 		criteria := map[string]any{}
 		for index, action := range candidates {
 			criterion := map[string]any{"element": fmt.Sprintf("[%s] %s", index, action.Label), "role": action.Role}
-			current := action.CurrentValue
-			if current == "" {
-				current = action.Value
+			if actRoleHasValue(action.Role) {
+				current := action.CurrentValue
+				if current == "" {
+					current = action.Value
+				}
+				criterion["current_value"] = current
 			}
-			criterion["current_value"] = current
 			for key, value := range map[string]string{"checked": action.Checked, "selected": action.Selected, "expanded": action.Expanded} {
 				if value != "" {
 					criterion[key] = value
@@ -300,12 +315,18 @@ func renderActElements(space actSpace, limit int) string {
 			fmt.Fprintf(&sb, "  ... %d more elements\n", len(space.Elements)-limit)
 			break
 		}
-		value := element.Value
-		if value == "" {
-			value = "empty"
+		fmt.Fprintf(&sb, "  [%s] %-10s %s", element.Index, element.Role, element.Label)
+		if actRoleHasValue(element.Role) {
+			value := element.Value
+			if value == "" {
+				value = "empty"
+			}
+			fmt.Fprintf(&sb, " · %s", value)
 		}
-		fmt.Fprintf(&sb, "  [%s] %-10s %s · %s (%s)\n", element.Index, element.Role, element.Label, value,
-			strings.Join(element.Operations, ","))
+		if element.Checked != "" {
+			fmt.Fprintf(&sb, " · checked=%s", element.Checked)
+		}
+		fmt.Fprintf(&sb, " (%s)\n", strings.Join(element.Operations, ","))
 	}
 	return sb.String()
 }

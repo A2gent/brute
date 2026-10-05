@@ -687,6 +687,7 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 
 	for _, id := range sessionIDsToDelete {
 		s.cancelActiveSessionRuns(id)
+		s.closeBrowserPageForSession(id)
 	}
 
 	type catalogDelete struct {

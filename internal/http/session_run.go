@@ -83,6 +83,7 @@ func (s *Server) runSessionWithoutStreaming(ctx context.Context, sess *session.S
 }
 
 func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *session.Session, result sessionRunResult, runErr error) error {
+	defer s.closeBrowserPageIfTerminal(sess)
 	publishError := func(message string) {
 		s.publishSessionEvent(sess.ID, ChatStreamEvent{
 			Type:     "error",

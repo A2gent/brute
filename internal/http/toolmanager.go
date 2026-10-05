@@ -2,6 +2,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/A2gent/brute/internal/contextcompress"
 	"github.com/A2gent/brute/internal/filesearch"
@@ -16,6 +17,62 @@ import (
 	"strings"
 	"time"
 )
+
+func (s *Server) closeBrowserPageForSession(sessionID string) {
+	if s == nil || s.toolManager == nil || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	s.browserSessionToolsMu.Lock()
+	toolsForSession := s.browserSessionTools[sessionID]
+	delete(s.browserSessionTools, sessionID)
+	s.browserSessionToolsMu.Unlock()
+	if registered, ok := s.toolManager.Get("browser_chrome"); ok {
+		if chrome, ok := registered.(*integrationtools.BrowserChromeTool); ok {
+			if toolsForSession == nil {
+				toolsForSession = make(map[*integrationtools.BrowserChromeTool]struct{})
+			}
+			toolsForSession[chrome] = struct{}{}
+		}
+	}
+	for chrome := range toolsForSession {
+		if err := chrome.CloseSessionPage(ctx, sessionID); err != nil {
+			logging.Warn("Failed to close Chrome page for session %s: %v", sessionID, err)
+		}
+	}
+}
+
+func (s *Server) closeBrowserPageIfTerminal(sess *session.Session) {
+	if sess == nil || (sess.Status != session.StatusCompleted && sess.Status != session.StatusFailed) {
+		return
+	}
+	s.closeBrowserPageForSession(sess.ID)
+}
+
+func (s *Server) registerBrowserSessionTool(sessionID string, manager *tools.Manager) {
+	if s == nil || sessionID == "" || manager == nil {
+		return
+	}
+	registered, ok := manager.Get("browser_chrome")
+	if !ok {
+		return
+	}
+	chrome, ok := registered.(*integrationtools.BrowserChromeTool)
+	if !ok {
+		return
+	}
+	s.browserSessionToolsMu.Lock()
+	if s.browserSessionTools == nil {
+		s.browserSessionTools = make(map[string]map[*integrationtools.BrowserChromeTool]struct{})
+	}
+	if s.browserSessionTools[sessionID] == nil {
+		s.browserSessionTools[sessionID] = make(map[*integrationtools.BrowserChromeTool]struct{})
+	}
+	s.browserSessionTools[sessionID][chrome] = struct{}{}
+	s.browserSessionToolsMu.Unlock()
+}
 
 func (s *Server) resolveSessionWorkDir(sess *session.Session) string {
 	defaultDir := strings.TrimSpace(s.config.WorkDir)
@@ -105,6 +162,9 @@ func (s *Server) toolManagerForSession(sess *session.Session) *tools.Manager {
 	indexingEnabled := s.resolveSessionFileIndexingEnabled(sess)
 	indexingDiffers := indexingEnabled != filesearch.IndexingEnabled()
 	if workDir == defaultDir && !indexingDiffers && len(disabledTools) == 0 && len(subAgentEnabledTools) == 0 {
+		if sess != nil {
+			s.registerBrowserSessionTool(sess.ID, s.toolManager)
+		}
 		return s.toolManager
 	}
 
@@ -116,6 +176,10 @@ func (s *Server) toolManagerForSession(sess *session.Session) *tools.Manager {
 		manager = tools.NewManagerWithOptions(workDir, managerOpts)
 		integrationtools.Register(manager, s.store, s.speechClips, s.sessionManager)
 		s.registerServerBackedTools(manager)
+	}
+
+	if sess != nil {
+		s.registerBrowserSessionTool(sess.ID, manager)
 	}
 
 	for toolName := range disabledTools {

@@ -40,6 +40,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.queueTelegramSessionMessageSync(sess.ID)
+	defer s.closeBrowserPageIfTerminal(sess)
 	if sess.Status == session.StatusQueued && sessionIsSerialQueuedAutoRun(sess) {
 		s.triggerSerialSessionQueueForSession(sess)
 		s.errorResponse(w, http.StatusConflict, "Session is queued for serial execution and will start automatically")

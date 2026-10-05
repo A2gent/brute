@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/A2gent/brute/internal/logging"
-	"github.com/A2gent/brute/internal/tools"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
 )
@@ -114,27 +113,27 @@ func (t *BrowserChromeTool) ensureBrowser(probeCtx, connectionCtx context.Contex
 
 // ensureBrowserAndPage ensures both browser connection and a persistent page exist
 func (t *BrowserChromeTool) ensureBrowserAndPage(ctx context.Context) error {
+	return t.ensureBrowserAndPageForSession(ctx, "")
+}
+
+func (t *BrowserChromeTool) ensureBrowserAndPageForSession(ctx context.Context, sessionID string) error {
+	if t.ensureBrowserAndPageOverride != nil {
+		return t.ensureBrowserAndPageOverride(ctx)
+	}
 	var lastErr error
 	for attempt := 1; attempt <= browserChromeSetupAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		tools.ReportProgress(ctx, tools.ProgressEvent{
-			Status:  "running",
-			Content: fmt.Sprintf("Preparing Chrome (attempt %d/%d)", attempt, browserChromeSetupAttempts),
-		})
-
 		attemptCtx, cancelAttempt := context.WithTimeout(ctx, browserChromeSetupAttemptTimeout)
-		err := t.ensureBrowserAndPageAttempt(attemptCtx, ctx)
+		err := t.ensureBrowserAndPageAttemptForSession(attemptCtx, ctx, sessionID)
+		cancelAttempt()
 		if err == nil {
-			cancelAttempt()
 			return nil
 		}
-		cancelAttempt()
 		lastErr = err
 		logging.Warn("Chrome setup attempt %d/%d failed: %v", attempt, browserChromeSetupAttempts, err)
 		t.dropBrowserConnection()
-
 		if attempt < browserChromeSetupAttempts {
 			if err := waitForBrowserChromeRetry(ctx, browserChromeSetupRetryDelay); err != nil {
 				return err
@@ -144,18 +143,27 @@ func (t *BrowserChromeTool) ensureBrowserAndPage(ctx context.Context) error {
 	return fmt.Errorf("Chrome setup failed after %d attempts: %w", browserChromeSetupAttempts, lastErr)
 }
 
-func (t *BrowserChromeTool) ensureBrowserAndPageAttempt(probeCtx, connectionCtx context.Context) error {
+func (t *BrowserChromeTool) ensureBrowserAndPageAttemptForSession(probeCtx, connectionCtx context.Context, sessionID string) error {
 	if err := t.ensureBrowser(probeCtx, connectionCtx); err != nil {
 		return err
 	}
 
-	if t.pageTargetID != "" {
+	if sessionID != "" {
+		if targetID := t.sessionTargets[sessionID]; targetID != "" {
+			if _, err := (proto.TargetGetTargetInfo{TargetID: targetID}).Call(t.browser.Context(probeCtx)); err == nil {
+				if _, err := t.browser.PageFromTarget(targetID); err == nil {
+					t.pageTargetID = targetID
+					return nil
+				}
+			}
+			delete(t.sessionTargets, sessionID)
+		}
+	} else if t.pageTargetID != "" {
 		if _, err := (proto.TargetGetTargetInfo{TargetID: t.pageTargetID}).Call(t.browser.Context(probeCtx)); err == nil {
 			if _, err := t.browser.PageFromTarget(t.pageTargetID); err == nil {
 				return nil
 			}
 		}
-		logging.Info("Page connection is stale, creating new page...")
 		t.pageTargetID = ""
 	}
 
@@ -171,8 +179,42 @@ func (t *BrowserChromeTool) ensureBrowserAndPageAttempt(probeCtx, connectionCtx 
 		t.pageTargetID = ""
 		return fmt.Errorf("failed to attach browser page: %w", err)
 	}
+	if sessionID != "" {
+		t.sessionTargets[sessionID] = t.pageTargetID
+	}
 	logging.Info("Browser page created successfully")
 	return nil
+}
+
+// CloseSessionPage closes only the Chrome target owned by the specified session.
+func (t *BrowserChromeTool) CloseSessionPage(ctx context.Context, sessionID string) error {
+	if t == nil || sessionID == "" {
+		return nil
+	}
+	if err := t.acquireOperation(ctx); err != nil {
+		return err
+	}
+	defer t.releaseOperation()
+
+	targetID := t.sessionTargets[sessionID]
+	if targetID == "" {
+		return nil
+	}
+	delete(t.sessionTargets, sessionID)
+	if err := t.ensureBrowser(ctx, ctx); err != nil {
+		return err
+	}
+	defer t.dropBrowserConnection()
+	_, err := (proto.TargetCloseTarget{TargetID: targetID}).Call(t.browser.Context(ctx))
+	return err
+}
+
+func (t *BrowserChromeTool) clearSessionTarget(sessionID string) {
+	if sessionID == "" || t.pageTargetID == "" {
+		return
+	}
+	delete(t.sessionTargets, sessionID)
+	t.pageTargetID = ""
 }
 
 func (t *BrowserChromeTool) pageForContext(ctx context.Context) (*rod.Page, error) {

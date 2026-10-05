@@ -30,6 +30,7 @@ type BrowserChromeTool struct {
 	operationGate                chan struct{}
 	browser                      *rod.Browser
 	pageTargetID                 proto.TargetTargetID
+	sessionTargets               map[string]proto.TargetTargetID
 	workDir                      string
 	debugPort                    string
 	userDataDir                  string
@@ -77,6 +78,7 @@ func newBrowserChromeTool(workDir string, settingsReader browserChromeSettingsRe
 
 	return &BrowserChromeTool{
 		operationGate:    make(chan struct{}, 1),
+		sessionTargets:   make(map[string]proto.TargetTargetID),
 		workDir:          workDir,
 		debugPort:        debugPort,
 		userDataDir:      userDataDir,
@@ -221,20 +223,14 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 		Status:  "running",
 		Content: "Preparing Chrome connection and page",
 	})
-	ensureBrowserAndPage := t.ensureBrowserAndPage
-	if t.ensureBrowserAndPageOverride != nil {
-		ensureBrowserAndPage = t.ensureBrowserAndPageOverride
-	}
-	if err := ensureBrowserAndPage(executionCtx); err != nil {
+	sessionID, _ := ctx.Value("session_id").(string)
+	if err := t.ensureBrowserAndPageForSession(executionCtx, sessionID); err != nil {
 		return browserChromeFailure("failed to ensure browser", err), nil
 	}
 
 	actionCtx, cancelAction := context.WithTimeout(executionCtx, browserChromeActionTimeout)
 	defer cancelAction()
 	defer func() {
-		if actionCtx.Err() != nil {
-			t.pageTargetID = ""
-		}
 		t.dropBrowserConnection()
 	}()
 	page, err := t.pageForContext(actionCtx)

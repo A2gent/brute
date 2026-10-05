@@ -49,6 +49,8 @@ type Server struct {
 	runParentCtx             context.Context
 	activeRunsMu             sync.Mutex
 	activeRuns               map[string]map[string]context.CancelFunc
+	browserSessionToolsMu    sync.Mutex
+	browserSessionTools      map[string]map[*integrationtools.BrowserChromeTool]struct{}
 	sessionEventsMu          sync.Mutex
 	sessionEventSubs         map[string]map[chan ChatStreamEvent]struct{}
 	liveTurnEvents           map[string][]ChatStreamEvent // guarded by sessionEventsMu

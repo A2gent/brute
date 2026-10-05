@@ -126,3 +126,13 @@ func escapeField(s string) string {
 	escaped := strings.ReplaceAll(s, "\"", "\"\"")
 	return "\"" + escaped + "\""
 }
+
+// formatEvalElements decodes a rod eval result first: a gson.JSON is not a map, so passing it
+// straight to formatElementsAsTOON falls back to fmt %v and the model gets a raw Go map dump.
+func formatEvalElements(value json.Marshaler) string {
+	var decoded interface{}
+	if raw, err := value.MarshalJSON(); err == nil {
+		_ = json.Unmarshal(raw, &decoded)
+	}
+	return formatElementsAsTOON(decoded)
+}

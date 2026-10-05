@@ -18,6 +18,7 @@ import (
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
+	"github.com/ysmood/gson"
 )
 
 type browserChromeSettingsStub struct {
@@ -407,3 +408,16 @@ func TestChromeProfileLaunchWhenNoChromeRunning(t *testing.T) {
 }
 
 // Note: isChromeRunning() is defined in browser_chrome.go
+
+func TestFormatEvalElementsDecodesRodValue(t *testing.T) {
+	value := gson.New(map[string]interface{}{
+		"elements": []interface{}{map[string]interface{}{"selector": "a", "tag": "a", "text": "Hi", "href": "https://x.test/"}},
+		"total":    1, "page": 1, "perPage": 20, "hasMore": false,
+	})
+
+	out := formatEvalElements(value)
+
+	if !strings.HasPrefix(out, "total: 1\n") || strings.Contains(out, "map[") {
+		t.Fatalf("expected a TOON table, got:\n%s", out)
+	}
+}

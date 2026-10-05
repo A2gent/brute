@@ -22,6 +22,9 @@ const (
 	actStallWindow     = 3
 	actPageExcerptCap  = 2000
 	actBailElementRows = 30
+	// actMaxAutoScrolls bounds scrolls the loop forces when the classifier says BLOCKED although
+	// more page is available; the needed control is often just below the fold.
+	actMaxAutoScrolls = 4
 )
 
 // errActStale means the observed page no longer matches the decision. The decision is discarded and
@@ -63,19 +66,23 @@ func NewBrowserActTool(chrome *BrowserChromeTool, client *jev.Client) *BrowserAc
 func (t *BrowserActTool) Name() string { return "browser_act" }
 
 func (t *BrowserActTool) Description() string {
-	return `Pursue one browser goal over multiple steps in a single call, returning a compact trace instead of per-click page dumps.
+	return `Pursue one browser goal over multiple steps in ONE call (fast, cheap, no page dumps).
+USE for multi-step flows on a known site: fill a form, search then open a result, apply filters, click through menus.
+DO NOT use for reading or judging page content (use browser_chrome get_text), picking an item by meaning
+("the project about X"), single clicks, screenshots, or anything needing login/password fields.
 
-A classifier picks an operation (CLICK, TYPE_TEXT, SELECT, SCROLL, WAIT, DONE, BLOCKED) and a visible
-element index each step; only indices are ever chosen, never selectors or JavaScript. Use it for
-multi-step flows (search, filter, navigate a form). Shares and serializes the same Chrome instance as
-browser_chrome, so do not call both in one turn.
+How it works: a fast classifier picks an operation (CLICK, TYPE_TEXT, SELECT, SCROLL, WAIT, DONE, BLOCKED)
+and an element index among the VISIBLE controls each step; it scrolls on its own when the target is below the
+fold. It cannot understand meaning, so phrase the goal with literal labels ("click Projects", "type golang in
+Search query"). It drives the same Chrome window as browser_chrome (the user sees it in the preview); never
+call both in one turn.
 
-Returns status done | blocked | low_confidence | needs_text | max_steps | error. On blocked,
-low_confidence and needs_text, control returns to you with the element table so you can continue with
-browser_chrome. "done" is the model's claim, not verification: confirm it yourself if it matters.
+Returns status done | blocked | low_confidence | needs_text | max_steps | error plus a compact step trace.
+On any non-done status the element table and page text are returned; continue with browser_chrome from the
+current page (do not navigate again). "done" is a claim, not verification: check it with get_text if it matters.
 
-Not supported: shadow DOM, iframes, canvas, file uploads, password fields, pop-up tabs, nested
-scrolling, hover-only menus.`
+Not supported: shadow DOM, iframes, canvas, file uploads, password fields, pop-up tabs, nested scrolling,
+hover-only menus.`
 }
 
 func (t *BrowserActTool) Schema() map[string]interface{} {
@@ -187,6 +194,7 @@ func (t *BrowserActTool) run(ctx context.Context, browser actBrowser, params act
 	}
 	run.Snapshot = snap
 	uncertain := 0
+	autoScrolls := 0
 
 	for {
 		if len(run.Steps) >= params.MaxSteps {
@@ -219,11 +227,22 @@ func (t *BrowserActTool) run(ctx context.Context, browser actBrowser, params act
 			return run
 		}
 
-		if decision.Operation == "BLOCKED" {
-			run.Status, run.Note = "blocked", "the classifier sees no supported operation that makes progress"
-			return run
-		}
 		confidence := decision.minConfidence()
+		forcedScroll := false
+		if decision.Operation == "BLOCKED" {
+			scroll, canScroll := space.Controls["SCROLL_DOWN"]
+			if !canScroll || autoScrolls >= actMaxAutoScrolls {
+				run.Status, run.Note = "blocked", "the classifier sees no supported operation that makes progress"
+				return run
+			}
+			// BLOCKED with unseen page below usually means "the control is not visible yet", not "stuck".
+			autoScrolls++
+			forcedScroll = true
+			decision = &actDecision{Operation: "SCROLL_DOWN", Action: scroll, HasAction: true, Probability: decision.Probability}
+			confidence = 1
+		} else {
+			autoScrolls = 0
+		}
 		if confidence < actMediumConfidence {
 			run.Status = "low_confidence"
 			run.Note = fmt.Sprintf("confidence %.2f below %.2f on %s, nothing executed", confidence, actMediumConfidence, decision.Operation)
@@ -274,7 +293,7 @@ func (t *BrowserActTool) run(ctx context.Context, browser actBrowser, params act
 		// Record execution before observing: a navigation during observation must not erase the action.
 		run.Steps = append(run.Steps, actStep{Operation: decision.Operation, Target: decision.Target,
 			Label: decision.Action.Label, Text: text, Probability: decision.Probability,
-			Uncertain: confidence < actHighConfidence})
+			Uncertain: confidence < actHighConfidence && !forcedScroll})
 		tools.ReportProgress(ctx, tools.ProgressEvent{Status: "running",
 			Content: fmt.Sprintf("step %d: %s %s", len(run.Steps), decision.Operation, decision.Action.Label)})
 
@@ -420,8 +439,29 @@ func formatActRun(run actRun, params actParams) string {
 		}
 		fmt.Fprintf(&sb, "page: %s\n", strings.ReplaceAll(excerpt, "\n", " · "))
 	}
+	if hint := actScrollHint(run); hint != "" {
+		sb.WriteString(hint)
+	}
 	if run.Note != "" {
 		fmt.Fprintf(&sb, "note: %s\n", run.Note)
 	}
 	return sb.String()
+}
+
+// actScrollHint tells the main agent that the element table covers only the viewport, so a bail-out
+// is not a verdict on the whole page.
+func actScrollHint(run actRun) string {
+	if run.Status != "blocked" && run.Status != "low_confidence" && run.Status != "max_steps" {
+		return ""
+	}
+	snap := run.Snapshot
+	if snap == nil {
+		return ""
+	}
+	below := snap.ScrollHeight - snap.ScrollY - snap.ViewportH
+	if below <= 2 {
+		return ""
+	}
+	return fmt.Sprintf("scroll: only the visible viewport is listed; the page continues %.0f px below (scrolling is available). "+
+		"Use browser_chrome get_text to read the whole page.\n", below)
 }

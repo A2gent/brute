@@ -37,7 +37,13 @@ func (t *BrowserActTool) openRod(ctx context.Context, url string) (actBrowser, f
 	if err := t.chrome.acquireOperation(ctx); err != nil {
 		return nil, nil, err
 	}
-	release := t.chrome.releaseOperation
+	// The rod connection is bound to this loop's context. browser_chrome reuses t.browser, so a
+	// connection left behind would fail its next call with "context canceled"; drop it on release,
+	// exactly as browser_chrome does after each of its own actions.
+	release := func() {
+		t.chrome.dropBrowserConnection()
+		t.chrome.releaseOperation()
+	}
 	ensure := t.chrome.ensureBrowserAndPage
 	if t.chrome.ensureBrowserAndPageOverride != nil {
 		ensure = t.chrome.ensureBrowserAndPageOverride

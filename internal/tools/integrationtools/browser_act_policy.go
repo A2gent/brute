@@ -28,7 +28,8 @@ Submit populated search fields before opening a result; a populated field alone 
 WAIT only when the needed control is absent/disabled, or submitted results are still loading.
 If Search/Submit is visible and the required fields are ready, CLICK it immediately.
 DONE requires visible evidence that ALL requirements are satisfied. BLOCKED means no supported
-operation can make progress.`
+operation can make progress; never choose BLOCKED while SCROLL_DOWN is offered and the needed control
+is not visible yet - SCROLL_DOWN instead.`
 
 const actTargetRules = `Choose the best observed target if the next operation is the one specified in this
 question. Another question decides which operation to execute. Do not choose a field that already
@@ -49,15 +50,18 @@ type actAction struct {
 }
 
 type actSnapshot struct {
-	URL     string                     `json:"url"`
-	Title   string                     `json:"title"`
-	Text    string                     `json:"text"`
-	ScrollY float64                    `json:"scroll_y"`
-	Actions []actAction                `json:"actions"`
-	Marker  json.RawMessage            `json:"marker"`
-	PageKey json.RawMessage            `json:"page_key"`
-	Guards  map[string]json.RawMessage `json:"guards"`
-	Omitted int                        `json:"omitted"`
+	URL     string  `json:"url"`
+	Title   string  `json:"title"`
+	Text    string  `json:"text"`
+	ScrollY float64 `json:"scroll_y"`
+	// ScrollHeight is the full page height; with ScrollY and ViewportH it tells whether content lies below.
+	ScrollHeight float64                    `json:"scroll_height"`
+	ViewportH    float64                    `json:"viewport_h"`
+	Actions      []actAction                `json:"actions"`
+	Marker       json.RawMessage            `json:"marker"`
+	PageKey      json.RawMessage            `json:"page_key"`
+	Guards       map[string]json.RawMessage `json:"guards"`
+	Omitted      int                        `json:"omitted"`
 }
 
 type actOption struct {

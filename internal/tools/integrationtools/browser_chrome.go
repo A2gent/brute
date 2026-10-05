@@ -134,6 +134,7 @@ Actions:
 - eval: Run JavaScript (requires 'script')
 
 Workflow: navigate -> get_interactive_elements -> click/type -> verify with get_text or screenshot.
+For a multi-step flow on a known site (fill a form, search then open a result, filters, menus), prefer the browser_act tool if it is available: one call instead of many. Use this tool for single actions, reading page text, choosing by meaning, screenshots, and to continue after browser_act returns blocked/low_confidence.
 Browser state is shared and actions are serialized. Do not call browser_chrome through parallel or issue multiple browser_chrome calls in the same turn.
 For visual apps, menus, tabs, timetables, canvases, or pages where text exists but the right control is unclear, take a screenshot and use click_at with the coordinates from get_interactive_elements or the screenshot.
 Prefer get_text/get_interactive_elements for cheap orientation; use screenshot only when visual layout matters or DOM signals are incomplete.`
@@ -545,7 +546,7 @@ func (t *BrowserChromeTool) Execute(ctx context.Context, params json.RawMessage)
 
 		// Format output in TOON format (Token-Oriented Object Notation)
 		// TOON is ~40%% more token-efficient than JSON for structured data
-		return &tools.Result{Success: true, Output: formatElementsAsTOON(result.Value)}, nil
+		return &tools.Result{Success: true, Output: formatEvalElements(result.Value)}, nil
 
 	case "eval":
 		script, _ := input["script"].(string)

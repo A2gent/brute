@@ -97,6 +97,11 @@ func (t *ParallelTool) Schema() map[string]interface{} {
 }
 
 func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Result, error) {
+	return t.execute(ctx, params, true)
+}
+
+// Pipeline predicates need original JSON, not a truncated verdict.
+func (t *ParallelTool) execute(ctx context.Context, params json.RawMessage, truncate bool) (*Result, error) {
 	var p ParallelParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid parameters: %w", err)
@@ -254,7 +259,7 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 			commandKind = "parallel"
 		}
 		// Bash originals must reach session-scoped retrieval before any lossy cap.
-		if results[i].Tool != "bash" && results[i].Tool != "pipeline" {
+		if truncate && results[i].Tool != "bash" && results[i].Tool != "pipeline" {
 			results[i].Output = truncateToChars(results[i].Output, maxPerStep)
 		}
 	}

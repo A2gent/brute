@@ -29,10 +29,14 @@ type PipelineParams struct {
 }
 
 type PipelineStep struct {
-	Tool          string          `json:"tool"`
-	Args          json.RawMessage `json:"args,omitempty"`
-	InputFromPrev bool            `json:"input_from_prev,omitempty"`
-	InputKey      string          `json:"input_key,omitempty"`
+	Tool          string             `json:"tool"`
+	Args          json.RawMessage    `json:"args,omitempty"`
+	InputFromPrev bool               `json:"input_from_prev,omitempty"`
+	InputKey      string             `json:"input_key,omitempty"`
+	PerItem       bool               `json:"per_item,omitempty"`
+	MaxItems      int                `json:"max_items,omitempty"`
+	KeepIf        *PipelinePredicate `json:"keep_if,omitempty"`
+	DropIf        *PipelinePredicate `json:"drop_if,omitempty"`
 }
 
 func NewPipelineTool(manager *Manager) *PipelineTool {
@@ -44,7 +48,7 @@ func (t *PipelineTool) Name() string {
 }
 
 func (t *PipelineTool) Description() string {
-	return "Run a sequence of tools in one call. Each step can receive the previous step output, reducing LLM context usage."
+	return `Run tools sequentially, keeping intermediate output out of LLM context. Set per_item:true to run a step concurrently for each previous JSON-array item or nonempty line (max_items defaults to 12, cannot exceed 12; uses parallel restrictions/timeouts). Items are injected into input_key (default input). Without a predicate, forwards a JSON array of output strings. keep_if or drop_if tests a top-level JSON output field with eq or gte; passing items forward preserves the ORIGINAL input, not the verdict. Tool/predicate errors stop the pipeline. Example: find_files(args:{pattern:"**/*.go",page_size:12}) -> classify(per_item:true,input_key:"path",args:{type:"choice",question:"Relevant?",criteria:{include:"Relevant",skip:"Unrelated"}},keep_if:{field:"answer",op:"eq",value:"include"}) -> read(per_item:true,input_key:"path"). For score use keep_if:{field:"answer",op:"gte",value:2}; for grep paths use args.mode:"files". Native search paths resolve against args.path; find_files pagination text is ignored.`
 }
 
 func (t *PipelineTool) Schema() map[string]interface{} {
@@ -69,6 +73,10 @@ func (t *PipelineTool) Schema() map[string]interface{} {
 							"type":        "boolean",
 							"description": "If true, inject previous stage output into args[input_key] (or args.input by default).",
 						},
+						"per_item":  map[string]interface{}{"type": "boolean", "description": "Run once per previous JSON-array item or nonempty line. Inject each item into input_key, even without input_from_prev. Requires a previous step; uses parallel restrictions/timeouts. Output is an ordered JSON array."},
+						"max_items": map[string]interface{}{"type": "integer", "minimum": 1, "maximum": parallelMaxSteps, "description": "Per-item bound (default/max 12). Excess items fail rather than silently dropping candidates."},
+						"keep_if":   pipelinePredicateSchema("Keep original items whose tool output matches this predicate. Requires per_item; cannot combine with drop_if."),
+						"drop_if":   pipelinePredicateSchema("Drop original items whose tool output matches this predicate. Requires per_item; cannot combine with keep_if."),
 						"input_key": map[string]interface{}{
 							"type":        "string",
 							"description": "Argument key to receive previous output (default: input).",
@@ -79,7 +87,7 @@ func (t *PipelineTool) Schema() map[string]interface{} {
 			},
 			"max_output_chars": map[string]interface{}{
 				"type":        "integer",
-				"description": "Max characters returned from the final stage output (default: 12000, max: 200000). Final relevance_gate verdicts are exempt to preserve all paths and full fallback.",
+				"description": "Max characters returned from the final stage output (default: 12000, max: 200000). Per-item outputs are capped within array strings, preserving valid JSON. Final per-item gates and relevance_gate verdicts are lossless.",
 			},
 		},
 		"required": []string{"steps"},
@@ -122,6 +130,7 @@ func (t *PipelineTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 	}
 
 	prevOutput := ""
+	var previousArgs map[string]interface{}
 	stageMeta := make([]map[string]interface{}, 0, len(p.Steps))
 	var images []interface{}
 	commandMetadata := make(map[string]interface{})
@@ -135,12 +144,16 @@ func (t *PipelineTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 			return &Result{Success: false, Error: fmt.Sprintf("step %d: recursive pipeline call is not allowed", i+1)}, nil
 		}
 
+		if err := validatePipelineItems(stage, i); err != nil {
+			return &Result{Success: false, Error: fmt.Sprintf("step %d: %v", i+1, err)}, nil
+		}
+
 		args, err := decodeStageArgs(stage.Args)
 		if err != nil {
 			return &Result{Success: false, Error: fmt.Sprintf("step %d: %v", i+1, err)}, nil
 		}
 
-		if i > 0 && (stage.InputFromPrev || strings.TrimSpace(stage.InputKey) != "") {
+		if !stage.PerItem && i > 0 && (stage.InputFromPrev || strings.TrimSpace(stage.InputKey) != "") {
 			inputKey := strings.TrimSpace(stage.InputKey)
 			if inputKey == "" {
 				inputKey = "input"
@@ -173,7 +186,12 @@ func (t *PipelineTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 		}
 
 		start := time.Now()
-		stageResult, err := t.manager.Execute(ctx, toolName, stageParams)
+		var stageResult *Result
+		if stage.PerItem {
+			stageResult, err = t.executePipelineItems(ctx, stage, p.Steps[i-1], previousArgs, prevOutput, args)
+		} else {
+			stageResult, err = t.manager.Execute(ctx, toolName, stageParams)
+		}
 		duration := time.Since(start)
 		stageInfo := map[string]interface{}{
 			"step":        i + 1,
@@ -230,6 +248,7 @@ func (t *PipelineTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 		}
 
 		prevOutput = stageResult.Output
+		previousArgs = args
 		stageInfo["success"] = true
 		stageInfo["output_chars"] = len(prevOutput)
 		stageMeta = append(stageMeta, stageInfo)
@@ -237,7 +256,33 @@ func (t *PipelineTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 
 	// Keep gate verdicts lossless: truncation hides skipped paths and full fallback.
 	finalOutput, truncated := prevOutput, false
-	if command, _ := commandMetadata["command_output"].(bool); !command && commandMetadata["command_output_kind"] != "parallel" && normalizeToolName(p.Steps[len(p.Steps)-1].Tool) != "relevance_gate" {
+	last := p.Steps[len(p.Steps)-1]
+	if last.PerItem {
+		// Keep the array parseable; gate identities must never be truncated.
+		if last.KeepIf == nil && last.DropIf == nil && commandMetadata["command_output"] != true {
+			var outputs []string
+			if err := json.Unmarshal([]byte(prevOutput), &outputs); err != nil {
+				return nil, err
+			}
+			perItem := maxChars
+			if len(outputs) > 0 {
+				perItem = maxChars / len(outputs)
+				if perItem < 1 {
+					perItem = 1
+				}
+			}
+			for i := range outputs {
+				var capped bool
+				outputs[i], capped = truncateWithFlag(outputs[i], perItem)
+				truncated = truncated || capped
+			}
+			raw, err := json.Marshal(outputs)
+			if err != nil {
+				return nil, err
+			}
+			finalOutput = string(raw)
+		}
+	} else if command, _ := commandMetadata["command_output"].(bool); !command && commandMetadata["command_output_kind"] != "parallel" && normalizeToolName(p.Steps[len(p.Steps)-1].Tool) != "relevance_gate" {
 		finalOutput, truncated = truncateWithFlag(prevOutput, maxChars)
 	}
 	commandMetadata["pipeline_steps"] = stageMeta

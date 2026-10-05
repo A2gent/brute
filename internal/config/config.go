@@ -272,13 +272,14 @@ func GetProviderDefinition(ptype ProviderType) *ProviderDefinition {
 
 // ToolsConfig configures tool permissions
 type ToolsConfig struct {
-	Bash  string `json:"bash"` // "allow", "deny", "ask"
-	Read  string `json:"read"`
-	Write string `json:"write"`
-	Edit  string `json:"edit"`
-	Glob  string `json:"glob"`
-	Grep  string `json:"grep"`
-	Task  string `json:"task"`
+	RelevanceGateDisabled bool   `json:"relevance_gate_disabled,omitempty"`
+	Bash                  string `json:"bash"` // "allow", "deny", "ask"
+	Read                  string `json:"read"`
+	Write                 string `json:"write"`
+	Edit                  string `json:"edit"`
+	Glob                  string `json:"glob"`
+	Grep                  string `json:"grep"`
+	Task                  string `json:"task"`
 }
 
 // DefaultConfig returns the default configuration

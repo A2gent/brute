@@ -63,6 +63,7 @@ func (s *Server) ToolManagerForSession(sess *session.Session) *tools.Manager {
 }
 
 func (s *Server) toolManagerForSession(sess *session.Session) *tools.Manager {
+	s.registerRelevanceGateTool(s.toolManager)
 	workDir := s.resolveSessionWorkDir(sess)
 	settings, err := s.store.GetSettings()
 	if err != nil {
@@ -143,6 +144,7 @@ func (s *Server) registerServerBackedTools(manager *tools.Manager) {
 		return
 	}
 	logging.Debug("Registering server-backed tools...")
+	s.registerRelevanceGateTool(manager)
 	manager.Register(newRecurringJobsTool(s))
 	manager.Register(newMCPManageTool(s))
 	manager.Register(newMCPListToolsTool(s))

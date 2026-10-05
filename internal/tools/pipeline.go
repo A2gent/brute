@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -78,7 +79,7 @@ func (t *PipelineTool) Schema() map[string]interface{} {
 			},
 			"max_output_chars": map[string]interface{}{
 				"type":        "integer",
-				"description": "Max characters returned from the final stage output (default: 12000, max: 200000).",
+				"description": "Max characters returned from the final stage output (default: 12000, max: 200000). Final relevance_gate verdicts are exempt to preserve all paths and full fallback.",
 			},
 		},
 		"required": []string{"steps"},
@@ -123,6 +124,7 @@ func (t *PipelineTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 	prevOutput := ""
 	stageMeta := make([]map[string]interface{}, 0, len(p.Steps))
 	var images []interface{}
+	commandMetadata := make(map[string]interface{})
 
 	for i, stage := range p.Steps {
 		toolName := normalizeToolName(stage.Tool)
@@ -144,6 +146,25 @@ func (t *PipelineTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 				inputKey = "input"
 			}
 			args[inputKey] = prevOutput
+			// Native search paths are relative to that search's root, not necessarily
+			// the session cwd. Resolve locally before injecting into the gate.
+			previous := p.Steps[i-1]
+			previousName := normalizeToolName(previous.Tool)
+			if toolName == "relevance_gate" && inputKey == "input" && (previousName == "file_search" || previousName == "content_search") {
+				searchArgs, _ := decodeStageArgs(previous.Args)
+				searchRoot, _ := searchArgs["path"].(string)
+				root, err := filepath.Abs(resolveToolPath(t.manager.WorkDir(), searchRoot))
+				if err != nil {
+					return &Result{Success: false, Error: fmt.Sprintf("step %d: resolve search root: %v", i+1, err)}, nil
+				}
+				paths := relevanceSearchPaths(prevOutput)
+				for j, path := range paths {
+					if !filepath.IsAbs(path) {
+						paths[j] = filepath.Join(root, path)
+					}
+				}
+				args[inputKey] = paths
+			}
 		}
 
 		stageParams, err := json.Marshal(args)
@@ -185,6 +206,13 @@ func (t *PipelineTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 		if childImages, ok := stageResult.Metadata["admission_images"].([]interface{}); ok {
 			images = append(images, childImages...)
 		}
+		commandMetadata = make(map[string]interface{})
+		for key, value := range stageResult.Metadata {
+			commandMetadata[key] = value
+		}
+		if toolName == "bash" {
+			commandMetadata["command_output"] = true
+		}
 		if !stageResult.Success {
 			stageInfo["success"] = false
 			stageInfo["output_chars"] = len(stageResult.Output)
@@ -193,14 +221,12 @@ func (t *PipelineTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 			if errMsg == "" {
 				errMsg = "tool returned unsuccessful result"
 			}
-			return &Result{
-				Success: false,
-				Error:   fmt.Sprintf("step %d (%s) failed: %s", i+1, toolName, errMsg),
-				Output:  truncateToChars(stageResult.Output, maxChars),
-				Metadata: map[string]interface{}{
-					"pipeline_steps": stageMeta,
-				},
-			}, nil
+			output := stageResult.Output
+			if toolName != "bash" && commandMetadata["command_output"] != true && commandMetadata["command_output_kind"] != "parallel" {
+				output = truncateToChars(output, maxChars)
+			}
+			commandMetadata["pipeline_steps"] = stageMeta
+			return &Result{Success: false, Error: fmt.Sprintf("step %d (%s) failed: %s", i+1, toolName, errMsg), Output: output, Metadata: commandMetadata}, nil
 		}
 
 		prevOutput = stageResult.Output
@@ -209,17 +235,16 @@ func (t *PipelineTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 		stageMeta = append(stageMeta, stageInfo)
 	}
 
-	finalOutput, truncated := truncateWithFlag(prevOutput, maxChars)
-	return &Result{
-		Success: true,
-		Output:  finalOutput,
-		Metadata: map[string]interface{}{
-			"pipeline_steps":         stageMeta,
-			"final_output_chars":     len(prevOutput),
-			"final_output_truncated": truncated,
-			"admission_images":       images,
-		},
-	}, nil
+	// Keep gate verdicts lossless: truncation hides skipped paths and full fallback.
+	finalOutput, truncated := prevOutput, false
+	if command, _ := commandMetadata["command_output"].(bool); !command && commandMetadata["command_output_kind"] != "parallel" && normalizeToolName(p.Steps[len(p.Steps)-1].Tool) != "relevance_gate" {
+		finalOutput, truncated = truncateWithFlag(prevOutput, maxChars)
+	}
+	commandMetadata["pipeline_steps"] = stageMeta
+	commandMetadata["final_output_chars"] = len(prevOutput)
+	commandMetadata["final_output_truncated"] = truncated
+	commandMetadata["admission_images"] = images
+	return &Result{Success: true, Output: finalOutput, Metadata: commandMetadata}, nil
 }
 
 func decodeStageArgs(raw json.RawMessage) (map[string]interface{}, error) {

@@ -61,6 +61,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to update session: "+err.Error())
 		return
 	}
+	s.publishSessionCatalog("session_updated", sess)
 
 	runCtx, cancelRun := s.chatStreamRunContext(r.Context(), sess)
 	runID := s.registerActiveSessionRun(sessionID, cancelRun)

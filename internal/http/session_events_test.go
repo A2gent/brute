@@ -172,3 +172,27 @@ func TestHandleSessionEventsReplaysSnapshotAndPublishedEvents(t *testing.T) {
 		t.Fatal("handler did not stop after request cancellation")
 	}
 }
+
+func TestSubscribeSessionEventsReplaysLiveTurn(t *testing.T) {
+	s := &Server{sessionEventSubs: make(map[string]map[chan ChatStreamEvent]struct{})}
+	s.publishSessionEvent("s1", ChatStreamEvent{Type: "assistant_delta", TurnID: "t1", Delta: "he"})
+	s.publishSessionEvent("s1", ChatStreamEvent{Type: "assistant_delta", TurnID: "t1", Delta: "llo"})
+	s.publishSessionEvent("s1", ChatStreamEvent{Type: "tool_started", TurnID: "t1"})
+	s.publishSessionEvent("s1", ChatStreamEvent{Type: "assistant_delta", TurnID: "t0", Delta: "persisted"})
+
+	events, unsubscribe := s.subscribeSessionEventsWithReplay("s1", map[string]bool{"t0": true})
+	got := []ChatStreamEvent{<-events, <-events}
+	unsubscribe()
+	if got[0].Delta != "hello" || got[1].Type != "tool_started" {
+		t.Fatalf("unexpected replay: %+v", got)
+	}
+
+	s.publishSessionEvent("s1", ChatStreamEvent{Type: "tool_executing"})
+	events, unsubscribe = s.subscribeSessionEventsWithReplay("s1", nil)
+	defer unsubscribe()
+	select {
+	case ev := <-events:
+		t.Fatalf("buffer should be cleared after the turn is persisted, got %+v", ev)
+	default:
+	}
+}

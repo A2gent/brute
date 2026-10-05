@@ -50,6 +50,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to update session: "+err.Error())
 		return
 	}
+	s.publishSessionCatalog("session_updated", sess)
 
 	runCtx, cancelRun := context.WithCancel(s.sessionRunParentContext())
 	runID := s.registerActiveSessionRun(sessionID, cancelRun)

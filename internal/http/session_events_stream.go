@@ -29,7 +29,13 @@ func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	events, unsubscribe := s.SubscribeSessionEvents(sessionID)
+	persistedTurns := map[string]bool{}
+	for _, m := range sess.Messages {
+		if id, ok := m.Metadata["runtime_turn_id"].(string); ok && id != "" {
+			persistedTurns[id] = true
+		}
+	}
+	events, unsubscribe := s.subscribeSessionEventsWithReplay(sessionID, persistedTurns)
 	defer unsubscribe()
 
 	writeSSE := func(event ChatStreamEvent) bool {

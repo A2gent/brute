@@ -51,6 +51,7 @@ type Server struct {
 	activeRuns               map[string]map[string]context.CancelFunc
 	sessionEventsMu          sync.Mutex
 	sessionEventSubs         map[string]map[chan ChatStreamEvent]struct{}
+	liveTurnEvents           map[string][]ChatStreamEvent // guarded by sessionEventsMu
 	sessionCatalogMu         sync.Mutex
 	sessionCatalogSubs       map[chan SessionCatalogEvent]string
 	serialQueueMu            sync.Mutex

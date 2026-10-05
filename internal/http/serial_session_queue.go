@@ -150,7 +150,11 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 	if !ok {
 		sess.AddAssistantMessage("Queued serial session could not start because it has no initial user message.", nil)
 		sess.SetStatus(session.StatusFailed)
-		_ = s.sessionManager.Save(sess)
+		if err := s.sessionManager.Save(sess); err != nil {
+			logging.Warn("Serial session queue failed to mark session %s failed: %v", sess.ID, err)
+			return true
+		}
+		s.publishSessionCatalog("session_updated", sess)
 		return true
 	}
 
@@ -159,6 +163,7 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 		logging.Warn("Serial session queue failed to mark session %s running: %v", sess.ID, err)
 		return true
 	}
+	s.publishSessionCatalog("session_updated", sess)
 	defer s.queueTelegramSessionMessageSync(sess.ID)
 
 	runCtx, cancelRun := context.WithCancel(ctx)

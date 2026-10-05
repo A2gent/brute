@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -210,6 +211,38 @@ func (s *Server) transcribeOpenRouter(ctx context.Context, model string, audio [
 	return text, nil
 }
 
+func openRouterSpeechResponseFormat(model string) string {
+	if strings.HasPrefix(strings.ToLower(model), "google/gemini-") {
+		return "pcm"
+	}
+	return "mp3"
+}
+
+func wrapOpenRouterPCMAsWAV(pcm []byte) []byte {
+	const (
+		sampleRate     = 24000
+		channels       = 1
+		bitsPerSample  = 16
+		bytesPerSample = bitsPerSample / 8
+	)
+	out := make([]byte, 44+len(pcm))
+	copy(out[0:4], "RIFF")
+	binary.LittleEndian.PutUint32(out[4:8], uint32(len(out)-8))
+	copy(out[8:12], "WAVE")
+	copy(out[12:16], "fmt ")
+	binary.LittleEndian.PutUint32(out[16:20], 16)
+	binary.LittleEndian.PutUint16(out[20:22], 1)
+	binary.LittleEndian.PutUint16(out[22:24], channels)
+	binary.LittleEndian.PutUint32(out[24:28], sampleRate)
+	binary.LittleEndian.PutUint32(out[28:32], sampleRate*channels*bytesPerSample)
+	binary.LittleEndian.PutUint16(out[32:34], channels*bytesPerSample)
+	binary.LittleEndian.PutUint16(out[34:36], bitsPerSample)
+	copy(out[36:40], "data")
+	binary.LittleEndian.PutUint32(out[40:44], uint32(len(pcm)))
+	copy(out[44:], pcm)
+	return out
+}
+
 func (s *Server) synthesizeOpenRouter(ctx context.Context, model, text, language string) ([]byte, string, error) {
 	apiKey := s.resolveOpenRouterAPIKey()
 	if apiKey == "" {
@@ -234,10 +267,11 @@ func (s *Server) synthesizeOpenRouter(ctx context.Context, model, text, language
 		return nil, "", fmt.Errorf("OpenRouter speech model %q not found in speech catalog; refresh the speech model list and choose an available model", model)
 	}
 	voice := selectOpenRouterSpeechVoice(selected.SupportedVoices, language)
+	format := openRouterSpeechResponseFormat(model)
 	payload := map[string]any{
 		"model":           model,
 		"input":           text,
-		"response_format": "mp3",
+		"response_format": format,
 	}
 	if voice != "" {
 		payload["voice"] = voice
@@ -256,16 +290,24 @@ func (s *Server) synthesizeOpenRouter(ctx context.Context, model, text, language
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "audio/mpeg")
+	if format == "pcm" {
+		req.Header.Set("Accept", "audio/pcm")
+	} else {
+		req.Header.Set("Accept", "audio/mpeg")
+	}
 
 	resp, err := s.openRouterDo(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to reach OpenRouter speech (model %q, voice %q): %w", model, voiceContext, err)
 	}
 	defer resp.Body.Close()
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	const maxSpeechResponseBytes = 16 << 20
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxSpeechResponseBytes+1))
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to read OpenRouter speech response (model %q, voice %q): %w", model, voiceContext, err)
+	}
+	if len(respBody) > maxSpeechResponseBytes {
+		return nil, "", fmt.Errorf("OpenRouter speech response exceeded %d bytes (model %q)", maxSpeechResponseBytes, model)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, "", fmt.Errorf("OpenRouter speech failed (%d, model %q, voice %q): %s", resp.StatusCode, model, voiceContext, strings.TrimSpace(string(respBody)))
@@ -274,7 +316,13 @@ func (s *Server) synthesizeOpenRouter(ctx context.Context, model, text, language
 		return nil, "", fmt.Errorf("OpenRouter returned empty speech audio (model %q, voice %q)", model, voiceContext)
 	}
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
-	if contentType == "" {
+	if format == "pcm" {
+		if len(respBody)%2 != 0 {
+			return nil, "", fmt.Errorf("OpenRouter returned invalid 16-bit PCM data with an incomplete sample (model %q)", model)
+		}
+		respBody = wrapOpenRouterPCMAsWAV(respBody)
+		contentType = "audio/wav"
+	} else if contentType == "" {
 		contentType = "audio/mpeg"
 	}
 	return respBody, contentType, nil

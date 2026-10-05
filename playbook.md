@@ -27,3 +27,4 @@
 - Preview status must inspect both Chrome product and User-Agent: headless Chrome may report the ordinary Chrome product string. Keep target lifecycle waits scoped per target and cancellation-aware.
 - When splitting Go tests into a new file, carry over the imports used by that fragment and compile the focused package immediately.
 - A real headless Chrome smoke check found no initial screencast frame within four seconds on an already-loaded static page with everyNthFrame=2. Preserve explicit protocol parameters, report this limitation, and investigate a read-only initial snapshot without resizing the viewport.
+- Docker delegation tests that use a fake OpenAI provider must clear both `A2GENT_PARENT_PROXY_URL` and `OPENAI_BASE_URL` with `t.Setenv`; either inherited override redirects requests away from the fixture. If unrelated staged code prevents package compilation, leave it untouched and report any explicit-file test exclusion.

@@ -36,6 +36,9 @@ func (c *Compressor) AdmitToolResult(sess *session.Session, tr llm.ToolResult, m
 	if maxTokens < MinAdmissionMaxTokens {
 		maxTokens = MinAdmissionMaxTokens
 	}
+	if command, ok := c.admitCommandPreview(sess, tr, original); ok {
+		return command
+	}
 	originalRunes := utf8.RuneCountInString(tr.Content)
 	// Divide first to avoid overflow when configuration has a very large limit.
 	if (originalRunes+3)/4 <= maxTokens {

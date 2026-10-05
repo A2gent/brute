@@ -236,6 +236,7 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 	}
 
 	success := true
+	commandKind := ""
 	totalOutputChars := 0
 	maxPerStep := maxChars
 	if len(results) > 0 {
@@ -249,7 +250,13 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 			success = false
 		}
 		totalOutputChars += len(results[i].Output)
-		results[i].Output = truncateToChars(results[i].Output, maxPerStep)
+		if results[i].Tool == "bash" || results[i].Metadata["command_output"] == true || results[i].Metadata["command_output_kind"] == "parallel" {
+			commandKind = "parallel"
+		}
+		// Bash originals must reach session-scoped retrieval before any lossy cap.
+		if results[i].Tool != "bash" && results[i].Tool != "pipeline" {
+			results[i].Output = truncateToChars(results[i].Output, maxPerStep)
+		}
 	}
 
 	// Read-cache recovery bodies must stay out of the model-visible JSON. Keep
@@ -298,6 +305,7 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 		Metadata: map[string]interface{}{
 			"read_cache_references": readReferences,
 			"admission_images":      images,
+			"command_output_kind":   commandKind,
 			"parallel_steps":        len(results),
 			"total_output_chars":    totalOutputChars,
 			"max_output_chars":      maxChars,

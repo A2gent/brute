@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -69,4 +70,40 @@ func executeGrepTool(t *testing.T, tool *GrepTool, params map[string]interface{}
 		t.Fatalf("tool execution failed: %v", err)
 	}
 	return result
+}
+
+func TestGrepTool_SummaryThreshold(t *testing.T) {
+	for _, n := range []int{100, 101} {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			dir := t.TempDir()
+			createTestFile(t, dir, "a.txt", strings.Repeat("needle\n", n))
+			tool := NewGrepTool(dir)
+			result := executeGrepTool(t, tool, map[string]interface{}{"pattern": "needle"})
+			summary := strings.Contains(result.Output, "full_output=true")
+			if summary != (n > 100) {
+				t.Fatalf("summary=%v for %d rows", summary, n)
+			}
+			if summary {
+				assertContains(t, result.Output, "a.txt: 101")
+				assertContains(t, result.Output, "a.txt:10:")
+				assertNotContains(t, result.Output, "a.txt:11:")
+			}
+			full := executeGrepTool(t, tool, map[string]interface{}{"pattern": "needle", "full_output": true})
+			assertContains(t, full.Output, fmt.Sprintf("a.txt:%d:", n))
+		})
+	}
+}
+
+func TestGrepTool_TokenThresholdAndCounts(t *testing.T) {
+	dir := t.TempDir()
+	createTestFile(t, dir, "a.txt", strings.Repeat("needle"+strings.Repeat("x", 450)+"\n", 40))
+	createTestFile(t, dir, "b.txt", "needle\n")
+	tool := NewGrepTool(dir)
+	result := executeGrepTool(t, tool, map[string]interface{}{"pattern": "needle"})
+	assertContains(t, result.Output, "full_output=true")
+	assertContains(t, result.Output, "a.txt: 40")
+	assertContains(t, result.Output, "b.txt: 1")
+	counts := executeGrepTool(t, tool, map[string]interface{}{"pattern": "needle", "mode": "count", "max_results": 1})
+	assertContains(t, counts.Output, "a.txt: 40")
+	assertContains(t, counts.Output, "b.txt: 1")
 }

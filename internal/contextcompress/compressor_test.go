@@ -210,7 +210,7 @@ func hasTool(tools []llm.ToolDefinition, name string) bool {
 func largeLogOutput() string {
 	return strings.Join([]string{
 		"running tests",
-		strings.Repeat("noise line\n", 1400),
+		strings.Repeat("noise line\n", 1800),
 		"FAIL: TestImportantThing",
 		"panic: cannot open database",
 		"exit status 1",
@@ -229,7 +229,7 @@ func largeSearchOutput() string {
 
 func largeQueryableOutput() string {
 	lines := []string{"alpha first"}
-	for i := 0; i < 900; i++ {
+	for i := 0; i < 1200; i++ {
 		lines = append(lines, fmt.Sprintf("noise line %04d", i))
 	}
 	lines = append(lines,

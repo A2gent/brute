@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/bmatcuk/doublestar/v4"
 )
@@ -38,6 +39,7 @@ type GrepParams struct {
 	Exclude            []string `json:"exclude,omitempty"` // Relative path filters
 	MaxResults         int      `json:"max_results,omitempty"`
 	MaxMatchesPerFile  int      `json:"max_matches_per_file,omitempty"`
+	FullOutput         bool     `json:"full_output,omitempty"`
 	Mode               string   `json:"mode,omitempty"` // lines|files|count
 	UseDefaultExcludes *bool    `json:"use_default_excludes,omitempty"`
 }
@@ -54,7 +56,8 @@ func (t *GrepTool) Name() string {
 func (t *GrepTool) Description() string {
 	return `Search file contents using regular expressions.
 Use mode=files or mode=count for compact outputs.
-Use include/exclude and limits to reduce context usage.`
+Use include/exclude and limits to reduce context usage.
+Broad line output is summarized; pass full_output=true to show all rows within the limits.`
 }
 
 func (t *GrepTool) Schema() map[string]interface{} {
@@ -87,6 +90,10 @@ func (t *GrepTool) Schema() map[string]interface{} {
 			"max_matches_per_file": map[string]interface{}{
 				"type":        "integer",
 				"description": "Maximum matches to emit per file (default: unlimited)",
+			},
+			"full_output": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Bypass broad-search summary; existing row and line-length limits still apply (default: false)",
 			},
 			"mode": map[string]interface{}{
 				"type":        "string",
@@ -157,6 +164,10 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 		maxResults = maxGrepResults
 	}
 	maxPerFile := p.MaxMatchesPerFile
+	// Retain only enough rows per file to fill the output; still scan for exact counts.
+	if maxPerFile <= 0 || maxPerFile > maxResults {
+		maxPerFile = maxResults
+	}
 	useDefaultExcludes := true
 	if p.UseDefaultExcludes != nil {
 		useDefaultExcludes = *p.UseDefaultExcludes
@@ -196,8 +207,10 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 					mu.Lock()
 					fileCounts[task.relPath] = totalCount
 					matches = append(matches, fileMatches...)
-					if len(matches) >= maxResults {
-						workerCancel()
+					// Do not cancel at the display limit: counts must cover the whole search.
+					sort.Slice(matches, func(i, j int) bool { return grepMatchLess(matches[i], matches[j]) })
+					if len(matches) > maxResults {
+						matches = matches[:maxResults]
 					}
 					mu.Unlock()
 				}
@@ -272,7 +285,7 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 
 	// Sort by modification time (newest first)
 	sort.Slice(matches, func(i, j int) bool {
-		return matches[i].modTime > matches[j].modTime
+		return grepMatchLess(matches[i], matches[j])
 	})
 
 	// Limit results
@@ -312,10 +325,30 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 	}
 
 	output := strings.Join(lines, "\n")
+	totalMatches := 0
+	for _, count := range fileCounts {
+		totalMatches += count
+	}
+	if mode == "lines" && !p.FullOutput && (totalMatches > 100 || utf8.RuneCountInString(output) > 16000) {
+		paths := make([]string, 0, len(fileCounts))
+		for path := range fileCounts {
+			paths = append(paths, path)
+		}
+		sort.Strings(paths)
+		var summary strings.Builder
+		summary.WriteString("Broad search summarized. Match counts per file (complete scan):\n")
+		for _, path := range paths {
+			fmt.Fprintf(&summary, "%s: %d\n", path, fileCounts[path])
+		}
+		k := min(10, len(lines))
+		fmt.Fprintf(&summary, "\nFirst %d matches (within max_results=%d):\n%s\n\nNarrow pattern, path or include; pass full_output=true for all rows within the configured limits.", k, maxResults, strings.Join(lines[:k], "\n"))
+		output = summary.String()
+	}
 
 	return &Result{
-		Success: true,
-		Output:  output,
+		Success:  true,
+		Output:   output,
+		Metadata: map[string]interface{}{"full_output": p.FullOutput},
 	}, nil
 }
 
@@ -368,6 +401,16 @@ func (t *GrepTool) searchFile(fullPath, relPath string, re *regexp.Regexp, modTi
 	}
 
 	return matches, totalCount
+}
+
+func grepMatchLess(a, b grepMatch) bool {
+	if a.modTime != b.modTime {
+		return a.modTime > b.modTime
+	}
+	if a.file != b.file {
+		return a.file < b.file
+	}
+	return a.line < b.line
 }
 
 // Ensure GrepTool implements Tool

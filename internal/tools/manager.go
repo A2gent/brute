@@ -260,7 +260,16 @@ func (m *Manager) ExecuteParallel(ctx context.Context, calls []llm.ToolCall) []l
 				if message == "" {
 					message = "tool returned unsuccessful result"
 				}
-				tr.Content = fmt.Sprintf("Error: %s", message)
+				tr.Content = result.Output
+				if strings.TrimSpace(result.Error) != "" {
+					// Append status so stderr line coordinates remain relative to the raw output.
+					if tr.Content != "" {
+						tr.Content += "\n"
+					}
+					tr.Content += fmt.Sprintf("Error: %s", message)
+				} else if tr.Content == "" {
+					tr.Content = fmt.Sprintf("Error: %s", message)
+				}
 				tr.IsError = true
 				tr.Metadata = result.Metadata
 				logging.LogToolExecution(toolName, false, duration)

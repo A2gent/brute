@@ -109,10 +109,18 @@ func (c *Compressor) CompressRequest(_ context.Context, sessionID string, req *l
 		}
 		for resultIdx := range msg.ToolResults {
 			tr := &msg.ToolResults[resultIdx]
+			if item, ok := c.restoreCommandPreview(sessionID, tr); ok {
+				result.Applied = true
+				result.Items = append(result.Items, item)
+				continue
+			}
 			if !shouldCompressToolResult(*tr, minChars) {
 				continue
 			}
-			compressed := compressToolContent(tr.Name, tr.Content)
+			compressed, command := commandPreview(*tr)
+			if !command {
+				compressed = compressToolContent(tr.Name, tr.Content)
+			}
 			if len(compressed) >= len(tr.Content) {
 				continue
 			}
@@ -316,8 +324,19 @@ func storeKey(sessionID, hash string) string {
 }
 
 func shouldCompressToolResult(tr llm.ToolResult, minChars int) bool {
-	// Admission excerpts already reference the full original.
+	// Admission excerpts already reference the full original. Recompressing them
+	// would create a second hash whose original is only the excerpt.
 	if strings.HasPrefix(tr.Content, "[brute-compressed ") {
+		return false
+	}
+	if tr.Name == "bash" || (tr.Name == "pipeline" && tr.Metadata["command_output"] == true) {
+		return largeBashResult(tr)
+	}
+	if tr.Name == "parallel" || tr.Metadata["command_output_kind"] == "parallel" {
+		_, ok := commandPreview(tr)
+		return ok
+	}
+	if full, _ := tr.Metadata["full_output"].(bool); full && tr.Name == "grep" {
 		return false
 	}
 	if len(tr.Content) < minChars {

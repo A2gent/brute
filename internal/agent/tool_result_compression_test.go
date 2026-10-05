@@ -51,7 +51,7 @@ func TestBuildRequestCompressesToolResultsWhenEnabled(t *testing.T) {
 	sess.AddToolResult([]session.ToolResult{{
 		ToolCallID: "tc-bash",
 		Name:       "bash",
-		Content:    strings.Repeat("noise\n", 1200) + "FAIL: important test\nexit status 1\n",
+		Content:    strings.Repeat("noise\n", 3000) + "FAIL: important test\nexit status 1\n",
 	}})
 
 	manager := tools.NewManager(t.TempDir())
@@ -143,7 +143,7 @@ func TestBuildRequestProviderStructureRemainsValidForToolResults(t *testing.T) {
 	sess.AddToolResult([]session.ToolResult{{
 		ToolCallID: "call_1",
 		Name:       "bash",
-		Content:    strings.Repeat("noise\n", 1200) + "panic: boom\n",
+		Content:    strings.Repeat("noise\n", 3000) + "panic: boom\n",
 		Metadata:   map[string]interface{}{"trace": "kept"},
 		DurationMs: 55,
 	}})

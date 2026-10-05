@@ -12,7 +12,7 @@ import (
 
 const (
 	defaultBashTimeout = 30 * time.Second
-	maxOutputSize      = 50 * 1024 // 50KB
+	maxOutputSize      = 50 * 1024 // code_execution legacy output limit
 )
 
 // BashTool executes shell commands
@@ -108,31 +108,45 @@ func (t *BashTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 		output += stderr.String()
 	}
 
-	// Truncate if too large
-	if len(output) > maxOutputSize {
-		output = output[:maxOutputSize] + "\n... (output truncated)"
+	// Keep the original lossless for session-scoped context_retrieve. Large logs
+	// are summarized deterministically by the request compressor.
+	exitCode := -1
+	if cmd.ProcessState != nil {
+		exitCode = cmd.ProcessState.ExitCode()
+	}
+	output += fmt.Sprintf("\nExit code: %d", exitCode)
+	metadata := map[string]interface{}{"exit_code": exitCode}
+	if stderr.Len() > 0 {
+		start := 1
+		if stdout.Len() > 0 {
+			start += strings.Count(stdout.String(), "\n") + 1
+		}
+		metadata["stderr_start_line"] = start
 	}
 
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return &Result{
-				Success: false,
-				Error:   fmt.Sprintf("command timed out after %v", timeout),
-				Output:  output,
+				Success:  false,
+				Error:    fmt.Sprintf("command timed out after %v", timeout),
+				Output:   output,
+				Metadata: metadata,
 			}, nil
 		}
 
 		// Command failed but we still want to return output
 		return &Result{
-			Success: false,
-			Error:   fmt.Sprintf("command failed: %v", err),
-			Output:  output,
+			Success:  false,
+			Error:    fmt.Sprintf("command failed: %v", err),
+			Output:   output,
+			Metadata: metadata,
 		}, nil
 	}
 
 	return &Result{
-		Success: true,
-		Output:  strings.TrimSpace(output),
+		Success:  true,
+		Output:   output,
+		Metadata: metadata,
 	}, nil
 }
 

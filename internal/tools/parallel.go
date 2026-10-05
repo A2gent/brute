@@ -252,6 +252,9 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 		results[i].Output = truncateToChars(results[i].Output, maxPerStep)
 	}
 
+	// Read-cache recovery bodies must stay out of the model-visible JSON. Keep
+	// them in outer metadata so request construction can repair dangling stubs.
+	readReferences := make(map[string]interface{})
 	var images []interface{}
 	for i := range results {
 		if childImages, ok := results[i].Metadata["admission_images"].([]interface{}); ok {
@@ -259,6 +262,25 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 			metadata := make(map[string]interface{}, len(results[i].Metadata))
 			for key, value := range results[i].Metadata {
 				if key != "admission_images" && key != "image_inline" && key != "image_original_text" {
+					metadata[key] = value
+				}
+			}
+			results[i].Metadata = metadata
+		}
+		if ref, ok := results[i].Metadata["read_cache_reference"]; ok {
+			// Match the emitted text even if the per-step budget truncated a stub.
+			if values, ok := ref.(map[string]interface{}); ok {
+				copy := make(map[string]interface{}, len(values))
+				for key, value := range values {
+					copy[key] = value
+				}
+				copy["stub"] = results[i].Output
+				ref = copy
+			}
+			readReferences[fmt.Sprint(results[i].Step)] = ref
+			metadata := make(map[string]interface{}, len(results[i].Metadata))
+			for key, value := range results[i].Metadata {
+				if key != "read_cache_reference" {
 					metadata[key] = value
 				}
 			}
@@ -274,10 +296,12 @@ func (t *ParallelTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 		Success: success,
 		Output:  string(outputBytes),
 		Metadata: map[string]interface{}{
-			"parallel_steps":      len(results),
-			"total_output_chars":  totalOutputChars,
-			"max_output_chars":    maxChars,
-			"output_truncated_by": "per_step",
+			"read_cache_references": readReferences,
+			"admission_images":      images,
+			"parallel_steps":        len(results),
+			"total_output_chars":    totalOutputChars,
+			"max_output_chars":      maxChars,
+			"output_truncated_by":   "per_step",
 		},
 	}, nil
 }

@@ -118,6 +118,25 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 		request, _ = a.compressor.CompressRequest(context.Background(), sess.ID, request)
 		a.compressor.SyncSessionEntries(sess)
 	}
+	// Validate read references against the actual outgoing context, not stored
+	// history: compaction, sanitization or compression may have removed bodies.
+	if tool, ok := a.toolManager.Get("read"); ok {
+		if cache, ok := tool.(interface {
+			SyncContext(string, []llm.Message) map[string]string
+		}); ok {
+			repairs := cache.SyncContext(sess.ID, request.Messages)
+			// Persist only repaired references, not request-time compression, so
+			// subsequent requests cannot resurrect a dangling stub from history.
+			for mi := range sess.Messages {
+				for ri := range sess.Messages[mi].ToolResults {
+					tr := &sess.Messages[mi].ToolResults[ri]
+					if body, ok := repairs[tr.ToolCallID]; ok {
+						tr.Content = body
+					}
+				}
+			}
+		}
+	}
 	a.admitExpandedRequestResults(sess, request)
 	return request
 }

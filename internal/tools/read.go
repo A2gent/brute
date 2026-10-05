@@ -3,9 +3,12 @@ package tools
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -17,11 +20,13 @@ const (
 // ReadTool reads file contents
 type ReadTool struct {
 	workDir string
+	cache   readSessionCache
 }
 
 // ReadParams defines parameters for the read tool
 type ReadParams struct {
 	Path               string `json:"path"`
+	Force              bool   `json:"force,omitempty"`
 	Offset             int    `json:"offset,omitempty"`               // 0-based line offset
 	Limit              int    `json:"limit,omitempty"`                // Number of lines to read
 	StartLine          int    `json:"start_line,omitempty"`           // 1-based inclusive
@@ -43,13 +48,19 @@ func (t *ReadTool) Description() string {
 By default reads up to 20 lines from the beginning.
 Use offset and limit for reading specific sections of large files.
 Use start_line and end_line for exact 1-based range reads.
-Set include_line_numbers=true to prefix each line with its 1-based line number.`
+Set include_line_numbers=true to prefix each line with its 1-based line number.
+Unchanged repeat reads return a reference to an earlier full result still in context.
+Set force=true to always return the full body.`
 }
 
 func (t *ReadTool) Schema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
+			"force": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Always return the full body, even if an unchanged earlier read is still in this session context",
+			},
 			"path": map[string]interface{}{
 				"type":        "string",
 				"description": "Absolute or relative path to the file",
@@ -95,7 +106,7 @@ func (t *ReadTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 		return &Result{Success: false, Error: "start_line must be <= end_line"}, nil
 	}
 
-	path := resolveToolPath(t.workDir, p.Path)
+	path := filepath.Clean(resolveToolPath(t.workDir, p.Path))
 
 	// Check if file exists
 	info, err := os.Stat(path)
@@ -107,6 +118,10 @@ func (t *ReadTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 	}
 	if info.IsDir() {
 		return &Result{Success: false, Error: fmt.Sprintf("%s is a directory", p.Path)}, nil
+	}
+
+	if !info.Mode().IsRegular() {
+		return &Result{Success: false, Error: fmt.Sprintf("%s is not a regular file", p.Path)}, nil
 	}
 
 	// Open file
@@ -124,9 +139,29 @@ func (t *ReadTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 	}
 	rangeMode := p.StartLine > 0 || p.EndLine > 0
 
+	start, end := offset+1, offset+limit
+	if offset < 0 {
+		start, end = 1, limit
+	}
+	if rangeMode {
+		start = p.StartLine
+		if start <= 0 {
+			start = 1
+		}
+		end = p.EndLine
+		if end <= 0 {
+			end = start + defaultReadLimit - 1
+		}
+	}
+	key := readCacheKey{path: path, start: start, end: end, lineNumbers: p.IncludeLineNumbers}
+
+	// Hash the entire file, including bytes outside the requested range. The
+	// scanner and hasher share one stream so the returned body matches the hash.
+	hasher := sha256.New()
+	reader := io.TeeReader(file, hasher)
 	// Read lines
 	var lines []string
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	lineNum := 0
 	linesRead := 0
@@ -186,7 +221,35 @@ func (t *ReadTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 		return nil, fmt.Errorf("error reading file: %w", err)
 	}
 
+	buffer := make([]byte, 64*1024)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		n, err := file.Read(buffer)
+		if n > 0 {
+			_, _ = hasher.Write(buffer[:n])
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("error hashing file: %w", err)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var hash [sha256.Size]byte
+	copy(hash[:], hasher.Sum(nil))
+	if !p.Force {
+		if cached := t.cachedRead(readCacheSession(ctx), key, hash); cached != nil {
+			return cached, nil
+		}
+	}
+
 	if len(lines) == 0 {
+		t.rememberRead(ctx, key, hash, "(empty file or no lines in range)", 0)
 		return &Result{
 			Success: true,
 			Output:  "(empty file or no lines in range)",
@@ -205,6 +268,7 @@ func (t *ReadTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 		output += fmt.Sprintf("\n\n(showing requested range starting at line %d through %d)", p.StartLine, endLine)
 	}
 
+	t.rememberRead(ctx, key, hash, output, linesRead)
 	return &Result{
 		Success: true,
 		Output:  output,

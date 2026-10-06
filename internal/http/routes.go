@@ -293,6 +293,8 @@ func (s *Server) registerSessionRoutes(r chi.Router) {
 		r.Put("/{sessionID}/project", s.handleUpdateSessionProject)
 		r.Put("/{sessionID}/provider", s.handleUpdateSessionProvider)
 		r.Put("/{sessionID}/needs-feedback", s.handleUpdateSessionNeedsFeedback)
+		r.Post("/{sessionID}/archive", s.handleArchiveSession)
+		r.Post("/{sessionID}/unarchive", s.handleUnarchiveSession)
 		r.Post("/{sessionID}/chat", s.handleChat)
 		r.Post("/{sessionID}/chat/stream", s.handleChatStream)
 		r.Post("/{sessionID}/inject", s.handleInjectSessionMessage)

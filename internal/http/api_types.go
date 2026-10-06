@@ -91,6 +91,7 @@ type SessionResponse struct {
 	PromptCache            *PromptCachePayload          `json:"prompt_cache,omitempty"`
 	CreatedAt              time.Time                    `json:"created_at"`
 	UpdatedAt              time.Time                    `json:"updated_at"`
+	ArchivedAt             *time.Time                   `json:"archived_at,omitempty"`
 	Messages               []MessageResponse            `json:"messages"`
 	SystemPromptSnapshot   *SystemPromptSnapshotPayload `json:"system_prompt_snapshot,omitempty"`
 	Metadata               map[string]interface{}       `json:"metadata,omitempty"`
@@ -335,6 +336,7 @@ type SessionListItem struct {
 	PromptCache        *PromptCachePayload    `json:"prompt_cache,omitempty"`
 	CreatedAt          time.Time              `json:"created_at"`
 	UpdatedAt          time.Time              `json:"updated_at"`
+	ArchivedAt         *time.Time             `json:"archived_at,omitempty"`
 	Metadata           map[string]interface{} `json:"metadata,omitempty"`
 	// A2A inbound fields — only set for sessions created from A2A tunnel requests.
 	A2AInbound         bool   `json:"a2a_inbound,omitempty"`

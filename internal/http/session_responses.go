@@ -86,6 +86,7 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		PromptCache:            sessionPromptCache(sess),
 		CreatedAt:              sess.CreatedAt,
 		UpdatedAt:              sess.UpdatedAt,
+		ArchivedAt:             sessionArchivedAt(sess),
 		Messages:               s.messagesToResponse(sess.Messages),
 		SystemPromptSnapshot:   snapshotPayload,
 		Metadata:               sess.Metadata,

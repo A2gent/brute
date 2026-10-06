@@ -192,6 +192,24 @@ func (t *ProjectSessionHistoryTool) handleGet(projectID string, p ProjectSession
 	}
 
 	maxMessages := clampInt(p.MaxMessages, defaultProjectSessionHistoryMessages, 1, maxProjectSessionHistoryMessages)
+	output, returned, omitted := formatSessionTranscript(sess, projectID, maxMessages)
+
+	return &Result{
+		Success: true,
+		Output:  output,
+		Metadata: map[string]interface{}{
+			"project_id":        projectID,
+			"session_id":        sess.ID,
+			"message_count":     len(sess.Messages),
+			"messages_returned": returned,
+			"messages_omitted":  omitted,
+		},
+	}, nil
+}
+
+// formatSessionTranscript renders the last maxMessages messages of sess as text.
+// Shared by project_session_history and archived_sessions.
+func formatSessionTranscript(sess *storage.Session, projectID string, maxMessages int) (string, int, int) {
 	messages := sess.Messages
 	omitted := 0
 	if len(messages) > maxMessages {
@@ -228,17 +246,7 @@ func (t *ProjectSessionHistoryTool) handleGet(projectID string, p ProjectSession
 		}
 	}
 
-	return &Result{
-		Success: true,
-		Output:  strings.TrimRight(b.String(), "\n"),
-		Metadata: map[string]interface{}{
-			"project_id":        projectID,
-			"session_id":        sess.ID,
-			"message_count":     len(sess.Messages),
-			"messages_returned": len(messages),
-			"messages_omitted":  omitted,
-		},
-	}, nil
+	return strings.TrimRight(b.String(), "\n"), len(messages), omitted
 }
 
 func sessionProjectID(sess *storage.Session) string {

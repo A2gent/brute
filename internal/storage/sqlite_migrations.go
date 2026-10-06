@@ -364,6 +364,11 @@ func (s *SQLiteStore) migrate() error {
 				FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 			)`,
 		`CREATE INDEX IF NOT EXISTS idx_task_dependencies_prerequisite ON task_dependencies(depends_on_task_id)`,
+		// Records one-time built-in seeds so user deletions are not undone on restart.
+		`CREATE TABLE IF NOT EXISTS builtin_seeds (
+				id TEXT PRIMARY KEY,
+				seeded_at TIMESTAMP NOT NULL
+			)`,
 	}
 
 	for _, m := range migrations {
@@ -403,6 +408,9 @@ func (s *SQLiteStore) migrate() error {
 	}
 	if err := s.seedBuiltInSubAgents(); err != nil {
 		return fmt.Errorf("failed to seed built-in sub-agents: %w", err)
+	}
+	if err := s.seedBuiltInRecurringJobs(); err != nil {
+		return fmt.Errorf("failed to seed built-in recurring jobs: %w", err)
 	}
 
 	return nil

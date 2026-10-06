@@ -30,6 +30,8 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	filterProjectID := strings.TrimSpace(r.URL.Query().Get("project_id"))
 	searchQuery := strings.TrimSpace(r.URL.Query().Get("search"))
 	metadataKeys := parseSessionListMetadataKeys(r.URL.Query().Get("metadata_keys"))
+	// Archived (completed) sessions are hidden unless explicitly requested.
+	archiveFilter := normalizeSessionArchiveFilter(r.URL.Query().Get("archived"))
 
 	var dialogueMatches map[string]struct{}
 	if searchQuery != "" {
@@ -42,6 +44,9 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]SessionListItem, 0, len(sessions))
 	for _, sess := range sessions {
+		if !sessionMatchesArchiveFilter(sess, archiveFilter) {
+			continue
+		}
 		if dialogueMatches != nil {
 			if _, matched := dialogueMatches[sess.ID]; !matched {
 				continue
@@ -91,6 +96,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			PromptCache:        sessionPromptCache(sess),
 			CreatedAt:          sess.CreatedAt,
 			UpdatedAt:          sess.UpdatedAt,
+			ArchivedAt:         sessionArchivedAt(sess),
 			A2AInbound:         isInbound,
 			A2ASourceAgentID:   sourceAgentID,
 			A2ASourceAgentName: sourceAgentName,

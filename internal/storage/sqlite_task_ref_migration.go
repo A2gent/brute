@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
+	"unicode/utf8"
 )
 
 // migrateBrokenTaskRefs repairs refs created from UTF-8 bytes instead of runes.
@@ -34,9 +36,15 @@ func (s *SQLiteStore) migrateBrokenTaskRefs() error {
 		if task.ref == expected {
 			continue
 		}
-		// The reported byte-slicing bug persisted as exactly two replacement
-		// characters for this project; do not rewrite unrelated custom refs.
-		if task.ref != "\uFFFD\uFFFD-"+strconv.Itoa(task.seq) {
+		// The byte-slicing bug left a mangled prefix: either literal U+FFFD runes
+		// or raw invalid UTF-8 bytes in the DB. Only rewrite refs of the form
+		// "<mangled>-<seq>", never valid custom refs.
+		suffix := "-" + strconv.Itoa(task.seq)
+		if !strings.HasSuffix(task.ref, suffix) {
+			continue
+		}
+		mangled := task.ref[:len(task.ref)-len(suffix)]
+		if utf8.ValidString(mangled) && !strings.ContainsRune(mangled, '\uFFFD') {
 			continue
 		}
 		task.settings = expected

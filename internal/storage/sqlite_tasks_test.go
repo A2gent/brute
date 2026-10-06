@@ -221,6 +221,29 @@ func TestMigrateBrokenTaskRefs(t *testing.T) {
 	}
 }
 
+// Production rows hold raw invalid UTF-8 bytes (not literal U+FFFD runes).
+func TestMigrateBrokenTaskRefsRawInvalidBytes(t *testing.T) {
+	store, err := NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	project := saveTaskTestProject(t, store, "raw-broken", "Агент 🤖")
+	task, err := store.CreateTask(project.ID, TaskCreate{Title: "Task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE tasks SET seq = 93, ref = CAST(x'D0F02D3933' AS TEXT) WHERE id = ?`, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.migrateBrokenTaskRefs(); err != nil {
+		t.Fatalf("migrateBrokenTaskRefs() error = %v", err)
+	}
+	if _, err := store.GetTask(project.ID, "T-93"); err != nil {
+		t.Fatalf("GetTask(T-93) error = %v", err)
+	}
+}
+
 func TestSQLiteTaskPersistsHours(t *testing.T) {
 	store, err := NewSQLiteStore(t.TempDir())
 	if err != nil {

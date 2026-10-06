@@ -80,6 +80,8 @@ func (t *EditTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 	}
 
 	path := resolveToolPath(t.workDir, p.Path)
+	unlock := lockToolPath(path)
+	defer unlock()
 
 	// Read file
 	content, err := os.ReadFile(path)

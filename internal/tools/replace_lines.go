@@ -78,6 +78,8 @@ func (t *ReplaceLinesTool) Execute(ctx context.Context, params json.RawMessage) 
 	}
 
 	path := resolveToolPath(t.workDir, p.Path)
+	unlock := lockToolPath(path)
+	defer unlock()
 
 	if ctx.Err() != nil {
 		return nil, ctx.Err()

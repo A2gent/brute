@@ -1,13 +1,13 @@
 - Before delegating edits, check the agent workspace mount mode: read-only agents can review or propose patches but cannot implement them. Use a writable coding agent or apply the reviewed patch locally.
 - Scope file discovery to the component repository and verify files/recipes exist before reading them; this workspace root is not a Git repository.
 - Discover component repositories and source filenames before Git commands or reads; the workspace root is not a Git worktree and tool interfaces live in `internal/tools/manager.go`, not `tool.go`. Verify delegated compression claims against actual request construction and nested tool outputs.
+- If a task-board ref renders with replacement characters and update/get fails, find the task by title or tag before trying an update; do not assume the displayed ref is a usable identifier.
 # Playbook
 - If CI job logs require GitHub authentication and `gh` is unavailable, inspect public Actions job step timestamps through the GitHub API, then profile locally; avoid claiming unverified cache-hit status or CI speedups.
 - On a locally downloaded Go toolchain missing `pkg/tool/*/covdata`, a full `go test -coverprofile ./...` may fail only for packages without tests; verify coverage on tested packages and run the full suite without coverage before attributing the failure to project code.
 
 - Before delegating repository analysis, verify the selected agent is bound to the current project and can see the expected source tree under `/workspace`.
 - Before exact string replacement, read the target fragment and preserve its current tabs, spaces, and alignment.
-- Never run parallel edits against the same file: each edit may write from stale content and silently discard another change.
 - When `storage.Store` gains methods, update every hand-rolled test stub (`memStore` and similar) in the same change; add `var _ storage.Store = (*stub)(nil)` so compile fails early.
 - For test-fix sessions, first run `go test ./...` without cache assumptions on packages that failed to compile; interface drift often surfaces as `[build failed]` before any assertion runs.
 - Git hooks that run `go test` must unset `GIT_DIR`/`GIT_INDEX_FILE`/`GIT_WORK_TREE` (and related) before tests; otherwise nested fixture repos inherit the outer commit index and fail with `invalid object` / `Error building trees`.

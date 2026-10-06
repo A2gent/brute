@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 )
@@ -401,7 +402,13 @@ func taskRefPrefix(project *Project) string {
 		parts := strings.Fields(project.Name)
 		var initials strings.Builder
 		for _, part := range parts {
-			initials.WriteByte(strings.ToUpper(part)[0])
+			for _, r := range part {
+				r = unicode.ToUpper(r)
+				if r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+					initials.WriteRune(r)
+					break
+				}
+			}
 		}
 		if initials.Len() > 0 {
 			return initials.String()

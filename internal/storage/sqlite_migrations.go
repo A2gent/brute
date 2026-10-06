@@ -381,6 +381,9 @@ func (s *SQLiteStore) migrate() error {
 			return fmt.Errorf("migration failed: %w", err)
 		}
 	}
+	if err := s.migrateBrokenTaskRefs(); err != nil {
+		return fmt.Errorf("failed to migrate broken task refs: %w", err)
+	}
 	if err := s.migrateLegacyCustomEnvFromAppSettings(); err != nil {
 		return fmt.Errorf("failed to migrate custom env settings: %w", err)
 	}

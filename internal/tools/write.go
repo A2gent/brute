@@ -62,6 +62,8 @@ func (t *WriteTool) Execute(ctx context.Context, params json.RawMessage) (*Resul
 	}
 
 	path := resolveToolPath(t.workDir, p.Path)
+	unlock := lockToolPath(path)
+	defer unlock()
 
 	// Create parent directories if needed
 	dir := filepath.Dir(path)

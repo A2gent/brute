@@ -31,6 +31,17 @@ type Client struct {
 }
 
 // providerName returns the display name for the provider (used in error messages)
+// effectiveMaxTokens returns the output token cap to send. For OpenRouter an
+// unset cap stays 0 (omitted from the request): reasoning models count hidden
+// reasoning tokens against it, and the 4096 default made them fail with
+// finish_reason=length before producing any visible output.
+func (c *Client) effectiveMaxTokens(requested int) int {
+	if requested == 0 && c.providerName() != "OpenRouter" {
+		return defaultMaxTokens
+	}
+	return requested
+}
+
 func (c *Client) providerName() string {
 	if c.isGemini {
 		return "Gemini"
@@ -259,10 +270,7 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 		model = c.model
 	}
 
-	maxTokens := request.MaxTokens
-	if maxTokens == 0 {
-		maxTokens = defaultMaxTokens
-	}
+	maxTokens := c.effectiveMaxTokens(request.MaxTokens)
 
 	// Log request
 	lastMsg := ""
@@ -423,10 +431,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		model = c.model
 	}
 
-	maxTokens := request.MaxTokens
-	if maxTokens == 0 {
-		maxTokens = defaultMaxTokens
-	}
+	maxTokens := c.effectiveMaxTokens(request.MaxTokens)
 
 	lastMsg := ""
 	if len(request.Messages) > 0 {

@@ -44,7 +44,6 @@
 - During concurrent edits, shared test failures can be transient incomplete code. Re-read the current diff and run focused tests instead of overwriting the other session's files. Run lengthy suites detached with explicit exit files; a tool timeout is not a test result.
 
 ## Jev browser_act loop
-- `delegate_to_agent` to `dev-code-reviewer` timed out twice on multi-file read-and-report tasks. Do not retry the same shape; survey the code directly with targeted `grep '^func \|^type '` declaration listings plus narrow `Read` offsets, which is cheaper than a full-file dump and did not need the subagent at all.
 - Verify third-party API shapes with `go doc` before writing code against them: `gson.JSON.Unmarshal` fails with "value has been parsed" on a value rod already decoded, so `MarshalJSON()` then `json.Unmarshal` is the working path for `page.Eval` results.
 - Widening a shared struct field to `any` (jev `SystemOneRequest.State`, `Question.Instructions`) compiles for all string callers but breaks test assertions that use `len`/`strings` on the field. Add `StateString()`/`InstructionsString()` helpers and update only the tests that decode into the real type - a blanket sed also hits tests that declare their own local struct.
 - A JS freshness marker must not be captured in a closure on `window`. Closing over the observation's own text/actions makes every later check compare equal; re-run the whole snapshot and read only `.marker`.

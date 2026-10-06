@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,10 +22,15 @@ const (
 type parallelContextKey struct{}
 
 var parallelUnsupportedTools = map[string]string{
-	"parallel":           "recursive parallel calls are not allowed",
-	"browser_chrome":     "browser automation is stateful and must be called sequentially as a top-level tool call",
-	"suggest_session":    "session suggestions should be created as top-level tool calls after the main work, not inside parallel results",
-	"suggest_git_commit": "git commit suggestions should be created as top-level tool calls after the main work, not inside parallel results",
+	"parallel": "recursive parallel calls are not allowed",
+}
+
+// Stateful tools are not rejected inside a batch; they run one at a time so
+// a single misplaced step does not discard the whole batch.
+var parallelSequentialTools = map[string]bool{
+	"browser_chrome":     true,
+	"suggest_session":    true,
+	"suggest_git_commit": true,
 }
 
 // ParallelTool executes independent tool calls concurrently and returns ordered results.
@@ -62,7 +68,7 @@ func (t *ParallelTool) Name() string {
 }
 
 func (t *ParallelTool) Description() string {
-	return "Run multiple independent tool calls concurrently in one call. Use this for parallel codebase exploration, such as several grep/read/find_files/bash searches that do not depend on each other, and for fan-out delegation to multiple independent agents. Do not use this for recursive parallel calls, browser_chrome, suggest_session, or suggest_git_commit; call those as top-level tool calls instead."
+	return "Run multiple independent tool calls concurrently in one call. Use this for parallel codebase exploration, such as several grep/read/find_files/bash searches that do not depend on each other, and for fan-out delegation to multiple independent agents. Do not use this for recursive parallel calls. browser_chrome, suggest_session and suggest_git_commit are allowed but run sequentially within the batch."
 }
 
 func (t *ParallelTool) Schema() map[string]interface{} {
@@ -77,7 +83,7 @@ func (t *ParallelTool) Schema() map[string]interface{} {
 					"properties": map[string]interface{}{
 						"tool": map[string]interface{}{
 							"type":        "string",
-							"description": "Tool name to execute for this parallel step. Cannot be parallel, browser_chrome, suggest_session, or suggest_git_commit.",
+							"description": "Tool name to execute for this parallel step. Cannot be parallel. browser_chrome, suggest_session and suggest_git_commit run sequentially.",
 						},
 						"args": map[string]interface{}{
 							"type":        "object",
@@ -139,6 +145,7 @@ func (t *ParallelTool) execute(ctx context.Context, params json.RawMessage, trun
 	results := make([]parallelStepOutput, len(p.Steps))
 	resultChans := make([]chan parallelStepOutput, 0, len(p.Steps))
 	stepTimeouts := make([]time.Duration, 0, len(p.Steps))
+	var sequentialMu sync.Mutex
 
 	for i, step := range p.Steps {
 		toolName := normalizeToolName(step.Tool)
@@ -162,6 +169,10 @@ func (t *ParallelTool) execute(ctx context.Context, params json.RawMessage, trun
 		resultChans = append(resultChans, resultCh)
 		stepTimeouts = append(stepTimeouts, stepTimeout)
 		go func(idx int, name string, raw json.RawMessage, timeout time.Duration) {
+			if parallelSequentialTools[name] {
+				sequentialMu.Lock()
+				defer sequentialMu.Unlock()
+			}
 			start := time.Now()
 			stepCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()

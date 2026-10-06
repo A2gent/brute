@@ -381,60 +381,22 @@ func TestParallelTool_Execute(t *testing.T) {
 		}
 	})
 
-	t.Run("disallow browser automation", func(t *testing.T) {
-		params := map[string]interface{}{
-			"steps": []map[string]interface{}{
-				{"tool": "browser_chrome", "action": "click", "selector": "#menu"},
-			},
-		}
-		raw, _ := json.Marshal(params)
-		result, err := parallel.Execute(context.Background(), raw)
-		if err != nil {
-			t.Fatalf("Execute returned error: %v", err)
-		}
-		if result.Success {
-			t.Fatalf("expected failure, got output: %s", result.Output)
-		}
-		if !strings.Contains(result.Error, "browser automation is stateful") {
-			t.Fatalf("unexpected error: %s", result.Error)
-		}
-	})
-
-	t.Run("disallow session suggestions inside parallel", func(t *testing.T) {
-		params := map[string]interface{}{
+	t.Run("stateful tools run sequentially instead of rejecting the batch", func(t *testing.T) {
+		raw, _ := json.Marshal(map[string]interface{}{
 			"steps": []map[string]interface{}{
 				{"tool": "suggest_session", "title": "Follow up", "prompt": "Inspect separately."},
-			},
-		}
-		raw, _ := json.Marshal(params)
-		result, err := parallel.Execute(context.Background(), raw)
-		if err != nil {
-			t.Fatalf("Execute returned error: %v", err)
-		}
-		if result.Success {
-			t.Fatalf("expected failure, got output: %s", result.Output)
-		}
-		if !strings.Contains(result.Error, "top-level tool calls") {
-			t.Fatalf("unexpected error: %s", result.Error)
-		}
-	})
-
-	t.Run("disallow git commit suggestions inside parallel", func(t *testing.T) {
-		params := map[string]interface{}{
-			"steps": []map[string]interface{}{
 				{"tool": "suggest_git_commit", "message": "Update app", "files": []string{"src/app.ts"}},
 			},
-		}
-		raw, _ := json.Marshal(params)
+		})
 		result, err := parallel.Execute(context.Background(), raw)
 		if err != nil {
 			t.Fatalf("Execute returned error: %v", err)
 		}
-		if result.Success {
-			t.Fatalf("expected failure, got output: %s", result.Output)
+		if strings.Contains(result.Error, "top-level") || strings.Contains(result.Error, "stateful") {
+			t.Fatalf("batch rejected: %s", result.Error)
 		}
-		if !strings.Contains(result.Error, "top-level tool calls") {
-			t.Fatalf("unexpected error: %s", result.Error)
+		if !strings.Contains(result.Output, `"tool": "suggest_session"`) || !strings.Contains(result.Output, `"tool": "suggest_git_commit"`) {
+			t.Fatalf("expected both steps in output: %s", result.Output)
 		}
 	})
 

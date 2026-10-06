@@ -49,6 +49,9 @@ func validatePipelineItems(stage PipelineStep, index int) error {
 	if reason, ok := parallelUnsupportedTools[normalizeToolName(stage.Tool)]; ok {
 		return fmt.Errorf("%s", reason)
 	}
+	if parallelSequentialTools[normalizeToolName(stage.Tool)] {
+		return fmt.Errorf("%s is stateful and cannot run per_item", stage.Tool)
+	}
 	for _, predicate := range []*PipelinePredicate{stage.KeepIf, stage.DropIf} {
 		if predicate == nil {
 			continue

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/A2gent/brute/internal/config"
+	"github.com/A2gent/brute/internal/storage"
 )
 
 func newTestOpenAIConfig(apiKey, baseURL string) *config.Config {
@@ -335,4 +336,30 @@ func TestOpenAIGenerateImageEmptyDataResponse(t *testing.T) {
 	if result.Success {
 		t.Error("expected failure when data array is empty")
 	}
+}
+
+func TestOpenAIResolveCredentialsPrefersIntegration(t *testing.T) {
+	t.Parallel()
+	store := &fakeIntegrationStore{items: []*storage.Integration{{
+		Provider: "openai_images", Enabled: true,
+		Config: map[string]string{"api_key": "sk-int", "model": "dall-e-3"},
+	}}}
+	tool := NewOpenAIGenerateImageTool(newTestOpenAIConfig("sk-provider", ""), "").WithStore(store)
+	key, base, model := tool.resolveCredentials()
+	if key != "sk-int" || model != "dall-e-3" || base != openAIDefaultBaseURL {
+		t.Errorf("got %q %q %q", key, base, model)
+	}
+	store.items[0].Enabled = false
+	if key, _, _ := tool.resolveCredentials(); key != "sk-provider" {
+		t.Errorf("expected provider fallback, got %q", key)
+	}
+}
+
+type fakeIntegrationStore struct {
+	storage.Store
+	items []*storage.Integration
+}
+
+func (f *fakeIntegrationStore) ListIntegrations() ([]*storage.Integration, error) {
+	return f.items, nil
 }

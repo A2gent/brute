@@ -193,6 +193,8 @@ func defaultIntegrationName(provider string) string {
 		return "Tavily"
 	case "leonardo":
 		return "Leonardo AI"
+	case "openai_images":
+		return "OpenAI Images"
 	case "comfyui":
 		return "ComfyUI"
 	case "blender":

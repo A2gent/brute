@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/A2gent/brute/internal/config"
+	"github.com/A2gent/brute/internal/storage"
 	"github.com/A2gent/brute/internal/tools"
 	"github.com/google/uuid"
 )
@@ -28,6 +29,7 @@ const (
 // results as local files. It reads the "openai" provider config for credentials.
 type OpenAIGenerateImageTool struct {
 	cfg       *config.Config
+	store     storage.Store
 	outputDir string
 	client    *http.Client
 }
@@ -72,6 +74,13 @@ func NewOpenAIGenerateImageTool(cfg *config.Config, outputDir string) *OpenAIGen
 		outputDir: strings.TrimSpace(outputDir),
 		client:    &http.Client{Timeout: 120 * time.Second},
 	}
+}
+
+// WithStore lets the tool prefer an enabled "openai_images" integration over
+// the LLM provider credentials.
+func (t *OpenAIGenerateImageTool) WithStore(store storage.Store) *OpenAIGenerateImageTool {
+	t.store = store
+	return t
 }
 
 func (t *OpenAIGenerateImageTool) Name() string {
@@ -122,14 +131,14 @@ func (t *OpenAIGenerateImageTool) Execute(ctx context.Context, params json.RawMe
 		return &tools.Result{Success: false, Error: "prompt is required"}, nil
 	}
 
-	apiKey, baseURL := t.resolveCredentials()
+	apiKey, baseURL, defaultModel := t.resolveCredentials()
 	if apiKey == "" {
 		return &tools.Result{Success: false, Error: "openai provider is not configured: set api_key in the openai provider settings"}, nil
 	}
 
 	model := strings.TrimSpace(p.Model)
 	if model == "" {
-		model = openAIDefaultImageModel
+		model = defaultModel
 	}
 	size := strings.TrimSpace(p.Size)
 	if size == "" {
@@ -212,20 +221,41 @@ func (t *OpenAIGenerateImageTool) Execute(ctx context.Context, params json.RawMe
 	}, nil
 }
 
-func (t *OpenAIGenerateImageTool) resolveCredentials() (apiKey, baseURL string) {
+func (t *OpenAIGenerateImageTool) resolveCredentials() (apiKey, baseURL, model string) {
+	model = openAIDefaultImageModel
+	// An enabled integration wins so image generation can use a dedicated key.
+	if t.store != nil {
+		if all, err := t.store.ListIntegrations(); err == nil {
+			for _, item := range all {
+				if item.Provider != "openai_images" || !item.Enabled {
+					continue
+				}
+				if key := strings.TrimSpace(item.Config["api_key"]); key != "" {
+					baseURL = strings.TrimSpace(item.Config["base_url"])
+					if baseURL == "" {
+						baseURL = openAIDefaultBaseURL
+					}
+					if m := strings.TrimSpace(item.Config["model"]); m != "" {
+						model = m
+					}
+					return key, baseURL, model
+				}
+			}
+		}
+	}
 	if t.cfg == nil {
-		return "", ""
+		return "", "", model
 	}
 	provider, ok := t.cfg.Providers[string(config.ProviderOpenAI)]
 	if !ok {
-		return "", ""
+		return "", "", model
 	}
 	apiKey = strings.TrimSpace(provider.APIKey)
 	baseURL = strings.TrimSpace(provider.BaseURL)
 	if baseURL == "" {
 		baseURL = openAIDefaultBaseURL
 	}
-	return apiKey, baseURL
+	return apiKey, baseURL, model
 }
 
 func (t *OpenAIGenerateImageTool) saveImages(ctx context.Context, generationID string, data []openAIImageDatum) ([]string, []string, error) {

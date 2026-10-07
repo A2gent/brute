@@ -26,6 +26,7 @@ func (a *Agent) admitExpandedRequestResults(sess *session.Session, request *llm.
 					if target.ToolCallID == tr.ToolCallID {
 						target.Content = admitted.Content
 						target.Metadata = admitted.Metadata
+						sess.MarkMessageChanged(sess.Messages[si].ID)
 					}
 				}
 			}

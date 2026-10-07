@@ -4,10 +4,12 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,7 +21,14 @@ import (
 )
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
-	sessions, err := s.sessionManager.List()
+	var sessions []*session.Session
+	var err error
+	projectID := strings.TrimSpace(r.URL.Query().Get("project_id"))
+	if relatedTo := strings.TrimSpace(r.URL.Query().Get("related_to")); relatedTo != "" {
+		sessions, err = s.sessionManager.ListRelatedForDisplay(projectID, relatedTo)
+	} else {
+		sessions, err = s.sessionManager.ListForDisplay(projectID)
+	}
 	if err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to list sessions: "+err.Error())
 		return
@@ -595,12 +604,28 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	includeMetadata := r.URL.Query().Get("include_metadata") != "false"
 	metadataKeys := parseSessionListMetadataKeys(r.URL.Query().Get("metadata_keys"))
 
+	messageLimit := 0
+	if raw := r.URL.Query().Get("message_limit"); raw != "" {
+		parsed, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || parsed < 1 || parsed > 500 {
+			s.errorResponse(w, http.StatusBadRequest, "message_limit must be between 1 and 500")
+			return
+		}
+		messageLimit = parsed
+	}
+	var hasMore bool
 	var sess *session.Session
 	var err error
-	if includeMessages || includeMetadata {
-		sess, err = s.sessionManager.Get(sessionID)
+	if includeMessages && messageLimit > 0 {
+		sess, hasMore, err = s.sessionManager.GetPageForDisplay(sessionID, messageLimit, r.URL.Query().Get("before_message"))
+	} else if includeMessages || includeMetadata {
+		sess, err = s.sessionManager.GetForDisplay(sessionID, includeMessages)
 	} else {
 		sess, err = s.sessionManager.GetSummary(sessionID)
+	}
+	if errors.Is(err, storage.ErrMessageCursorMissing) {
+		s.errorResponse(w, http.StatusConflict, "Session history changed; reload the latest page")
+		return
 	}
 	if err != nil {
 		if resp, ok, proxyErr := s.getDockerDelegatedSession(r.Context(), sessionID, includeMessages, includeMetadata); ok {
@@ -614,9 +639,16 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if includeMessages {
-		_ = s.ensureSessionSystemPromptSnapshot(sess)
+		_ = s.ensureDisplaySystemPromptSnapshot(sess)
 	}
+
 	resp := s.sessionToResponse(sess)
+	if includeMessages && messageLimit > 0 {
+		resp.MessagePage = &MessagePagePayload{HasMore: hasMore}
+		if len(sess.Messages) > 0 {
+			resp.MessagePage.BeforeMessage = sess.Messages[0].ID
+		}
+	}
 	if !includeMessages {
 		resp.Messages = nil
 		resp.SystemPromptSnapshot = nil

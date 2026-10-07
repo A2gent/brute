@@ -43,6 +43,16 @@ func (s *Server) buildSystemPromptForSession(sess *session.Session) string {
 }
 
 func (s *Server) ensureSessionSystemPromptSnapshot(sess *session.Session) *systemPromptSnapshot {
+	return s.ensureSystemPromptSnapshot(sess, false)
+}
+
+// Display reads omit internal state. Merge a regenerated snapshot into a full
+// session before saving so a read cannot erase compression data.
+func (s *Server) ensureDisplaySystemPromptSnapshot(sess *session.Session) *systemPromptSnapshot {
+	return s.ensureSystemPromptSnapshot(sess, true)
+}
+
+func (s *Server) ensureSystemPromptSnapshot(sess *session.Session, displayOnly bool) *systemPromptSnapshot {
 	if sess == nil {
 		return nil
 	}
@@ -92,7 +102,17 @@ func (s *Server) ensureSessionSystemPromptSnapshot(sess *session.Session) *syste
 		return nil
 	}
 	attachSessionSystemPromptSnapshot(sess, snapshot)
-	if err := s.sessionManager.Save(sess); err != nil {
+	persisted := sess
+	if displayOnly {
+		complete, err := s.sessionManager.Get(sess.ID)
+		if err != nil {
+			logging.Warn("Failed to load session %s for system prompt snapshot persistence: %v", sess.ID, err)
+			return snapshot
+		}
+		attachSessionSystemPromptSnapshot(complete, snapshot)
+		persisted = complete
+	}
+	if err := s.sessionManager.Save(persisted); err != nil {
 		logging.Warn("Failed to persist system prompt snapshot for session %s: %v", sess.ID, err)
 	}
 	return snapshot

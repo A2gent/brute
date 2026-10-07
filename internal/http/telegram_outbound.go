@@ -186,6 +186,7 @@ func (s *Server) attachTelegramReplyAudioMetadata(sessionID, clipID, contentType
 			"content_type": strings.TrimSpace(contentType),
 			"source":       "telegram_reply",
 		}
+		sess.MarkMessageChanged(sess.Messages[i].ID)
 		_ = s.sessionManager.Save(sess)
 		return
 	}

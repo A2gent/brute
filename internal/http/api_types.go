@@ -93,6 +93,7 @@ type SessionResponse struct {
 	UpdatedAt              time.Time                    `json:"updated_at"`
 	ArchivedAt             *time.Time                   `json:"archived_at,omitempty"`
 	Messages               []MessageResponse            `json:"messages"`
+	MessagePage            *MessagePagePayload          `json:"message_page,omitempty"`
 	SystemPromptSnapshot   *SystemPromptSnapshotPayload `json:"system_prompt_snapshot,omitempty"`
 	Metadata               map[string]interface{}       `json:"metadata,omitempty"`
 	// A2A outbound fields — set for sessions used to contact remote agents.
@@ -713,4 +714,9 @@ type ProviderTestResult struct {
 	Success  bool   `json:"success"`
 	Message  string `json:"message"`
 	Duration int64  `json:"duration_ms"`
+}
+
+type MessagePagePayload struct {
+	HasMore       bool   `json:"has_more"`
+	BeforeMessage string `json:"before_message,omitempty"`
 }

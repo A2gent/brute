@@ -277,3 +277,43 @@ func TestHandleDownloadSessionLogRejectsTraversalSessionID(t *testing.T) {
 		t.Fatalf("expected 404 for unsafe session log path, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestHandleGetSessionDoesNotExposeOrEraseCompressionState(t *testing.T) {
+	server, _ := newBruteHTTPProxyTestServer(t)
+	sess, err := server.sessionManager.Create("build")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.Metadata = map[string]interface{}{"context_compression_store": map[string]interface{}{"content": strings.Repeat("x", 1<<20)}, "custom": "keep"}
+	sess.AddUserMessage("Keep this transcript")
+	if err := server.sessionManager.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		rec := httptest.NewRecorder()
+		server.router.ServeHTTP(rec, httptest.NewRequest(stdhttp.MethodGet, "/sessions/"+sess.ID, nil))
+		if rec.Code != stdhttp.StatusOK {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+		}
+		var response SessionResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := response.Metadata["context_compression_store"]; ok {
+			t.Fatal("internal compression state exposed")
+		}
+		if response.Metadata["custom"] != "keep" || len(response.Messages) != 1 || response.Messages[0].Content != "Keep this transcript" {
+			t.Fatal("display lost session content")
+		}
+		if response.SystemPromptSnapshot == nil {
+			t.Fatal("missing prompt snapshot")
+		}
+		stored, err := server.sessionManager.Get(sess.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := stored.Metadata["context_compression_store"]; !ok {
+			t.Fatal("snapshot save erased compression state")
+		}
+	}
+}

@@ -12,7 +12,7 @@ import (
 
 func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionID")
-	sess, err := s.sessionManager.Get(sessionID)
+	sess, err := s.sessionManager.GetForDisplay(sessionID, true)
 	if err != nil {
 		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
 		return
@@ -58,7 +58,13 @@ func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
 		return true
 	}
 
-	if !writeSSE(s.sessionSnapshotStreamEvent(sess)) {
+	snapshot := s.sessionSnapshotStreamEvent(sess)
+	// Caesar may already have fetched this exact persisted transcript. Keep the
+	// handshake and replay, but omit duplicate history only for an exact version.
+	if r.URL.Query().Get("after_updated_at") == sess.UpdatedAt.Format(time.RFC3339Nano) {
+		snapshot.Messages = nil
+	}
+	if !writeSSE(snapshot) {
 		return
 	}
 

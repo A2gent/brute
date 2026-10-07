@@ -132,6 +132,7 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 					tr := &sess.Messages[mi].ToolResults[ri]
 					if body, ok := repairs[tr.ToolCallID]; ok {
 						tr.Content = body
+						sess.MarkMessageChanged(sess.Messages[mi].ID)
 					}
 				}
 			}

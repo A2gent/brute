@@ -24,19 +24,21 @@ const (
 
 // Session represents an agent session
 type Session struct {
-	ID           string                 `json:"id"`
-	AgentID      string                 `json:"agent_id"`
-	ParentID     *string                `json:"parent_id,omitempty"`
-	JobID        *string                `json:"job_id,omitempty"` // Associated recurring job
-	ProjectID    *string                `json:"project_id,omitempty"`
-	Title        string                 `json:"title"`
-	Summary      string                 `json:"summary,omitempty"`
-	Status       Status                 `json:"status"`
-	Messages     []Message              `json:"messages"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty"`
-	TaskProgress string                 `json:"task_progress,omitempty"` // Temporary task planning and progress tracking
-	CreatedAt    time.Time              `json:"created_at"`
-	UpdatedAt    time.Time              `json:"updated_at"`
+	// Changed historical messages are explicitly included in incremental saves.
+	dirtyMessageIDs map[string]bool
+	ID              string                 `json:"id"`
+	AgentID         string                 `json:"agent_id"`
+	ParentID        *string                `json:"parent_id,omitempty"`
+	JobID           *string                `json:"job_id,omitempty"` // Associated recurring job
+	ProjectID       *string                `json:"project_id,omitempty"`
+	Title           string                 `json:"title"`
+	Summary         string                 `json:"summary,omitempty"`
+	Status          Status                 `json:"status"`
+	Messages        []Message              `json:"messages"`
+	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+	TaskProgress    string                 `json:"task_progress,omitempty"` // Temporary task planning and progress tracking
+	CreatedAt       time.Time              `json:"created_at"`
+	UpdatedAt       time.Time              `json:"updated_at"`
 }
 
 // Message represents a conversation message
@@ -235,22 +237,30 @@ func (s *Session) SetSummary(summary string) {
 }
 
 // ToStorage converts to storage format
-func (s *Session) ToStorage() *storage.Session {
-	messages := make([]storage.Message, len(s.Messages))
-	for i, m := range s.Messages {
-		toolCalls, _ := json.Marshal(m.ToolCalls)
-		toolResults, _ := json.Marshal(m.ToolResults)
-		messages[i] = storage.Message{
-			ID:          m.ID,
-			Role:        m.Role,
-			Content:     m.Content,
-			ToolCalls:   toolCalls,
-			ToolResults: toolResults,
-			Metadata:    metadataWithImages(m.Metadata, m.Images),
-			Timestamp:   m.Timestamp,
-		}
-	}
+func messageToStorage(m Message) storage.Message {
+	toolCalls, _ := json.Marshal(m.ToolCalls)
+	toolResults, _ := json.Marshal(m.ToolResults)
+	return storage.Message{ID: m.ID, Role: m.Role, Content: m.Content, ToolCalls: toolCalls, ToolResults: toolResults, Metadata: metadataWithImages(m.Metadata, m.Images), Timestamp: m.Timestamp}
+}
 
+func (s *Session) MarkMessageChanged(id string) {
+	if s.dirtyMessageIDs == nil {
+		s.dirtyMessageIDs = make(map[string]bool)
+	}
+	s.dirtyMessageIDs[id] = true
+	s.UpdatedAt = time.Now()
+}
+
+func (s *Session) ToStorage() *storage.Session {
+	row := s.storageState()
+	row.Messages = make([]storage.Message, len(s.Messages))
+	for i, message := range s.Messages {
+		row.Messages[i] = messageToStorage(message)
+	}
+	return row
+}
+
+func (s *Session) storageState() *storage.Session {
 	return &storage.Session{
 		ID:           s.ID,
 		AgentID:      s.AgentID,
@@ -260,7 +270,6 @@ func (s *Session) ToStorage() *storage.Session {
 		Title:        s.Title,
 		Summary:      s.Summary,
 		Status:       string(s.Status),
-		Messages:     messages,
 		Metadata:     s.Metadata,
 		TaskProgress: s.TaskProgress,
 		CreatedAt:    s.CreatedAt,

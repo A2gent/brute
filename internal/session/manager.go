@@ -144,9 +144,22 @@ func (m *Manager) GetSummary(id string) (*Session, error) {
 
 // Save saves a session and appends new messages to the JSONL log (if configured).
 func (m *Manager) Save(sess *Session) error {
-	if err := m.store.SaveSession(sess.ToStorage()); err != nil {
+	var err error
+	if store, ok := m.store.(interface {
+		SaveSessionIncremental(*storage.Session, []string, map[string]bool, func(int) storage.Message) error
+	}); ok {
+		ids := make([]string, len(sess.Messages))
+		for i, message := range sess.Messages {
+			ids[i] = message.ID
+		}
+		err = store.SaveSessionIncremental(sess.storageState(), ids, sess.dirtyMessageIDs, func(i int) storage.Message { return messageToStorage(sess.Messages[i]) })
+	} else {
+		err = m.store.SaveSession(sess.ToStorage())
+	}
+	if err != nil {
 		return err
 	}
+	sess.dirtyMessageIDs = nil
 	// Best-effort JSONL flush – do not fail the save if writing fails.
 	if m.jsonlWriter != nil {
 		if err := m.jsonlWriter.Flush(sess); err != nil {
@@ -397,4 +410,81 @@ func (m *Manager) SetSessionProject(sessionID string, projectID *string) error {
 
 	sess.ProjectID = projectID
 	return m.Save(sess)
+}
+
+// GetForDisplay leaves agent-only compression data in storage.
+func (m *Manager) GetForDisplay(id string, includeMessages bool) (*Session, error) {
+	if store, ok := m.store.(interface {
+		GetSessionForDisplay(string, bool) (*storage.Session, error)
+	}); ok {
+		stored, err := store.GetSessionForDisplay(id, includeMessages)
+		if err != nil {
+			return nil, err
+		}
+		return FromStorage(stored), nil
+	}
+	return m.Get(id)
+}
+
+func (m *Manager) ListForDisplay(projectID string) ([]*Session, error) {
+	if store, ok := m.store.(interface {
+		ListSessionsForDisplay(string) ([]*storage.Session, error)
+	}); ok {
+		stored, err := store.ListSessionsForDisplay(projectID)
+		if err != nil {
+			return nil, err
+		}
+		sessions := make([]*Session, len(stored))
+		for i, row := range stored {
+			sessions[i] = FromStorage(row)
+		}
+		return sessions, nil
+	}
+	return m.List()
+}
+
+// ListRelatedForDisplay reads only the parent and immediate children of a session.
+func (m *Manager) ListRelatedForDisplay(projectID, sessionID string) ([]*Session, error) {
+	if store, ok := m.store.(interface {
+		ListRelatedSessionsForDisplay(string, string) ([]*storage.Session, error)
+	}); ok {
+		stored, err := store.ListRelatedSessionsForDisplay(projectID, sessionID)
+		if err != nil {
+			return nil, err
+		}
+		sessions := make([]*Session, len(stored))
+		for i, row := range stored {
+			sessions[i] = FromStorage(row)
+		}
+		return sessions, nil
+	}
+	rows, err := m.ListForDisplay(projectID)
+	if err != nil {
+		return nil, err
+	}
+	current, err := m.GetSummary(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	var related []*Session
+	for _, row := range rows {
+		if (row.ParentID != nil && *row.ParentID == sessionID) || (current.ParentID != nil && row.ID == *current.ParentID) {
+			related = append(related, row)
+		}
+	}
+	return related, nil
+}
+
+func (m *Manager) GetPageForDisplay(id string, limit int, before string) (*Session, bool, error) {
+	if store, ok := m.store.(interface {
+		GetSessionPageForDisplay(string, int, string) (*storage.Session, bool, error)
+	}); ok {
+		row, more, err := store.GetSessionPageForDisplay(id, limit, before)
+		if err != nil {
+			return nil, false, err
+		}
+		return FromStorage(row), more, nil
+	}
+	row, err := m.GetForDisplay(id, true)
+	return row, false, err
 }

@@ -226,7 +226,19 @@ func (t *ArchivedSessionsTool) markAnalyzed(p archivedSessionsParams) (*Result, 
 			continue
 		}
 		sess.Metadata = storage.SetSessionMetadataTime(sess.Metadata, storage.SessionArchiveAnalyzedAtKey, &now)
-		if err := t.store.SaveSession(sess); err != nil {
+		// Only metadata changed; avoid rewriting the entire archived transcript.
+		if incremental, ok := t.store.(interface {
+			SaveSessionIncremental(*storage.Session, []string, map[string]bool, func(int) storage.Message) error
+		}); ok {
+			ids := make([]string, len(sess.Messages))
+			for i, message := range sess.Messages {
+				ids[i] = message.ID
+			}
+			err = incremental.SaveSessionIncremental(sess, ids, nil, func(i int) storage.Message { return sess.Messages[i] })
+		} else {
+			err = t.store.SaveSession(sess)
+		}
+		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", id, err))
 			continue
 		}

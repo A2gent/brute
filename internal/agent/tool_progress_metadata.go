@@ -59,6 +59,7 @@ func recordPendingToolProgress(sess *session.Session, progress tools.ProgressEve
 		pendingResults = append(pendingResults, updated)
 	}
 	msg.Metadata[messageMetadataPendingToolResults] = pendingResults
+	sess.MarkMessageChanged(msg.ID)
 	return true
 }
 
@@ -73,6 +74,7 @@ func clearPendingToolProgressMetadata(sess *session.Session) bool {
 		}
 		if _, ok := sess.Messages[i].Metadata[messageMetadataPendingToolResults]; ok {
 			delete(sess.Messages[i].Metadata, messageMetadataPendingToolResults)
+			sess.MarkMessageChanged(sess.Messages[i].ID)
 			cleared = true
 		}
 	}

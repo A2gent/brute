@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 // SQLiteStore implements Store using SQLite
 type SQLiteStore struct {
 	db       *sql.DB
+	readDB   *sql.DB
 	dataPath string
 	dbPath   string
 	mu       sync.Mutex
@@ -44,6 +46,23 @@ func NewSQLiteStore(dataPath string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
+	// WAL allows readers to see committed progress while a session is saving.
+	var journalMode string
+	if err := db.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to read journal mode: %w", err)
+	}
+	if !strings.EqualFold(journalMode, "wal") {
+		if err := db.QueryRow("PRAGMA journal_mode=WAL").Scan(&journalMode); err != nil || !strings.EqualFold(journalMode, "wal") {
+			db.Close()
+			return nil, fmt.Errorf("failed to enable WAL (mode %s): %v", journalMode, err)
+		}
+	}
+	store.readDB, err = openSQLiteReaders(dbPath)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
 	return store, nil
 }
 
@@ -58,6 +77,43 @@ func openSQLiteConnection(dbPath string) (*sql.DB, error) {
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
 	return db, nil
+}
+
+// Keep writes serialized, but do not make UI reads wait for the writer pool.
+func openSQLiteReaders(dbPath string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", sqliteDSN(dbPath)+"&_pragma=query_only%3DON")
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
+	// Open the bounded pool during startup. Besides removing first-view latency,
+	// this avoids lazy connection setup racing with shutdown/background reads.
+	connections := make([]*sql.Conn, 0, 4)
+	for i := 0; i < 4; i++ {
+		conn, err := db.Conn(context.Background())
+		if err != nil {
+			for _, opened := range connections {
+				opened.Close()
+			}
+			db.Close()
+			return nil, err
+		}
+		connections = append(connections, conn)
+	}
+	for _, conn := range connections {
+		conn.Close()
+	}
+	return db, nil
+}
+
+func (s *SQLiteStore) sessionReader() *sql.DB {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.readDB != nil {
+		return s.readDB
+	}
+	return s.db
 }
 
 func sqliteDSN(dbPath string) string {
@@ -93,6 +149,16 @@ func (s *SQLiteStore) reopenOnReadonly(writeErr error) error {
 	if err != nil {
 		return fmt.Errorf("failed to reopen sqlite database after readonly error: %w", err)
 	}
+	nextReaders, err := openSQLiteReaders(s.dbPath)
+	if err != nil {
+		nextDB.Close()
+		return err
+	}
+	previousReaders := s.readDB
+	s.readDB = nextReaders
+	if previousReaders != nil {
+		_ = previousReaders.Close()
+	}
 	prev := s.db
 	s.db = nextDB
 	if prev != nil {
@@ -103,6 +169,11 @@ func (s *SQLiteStore) reopenOnReadonly(writeErr error) error {
 
 // Close closes the database connection
 func (s *SQLiteStore) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.readDB != nil {
+		_ = s.readDB.Close()
+	}
 	return s.db.Close()
 }
 

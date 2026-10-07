@@ -45,6 +45,9 @@ func (s *SQLiteStore) migrate() error {
 		// Migration to add metadata column to messages
 		`ALTER TABLE messages ADD COLUMN metadata TEXT`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_project_id ON sessions(project_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_project_created ON sessions(project_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_session_timestamp ON messages(session_id, timestamp)`,
 		// Recurring jobs table
 		`CREATE TABLE IF NOT EXISTS recurring_jobs (
 				id TEXT PRIMARY KEY,
@@ -386,6 +389,9 @@ func (s *SQLiteStore) migrate() error {
 			return fmt.Errorf("migration failed: %w", err)
 		}
 	}
+	if err := s.migrateSessionDisplayMetadata(); err != nil {
+		return fmt.Errorf("failed to migrate session display metadata: %w", err)
+	}
 	if err := s.migrateBrokenTaskRefs(); err != nil {
 		return fmt.Errorf("failed to migrate broken task refs: %w", err)
 	}
@@ -644,4 +650,24 @@ func isSQLiteDuplicateColumnError(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "duplicate column name")
+}
+
+// Add and backfill atomically, and never request a write lock on later startups.
+func (s *SQLiteStore) migrateSessionDisplayMetadata() error {
+	exists, err := s.columnExists("sessions", "display_metadata")
+	if err != nil || exists {
+		return err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("ALTER TABLE sessions ADD COLUMN display_metadata TEXT"); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE sessions SET display_metadata = CASE WHEN json_valid(metadata) THEN json_remove(metadata, '$.context_compression_store') ELSE metadata END`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

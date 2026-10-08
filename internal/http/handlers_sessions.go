@@ -119,43 +119,6 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	s.jsonResponse(w, http.StatusOK, items)
 }
 
-func parseSessionListMetadataKeys(raw string) map[string]struct{} {
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	keys := make(map[string]struct{})
-	for _, part := range strings.Split(raw, ",") {
-		key := strings.TrimSpace(part)
-		if key == "" {
-			continue
-		}
-		keys[key] = struct{}{}
-	}
-	if len(keys) == 0 {
-		return nil
-	}
-	return keys
-}
-
-func filterSessionListMetadata(metadata map[string]interface{}, keys map[string]struct{}) map[string]interface{} {
-	if len(metadata) == 0 {
-		return nil
-	}
-	if len(keys) == 0 {
-		return metadata
-	}
-	filtered := make(map[string]interface{}, len(keys))
-	for key := range keys {
-		if value, ok := metadata[key]; ok {
-			filtered[key] = value
-		}
-	}
-	if len(filtered) == 0 {
-		return nil
-	}
-	return filtered
-}
-
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	var req CreateSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -208,6 +171,9 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if imagesErr != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Invalid images payload: "+imagesErr.Error())
 		return
+	}
+	if linkedContinuation != nil {
+		images = linkedContinuationImages(parentSession, images)
 	}
 	req.ProjectID = strings.TrimSpace(req.ProjectID)
 	req.TaskID = strings.TrimSpace(req.TaskID)

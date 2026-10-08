@@ -167,7 +167,7 @@ func firstLinkedContextUserMessage(sess *session.Session) (session.Message, bool
 		return session.Message{}, false
 	}
 	for _, msg := range sess.Messages {
-		if msg.Role != "user" || strings.TrimSpace(msg.Content) == "" {
+		if msg.Role != "user" || (strings.TrimSpace(msg.Content) == "" && len(msg.Images) == 0) {
 			continue
 		}
 		if linkedContextMetadataBool(msg.Metadata, "internal_handoff") || linkedContextMetadataBool(msg.Metadata, "synthetic_continuation") {
@@ -256,6 +256,9 @@ func linkedContextMessageLogEntry(msg session.Message) string {
 		if result.IsError {
 			status = "error"
 		}
+		// Older transcripts can still contain JSON screenshot payloads. Extract
+		// them before summarizing; the full images travel as attachments instead.
+		result.Content = linkedContextToolResult(result).Content
 		snippet := compactLinkedContextWhitespace(result.Content)
 		if snippet == "" {
 			parts = append(parts, fmt.Sprintf("- Tool result %s (%s, %d chars)", name, status, len([]rune(result.Content))))

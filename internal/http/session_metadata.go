@@ -715,3 +715,40 @@ func metadataNumber(metadata map[string]interface{}, key string) float64 {
 		return 0
 	}
 }
+
+func parseSessionListMetadataKeys(raw string) map[string]struct{} {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	keys := make(map[string]struct{})
+	for _, part := range strings.Split(raw, ",") {
+		key := strings.TrimSpace(part)
+		if key == "" {
+			continue
+		}
+		keys[key] = struct{}{}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	return keys
+}
+
+func filterSessionListMetadata(metadata map[string]interface{}, keys map[string]struct{}) map[string]interface{} {
+	if len(metadata) == 0 {
+		return nil
+	}
+	if len(keys) == 0 {
+		return metadata
+	}
+	filtered := make(map[string]interface{}, len(keys))
+	for key := range keys {
+		if value, ok := metadata[key]; ok {
+			filtered[key] = value
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
+}

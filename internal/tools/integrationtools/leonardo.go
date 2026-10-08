@@ -250,8 +250,8 @@ var leonardoModelUUID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a
 // validates width and height against separate lists).
 var leonardoV2Sizes = map[string]struct{ widths, heights []int }{
 	"gemini-2.5-flash-image": {
-		widths:  []int{832, 864, 896, 1024, 1152, 1184, 1248, 1344, 1536},
-		heights: []int{672, 768, 832, 864, 896, 1024, 1184, 1248, 1344},
+		widths:  []int{768, 832, 864, 896, 1024, 1152, 1184, 1248, 1344},
+		heights: []int{672, 768, 832, 864, 896, 1152, 1184, 1248, 1344},
 	},
 }
 
@@ -380,6 +380,9 @@ func (t *LeonardoGenerateImageTool) createGeneration(ctx context.Context, apiKey
 		return "", fmt.Errorf("leonardo API error (status %d): %s", resp.StatusCode, detail)
 	}
 
+	if err := leonardoEnvelopeError(respBody); err != nil {
+		return "", err
+	}
 	generationID := extractLeonardoGenerationID(respBody)
 	if generationID == "" {
 		return "", fmt.Errorf("leonardo response did not include a generation id")
@@ -445,6 +448,9 @@ func (t *LeonardoGenerateImageTool) fetchGenerationStatus(ctx context.Context, a
 		return nil, "", fmt.Errorf("leonardo status API error (status %d): %s", resp.StatusCode, detail)
 	}
 
+	if err := leonardoEnvelopeError(respBody); err != nil {
+		return nil, "", err
+	}
 	return respBody, extractLeonardoStatus(respBody), nil
 }
 
@@ -600,6 +606,41 @@ func (t *LeonardoGenerateImageTool) selectIntegration(integrationID string, inte
 		return candidates[0], nil
 	}
 	return nil, fmt.Errorf("multiple leonardo integrations are enabled; pass integration_id or integration_name")
+}
+
+// Leonardo can signal rejected requests in a GraphQL-style array despite HTTP 200.
+// Decode the envelope explicitly so generic nested messages cannot hide the cause.
+func leonardoEnvelopeError(raw []byte) error {
+	var entries []struct {
+		Message    string `json:"message"`
+		Extensions struct {
+			Code       string          `json:"code"`
+			StatusCode int             `json:"statusCode"`
+			Details    json.RawMessage `json:"details"`
+		} `json:"extensions"`
+	}
+	if json.Unmarshal(raw, &entries) != nil {
+		return nil
+	}
+	for _, entry := range entries {
+		if entry.Extensions.StatusCode < 400 && entry.Extensions.Code == "" {
+			continue
+		}
+		detail := strings.TrimSpace(entry.Message)
+		// Validation errors carry their actionable message in an object; a
+		// billing rejection instead has a useful top-level message.
+		var validation struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(entry.Extensions.Details, &validation) == nil && strings.TrimSpace(validation.Message) != "" {
+			detail = strings.TrimSpace(validation.Message)
+		}
+		if detail == "" {
+			detail = entry.Extensions.Code
+		}
+		return fmt.Errorf("leonardo API error (status %d, code %s): %s", entry.Extensions.StatusCode, entry.Extensions.Code, detail)
+	}
+	return nil
 }
 
 func extractLeonardoGenerationID(raw []byte) string {

@@ -152,6 +152,7 @@ To display Cursor usage in Caesar, Brute calls Cursor's `GetCurrentPeriodUsage` 
 - REST API for web-app integration
 - Session management endpoints (create/list/resume/manage)
 - Speech and integration plumbing (including Whisper-related flows)
+- [Leonardo image generation: models, dimensions, and API error handling](docs/leonardo-image-generation.md)
 
 ### 3.7 Reliability and Performance
 

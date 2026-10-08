@@ -61,3 +61,5 @@
 - Read the workspace AGENTS.md before initial Git commands: `/Users/artjomkurapov/git/a2gent` is a multi-component workspace, and Git commands must run in a component repository.
 - Linked-context `Truncated` marks the final prompt cap, not every section cap. Tests for image preservation should assert the text length and untouched image bytes rather than require this flag for oversized original messages.
 - The read-only dev-code-reviewer container may lack Go. Treat its result as static review and run build, vet, and race tests on the host.
+- Leonardo v2 can return HTTP 200 with a JSON array of API errors. Check extensions.statusCode/code before reading generationId or polling; validation details.message and top-level billing messages carry the actionable cause. Confirm model dimensions against live API validation, not stale mock fixtures.
+- A bounded full-suite command that times out is not a passing check. Preserve its log, report incomplete verification, and ask whether to rerun with a longer budget rather than bypassing commit hooks.

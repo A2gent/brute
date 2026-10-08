@@ -261,8 +261,8 @@ func TestLeonardoGenerateImageNanoBananaUsesV2(t *testing.T) {
 			t.Fatalf("unexpected model: %v", payload["model"])
 		}
 		params := payload["parameters"].(map[string]interface{})
-		// 768x1152 is not valid for Nano Banana: width must snap to 832, height stays 1184 or 1024 neighbour.
-		if params["width"].(float64) != 832 || params["height"].(float64) != 1184 {
+		// Nano Banana accepts 768x1152 in the current v2 dimension lists.
+		if params["width"].(float64) != 768 || params["height"].(float64) != 1152 {
 			t.Fatalf("sizes not snapped: %v x %v", params["width"], params["height"])
 		}
 		if !strings.Contains(params["prompt"].(string), "Avoid: text") {
@@ -295,5 +295,59 @@ func TestLeonardoGenerateImageNanoBananaUsesV2(t *testing.T) {
 	}
 	if v2Posts.Load() != 1 {
 		t.Fatalf("expected one v2 create request, got %d", v2Posts.Load())
+	}
+}
+
+// Leonardo v2 can return GraphQL-style error envelopes with HTTP 200.
+func TestLeonardoGenerateImageCreateErrorEnvelope(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		{"credits", `[{"extensions":{"code":"HttpException","details":"An error occurred processing your request.","statusCode":402},"message":"Insufficient tokens","path":[]}]`, "Insufficient tokens"},
+		{"validation", `[{"extensions":{"code":"BadRequestException","details":{"code":"VALIDATION_ERROR","message":"parameters.width must be one of: 1344, 768"},"statusCode":400},"message":"An error occurred.","path":[]}]`, "parameters.width must be one of: 1344, 768"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			tool := NewLeonardoGenerateImageTool(newLeonardoTestStore(t, "test-key", nil), t.TempDir())
+			tool.apiV2BaseURL = server.URL
+			params := json.RawMessage(`{"prompt":"embers","model_id":"gemini-2.5-flash-image"}`)
+			result, err := tool.Execute(context.Background(), params)
+			if err != nil || result.Success || !strings.Contains(result.Error, tc.want) {
+				t.Fatalf("expected actionable API failure %q, got err=%v result=%+v", tc.want, err, result)
+			}
+			if requests.Load() != 1 {
+				t.Fatalf("error envelope must not start polling: %d requests", requests.Load())
+			}
+		})
+	}
+}
+
+func TestLeonardoNanoBananaCurrentSizes(t *testing.T) {
+	t.Parallel()
+	request := buildLeonardoV2Request("gemini-2.5-flash-image", "embers", LeonardoGenerateImageParams{Width: 1536, Height: 1024}, &storage.Integration{Config: map[string]string{}})
+	params := request["parameters"].(map[string]interface{})
+	if params["width"] != 1344 || params["height"] != 896 {
+		t.Fatalf("invalid Nano Banana sizes were not snapped to current API values: %v", params)
+	}
+}
+
+func TestLeonardoGenerateImageStatusErrorEnvelope(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"extensions":{"code":"HttpException","statusCode":429},"message":"Rate limit exceeded"}]`))
+	}))
+	defer server.Close()
+	tool := NewLeonardoGenerateImageTool(nil, t.TempDir())
+	tool.apiBaseURL = server.URL
+	_, _, err := tool.fetchGenerationStatus(context.Background(), "test-key", "generation-id")
+	if err == nil || !strings.Contains(err.Error(), "Rate limit exceeded") {
+		t.Fatalf("expected immediate status error, got %v", err)
 	}
 }

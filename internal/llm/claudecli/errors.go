@@ -2,8 +2,15 @@ package claudecli
 
 import (
 	"encoding/json"
+	"fmt"
+	"regexp"
 	"strings"
 )
+
+const maxFallbackTailChars = 300
+
+// base64Run matches long opaque payloads (inline images, blobs) that make error dumps unreadable.
+var base64Run = regexp.MustCompile(`[A-Za-z0-9+/=]{80,}`)
 
 func cliErrorMessage(runErr error, stdout, stderr string) string {
 	parts := make([]string, 0, 3)
@@ -14,7 +21,10 @@ func cliErrorMessage(runErr error, stdout, stderr string) string {
 		if msg := cliOutputMessage(stdout); msg != "" {
 			parts = append(parts, msg)
 		} else {
-			parts = append(parts, stdout)
+			// WHY: when the CLI dies mid-turn, stdout holds stream events (tool results,
+			// base64 images) with no error text. Dumping them hides the real cause, so
+			// report the exit reason plus a compact summary instead.
+			parts = append(parts, runErr.Error(), summarizeCLIOutput(stdout))
 		}
 	}
 	if len(parts) == 0 {
@@ -29,8 +39,11 @@ func cliOutputMessage(stdout string) string {
 		return ""
 	}
 	if json.Valid([]byte(stdout)) {
-		if parsed, _, err := parseCLIResult(stdout); err == nil {
-			return cliResultMessage(parsed)
+		if parsed, raw, err := parseCLIResult(stdout); err == nil {
+			// parseCLIResult echoes raw input as Result when it cannot decode it; not a message.
+			if msg := cliResultMessage(parsed); msg != raw {
+				return msg
+			}
 		}
 	}
 
@@ -44,6 +57,9 @@ func cliOutputMessage(stdout string) string {
 			if msg := cliStreamEnvelopeMessage(event); msg != "" {
 				return msg
 			}
+			// WHY: a well-formed envelope without text is authoritative; falling
+			// through to parseCLIResult would echo the whole raw line as the "message".
+			continue
 		}
 		if parsed, _, err := parseCLIResult(line); err == nil {
 			if msg := cliResultMessage(parsed); msg != "" {
@@ -120,4 +136,28 @@ func isClaudeCLIAuthError(lower string) bool {
 		strings.Contains(lower, "authentication") ||
 		strings.Contains(lower, "unauthorized") ||
 		strings.Contains(lower, "401")
+}
+
+// summarizeCLIOutput describes stream-json output that carries no error message:
+// event count, last event type and a short sanitized tail of the last event.
+func summarizeCLIOutput(stdout string) string {
+	var lines []string
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.TrimSpace(line) != "" {
+			lines = append(lines, strings.TrimSpace(line))
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	last := lines[len(lines)-1]
+	var env struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal([]byte(last), &env)
+	tail := base64Run.ReplaceAllString(last, "<blob>")
+	if len(tail) > maxFallbackTailChars {
+		tail = tail[:maxFallbackTailChars] + "..."
+	}
+	return fmt.Sprintf("CLI produced no error message (%d events, last event %q): %s", len(lines), env.Type, tail)
 }

@@ -236,3 +236,64 @@ func TestExtractLeonardoImageURLs(t *testing.T) {
 		t.Fatalf("unexpected urls: %#v", urls)
 	}
 }
+
+func TestLeonardoGenerateImageNanoBananaUsesV2(t *testing.T) {
+	t.Parallel()
+
+	const generationID = "aaaaaaaa-2222-3333-4444-555555555555"
+	var v2Posts atomic.Int32
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("User-Agent") == "" || strings.HasPrefix(r.Header.Get("User-Agent"), "Go-http-client") {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte{0x89, 0x50, 0x4e, 0x47})
+	}))
+	t.Cleanup(imageServer.Close)
+
+	v2Server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		v2Posts.Add(1)
+		var payload map[string]interface{}
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &payload)
+		if payload["model"] != "gemini-2.5-flash-image" {
+			t.Fatalf("unexpected model: %v", payload["model"])
+		}
+		params := payload["parameters"].(map[string]interface{})
+		// 768x1152 is not valid for Nano Banana: width must snap to 832, height stays 1184 or 1024 neighbour.
+		if params["width"].(float64) != 832 || params["height"].(float64) != 1184 {
+			t.Fatalf("sizes not snapped: %v x %v", params["width"], params["height"])
+		}
+		if !strings.Contains(params["prompt"].(string), "Avoid: text") {
+			t.Fatalf("negative prompt not folded in: %v", params["prompt"])
+		}
+		_, _ = w.Write([]byte(`{"generate":{"generationId":"` + generationID + `"}}`))
+	}))
+	t.Cleanup(v2Server.Close)
+
+	v1Server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/generations/"+generationID {
+			t.Fatalf("unexpected v1 request: %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"generations_by_pk":{"status":"COMPLETE","generated_images":[{"url":"` + imageServer.URL + `/i.png"}]}}`))
+	}))
+	t.Cleanup(v1Server.Close)
+
+	tool := NewLeonardoGenerateImageTool(newLeonardoTestStore(t, "test-key", nil), t.TempDir())
+	tool.apiBaseURL = v1Server.URL
+	tool.apiV2BaseURL = v2Server.URL
+	tool.pollInterval = 10 * time.Millisecond
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"prompt": "stained glass", "model_id": "gemini-2.5-flash-image",
+		"width": 768, "height": 1152, "negative_prompt": "text",
+	})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil || !result.Success {
+		t.Fatalf("expected success, got err=%v result=%+v", err, result)
+	}
+	if v2Posts.Load() != 1 {
+		t.Fatalf("expected one v2 create request, got %d", v2Posts.Load())
+	}
+}

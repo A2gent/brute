@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -19,22 +20,24 @@ import (
 )
 
 const (
-	leonardoAPIBaseURL            = "https://cloud.leonardo.ai/api/rest/v1"
-	leonardoAPIStatusComplete     = "COMPLETE"
-	leonardoAPIStatusFailed       = "FAILED"
-	leonardoAPIStatusPending      = "PENDING"
-	defaultLeonardoWidth          = 1344
-	defaultLeonardoHeight         = 768
-	defaultLeonardoNumImages      = 1
-	leonardoDefaultPollInterval   = 2 * time.Second
-	leonardoDefaultTimeout        = 10 * time.Minute
-	leonardoHTTPClientTimeout     = 60 * time.Second
+	leonardoAPIBaseURL          = "https://cloud.leonardo.ai/api/rest/v1"
+	leonardoAPIV2BaseURL        = "https://cloud.leonardo.ai/api/rest/v2"
+	leonardoAPIStatusComplete   = "COMPLETE"
+	leonardoAPIStatusFailed     = "FAILED"
+	leonardoAPIStatusPending    = "PENDING"
+	defaultLeonardoWidth        = 1344
+	defaultLeonardoHeight       = 768
+	defaultLeonardoNumImages    = 1
+	leonardoDefaultPollInterval = 2 * time.Second
+	leonardoDefaultTimeout      = 10 * time.Minute
+	leonardoHTTPClientTimeout   = 60 * time.Second
 )
 
 type LeonardoGenerateImageTool struct {
 	store        storage.Store
 	outputDir    string
 	apiBaseURL   string
+	apiV2BaseURL string
 	client       *http.Client
 	pollInterval time.Duration
 }
@@ -92,7 +95,7 @@ func (t *LeonardoGenerateImageTool) Schema() map[string]interface{} {
 			},
 			"model_id": map[string]interface{}{
 				"type":        "string",
-				"description": "Optional Leonardo model ID override.",
+				"description": "Optional model override. A Leonardo model UUID uses the v1 API. A named partner model such as gemini-2.5-flash-image (Nano Banana) or gpt-image-1.5 (OpenAI) uses the v2 API; sizes are snapped to the nearest size the model accepts.",
 			},
 			"width": map[string]interface{}{
 				"type":        "integer",
@@ -146,12 +149,15 @@ func (t *LeonardoGenerateImageTool) Execute(ctx context.Context, params json.Raw
 	defer cancel()
 
 	requestBody := t.buildGenerationRequest(prompt, p, integration)
+	if model := t.v2Model(p, integration); model != "" {
+		requestBody = buildLeonardoV2Request(model, prompt, p, integration)
+	}
 	body, err := json.Marshal(requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode leonardo request: %w", err)
 	}
 
-	generationID, err := t.createGeneration(ctx, apiKey, body)
+	generationID, err := t.createGeneration(ctx, apiKey, body, t.v2Model(p, integration) != "")
 	if err != nil {
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}
@@ -236,6 +242,110 @@ func (t *LeonardoGenerateImageTool) buildGenerationRequest(prompt string, p Leon
 	return requestBody
 }
 
+// leonardoModelUUID matches Leonardo's own (v1) model IDs; anything else is a
+// partner model name served by the v2 API.
+var leonardoModelUUID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// leonardoV2Sizes lists the dimensions the v2 Nano Banana model accepts (it
+// validates width and height against separate lists).
+var leonardoV2Sizes = map[string]struct{ widths, heights []int }{
+	"gemini-2.5-flash-image": {
+		widths:  []int{832, 864, 896, 1024, 1152, 1184, 1248, 1344, 1536},
+		heights: []int{672, 768, 832, 864, 896, 1024, 1184, 1248, 1344},
+	},
+}
+
+// v2Model returns the partner model name when the request should use the v2
+// API, or "" for Leonardo's own models.
+func (t *LeonardoGenerateImageTool) v2Model(p LeonardoGenerateImageParams, integration *storage.Integration) string {
+	model := strings.TrimSpace(p.ModelID)
+	if model == "" {
+		model = strings.TrimSpace(integration.Config["model_id"])
+	}
+	if model == "" || leonardoModelUUID.MatchString(model) {
+		return ""
+	}
+	return model
+}
+
+func snapToNearest(value int, allowed []int) int {
+	best := allowed[0]
+	for _, candidate := range allowed {
+		if absInt(candidate-value) < absInt(best-value) {
+			best = candidate
+		}
+	}
+	return best
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+// buildLeonardoV2Request builds a v2 /generations body. The v2 API has no
+// negative prompt or preset style, so a negative prompt is folded into the
+// prompt text.
+func buildLeonardoV2Request(model, prompt string, p LeonardoGenerateImageParams, integration *storage.Integration) map[string]interface{} {
+	width := p.Width
+	if width <= 0 {
+		width = parsePositiveInt(integration.Config["width"])
+	}
+	if width <= 0 {
+		width = defaultLeonardoWidth
+	}
+	height := p.Height
+	if height <= 0 {
+		height = parsePositiveInt(integration.Config["height"])
+	}
+	if height <= 0 {
+		height = defaultLeonardoHeight
+	}
+	if sizes, ok := leonardoV2Sizes[model]; ok {
+		width = snapToNearest(width, sizes.widths)
+		height = snapToNearest(height, sizes.heights)
+	}
+	if negative := strings.TrimSpace(p.NegativePrompt); negative != "" {
+		prompt += "\n\nAvoid: " + negative
+	}
+	quantity := p.NumImages
+	if quantity <= 0 {
+		quantity = parsePositiveInt(integration.Config["num_images"])
+	}
+	if quantity <= 0 {
+		quantity = defaultLeonardoNumImages
+	}
+	parameters := map[string]interface{}{
+		"prompt":   prompt,
+		"width":    width,
+		"height":   height,
+		"quantity": quantity,
+	}
+	if strings.HasPrefix(model, "gpt-image") {
+		parameters["quality"] = "HIGH"
+	}
+	return map[string]interface{}{
+		"model":      model,
+		"parameters": parameters,
+		"public":     false,
+	}
+}
+
+func (t *LeonardoGenerateImageTool) createURL(v2 bool) string {
+	if !v2 {
+		return t.baseURL() + "/generations"
+	}
+	if base := strings.TrimSpace(t.apiV2BaseURL); base != "" {
+		return strings.TrimRight(base, "/") + "/generations"
+	}
+	if base := strings.TrimSpace(t.apiBaseURL); base != "" {
+		return strings.TrimRight(base, "/") + "/generations"
+	}
+	return leonardoAPIV2BaseURL + "/generations"
+}
+
 func (t *LeonardoGenerateImageTool) baseURL() string {
 	if base := strings.TrimSpace(t.apiBaseURL); base != "" {
 		return strings.TrimRight(base, "/")
@@ -243,8 +353,8 @@ func (t *LeonardoGenerateImageTool) baseURL() string {
 	return leonardoAPIBaseURL
 }
 
-func (t *LeonardoGenerateImageTool) createGeneration(ctx context.Context, apiKey string, body []byte) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.baseURL()+"/generations", strings.NewReader(string(body)))
+func (t *LeonardoGenerateImageTool) createGeneration(ctx context.Context, apiKey string, body []byte, v2 bool) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.createURL(v2), strings.NewReader(string(body)))
 	if err != nil {
 		return "", fmt.Errorf("failed to build leonardo request: %w", err)
 	}
@@ -363,6 +473,8 @@ func (t *LeonardoGenerateImageTool) downloadImage(ctx context.Context, outDir, g
 	if err != nil {
 		return "", fmt.Errorf("failed to build image download request: %w", err)
 	}
+	// Leonardo's CDN answers 403 to the default Go user agent on partner-model images.
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; a2gent-brute)")
 	resp, err := t.client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to download generated image: %w", err)

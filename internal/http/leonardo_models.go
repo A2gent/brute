@@ -32,6 +32,11 @@ type LeonardoModelsResponse struct {
 	Models []LeonardoModelOption `json:"models"`
 }
 
+var leonardoPartnerModels = []LeonardoModelOption{
+	{ID: "gemini-2.5-flash-image", Name: "Nano Banana (Gemini 2.5 Flash Image)", Description: "Partner model via Leonardo v2 API; sizes snap to supported values."},
+	{ID: "gpt-image-1.5", Name: "GPT Image 1.5 (OpenAI)", Description: "Partner model via Leonardo v2 API."},
+}
+
 func (s *Server) handleListLeonardoModels(w http.ResponseWriter, r *http.Request) {
 	var req LeonardoModelsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -101,6 +106,20 @@ func listLeonardoPlatformModels(ctx context.Context, apiKey string) ([]LeonardoM
 	}
 
 	models := collectLeonardoModels(payload)
+	// Partner models are addressed by name on the v2 API and are not always in
+	// the platform model list; offer them so the image tool works with them.
+	for _, partner := range leonardoPartnerModels {
+		known := false
+		for _, existing := range models {
+			if existing.ID == partner.ID {
+				known = true
+				break
+			}
+		}
+		if !known {
+			models = append(models, partner)
+		}
+	}
 	if len(models) == 0 {
 		return nil, fmt.Errorf("Leonardo returned no platform models")
 	}

@@ -37,11 +37,16 @@ func TestHandleListLeonardoModels_UsesV2Endpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(models) != 2 {
-		t.Fatalf("expected 2 models, got %d", len(models))
+	// Two platform models from the mock plus the built-in partner models.
+	if want := 2 + len(leonardoPartnerModels); len(models) != want {
+		t.Fatalf("expected %d models, got %d", want, len(models))
 	}
-	if models[0].ID != "kino-xl" {
-		t.Fatalf("unexpected model id: %q", models[0].ID)
+	ids := map[string]bool{}
+	for _, m := range models {
+		ids[m.ID] = true
+	}
+	if !ids["kino-xl"] || !ids["gemini-2.5-flash-image"] {
+		t.Fatalf("expected platform and Nano Banana models, got %v", ids)
 	}
 }
 

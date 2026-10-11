@@ -284,3 +284,40 @@ func saveTaskTestProject(t *testing.T, store *SQLiteStore, id, name string) *Pro
 	}
 	return project
 }
+
+func TestSQLiteTaskPersistsMultipleImages(t *testing.T) {
+	store, err := NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	project := saveTaskTestProject(t, store, "multi-image", "Images")
+	images := []TaskImage{{Name: "one.png", MediaType: "image/png", DataBase64: "b25l"}, {Name: "two.png", MediaType: "image/png", DataBase64: "dHdv"}}
+	task, err := store.CreateTask(project.ID, TaskCreate{Title: "Visual backlog", Images: images})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.GetTask(project.ID, task.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Images) != 2 || loaded.Images[1].Name != "two.png" {
+		t.Fatalf("images = %#v", loaded.Images)
+	}
+	title := "Retitled"
+	if _, err := store.UpdateTask(project.ID, task.Ref, TaskUpdate{Title: &title}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _ = store.GetTask(project.ID, task.Ref)
+	if len(loaded.Images) != 2 {
+		t.Fatal("metadata edit lost images")
+	}
+	empty := []TaskImage{}
+	if _, err := store.UpdateTask(project.ID, task.Ref, TaskUpdate{Images: &empty}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _ = store.GetTask(project.ID, task.Ref)
+	if len(loaded.Images) != 0 || loaded.Image != nil {
+		t.Fatal("clearing images failed")
+	}
+}

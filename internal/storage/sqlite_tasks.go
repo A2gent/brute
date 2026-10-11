@@ -73,15 +73,12 @@ func (s *SQLiteStore) CreateTask(projectID string, input TaskCreate) (*Task, err
 	now := time.Now().UTC()
 	task := &Task{
 		ID: uuid.New().String(), ProjectID: projectID, Ref: taskRefPrefix(project) + fmt.Sprintf("-%d", seq), Seq: seq,
-		Title: title, Body: input.Body, Image: input.Image, Status: status, Priority: input.Priority, Complexity: input.Complexity,
+		Title: title, Body: input.Body, Image: input.Image, Images: input.Images, Status: status, Priority: input.Priority, Complexity: input.Complexity,
 		Tags: normalizeTaskTags(input.Tags), Price: strings.TrimSpace(input.Price), Hours: input.Hours, Position: position,
 		CreatedBy: createdBy, CreatedAt: now, UpdatedAt: now, SourceKey: strings.TrimSpace(input.SourceKey),
 	}
 	stampTaskStatus(task, "", status, now)
-	imageJSON := []byte{}
-	if task.Image != nil {
-		imageJSON, _ = json.Marshal(task.Image)
-	}
+	imageJSON := marshalTaskImages(task)
 	tagsJSON, _ := json.Marshal(task.Tags)
 	_, err = tx.Exec(`INSERT INTO tasks
 		(id, project_id, ref, seq, title, body, image, session_id, status, priority, complexity, tags, price, hours, position, created_by, source_key, created_at, updated_at, started_at, completed_at)
@@ -160,8 +157,12 @@ func (s *SQLiteStore) UpdateTask(projectID, taskRef string, update TaskUpdate) (
 	if update.Body != nil {
 		task.Body = *update.Body
 	}
-	if update.Image != nil {
+	if update.Images != nil {
+		task.Images = *update.Images
+		task.Image = nil
+	} else if update.Image != nil {
 		task.Image = *update.Image
+		task.Images = nil
 	}
 	if update.SessionID != nil {
 		task.SessionID = strings.TrimSpace(*update.SessionID)
@@ -202,10 +203,7 @@ func (s *SQLiteStore) UpdateTask(projectID, taskRef string, update TaskUpdate) (
 	task.UpdatedAt = time.Now().UTC()
 	stampTaskStatus(task, previousStatus, task.Status, task.UpdatedAt)
 	tagsJSON, _ := json.Marshal(task.Tags)
-	imageJSON := []byte{}
-	if task.Image != nil {
-		imageJSON, _ = json.Marshal(task.Image)
-	}
+	imageJSON := marshalTaskImages(task)
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
@@ -266,7 +264,15 @@ func scanTask(scanner taskScanner) (*Task, error) {
 	}
 	_ = json.Unmarshal([]byte(tagsJSON), &task.Tags)
 	if strings.TrimSpace(imageJSON) != "" {
-		_ = json.Unmarshal([]byte(imageJSON), &task.Image)
+		// Existing rows contain a single object; new rows can contain an array.
+		if strings.HasPrefix(strings.TrimSpace(imageJSON), "[") {
+			_ = json.Unmarshal([]byte(imageJSON), &task.Images)
+			if len(task.Images) > 0 {
+				task.Image = &task.Images[0]
+			}
+		} else {
+			_ = json.Unmarshal([]byte(imageJSON), &task.Image)
+		}
 	}
 	if task.Tags == nil {
 		task.Tags = []string{}
@@ -426,4 +432,18 @@ func stampTaskStatus(task *Task, previous, next string, now time.Time) {
 	} else if previous == TaskStatusDone || previous == TaskStatusCancelled {
 		task.CompletedAt = nil
 	}
+}
+
+// Keep the legacy image column and first-image API compatible without a schema migration.
+func marshalTaskImages(task *Task) []byte {
+	if len(task.Images) > 0 {
+		task.Image = &task.Images[0]
+		data, _ := json.Marshal(task.Images)
+		return data
+	}
+	if task.Image != nil {
+		data, _ := json.Marshal(task.Image)
+		return data
+	}
+	return nil
 }

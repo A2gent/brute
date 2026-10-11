@@ -2,6 +2,7 @@ package claudecli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -145,6 +146,11 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 		return c.chatViaSidecar(ctx, request, model, nil)
 	}
 
+	if hasInlineImages(request) {
+		// WHY: --input-format stream-json (needed for image blocks) requires stream-json output.
+		return c.ChatStream(ctx, request, func(llm.StreamEvent) error { return nil })
+	}
+
 	prompt := buildPrompt(request)
 	bridge := c.newMCPBridgeInvocation(ctx)
 	defer bridge.revoke()
@@ -235,6 +241,15 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	bridge := c.newMCPBridgeInvocation(ctx)
 	defer bridge.revoke()
 	args := c.buildStreamArgs(request, model, prompt, bridge)
+	var stdinPayload []byte
+	if hasInlineImages(request) {
+		payload, err := buildStreamInput(request, prompt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode Claude CLI image input: %w", err)
+		}
+		stdinPayload = payload
+		args = withStdinPrompt(args)
+	}
 
 	claudePath, err := findExecutable(c.options.Executable)
 	if err != nil {
@@ -244,6 +259,9 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	cmd := exec.CommandContext(ctx, claudePath, args...)
 	cmd.Dir = c.options.WorkDir
 	cmd.Env = c.commandEnv()
+	if stdinPayload != nil {
+		cmd.Stdin = bytes.NewReader(stdinPayload)
+	}
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {

@@ -57,7 +57,12 @@ func writeMessage(b *strings.Builder, msg llm.Message) {
 		if label == "" {
 			label = "inline image"
 		}
-		b.WriteString("[Image attachment omitted in Claude CLI provider adapter: ")
+		if img.MediaType != "" && img.DataBase64 != "" {
+			// Delivered as a native image block via stdin (see images.go).
+			b.WriteString("[Image attached: ")
+		} else {
+			b.WriteString("[Image attachment omitted in Claude CLI provider adapter: ")
+		}
 		b.WriteString(label)
 		b.WriteString("]\n")
 	}

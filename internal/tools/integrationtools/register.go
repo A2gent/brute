@@ -42,4 +42,6 @@ func Register(manager *tools.Manager, store storage.Store, clipStore *speechcach
 	manager.Register(NewComfyUIRunWorkflowTool(store, manager.WorkDir(), filepath.Join(manager.WorkDir(), "generated", "comfyui")))
 	manager.Register(NewBlenderRenderTool(store, filepath.Join(manager.WorkDir(), "generated", "blender")).WithWorkDir(manager.WorkDir()))
 	manager.Register(NewBlenderRunScriptTool(store, manager.WorkDir(), filepath.Join(manager.WorkDir(), "generated", "blender")))
+	manager.Register(NewMeshyGenerate3DTool(store, manager.WorkDir(), filepath.Join(manager.WorkDir(), "generated", "meshy")))
+	manager.Register(NewTripoGenerate3DTool(store, manager.WorkDir(), filepath.Join(manager.WorkDir(), "generated", "tripo")))
 }

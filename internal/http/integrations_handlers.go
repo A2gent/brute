@@ -192,6 +192,15 @@ func (s *Server) handleTestIntegration(w http.ResponseWriter, r *http.Request) {
 		s.jsonResponse(w, status, IntegrationTestResponse{Success: ok, Message: message})
 		return
 	}
+	if integration.Provider == "meshy" || integration.Provider == "tripo" {
+		ok, message := s.testModel3DIntegration(r.Context(), integration)
+		status := http.StatusOK
+		if !ok {
+			status = http.StatusBadGateway
+		}
+		s.jsonResponse(w, status, IntegrationTestResponse{Success: ok, Message: message})
+		return
+	}
 	if integration.Provider == "comfyui" {
 		ok, message := s.testComfyUIIntegration(r.Context(), integration)
 		status := http.StatusOK

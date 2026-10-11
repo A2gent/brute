@@ -28,6 +28,8 @@ var supportedIntegrationProviders = map[string]struct{}{
 	"openai_images":   {},
 	"comfyui":         {},
 	"blender":         {},
+	"meshy":           {},
+	"tripo":           {},
 	"youtube":         {},
 	"a2_registry":     {},
 }
@@ -59,6 +61,8 @@ var requiredConfigFields = map[string][]string{
 	"openai_images":   {"api_key"},
 	"comfyui":         {"base_url"},
 	"blender":         {"binary_path"},
+	"meshy":           {"api_key"},
+	"tripo":           {"api_key"},
 	"youtube":         {},
 	"a2_registry":     {"api_key"},
 }

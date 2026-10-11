@@ -199,6 +199,10 @@ func defaultIntegrationName(provider string) string {
 		return "ComfyUI"
 	case "blender":
 		return "Blender"
+	case "meshy":
+		return "Meshy"
+	case "tripo":
+		return "Tripo3D"
 	default:
 		return provider
 	}

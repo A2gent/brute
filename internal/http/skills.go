@@ -31,6 +31,8 @@ var integrationToolsByProvider = map[string][]string{
 	"openai_images":   {"openai_generate_image"},
 	"comfyui":         {"comfyui_generate_image", "comfyui_run_workflow"},
 	"blender":         {"blender_render", "blender_run_script"},
+	"meshy":           {"meshy_generate_3d"},
+	"tripo":           {"tripo_generate_3d"},
 	"telegram":        {"telegram_send_message"},
 	"discord":         {"discord_send_message"},
 	"exa":             {"exa_search"},

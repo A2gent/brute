@@ -153,6 +153,7 @@ To display Cursor usage in Caesar, Brute calls Cursor's `GetCurrentPeriodUsage` 
 - Session management endpoints (create/list/resume/manage)
 - Speech and integration plumbing (including Whisper-related flows)
 - [Leonardo image generation: models, dimensions, and API error handling](docs/leonardo-image-generation.md)
+- [3D model generation with Meshy and Tripo3D](docs/3d-model-generation.md)
 
 ### 3.7 Reliability and Performance
 

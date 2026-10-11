@@ -661,31 +661,17 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	if listErr != nil {
 		logging.Warn("Failed to list sessions before delete cascade for %s: %v", sessionID, listErr)
 	} else {
-		childrenByParent := make(map[string][]string)
-		for _, item := range allSessions {
-			if item.ParentID == nil {
-				continue
+		// WHY: descendants that are still running must outlive their deleted ancestors;
+		// they are detached (becoming roots) so the storage-level cascade does not reach them.
+		var detach []*session.Session
+		sessionIDsToDelete, detach = sessionDeleteCascade(allSessions, sessionID, s.sessionIsBusy)
+		for _, survivor := range detach {
+			survivor.ParentID = nil
+			if saveErr := s.sessionManager.Save(survivor); saveErr != nil {
+				s.errorResponse(w, http.StatusInternalServerError, "Failed to detach running child session: "+saveErr.Error())
+				return
 			}
-			parentID := strings.TrimSpace(*item.ParentID)
-			if parentID == "" {
-				continue
-			}
-			childrenByParent[parentID] = append(childrenByParent[parentID], item.ID)
-		}
-
-		seen := map[string]struct{}{sessionID: {}}
-		queue := []string{sessionID}
-		for len(queue) > 0 {
-			current := queue[0]
-			queue = queue[1:]
-			for _, childID := range childrenByParent[current] {
-				if _, exists := seen[childID]; exists {
-					continue
-				}
-				seen[childID] = struct{}{}
-				sessionIDsToDelete = append(sessionIDsToDelete, childID)
-				queue = append(queue, childID)
-			}
+			s.publishSessionCatalog("session_updated", survivor)
 		}
 	}
 

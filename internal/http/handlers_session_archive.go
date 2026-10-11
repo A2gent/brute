@@ -149,3 +149,36 @@ func sessionSubtreeIDs(all []*session.Session, rootID string) []string {
 	}
 	return ids
 }
+
+// sessionDeleteCascade returns rootID plus the descendants to delete (BFS order),
+// and the busy descendants that must be detached and kept. A busy descendant is
+// not traversed, so its own subtree survives with it.
+func sessionDeleteCascade(all []*session.Session, rootID string, isBusy func(*session.Session) bool) ([]string, []*session.Session) {
+	childrenByParent := make(map[string][]*session.Session)
+	for _, item := range all {
+		if item == nil || item.ParentID == nil {
+			continue
+		}
+		parentID := strings.TrimSpace(*item.ParentID)
+		if parentID != "" {
+			childrenByParent[parentID] = append(childrenByParent[parentID], item)
+		}
+	}
+	ids := []string{rootID}
+	var survivors []*session.Session
+	seen := map[string]struct{}{rootID: {}}
+	for i := 0; i < len(ids); i++ {
+		for _, child := range childrenByParent[ids[i]] {
+			if _, ok := seen[child.ID]; ok {
+				continue
+			}
+			seen[child.ID] = struct{}{}
+			if isBusy(child) {
+				survivors = append(survivors, child)
+				continue
+			}
+			ids = append(ids, child.ID)
+		}
+	}
+	return ids, survivors
+}

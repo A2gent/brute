@@ -155,3 +155,62 @@ func TestArchiveSessionRejectsRunningSession(t *testing.T) {
 		t.Fatalf("status = %d, want 409, body = %s", rec.Code, rec.Body.String())
 	}
 }
+
+// buildParentChainWithRunningGrandchild creates completed parent -> completed child -> running grandchild.
+func buildParentChainWithRunningGrandchild(t *testing.T, sm *session.Manager) (parent, child, grandchild *session.Session) {
+	t.Helper()
+	parent, _ = sm.Create("build")
+	parent.SetStatus(session.StatusCompleted)
+	child, _ = sm.CreateWithParent("build", parent.ID)
+	child.SetStatus(session.StatusCompleted)
+	grandchild, _ = sm.CreateWithParent("build", child.ID)
+	grandchild.SetStatus(session.StatusRunning)
+	for _, s := range []*session.Session{parent, child, grandchild} {
+		if err := sm.Save(s); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+	}
+	return parent, child, grandchild
+}
+
+func TestArchiveSessionKeepsRunningDeepDescendantVisible(t *testing.T) {
+	server, sm := newSessionArchiveTestServer(t)
+	parent, child, grandchild := buildParentChainWithRunningGrandchild(t, sm)
+
+	if rec := callSessionArchiveHandler(t, server.handleArchiveSession, parent.ID); rec.Code != http.StatusOK {
+		t.Fatalf("archive status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	active := listSessionIDs(t, server, "")
+	if _, ok := active[grandchild.ID]; !ok {
+		t.Fatalf("running grandchild must stay in default list")
+	}
+	if _, ok := active[parent.ID]; ok {
+		t.Fatalf("archived parent must be hidden")
+	}
+	if _, ok := active[child.ID]; ok {
+		t.Fatalf("archived idle child must be hidden")
+	}
+}
+
+func TestDeleteSessionKeepsRunningDeepDescendant(t *testing.T) {
+	server, sm := newSessionArchiveTestServer(t)
+	parent, child, grandchild := buildParentChainWithRunningGrandchild(t, sm)
+
+	rec := callSessionArchiveHandler(t, server.handleDeleteSession, parent.ID)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	active := listSessionIDs(t, server, "")
+	if _, ok := active[grandchild.ID]; !ok {
+		t.Fatalf("running grandchild must survive deleting its ancestors")
+	}
+	if active[grandchild.ID].ParentID != "" {
+		t.Fatalf("surviving grandchild should be detached, got parent %q", active[grandchild.ID].ParentID)
+	}
+	if _, ok := active[parent.ID]; ok {
+		t.Fatalf("deleted parent must be gone")
+	}
+	if _, err := sm.Get(child.ID); err == nil {
+		t.Fatalf("idle child should be deleted")
+	}
+}

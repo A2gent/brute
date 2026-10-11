@@ -182,3 +182,25 @@ func TestTasksToolCreateAndUpdateHours(t *testing.T) {
 		t.Fatalf("update output = %q, want 1h", updated)
 	}
 }
+
+func TestTasksToolGetIncludesSavedScreenshots(t *testing.T) {
+	tool, ctx, store, projectID := newTasksToolFixture(t)
+	images := []storage.TaskImage{{Name: "one.png", MediaType: "image/png", DataBase64: "b25l"}, {Name: "two.png", MediaType: "image/png", DataBase64: "dHdv"}}
+	task, err := store.CreateTask(projectID, storage.TaskCreate{Title: "Visual task", Images: images})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := runTasksTool(t, tool, ctx, map[string]any{"action": "next"})
+	if !strings.Contains(next, "2 screenshot") || !strings.Contains(next, "action=get") {
+		t.Fatalf("next = %s", next)
+	}
+	params, _ := json.Marshal(map[string]any{"action": "get", "ref": task.Ref})
+	result, err := tool.Execute(ctx, params)
+	if err != nil || !result.Success {
+		t.Fatalf("get: %#v %v", result, err)
+	}
+	attached, ok := result.Metadata["admission_images"].([]interface{})
+	if !ok || len(attached) != 2 {
+		t.Fatalf("metadata = %#v", result.Metadata)
+	}
+}

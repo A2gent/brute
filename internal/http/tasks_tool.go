@@ -125,9 +125,26 @@ func (t *tasksTool) Execute(ctx context.Context, params json.RawMessage) (*tools
 	if err != nil {
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}
-	return &tools.Result{Success: true, Output: output, Metadata: map[string]interface{}{
-		"action": action, "project_id": projectID,
-	}}, nil
+	metadata := map[string]interface{}{"action": action, "project_id": projectID}
+	if action == "get" {
+		task, err := t.server.store.GetTask(projectID, p.Ref)
+		if err != nil {
+			return &tools.Result{Success: false, Error: err.Error()}, nil
+		}
+		images := task.Images
+		if len(images) == 0 && task.Image != nil {
+			images = []storage.TaskImage{*task.Image}
+		}
+		if len(images) > 0 {
+			// Use the shared image channel instead of putting base64 in the text context.
+			attached := make([]interface{}, 0, len(images))
+			for _, image := range images {
+				attached = append(attached, map[string]interface{}{"name": image.Name, "media_type": image.MediaType, "data_base64": image.DataBase64})
+			}
+			metadata["admission_images"] = attached
+		}
+	}
+	return &tools.Result{Success: true, Output: output, Metadata: metadata}, nil
 }
 
 // resolveProjectID keeps the board scoped to the calling session's project so an agent cannot read
@@ -394,6 +411,13 @@ func formatTaskLine(task *storage.Task) string {
 
 func formatTaskDetail(task *storage.Task) string {
 	detail := formatTaskLine(task)
+	imageCount := len(task.Images)
+	if imageCount == 0 && task.Image != nil {
+		imageCount = 1
+	}
+	if imageCount > 0 {
+		detail += fmt.Sprintf("\n%d screenshot(s) attached. Load them with action=get ref=%s before implementing.", imageCount, task.Ref)
+	}
 	if strings.TrimSpace(task.Body) != "" {
 		detail += "\n\n" + task.Body
 	}

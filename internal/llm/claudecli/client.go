@@ -416,11 +416,24 @@ func (c *Client) commandEnv() []string {
 	return optionsCommandEnv(c.options)
 }
 
+// defaultMCPToolTimeoutMS lifts Claude CLI's MCP tool-call timeout. Media tools
+// (Meshy, Tripo, Blender) poll for minutes; without this the CLI reports
+// "The operation timed out." although the provider task keeps running.
+const defaultMCPToolTimeoutMS = "1800000"
+
 func optionsCommandEnv(opts Options) []string {
-	if len(opts.Environment) > 0 {
-		return opts.Environment
+	base := opts.Environment
+	if len(base) == 0 {
+		base = os.Environ()
 	}
-	return os.Environ()
+	for _, kv := range base {
+		if strings.HasPrefix(kv, "MCP_TOOL_TIMEOUT=") {
+			return base
+		}
+	}
+	env := make([]string, 0, len(base)+1)
+	env = append(env, base...)
+	return append(env, "MCP_TOOL_TIMEOUT="+defaultMCPToolTimeoutMS)
 }
 
 var _ llm.Client = (*Client)(nil)

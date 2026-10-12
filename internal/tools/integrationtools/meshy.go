@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,17 +28,26 @@ type MeshyGenerate3DTool struct {
 	outputDir    string
 	client       *http.Client
 	pollInterval time.Duration
+	maxWait      time.Duration
 }
 
+// meshyMaxWaitPerCall keeps one tool call under the Claude CLI MCP tool
+// timeout (3 min, see claudecli.defaultMCPToolTimeoutMS) with headroom for
+// downloading the result.
+const meshyMaxWaitPerCall = 150 * time.Second
+
 type meshyGenerate3DParams struct {
-	Prompt         string `json:"prompt"`
-	Image          string `json:"image"`
-	TexturePrompt  string `json:"texture_prompt"`
-	Texture        *bool  `json:"texture"`
-	PBR            bool   `json:"pbr"`
-	AIModel        string `json:"ai_model"`
-	Format         string `json:"format"`
-	TimeoutSeconds int    `json:"timeout_seconds"`
+	Prompt          string `json:"prompt"`
+	Image           string `json:"image"`
+	TexturePrompt   string `json:"texture_prompt"`
+	Texture         *bool  `json:"texture"`
+	PBR             bool   `json:"pbr"`
+	AIModel         string `json:"ai_model"`
+	Format          string `json:"format"`
+	TimeoutSeconds  int    `json:"timeout_seconds"`
+	TaskID          string `json:"task_id"`
+	ModelType       string `json:"model_type"`
+	TargetPolycount int    `json:"target_polycount"`
 }
 
 type meshyTask struct {
@@ -58,6 +68,7 @@ func NewMeshyGenerate3DTool(store storage.Store, workDir, outputDir string) *Mes
 		outputDir:    strings.TrimSpace(outputDir),
 		client:       &http.Client{Timeout: 120 * time.Second},
 		pollInterval: model3DDefaultPollInterval,
+		maxWait:      meshyMaxWaitPerCall,
 	}
 }
 
@@ -66,7 +77,8 @@ func (t *MeshyGenerate3DTool) Name() string { return "meshy_generate_3d" }
 func (t *MeshyGenerate3DTool) Description() string {
 	return "Generate a 3D model with Meshy AI from a text prompt (text-to-3D) or from an image (image-to-3D). " +
 		"The image can be a local file path (for example one produced by leonardo_generate_image) or a public URL. " +
-		"Waits for the task to finish (usually 1-5 minutes) and returns the local path of the downloaded model file and a preview image."
+		"Waits up to ~2.5 minutes per call; slower tasks return a task_id - call again with task_id to keep waiting instead of starting a new task. " +
+		"Returns the local path of the downloaded model file and a preview image."
 }
 
 func (t *MeshyGenerate3DTool) Schema() map[string]interface{} {
@@ -103,7 +115,19 @@ func (t *MeshyGenerate3DTool) Schema() map[string]interface{} {
 			},
 			"timeout_seconds": map[string]interface{}{
 				"type":        "integer",
-				"description": "Maximum time to wait for the task (default from integration or 600).",
+				"description": "Maximum time to wait in this call (capped at 150s). Unfinished tasks return a task_id to resume.",
+			},
+			"task_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Resume waiting for a task returned by a previous call (e.g. image-to-3d:<id>). Other inputs except format/texture options are ignored.",
+			},
+			"model_type": map[string]interface{}{
+				"type":        "string",
+				"description": "Mesh type: standard (high detail) or smart-topology (clean low-poly via meshy-t2). Defaults to the integration setting.",
+			},
+			"target_polycount": map[string]interface{}{
+				"type":        "integer",
+				"description": "Target face count. Standard: 100-300000 (enables remesh). Smart-topology: 100-15000. Defaults to the integration setting.",
 			},
 		},
 	}
@@ -116,8 +140,9 @@ func (t *MeshyGenerate3DTool) Execute(ctx context.Context, params json.RawMessag
 	}
 	p.Prompt = strings.TrimSpace(p.Prompt)
 	p.Image = strings.TrimSpace(p.Image)
-	if p.Prompt == "" && p.Image == "" {
-		return &tools.Result{Success: false, Error: "either prompt or image is required"}, nil
+	p.TaskID = strings.TrimSpace(p.TaskID)
+	if p.Prompt == "" && p.Image == "" && p.TaskID == "" {
+		return &tools.Result{Success: false, Error: "either prompt, image or task_id is required"}, nil
 	}
 	format := strings.ToLower(strings.TrimSpace(p.Format))
 	if format == "" {
@@ -143,25 +168,55 @@ func (t *MeshyGenerate3DTool) Execute(ctx context.Context, params json.RawMessag
 	if p.TimeoutSeconds > 0 {
 		timeout = time.Duration(p.TimeoutSeconds) * time.Second
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	// Cap a single call below the MCP client tool timeout; longer tasks are
+	// handed back as a resumable task_id instead of failing the call.
+	if t.maxWait > 0 && timeout > t.maxWait {
+		timeout = t.maxWait
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	var task *meshyTask
-	if p.Image != "" {
-		task, err = t.runImageTo3D(ctx, baseURL, integration.APIKey, p, aiModel, format, texture)
-	} else {
-		task, err = t.runTextTo3D(ctx, baseURL, integration.APIKey, p, aiModel, format, texture)
+	var job meshyJob
+	switch {
+	case p.TaskID != "":
+		job, err = parseMeshyJob(p.TaskID)
+	case p.Image != "":
+		job.kind = meshyKindImage
+		job.id, err = t.createImageTo3D(waitCtx, baseURL, integration, p, aiModel, format, texture)
+	default:
+		job.kind = meshyKindPreview
+		job.id, err = t.createTextPreview(waitCtx, baseURL, integration, p, aiModel, format)
 	}
 	if err != nil {
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}
-	return t.saveResult(ctx, task, format)
+	for {
+		task, err := t.waitTask(waitCtx, job.endpoint(baseURL)+"/"+job.id, integration.APIKey)
+		if err != nil {
+			if waitCtx.Err() != nil && ctx.Err() == nil {
+				return meshyPendingResult(t.Name(), job, task), nil
+			}
+			return &tools.Result{Success: false, Error: err.Error()}, nil
+		}
+		if job.kind != meshyKindPreview || !texture {
+			return t.saveResult(ctx, task, format)
+		}
+		// Meshy text-to-3D is two-step: preview builds the mesh, refine textures it.
+		refineID, err := t.createTextRefine(waitCtx, baseURL, integration.APIKey, p, job.id, format)
+		if err != nil {
+			if waitCtx.Err() != nil && ctx.Err() == nil {
+				return meshyPendingResult(t.Name(), job, task), nil
+			}
+			return &tools.Result{Success: false, Error: err.Error()}, nil
+		}
+		job = meshyJob{kind: meshyKindRefine, id: refineID}
+	}
 }
 
-func (t *MeshyGenerate3DTool) runImageTo3D(ctx context.Context, baseURL, apiKey string, p meshyGenerate3DParams, aiModel, format string, texture bool) (*meshyTask, error) {
+func (t *MeshyGenerate3DTool) createImageTo3D(ctx context.Context, baseURL string, integration *model3DIntegration, p meshyGenerate3DParams, aiModel, format string, texture bool) (string, error) {
 	img, err := resolveModel3DImage(p.Image, t.workDir)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	imageURL := img.URL
 	if imageURL == "" {
@@ -182,49 +237,116 @@ func (t *MeshyGenerate3DTool) runImageTo3D(ctx context.Context, baseURL, apiKey 
 	if aiModel != "" {
 		body["ai_model"] = aiModel
 	}
-	endpoint := baseURL + "/openapi/v1/image-to-3d"
-	id, err := t.createTask(ctx, endpoint, apiKey, body)
-	if err != nil {
-		return nil, err
-	}
-	return t.waitTask(ctx, endpoint+"/"+id, apiKey)
+	applyMeshyQuality(body, p, integration.Config)
+	return t.createTask(ctx, meshyJob{kind: meshyKindImage}.endpoint(baseURL), integration.APIKey, body)
 }
 
-func (t *MeshyGenerate3DTool) runTextTo3D(ctx context.Context, baseURL, apiKey string, p meshyGenerate3DParams, aiModel, format string, texture bool) (*meshyTask, error) {
-	endpoint := baseURL + "/openapi/v2/text-to-3d"
-	preview := map[string]interface{}{
+func (t *MeshyGenerate3DTool) createTextPreview(ctx context.Context, baseURL string, integration *model3DIntegration, p meshyGenerate3DParams, aiModel, format string) (string, error) {
+	body := map[string]interface{}{
 		"mode":           "preview",
 		"prompt":         p.Prompt,
 		"target_formats": []string{format},
 	}
 	if aiModel != "" {
-		preview["ai_model"] = aiModel
+		body["ai_model"] = aiModel
 	}
-	previewID, err := t.createTask(ctx, endpoint, apiKey, preview)
-	if err != nil {
-		return nil, err
-	}
-	task, err := t.waitTask(ctx, endpoint+"/"+previewID, apiKey)
-	if err != nil || !texture {
-		return task, err
-	}
-	// Meshy text-to-3D is two-step: preview builds the mesh, refine textures it.
-	refine := map[string]interface{}{
+	applyMeshyQuality(body, p, integration.Config)
+	return t.createTask(ctx, meshyJob{kind: meshyKindPreview}.endpoint(baseURL), integration.APIKey, body)
+}
+
+func (t *MeshyGenerate3DTool) createTextRefine(ctx context.Context, baseURL, apiKey string, p meshyGenerate3DParams, previewID, format string) (string, error) {
+	body := map[string]interface{}{
 		"mode":            "refine",
 		"preview_task_id": previewID,
 		"target_formats":  []string{format},
 	}
 	if p.PBR {
-		refine["enable_pbr"] = true
+		body["enable_pbr"] = true
 	}
 	if tp := strings.TrimSpace(p.TexturePrompt); tp != "" {
-		refine["texture_prompt"] = tp
+		body["texture_prompt"] = tp
 	}
-	refineID, err := t.createTask(ctx, endpoint, apiKey, refine)
-	if err != nil {
-		return nil, err
+	return t.createTask(ctx, meshyJob{kind: meshyKindRefine}.endpoint(baseURL), apiKey, body)
+}
+
+// applyMeshyQuality sets mesh density: call params win over integration
+// defaults so a project can default to lighter models without losing control.
+func applyMeshyQuality(body map[string]interface{}, p meshyGenerate3DParams, config map[string]string) {
+	modelType := strings.TrimSpace(firstNonEmpty(p.ModelType, config["model_type"]))
+	polycount := p.TargetPolycount
+	if polycount <= 0 {
+		polycount, _ = strconv.Atoi(strings.TrimSpace(config["target_polycount"]))
 	}
-	return t.waitTask(ctx, endpoint+"/"+refineID, apiKey)
+	if modelType != "" && modelType != "standard" {
+		body["model_type"] = modelType
+	}
+	if modelType == "smart-topology" {
+		// Smart Topology only runs on meshy-t* models; the standard default
+		// ("latest") would be rejected.
+		if m, _ := body["ai_model"].(string); !strings.HasPrefix(m, "meshy-t") {
+			body["ai_model"] = "meshy-t2"
+		}
+	}
+	if polycount > 0 {
+		body["target_polycount"] = polycount
+		if modelType == "" || modelType == "standard" {
+			// Standard models only honour target_polycount during remesh.
+			body["should_remesh"] = true
+		}
+	}
+}
+
+const (
+	meshyKindImage   = "image-to-3d"
+	meshyKindPreview = "text-to-3d-preview"
+	meshyKindRefine  = "text-to-3d-refine"
+)
+
+// meshyJob identifies a Meshy task plus its stage, serialized as "kind:id" so
+// the agent can resume a slow generation with one opaque task_id.
+type meshyJob struct {
+	kind string
+	id   string
+}
+
+func (j meshyJob) String() string { return j.kind + ":" + j.id }
+
+func (j meshyJob) endpoint(baseURL string) string {
+	if j.kind == meshyKindImage {
+		return baseURL + "/openapi/v1/image-to-3d"
+	}
+	return baseURL + "/openapi/v2/text-to-3d"
+}
+
+func parseMeshyJob(raw string) (meshyJob, error) {
+	kind, id, ok := strings.Cut(raw, ":")
+	id = strings.TrimSpace(id)
+	switch kind {
+	case meshyKindImage, meshyKindPreview, meshyKindRefine:
+		if ok && id != "" {
+			return meshyJob{kind: kind, id: id}, nil
+		}
+	}
+	return meshyJob{}, fmt.Errorf("invalid task_id %q: expected %s:<id>, %s:<id> or %s:<id>", raw, meshyKindImage, meshyKindPreview, meshyKindRefine)
+}
+
+func meshyPendingResult(toolName string, job meshyJob, task *meshyTask) *tools.Result {
+	progress := 0
+	if task != nil {
+		progress = task.Progress
+	}
+	return &tools.Result{
+		Success: true,
+		Output: fmt.Sprintf("Meshy task %s is still running (%d%%). Call %s again with task_id=%s (same format/texture options) to keep waiting. Do not start a new generation - that would be billed again.",
+			job, progress, toolName, job),
+		Metadata: map[string]interface{}{
+			"model_3d_pending": map[string]interface{}{
+				"provider": "meshy",
+				"task_id":  job.String(),
+				"progress": progress,
+			},
+		},
+	}
 }
 
 func (t *MeshyGenerate3DTool) createTask(ctx context.Context, endpoint, apiKey string, body map[string]interface{}) (string, error) {
@@ -267,10 +389,8 @@ func (t *MeshyGenerate3DTool) waitTask(ctx context.Context, taskURL, apiKey stri
 		}
 		return false, nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	return &task, nil
+	// The task is returned even on error so timeouts can report progress.
+	return &task, err
 }
 
 func (t *MeshyGenerate3DTool) do(ctx context.Context, method, endpoint, apiKey string, payload []byte) ([]byte, error) {

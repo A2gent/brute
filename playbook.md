@@ -63,3 +63,4 @@
 - The read-only dev-code-reviewer container may lack Go. Treat its result as static review and run build, vet, and race tests on the host.
 - Leonardo v2 can return HTTP 200 with a JSON array of API errors. Check extensions.statusCode/code before reading generationId or polling; validation details.message and top-level billing messages carry the actionable cause. Confirm model dimensions against live API validation, not stale mock fixtures.
 - A bounded full-suite command that times out is not a passing check. Preserve its log, report incomplete verification, and ask whether to rerun with a longer budget rather than bypassing commit hooks.
+- Claude CLI applies MCP_TOOL_TIMEOUT to every MCP tool, including delegate_to_agent. With a short cap (3 min) long delegations and media tools fail with "The operation timed out." while the work continues; long-running tools must return a resumable handle (see meshy_generate_3d task_id) instead of blocking.

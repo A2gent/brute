@@ -34,6 +34,8 @@ type model3DIntegration struct {
 	BaseURL string
 	Model   string
 	Timeout time.Duration
+	// Config keeps provider-specific defaults (e.g. Meshy quality settings).
+	Config map[string]string
 }
 
 func findModel3DIntegration(store storage.Store, provider string) (*model3DIntegration, error) {
@@ -57,6 +59,7 @@ func findModel3DIntegration(store storage.Store, provider string) (*model3DInteg
 			BaseURL: strings.TrimRight(strings.TrimSpace(item.Config["base_url"]), "/"),
 			Model:   strings.TrimSpace(item.Config["model"]),
 			Timeout: model3DDefaultTimeout,
+			Config:  item.Config,
 		}
 		if secs, err := strconv.Atoi(strings.TrimSpace(item.Config["timeout_seconds"])); err == nil && secs > 0 {
 			out.Timeout = time.Duration(secs) * time.Second

@@ -250,6 +250,9 @@ func (s *Server) handleGetProjectFileRaw(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.Header().Set("Content-Type", projectRawPreviewContentType(normalizedRelPath))
+	// WHY: without this browsers heuristically cache by Last-Modified, so replaced files keep showing stale content.
+	// no-cache forces revalidation; ServeFile answers 304 when unchanged.
+	w.Header().Set("Cache-Control", "no-cache")
 	if isHTMLFile(normalizedRelPath) {
 		// Protect direct raw URL navigation as well as sandboxed iframe previews.
 		w.Header().Set("Content-Security-Policy", projectHTMLPreviewCSP)

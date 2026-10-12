@@ -53,3 +53,24 @@ func TestProjectRawPreviewRejectsHTMLTemplate(t *testing.T) {
 		t.Fatal("HTML templates must not be served as raw previews")
 	}
 }
+
+// Raw files must revalidate so replaced images are not shown from browser cache.
+func TestRawFilesRequireRevalidation(t *testing.T) {
+	server, projectID, projectDir := newProjectFileTestServer(t)
+	if err := os.WriteFile(filepath.Join(projectDir, "a.png"), []byte("png"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.store.SaveSettings(map[string]string{mindRootFolderSettingKey: projectDir}); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{
+		"/projects/file/raw?projectID=" + url.QueryEscape(projectID) + "&path=a.png",
+		"/mind/file/raw?path=a.png",
+	} {
+		rec := httptest.NewRecorder()
+		server.router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+			t.Fatalf("%s: expected no-cache, got %q", target, got)
+		}
+	}
+}

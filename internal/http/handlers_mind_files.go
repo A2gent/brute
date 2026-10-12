@@ -93,6 +93,8 @@ func (s *Server) handleGetMindFileRaw(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", projectRawPreviewContentType(normalizedRelPath))
+	// WHY: force revalidation so replaced files are not served from heuristic browser cache.
+	w.Header().Set("Cache-Control", "no-cache")
 	if isHTMLFile(normalizedRelPath) {
 		w.Header().Set("Content-Security-Policy", projectHTMLPreviewCSP)
 	}

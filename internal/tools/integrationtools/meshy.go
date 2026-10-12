@@ -32,9 +32,9 @@ type MeshyGenerate3DTool struct {
 }
 
 // meshyMaxWaitPerCall keeps one tool call under the Claude CLI MCP tool
-// timeout (3 min, see claudecli.defaultMCPToolTimeoutMS) with headroom for
+// timeout (10 min, see claudecli.defaultMCPToolTimeoutMS) with headroom for
 // downloading the result.
-const meshyMaxWaitPerCall = 150 * time.Second
+const meshyMaxWaitPerCall = 9 * time.Minute
 
 type meshyGenerate3DParams struct {
 	Prompt          string `json:"prompt"`
@@ -115,7 +115,7 @@ func (t *MeshyGenerate3DTool) Schema() map[string]interface{} {
 			},
 			"timeout_seconds": map[string]interface{}{
 				"type":        "integer",
-				"description": "Maximum time to wait in this call (capped at 150s). Unfinished tasks return a task_id to resume.",
+				"description": "Maximum time to wait in this call (capped at 540s). Unfinished tasks return a task_id to resume.",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",

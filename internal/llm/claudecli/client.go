@@ -416,11 +416,12 @@ func (c *Client) commandEnv() []string {
 	return optionsCommandEnv(c.options)
 }
 
-// defaultMCPToolTimeoutMS sets Claude CLI's MCP tool-call timeout to 3 min so a
-// stuck tool cannot block a session for long. Slow media tools must return
-// before it (Meshy hands back a resumable task_id after ~150s); otherwise the
-// CLI reports "The operation timed out." while the provider task keeps running.
-const defaultMCPToolTimeoutMS = "180000"
+// defaultMCPToolTimeoutMS sets Claude CLI's MCP tool-call timeout to 10 min:
+// long enough for slow ComfyUI/Meshy generations, short enough that a stuck
+// tool cannot block a session for long. Tools must return before it (Meshy
+// hands back a resumable task_id after ~9 min); otherwise the CLI reports
+// "The operation timed out." while the provider task keeps running.
+const defaultMCPToolTimeoutMS = "600000"
 
 func optionsCommandEnv(opts Options) []string {
 	base := opts.Environment

@@ -329,6 +329,7 @@ func (s *Server) registerProjectRoutes(r chi.Router) {
 		r.Post("/git/init", s.handleProjectGitInit)
 		r.Get("/git/diff", s.handleProjectGitFileDiff)
 		r.Get("/git/branch-changes", s.handleProjectGitBranchChanges)
+		r.Get("/git/head-raw", s.handleProjectGitHeadFileRaw)
 		r.Get("/git/branch-diff", s.handleProjectGitBranchDiff)
 		r.Get("/git/history", s.handleProjectGitHistory)
 		r.Get("/git/commit-files", s.handleProjectGitCommitFiles)

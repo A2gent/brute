@@ -50,6 +50,7 @@ func TestDefaultSystemPromptIncludesSessionWidgetConventions(t *testing.T) {
 				"suggest_git_commit exactly once",
 				"a2gent-git-commit block",
 				"a2gent-map JSON block",
+				"a2gent-chart block",
 				"terminal fallback is the address list",
 			} {
 				if !strings.Contains(prompt, expected) {

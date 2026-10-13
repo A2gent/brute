@@ -229,6 +229,7 @@ Output/widget conventions:
 - Reference project files as plain text paths with optional line ranges, e.g. src/app.ts:42 or src/app.ts:42-48. Avoid wrapping file references in code when they should be clickable in UI.
 - When you finish a task that changed files and the changes are ready for the user to commit, call suggest_git_commit exactly once with the commit message and project-relative files that belong to this session. Include the returned a2gent-git-commit block in your final answer. Do not include unrelated files from other concurrent sessions, and do not claim the files were staged or committed.
 - For location results, include normal readable addresses first, then add an optional fenced a2gent-map JSON block with {"title":"...","points":[{"label":"...","address":"...","lat":0,"lng":0}]}. The terminal fallback is the address list; Caesar renders the map when coordinates or addresses are present.
+- For charts and data visualizations, emit a fenced a2gent-chart block containing one Vega-Lite v6 JSON spec with inline data ("data":{"values":[...]}); external data URLs are blocked. Aggregate in SQL/code first and keep inline data under ~2000 rows. Set a "title"; use "scale":{"type":"log"} for long-tail distributions and facet or color for category breakdowns. Caesar renders it interactively and offers PNG/SVG download and saving to the project charts/ folder. Prefer it over generating image files unless the user asks for a file.
 
 Be concise but thorough. Complete the user's task step by step.`
 
@@ -272,7 +273,8 @@ Use man with a tool name to read detailed usage and input schema only when neede
 Output/widget conventions:
 - Reference project files as plain text paths with optional line ranges, e.g. src/app.ts:42 or src/app.ts:42-48. Avoid wrapping file references in code when they should be clickable in UI.
 - When you finish a task that changed files and the changes are ready for the user to commit, call suggest_git_commit exactly once with the commit message and project-relative files that belong to this session. Include the returned a2gent-git-commit block in your final answer. Do not include unrelated files from other concurrent sessions, and do not claim the files were staged or committed.
-- For location results, include normal readable addresses first, then add an optional fenced a2gent-map JSON block with {"title":"...","points":[{"label":"...","address":"...","lat":0,"lng":0}]}. The terminal fallback is the address list; Caesar renders the map when coordinates or addresses are present.`
+- For location results, include normal readable addresses first, then add an optional fenced a2gent-map JSON block with {"title":"...","points":[{"label":"...","address":"...","lat":0,"lng":0}]}. The terminal fallback is the address list; Caesar renders the map when coordinates or addresses are present.
+- For charts and data visualizations, emit a fenced a2gent-chart block containing one Vega-Lite v6 JSON spec with inline data ("data":{"values":[...]}); external data URLs are blocked. Aggregate in SQL/code first and keep inline data under ~2000 rows. Set a "title"; use "scale":{"type":"log"} for long-tail distributions and facet or color for category breakdowns. Caesar renders it interactively and offers PNG/SVG download and saving to the project charts/ folder. Prefer it over generating image files unless the user asks for a file.`
 
 func (a *Agent) buildCompactionRequestFromMessages(messagesToSummarize []session.Message, prompt string) *llm.ChatRequest {
 	var sb strings.Builder

@@ -144,6 +144,31 @@ func (s *SQLiteStore) saveSessionMessages(sess *Session, ids []string, dirty map
 	return nil
 }
 
+// UpdateSessionSummary writes only the summary column so a late async summary
+// cannot clobber messages/status saved by a newer run of the same session.
+func (s *SQLiteStore) UpdateSessionSummary(id, summary string) error {
+	update := func() error {
+		res, err := s.db.Exec(`UPDATE sessions SET summary = ? WHERE id = ?`, summary, id)
+		if err != nil {
+			return fmt.Errorf("failed to update session summary: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return fmt.Errorf("session not found: %s", id)
+		}
+		return nil
+	}
+	if err := update(); err != nil {
+		if reopenErr := s.reopenOnReadonly(err); reopenErr != nil {
+			return reopenErr
+		}
+		if isSQLiteReadonlyError(err) {
+			return update()
+		}
+		return err
+	}
+	return nil
+}
+
 // GetSession retrieves a session by ID
 func (s *SQLiteStore) GetSession(id string) (*Session, error) {
 	return s.getSession(id, "metadata", true, 0, "")

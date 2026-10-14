@@ -62,6 +62,10 @@ type Server struct {
 	sessionCatalogSubs       map[chan SessionCatalogEvent]string
 	serialQueueMu            sync.Mutex
 	serialQueueWorkers       map[string]struct{}
+	sessionSummaryWG         sync.WaitGroup // tracks async session summary goroutines (tests wait on it)
+	sessionSummaryMu         sync.Mutex
+	sessionSummarySeq        uint64            // guarded by sessionSummaryMu
+	sessionSummaryLatest     map[string]uint64 // session ID -> latest summary token; guarded by sessionSummaryMu
 	chromeExtensionBridge    *chromeExtensionBridge
 	browserChromePreviewMu   sync.Mutex
 	browserChromePreview     *browserChromePreview

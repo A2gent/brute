@@ -132,7 +132,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			sess.AddAssistantMessage(fmt.Sprintf("Agent failed: %s", runErr.Error()), nil)
 			sess.SetStatus(session.StatusFailed)
 			_ = s.sessionManager.Save(sess)
-			s.refreshSessionSummaryWithPrompt(runCtx, sess)
+			s.refreshSessionSummaryAsync(sess)
 			s.triggerSerialSessionQueueIfAdvanceable(sess)
 			_ = writeEvent(ChatStreamEvent{Type: "error", Error: "Agent error: " + runErr.Error(), Status: string(sess.Status), Messages: s.messagesToResponse(sess.Messages)})
 			return
@@ -146,9 +146,9 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			_ = writeEvent(ChatStreamEvent{Type: "error", Error: "Failed to save agent response: " + saveErr.Error(), Status: string(sess.Status), Messages: s.messagesToResponse(sess.Messages)})
 			return
 		}
-		s.refreshSessionSummaryWithPrompt(runCtx, sess)
-		s.triggerSerialSessionQueueIfAdvanceable(sess)
+		s.refreshSessionSummaryAsync(sess)
 		_ = writeEvent(ChatStreamEvent{Type: "done", Content: chatResp.Content, Messages: s.messagesToResponse(sess.Messages), Status: string(sess.Status), Usage: &chatResp.Usage})
+		s.triggerSerialSessionQueueIfAdvanceable(sess)
 		s.publishSessionCatalog("session_updated", sess)
 		return
 	}
@@ -218,8 +218,9 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		_ = writeEvent(*event)
 	}
 
-	s.refreshSessionSummaryWithPrompt(runCtx, sess)
-	s.triggerSerialSessionQueueIfAdvanceable(sess)
+	// The LLM summary pass runs in the background so `done` and queue
+	// advancement are not delayed by an extra provider round-trip.
+	s.refreshSessionSummaryAsync(sess)
 	_ = writeEvent(ChatStreamEvent{
 		Type:     "done",
 		Content:  content,
@@ -230,6 +231,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			OutputTokens: usage.OutputTokens,
 		},
 	})
+	s.triggerSerialSessionQueueIfAdvanceable(sess)
 	s.publishSessionCatalog("session_updated", sess)
 }
 

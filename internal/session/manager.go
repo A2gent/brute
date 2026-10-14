@@ -322,6 +322,22 @@ func (m *Manager) SetSessionStatus(sessionID string, status string) error {
 	return m.Save(sess)
 }
 
+// SetSessionSummary persists only the session summary. Stores without a
+// column-level update fall back to a full load+save.
+func (m *Manager) SetSessionSummary(sessionID, summary string) error {
+	if store, ok := m.store.(interface {
+		UpdateSessionSummary(id, summary string) error
+	}); ok {
+		return store.UpdateSessionSummary(sessionID, summary)
+	}
+	sess, err := m.Get(sessionID)
+	if err != nil {
+		return fmt.Errorf("session not found: %w", err)
+	}
+	sess.SetSummary(summary)
+	return m.Save(sess)
+}
+
 // GetSessionTaskProgress retrieves task progress for a session
 func (m *Manager) GetSessionTaskProgress(sessionID string) (string, error) {
 	sess, err := m.Get(sessionID)

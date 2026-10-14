@@ -103,7 +103,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 			sess.AddAssistantMessage(fmt.Sprintf("Unable to start request: %s", runErr.Error()), nil)
 			sess.SetStatus(session.StatusFailed)
 			_ = s.sessionManager.Save(sess)
-			s.refreshSessionSummaryWithPrompt(ctx, sess)
+			s.refreshSessionSummaryAsync(sess)
 			s.triggerSerialSessionQueueIfAdvanceable(sess)
 			publishError("Provider configuration error: " + runErr.Error())
 			return runErr
@@ -112,7 +112,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 			sess.AddAssistantMessage(fmt.Sprintf("Agent failed: %s", runErr.Error()), nil)
 			sess.SetStatus(session.StatusFailed)
 			_ = s.sessionManager.Save(sess)
-			s.refreshSessionSummaryWithPrompt(ctx, sess)
+			s.refreshSessionSummaryAsync(sess)
 			s.triggerSerialSessionQueueIfAdvanceable(sess)
 			publishError("Agent error: " + runErr.Error())
 			return runErr
@@ -121,7 +121,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 		addRequestFailedAssistantMessage(sess, adaptedErr)
 		sess.SetStatus(session.StatusFailed)
 		_ = s.sessionManager.Save(sess)
-		s.refreshSessionSummaryWithPrompt(ctx, sess)
+		s.refreshSessionSummaryAsync(sess)
 		s.triggerSerialSessionQueueIfAdvanceable(sess)
 		publishError("Agent error: " + adaptedErr.Error())
 		return adaptedErr
@@ -138,8 +138,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 		}
 	}
 
-	s.refreshSessionSummaryWithPrompt(ctx, sess)
-	s.triggerSerialSessionQueueIfAdvanceable(sess)
+	s.refreshSessionSummaryAsync(sess)
 	if event := s.inputRequiredStreamEvent(sess); event != nil {
 		s.publishSessionEvent(sess.ID, *event)
 	}
@@ -153,6 +152,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 			OutputTokens: result.Usage.OutputTokens,
 		},
 	})
+	s.triggerSerialSessionQueueIfAdvanceable(sess)
 	s.publishSessionCatalog("session_updated", sess)
 	return nil
 }

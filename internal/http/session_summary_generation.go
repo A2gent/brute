@@ -10,29 +10,96 @@ import (
 	"github.com/A2gent/brute/internal/session"
 )
 
-func (s *Server) refreshSessionSummaryWithPrompt(ctx context.Context, sess *session.Session) {
+const sessionSummaryTimeout = 20 * time.Second
+
+// refreshSessionSummaryAsync updates the session summary without delaying the
+// caller. The cheap deterministic fallback is persisted synchronously; the
+// optional LLM summary pass runs in a goroutine on a snapshot because the run
+// context is cancelled when the handler returns and the session may be resumed
+// by a newer run meanwhile. Only the summary column is written back.
+func (s *Server) refreshSessionSummaryAsync(sess *session.Session) {
 	if s == nil || sess == nil || (sess.Status != session.StatusCompleted && sess.Status != session.StatusFailed) {
 		return
 	}
 
 	// WHY: keep a deterministic fallback so summary generation never blocks saving
 	// the actual session result, even when the configured LLM/provider is unavailable.
-	fallbackSession := *sess
-	fallbackSession.RefreshSummary()
-	fallbackSummary := strings.TrimSpace(fallbackSession.Summary)
+	snapshot := *sess
+	snapshot.Messages = append([]session.Message(nil), sess.Messages...)
+	snapshot.Metadata = make(map[string]interface{}, len(sess.Metadata))
+	for key, value := range sess.Metadata {
+		snapshot.Metadata[key] = value
+	}
+	snapshot.RefreshSummary()
+	fallbackSummary := strings.TrimSpace(snapshot.Summary)
+	if fallbackSummary != "" && fallbackSummary != sess.Summary {
+		sess.SetSummary(fallbackSummary)
+		s.persistSessionSummary(sess.ID, fallbackSummary, false)
+	}
 
-	prompt := s.renderSessionSummaryPrompt(sess)
+	prompt := s.renderSessionSummaryPrompt(&snapshot)
 	if strings.TrimSpace(prompt) == "" {
-		if fallbackSummary != "" {
-			sess.SetSummary(fallbackSummary)
-			_ = s.sessionManager.Save(sess)
-		}
 		return
 	}
 
-	summaryCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
+	token := s.beginSessionSummary(sess.ID)
+	s.sessionSummaryWG.Add(1)
+	go func() {
+		defer s.sessionSummaryWG.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), sessionSummaryTimeout)
+		defer cancel()
+		summary := s.generateSessionSummary(ctx, &snapshot, prompt)
+		// A resumed session may have started a newer summary pass; only the
+		// latest one may write, so out-of-order completions cannot go stale.
+		if !s.finishSessionSummary(snapshot.ID, token) || summary == "" || summary == fallbackSummary {
+			return
+		}
+		s.persistSessionSummary(snapshot.ID, summary, true)
+	}()
+}
 
+func (s *Server) beginSessionSummary(sessionID string) uint64 {
+	s.sessionSummaryMu.Lock()
+	defer s.sessionSummaryMu.Unlock()
+	if s.sessionSummaryLatest == nil {
+		s.sessionSummaryLatest = make(map[string]uint64)
+	}
+	s.sessionSummarySeq++
+	s.sessionSummaryLatest[sessionID] = s.sessionSummarySeq
+	return s.sessionSummarySeq
+}
+
+// finishSessionSummary reports whether token is still the latest pass for the
+// session and releases the entry. Tokens are globally unique, so a stale pass
+// can never match a token issued after the entry was released.
+func (s *Server) finishSessionSummary(sessionID string, token uint64) bool {
+	s.sessionSummaryMu.Lock()
+	defer s.sessionSummaryMu.Unlock()
+	if s.sessionSummaryLatest[sessionID] != token {
+		return false
+	}
+	delete(s.sessionSummaryLatest, sessionID)
+	return true
+}
+
+func (s *Server) persistSessionSummary(sessionID, summary string, publish bool) {
+	if err := s.sessionManager.SetSessionSummary(sessionID, summary); err != nil {
+		logging.Warn("Failed to save session summary: %v", err)
+		return
+	}
+	if !publish {
+		return
+	}
+	// Publish the current DB state, not the snapshot: a newer run may have
+	// changed the status since the summary generation started.
+	if fresh, err := s.sessionManager.GetSummary(sessionID); err == nil {
+		s.publishSessionCatalog("session_updated", fresh)
+	}
+}
+
+// generateSessionSummary runs the LLM summary pass. Returns "" on failure so the
+// already persisted fallback summary stays in place.
+func (s *Server) generateSessionSummary(summaryCtx context.Context, sess *session.Session, prompt string) string {
 	settings, settingsErr := s.store.GetSettings()
 	if settingsErr != nil {
 		logging.Warn("Failed to load settings for session summary provider: %v", settingsErr)
@@ -44,11 +111,7 @@ func (s *Server) refreshSessionSummaryWithPrompt(ctx context.Context, sess *sess
 	target, err := s.resolveExecutionTarget(summaryCtx, targetConfig.ProviderType, targetConfig.Model, prompt, sess)
 	if err != nil {
 		logging.Warn("Failed to resolve provider for session summary: %v", err)
-		if fallbackSummary != "" {
-			sess.SetSummary(fallbackSummary)
-			_ = s.sessionManager.Save(sess)
-		}
-		return
+		return ""
 	}
 
 	resp, err := target.Client.Chat(summaryCtx, &llm.ChatRequest{
@@ -61,24 +124,9 @@ func (s *Server) refreshSessionSummaryWithPrompt(ctx context.Context, sess *sess
 	})
 	if err != nil {
 		logging.Warn("Failed to generate session summary: %v", err)
-		if fallbackSummary != "" {
-			sess.SetSummary(fallbackSummary)
-			_ = s.sessionManager.Save(sess)
-		}
-		return
+		return ""
 	}
-
-	summary := session.SummaryFromContent(resp.Content)
-	if summary == "" {
-		summary = fallbackSummary
-	}
-	if summary == "" {
-		return
-	}
-	sess.SetSummary(summary)
-	if err := s.sessionManager.Save(sess); err != nil {
-		logging.Warn("Failed to save generated session summary: %v", err)
-	}
+	return session.SummaryFromContent(resp.Content)
 }
 
 func (s *Server) renderSessionSummaryPrompt(sess *session.Session) string {

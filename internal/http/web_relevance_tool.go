@@ -84,7 +84,7 @@ func (s *Server) jevEgressSecrets(jevKey string) ([]string, bool) {
 // relevanceGate returns nil (gating off) unless tools.jev_admission is enabled
 // and a Jev credential resolves, so a missing key fails open silently.
 func (s *Server) relevanceGate() *contextcompress.RelevanceGate {
-	if s == nil || s.config == nil || !s.config.Tools.JevAdmission.Enabled {
+	if s == nil || s.config == nil || !s.jevAutomationEnabled(jevAdmissionSettingKey, s.config.Tools.JevAdmission.Enabled) {
 		return nil
 	}
 	key, model, baseURL := s.resolveClassifyCredentials()
@@ -102,7 +102,7 @@ func (s *Server) relevanceGate() *contextcompress.RelevanceGate {
 // toolSelector mirrors relevanceGate: nil (all tools) unless tools.jev_toolsets
 // is enabled and a Jev credential resolves.
 func (s *Server) toolSelector() *agent.ToolSelector {
-	if s == nil || s.config == nil || !s.config.Tools.JevToolsets.Enabled {
+	if s == nil || s.config == nil || !s.jevAutomationEnabled(jevToolsetsSettingKey, s.config.Tools.JevToolsets.Enabled) {
 		return nil
 	}
 	key, model, baseURL := s.resolveClassifyCredentials()

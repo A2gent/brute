@@ -38,7 +38,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to load custom env: "+err.Error())
 		return
 	}
-	s.jsonResponse(w, http.StatusOK, settingsResponse(settings, customEnv))
+	s.jsonResponse(w, http.StatusOK, s.settingsResponseWithJev(settings, customEnv))
 }
 
 func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
@@ -88,7 +88,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		folder = filepath.Join(s.config.DataPath, "sessions")
 	}
 	s.sessionManager.SetJSONLFolder(folder)
-	s.jsonResponse(w, http.StatusOK, settingsResponse(req.Settings, nextCustomEnv))
+	s.jsonResponse(w, http.StatusOK, s.settingsResponseWithJev(req.Settings, nextCustomEnv))
 }
 
 func settingsResponse(settings map[string]string, customEnv map[string]string) SettingsResponse {
@@ -98,6 +98,11 @@ func settingsResponse(settings map[string]string, customEnv map[string]string) S
 			continue
 		}
 		out[key] = value
+	}
+	for _, key := range []string{jevAdmissionSettingKey, jevToolsetsSettingKey} {
+		if strings.TrimSpace(out[key]) == "" {
+			out[key] = "true"
+		}
 	}
 	if strings.TrimSpace(out[toolResultCompressionSettingKey]) == "" {
 		// WHY: The UI should render the effective runtime default, not a missing key,

@@ -279,19 +279,19 @@ type WebRelevanceConfig struct {
 	MaxPageBytes  int     `json:"max_page_bytes,omitempty"`
 }
 
-// JevAdmissionConfig opts in to Jev relevance gating of large bash/grep/read
+// JevAdmissionConfig controls Jev relevance gating of large bash/grep/read
 // results before they enter the transcript. Zero values use package defaults.
 type JevAdmissionConfig struct {
-	Enabled       bool    `json:"enabled,omitempty"`
+	Enabled       bool    `json:"enabled"`
 	MinTokens     int     `json:"min_tokens,omitempty"`
 	Threshold     float64 `json:"threshold,omitempty"`
 	MinConfidence float64 `json:"min_confidence,omitempty"`
 }
 
-// JevToolsetsConfig opts in to Jev selection of optional tool groups on the
+// JevToolsetsConfig controls Jev selection of optional tool groups on the
 // first user prompt of a session. Threshold is the minimum noul score (default 0.3).
 type JevToolsetsConfig struct {
-	Enabled   bool    `json:"enabled,omitempty"`
+	Enabled   bool    `json:"enabled"`
 	Threshold float64 `json:"threshold,omitempty"`
 }
 
@@ -332,13 +332,15 @@ func DefaultConfig() *Config {
 		},
 		Providers: make(map[string]Provider),
 		Tools: ToolsConfig{
-			Bash:  "allow",
-			Read:  "allow",
-			Write: "allow",
-			Edit:  "allow",
-			Glob:  "allow",
-			Grep:  "allow",
-			Task:  "allow",
+			JevAdmission: JevAdmissionConfig{Enabled: true},
+			JevToolsets:  JevToolsetsConfig{Enabled: true},
+			Bash:         "allow",
+			Read:         "allow",
+			Write:        "allow",
+			Edit:         "allow",
+			Glob:         "allow",
+			Grep:         "allow",
+			Task:         "allow",
 		},
 	}
 }

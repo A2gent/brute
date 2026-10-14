@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -94,7 +95,7 @@ func SelectToolGroups(ctx context.Context, client *jev.Client, prompt string, th
 	selected := []string{}
 	for _, group := range ToolGroups {
 		answer, ok := response.Answers[group.Name]
-		if !ok || answer.Noul == nil {
+		if !ok || answer.Type != "noul" || answer.Noul == nil || math.IsNaN(*answer.Noul) || math.IsInf(*answer.Noul, 0) || *answer.Noul < 0 || *answer.Noul > 1 {
 			return nil, fmt.Errorf("jev returned no answer for tool group %q", group.Name)
 		}
 		if *answer.Noul >= threshold {

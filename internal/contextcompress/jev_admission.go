@@ -43,10 +43,18 @@ type relevanceChunk struct {
 // AdmitToolResultWithGate tries Jev relevance gating first and otherwise behaves
 // exactly like AdmitToolResult. Every failure path keeps the deterministic cap.
 func (c *Compressor) AdmitToolResultWithGate(ctx context.Context, sess *session.Session, tr llm.ToolResult, maxTokens int, gate *RelevanceGate) llm.ToolResult {
-	if gated, ok := c.gateRelevance(ctx, sess, tr, maxTokens, gate); ok {
+	ctx, trace := jev.WithTrace(ctx)
+	gated, ok := c.gateRelevance(ctx, sess, tr, maxTokens, gate)
+	if ok {
+		gated.Metadata = trace.Attach(gated.Metadata)
 		return gated
 	}
-	return c.AdmitToolResult(sess, tr, maxTokens)
+	admitted := c.AdmitToolResult(sess, tr, maxTokens)
+	admitted.Metadata = trace.Attach(admitted.Metadata)
+	if len(trace.Records()) > 0 {
+		admitted.Metadata["jev_admission"] = map[string]interface{}{"outcome": "fallback", "saved_tokens_approx": 0}
+	}
+	return admitted
 }
 
 func (c *Compressor) gateRelevance(ctx context.Context, sess *session.Session, tr llm.ToolResult, maxTokens int, gate *RelevanceGate) (llm.ToolResult, bool) {
@@ -126,6 +134,18 @@ func (c *Compressor) gateRelevance(ctx context.Context, sess *session.Session, t
 	stored := readSessionEntries(sess.Metadata)
 	stored[value.Hash] = value
 	sess.Metadata[sessionCCRMetadataKey] = encodeSessionEntries(stored)
+	metadata := make(map[string]interface{}, len(tr.Metadata)+1)
+	for key, value := range tr.Metadata {
+		metadata[key] = value
+	}
+	admittedTokens := (utf8.RuneCountInString(value.Compressed) + 3) / 4
+	metadata["jev_admission"] = map[string]interface{}{
+		"outcome": "filtered", "original_tokens_approx": originalTokens,
+		"admitted_tokens_approx": admittedTokens, "saved_tokens_approx": originalTokens - admittedTokens,
+		"threshold": threshold, "min_confidence": minConfidence, "dropped_chunks": dropped,
+		"original_hash": value.Hash,
+	}
+	tr.Metadata = metadata
 	tr.Content = value.Compressed
 	return tr, true
 }

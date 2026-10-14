@@ -45,3 +45,21 @@ func TestGetDefinitionsStableOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestSelectToolGroupsInvalidProbabilityFailsOpen(t *testing.T) {
+	for _, value := range []string{`{"type":"score","noul":0.9}`, `{"type":"noul","noul":-1}`, `{"type":"noul","noul":1.5}`} {
+		t.Run(value, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				answers := map[string]json.RawMessage{}
+				for _, group := range ToolGroups {
+					answers[group.Name] = json.RawMessage(value)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"answers": answers})
+			}))
+			defer server.Close()
+			if _, err := SelectToolGroups(context.Background(), jev.NewClient("key", "", server.URL), "task", 0.3); err == nil {
+				t.Fatal("malformed probabilities must not hide tools")
+			}
+		})
+	}
+}

@@ -121,8 +121,12 @@ func TestWebRelevanceCredentialRefresh(t *testing.T) {
 func TestRelevanceGateRequiresFlagAndCredentials(t *testing.T) {
 	t.Setenv("TYPESAFE_API_KEY", "")
 	server, _ := newClassifyRegistrationTestServer(t, config.Provider{APIKey: "jev-key"}, nil)
+	if server.relevanceGate() == nil {
+		t.Fatal("gate must be enabled by default with credentials")
+	}
+	server.config.Tools.JevAdmission.Enabled = false
 	if server.relevanceGate() != nil {
-		t.Fatal("gate must be off by default")
+		t.Fatal("explicit legacy config opt-out ignored")
 	}
 	server.config.Tools.JevAdmission = config.JevAdmissionConfig{Enabled: true, MinTokens: 3000}
 	gate := server.relevanceGate()

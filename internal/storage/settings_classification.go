@@ -14,6 +14,8 @@ func isManagedAppSettingKey(key string) bool {
 	}
 
 	exact := map[string]struct{}{
+		"A2GENT_JEV_ADMISSION_ENABLED":                        {},
+		"A2GENT_JEV_TOOLSETS_ENABLED":                         {},
 		"AAGENT_AGENT_DEFINITIONS_FOLDER":                     {},
 		"AAGENT_CONTEXT_COMPACTION_PROMPT":                    {},
 		"AAGENT_CONTEXT_COMPACTION_TRIGGER_PERCENT":           {},

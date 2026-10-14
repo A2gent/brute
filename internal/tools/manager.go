@@ -11,6 +11,7 @@ import (
 
 	"github.com/A2gent/brute/internal/filesearch"
 	"github.com/A2gent/brute/internal/llm"
+	"github.com/A2gent/brute/internal/llm/jev"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/storage"
 )
@@ -205,8 +206,13 @@ func (m *Manager) Execute(ctx context.Context, name string, params json.RawMessa
 	if !ok {
 		return nil, fmt.Errorf("tool not found: %s", toolName)
 	}
+	ctx, trace := jev.WithTrace(ctx)
 	result, err := tool.Execute(ctx, params)
+	if result == nil && len(trace.Records()) > 0 {
+		result = &Result{}
+	}
 	if result != nil {
+		result.Metadata = trace.Attach(result.Metadata)
 		separated := llm.SeparateToolResultImages(llm.ToolResult{Content: result.Output, Metadata: result.Metadata})
 		result.Output, result.Metadata = separated.Content, separated.Metadata
 	}
@@ -248,6 +254,9 @@ func (m *Manager) ExecuteParallel(ctx context.Context, calls []llm.ToolCall) []l
 				DurationMs: duration.Milliseconds(),
 			}
 
+			if result != nil {
+				tr.Metadata = result.Metadata
+			}
 			if err != nil {
 				tr.Content = fmt.Sprintf("Error: %v", err)
 				tr.IsError = true

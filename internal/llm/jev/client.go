@@ -254,7 +254,9 @@ func (c *Client) connectivityCheck(ctx context.Context, model, state string) (*l
 }
 
 // SystemOne calls the classifier directly without the chat router adapter.
-func (c *Client) SystemOne(ctx context.Context, payload SystemOneRequest) (*SystemOneResponse, error) {
+func (c *Client) SystemOne(ctx context.Context, payload SystemOneRequest) (response *SystemOneResponse, resultErr error) {
+	started := time.Now()
+	defer func() { recordRequest(ctx, payload, response, resultErr, started) }()
 	if strings.TrimSpace(c.apiKey) == "" {
 		return nil, llm.UnsafeForRetry(fmt.Errorf("jev requires an API key"))
 	}

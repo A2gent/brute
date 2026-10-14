@@ -27,6 +27,8 @@ func (m Model) executeCommand(cmdName string, args []string) (tea.Model, tea.Cmd
 		return m.showHelp()
 	case "logs":
 		return m.showLogs()
+	case "update":
+		return m.startSelfUpdate()
 	case "a2a":
 		return m.handleA2ACommand(args)
 	default:

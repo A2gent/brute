@@ -14,6 +14,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	)
 
 	switch msg := msg.(type) {
+	case selfUpdateDoneMsg:
+		return m.handleSelfUpdateDone(msg)
+
 	case tea.WindowSizeMsg:
 		m = m.updateWindowSize(msg)
 

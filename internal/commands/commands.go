@@ -58,6 +58,10 @@ func NewRegistry() *Registry {
 				Aliases:     []string{"l"},
 			},
 			{
+				Name:        "update",
+				Description: "Update brute from GitHub and restart",
+			},
+			{
 				Name:        "a2a",
 				Description: "Manage A2 network (/a2a status|connect|disconnect)",
 				Aliases:     []string{"net"},

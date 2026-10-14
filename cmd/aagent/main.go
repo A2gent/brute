@@ -259,6 +259,15 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 	// Cancel context to stop HTTP server
 	cancel()
 
+	// /update rebuilt the binary on disk; replace this process with it.
+	if tui.RestartRequested {
+		if exe, err := os.Executable(); err == nil {
+			if err := syscall.Exec(exe, os.Args, os.Environ()); err != nil {
+				return fmt.Errorf("restart failed, please start brute again: %w", err)
+			}
+		}
+	}
+
 	return nil
 }
 

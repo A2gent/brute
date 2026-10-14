@@ -389,6 +389,11 @@ type SubAgentResponse struct {
 type ToolDefinitionResponse struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	// Group is the optional tool group ("" = core, always sent).
+	Group string `json:"group,omitempty"`
+	// EstimatedTokens approximates what the full definition (name, description,
+	// schema) costs per request, so tool-list size can be measured.
+	EstimatedTokens int `json:"estimated_tokens"`
 }
 
 // CreateJobRequest represents a request to create a recurring job
@@ -408,14 +413,14 @@ type CreateJobRequest struct {
 	LLMProvider        string `json:"llm_provider,omitempty"`
 	LLMModel           string `json:"llm_model,omitempty"`
 	QueueSerial        *bool  `json:"queue_serial,omitempty"` // default true
+	GateTool           string `json:"gate_tool,omitempty"`
+	GateParams         string `json:"gate_params,omitempty"`
+	GateQuestion       string `json:"gate_question,omitempty"`
 	Enabled            bool   `json:"enabled"`
 }
 
 // UpdateJobRequest represents a request to update a recurring job
 type UpdateJobRequest struct {
-	GateTool           string `json:"gate_tool,omitempty"`
-	GateParams         string `json:"gate_params,omitempty"`
-	GateQuestion       string `json:"gate_question,omitempty"`
 	Name               string  `json:"name"`
 	ProjectID          *string `json:"project_id,omitempty"`
 	ScheduleText       string  `json:"schedule_text"`
@@ -431,14 +436,14 @@ type UpdateJobRequest struct {
 	LLMProvider        *string `json:"llm_provider,omitempty"`
 	LLMModel           string  `json:"llm_model,omitempty"`
 	QueueSerial        *bool   `json:"queue_serial,omitempty"`
+	GateTool           *string `json:"gate_tool,omitempty"`
+	GateParams         *string `json:"gate_params,omitempty"`
+	GateQuestion       *string `json:"gate_question,omitempty"`
 	Enabled            *bool   `json:"enabled,omitempty"`
 }
 
 // JobResponse represents a recurring job response
 type JobResponse struct {
-	GateTool           *string `json:"gate_tool,omitempty"`
-	GateParams         *string `json:"gate_params,omitempty"`
-	GateQuestion       *string `json:"gate_question,omitempty"`
 	ID                 string     `json:"id"`
 	ProjectID          string     `json:"project_id,omitempty"`
 	Name               string     `json:"name"`
@@ -456,14 +461,14 @@ type JobResponse struct {
 	LLMProvider        string     `json:"llm_provider,omitempty"`
 	LLMModel           string     `json:"llm_model,omitempty"`
 	QueueSerial        bool       `json:"queue_serial"`
+	GateTool           string     `json:"gate_tool,omitempty"`
+	GateParams         string     `json:"gate_params,omitempty"`
+	GateQuestion       string     `json:"gate_question,omitempty"`
 	Enabled            bool       `json:"enabled"`
 	LastRunAt          *time.Time `json:"last_run_at,omitempty"`
 	NextRunAt          *time.Time `json:"next_run_at,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
-	GateTool           string     `json:"gate_tool,omitempty"`
-	GateParams         string     `json:"gate_params,omitempty"`
-	GateQuestion       string     `json:"gate_question,omitempty"`
 }
 
 type SessionTemplateRequest struct {

@@ -35,6 +35,7 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 
 	// Clean up incomplete tool calls before starting
 	a.cleanupIncompleteToolCalls(sess)
+	a.ensureToolGroups(ctx, sess)
 
 	for {
 		// Check context - distinguish between user cancellation and timeouts

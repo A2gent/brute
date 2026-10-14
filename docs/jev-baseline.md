@@ -219,3 +219,19 @@ JEV_GATE_CANDIDATES=/tmp/gate.jsonl TYPESAFE_API_KEY=... \
 ```
 
 The replay sends archived tool output (minus guarded secrets) to Jev, so run it deliberately.
+
+## Tool-group selection (T-120)
+
+`tools.jev_toolsets.enabled` (default off, optional `threshold`, default 0.3) hides optional tool
+groups (`internal/tools/toolsets.go`: browser, web, media, integrations, agents, git_review).
+On the first user prompt one Jev request asks a `noul` question per group; the result is stored
+in session metadata `tool_groups` and stays fixed for the session so the tool list remains
+cacheable. Ungrouped tools (core, MCP, custom) are always sent. `enable_tools(group)` widens the
+set; Jev errors, secret-bearing prompts and sessions started before the feature get all tools.
+`GET /tools/definitions` reports `group` and `estimated_tokens` per tool.
+
+Measured 2026-10-14 on the live server (77 tools, name+description as returned by
+`GET /tools/definitions`): 6,861 tokens total, core 2,708 (27 tools), browser 1,201, agents 979,
+integrations 911, media 749, web 225, git_review 88. Including input schemas (MCP `tools/list`,
+54 non-file tools) optional groups are 13,801 of 17,207 tokens. A core-only session therefore
+sends roughly 40% of the previous tool-list tokens; each enabled group adds its share.

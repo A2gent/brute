@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/contextcompress"
 	"github.com/A2gent/brute/internal/llm/jev"
 	"github.com/A2gent/brute/internal/tools"
@@ -98,9 +99,26 @@ func (s *Server) relevanceGate() *contextcompress.RelevanceGate {
 	return &contextcompress.RelevanceGate{Client: jev.NewClient(key, model, baseURL), MinTokens: policy.MinTokens, Threshold: policy.Threshold, MinConfidence: policy.MinConfidence, Secrets: secrets}
 }
 
+// toolSelector mirrors relevanceGate: nil (all tools) unless tools.jev_toolsets
+// is enabled and a Jev credential resolves.
+func (s *Server) toolSelector() *agent.ToolSelector {
+	if s == nil || s.config == nil || !s.config.Tools.JevToolsets.Enabled {
+		return nil
+	}
+	key, model, baseURL := s.resolveClassifyCredentials()
+	if key == "" {
+		return nil
+	}
+	secrets, ok := s.jevEgressSecrets(key)
+	if !ok {
+		return nil
+	}
+	return &agent.ToolSelector{Client: jev.NewClient(key, model, baseURL), Secrets: secrets, Threshold: s.config.Tools.JevToolsets.Threshold}
+}
+
 func webCredentialName(name string) bool {
 	name = strings.ToLower(name)
-	for _, part := range []string{"key", "token", "secret", "password", "credential", "authorization"} {
+	for _, part := range []string{"key", "token", "secret", "password", "credential", "authorization", "dsn", "database_url"} {
 		if strings.Contains(name, part) {
 			return true
 		}

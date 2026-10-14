@@ -288,10 +288,18 @@ type JevAdmissionConfig struct {
 	MinConfidence float64 `json:"min_confidence,omitempty"`
 }
 
+// JevToolsetsConfig opts in to Jev selection of optional tool groups on the
+// first user prompt of a session. Threshold is the minimum noul score (default 0.3).
+type JevToolsetsConfig struct {
+	Enabled   bool    `json:"enabled,omitempty"`
+	Threshold float64 `json:"threshold,omitempty"`
+}
+
 // ToolsConfig configures tool permissions.
 type ToolsConfig struct {
 	WebRelevance          WebRelevanceConfig `json:"web_relevance,omitempty"`
 	JevAdmission          JevAdmissionConfig `json:"jev_admission,omitempty"`
+	JevToolsets           JevToolsetsConfig  `json:"jev_toolsets,omitempty"`
 	RelevanceGateDisabled bool               `json:"relevance_gate_disabled,omitempty"`
 	// BrowserActEnabled opts in to the Jev-driven browser loop. Off by default: it is a prototype and
 	// it holds the shared Chrome lock for the duration of a multi-step run.

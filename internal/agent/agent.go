@@ -66,6 +66,9 @@ func NewWithCompressor(config Config, llmClient llm.Client, toolManager *tools.M
 		if _, ok := toolManager.Get(contextcompress.RetrievalToolName); !ok {
 			toolManager.Register(contextcompress.NewRetrieveTool(compressor))
 		}
+		if config.ToolSelector != nil {
+			toolManager.Register(tools.NewEnableToolsTool())
+		}
 	}
 
 	return &Agent{

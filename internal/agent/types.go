@@ -23,7 +23,9 @@ type Config struct {
 	ProviderSessionIdentity  string
 	ToolResultMaxTokens      int
 	// RelevanceGate is nil unless Jev admission gating is enabled and credentialed.
-	RelevanceGate           *contextcompress.RelevanceGate
+	RelevanceGate *contextcompress.RelevanceGate
+	// ToolSelector is nil unless Jev tool-group selection is enabled and credentialed.
+	ToolSelector            *ToolSelector
 	CompressToolResults     bool
 	PersistRuntimeReasoning bool
 }

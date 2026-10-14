@@ -100,7 +100,7 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 		Model:                 a.config.Model,
 		ReasoningEffort:       strings.TrimSpace(a.config.ReasoningEffort),
 		Messages:              messages,
-		Tools:                 a.toolManager.GetDefinitions(),
+		Tools:                 a.toolDefinitions(sess),
 		Temperature:           a.config.Temperature,
 		SystemPrompt:          a.config.SystemPrompt,
 		SessionID:             sess.ID,

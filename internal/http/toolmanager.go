@@ -411,9 +411,12 @@ func (s *Server) handleListToolDefinitions(w http.ResponseWriter, r *http.Reques
 	defs := s.toolManager.GetDefinitions()
 	resp := make([]ToolDefinitionResponse, len(defs))
 	for i, d := range defs {
+		raw, _ := json.Marshal(d)
 		resp[i] = ToolDefinitionResponse{
-			Name:        d.Name,
-			Description: d.Description,
+			Name:            d.Name,
+			Description:     d.Description,
+			Group:           tools.ToolGroupOf(d.Name),
+			EstimatedTokens: (len(raw) + 3) / 4,
 		}
 	}
 	sort.Slice(resp, func(i, j int) bool {

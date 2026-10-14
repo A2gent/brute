@@ -96,12 +96,16 @@ func capText(text string, limit int) string {
 var secretPattern = regexp.MustCompile(`(?i)(-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|password|passwd|client[_-]?secret|secret[_-]?key|token|secret|signature|credential)\b["']?\s*[:=]\s*["']?\S+|\bbearer\s+\S+|\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]+|AKIA[A-Z0-9]{16})\b)`)
 var urlPattern = regexp.MustCompile(`(?i)https?://[^\s<>"'\x60]+`)
 
+// dsnPattern catches credentials embedded in any scheme, e.g. postgres://user:pass@host,
+// which urlPattern (http/https only) and the labeled-secret pattern both miss.
+var dsnPattern = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^\s/@:]+:[^\s/@]+@`)
+
 // SafeEgressText is conservative fail-open locally, fail-closed for Jev egress.
 // Credential-bearing text, private URLs and secret paths bypass classification
 // altogether. Known configured credentials are checked even when the source
 // omits their labels.
 func SafeEgressText(text string, secrets []string) bool {
-	if secretPattern.MatchString(text) {
+	if secretPattern.MatchString(text) || dsnPattern.MatchString(text) {
 		return false
 	}
 	for _, secret := range secrets {

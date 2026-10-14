@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -301,5 +302,8 @@ func (m *Manager) GetDefinitions() []llm.ToolDefinition {
 			InputSchema: tool.Schema(),
 		})
 	}
+	// Map order is random; a stable order keeps the provider prompt prefix
+	// byte-identical between requests so it stays cacheable.
+	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })
 	return defs
 }

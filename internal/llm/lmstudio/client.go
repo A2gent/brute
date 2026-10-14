@@ -73,7 +73,8 @@ func NewClient(apiKey, model, baseURL string) *Client {
 		model:    model,
 		isGemini: isGemini,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Minute, // Local models can be slower
+			Transport: llm.SharedHTTPTransport(0),
+			Timeout:   10 * time.Minute, // Local models can be slower
 		},
 	}
 }
@@ -87,7 +88,10 @@ type openAIRequest struct {
 	Temperature         *float64        `json:"temperature,omitempty"`
 	Tools               []openAITool    `json:"tools,omitempty"`
 	Stream              bool            `json:"stream,omitempty"`
-	PromptCacheKey      string          `json:"prompt_cache_key,omitempty"`
+	StreamOptions       *struct {
+		IncludeUsage bool `json:"include_usage"`
+	} `json:"stream_options,omitempty"`
+	PromptCacheKey string `json:"prompt_cache_key,omitempty"`
 }
 
 // modelRequiresMaxCompletionTokens reports whether an OpenAI model rejects the
@@ -332,6 +336,7 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 			InputTokens:       oaiResp.Usage.PromptTokens,
 			OutputTokens:      oaiResp.Usage.CompletionTokens,
 			CachedInputTokens: oaiResp.Usage.PromptTokensDetails.CachedTokens,
+			ReasoningTokens:   oaiResp.Usage.CompletionTokensDetails.ReasoningTokens,
 		},
 	}
 
@@ -403,6 +408,10 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		Messages: messages,
 		Tools:    tools,
 		Stream:   true,
+		// Usage arrives in a final chunk with empty choices only when requested.
+		StreamOptions: &struct {
+			IncludeUsage bool `json:"include_usage"`
+		}{IncludeUsage: true},
 	}
 	if c.providerName() == "OpenAI" {
 		reqBody.PromptCacheKey = strings.TrimSpace(request.PromptCacheKey)
@@ -440,6 +449,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	}
 
 	result := &llm.ChatResponse{}
+	var content strings.Builder
 	toolByIndex := map[int]int{}
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
@@ -476,6 +486,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 				InputTokens:       chunk.Usage.PromptTokens,
 				OutputTokens:      chunk.Usage.CompletionTokens,
 				CachedInputTokens: chunk.Usage.PromptTokensDetails.CachedTokens,
+				ReasoningTokens:   chunk.Usage.CompletionTokensDetails.ReasoningTokens,
 			}
 			if onEvent != nil {
 				if err := onEvent(llm.StreamEvent{Type: llm.StreamEventUsage, Usage: result.Usage}); err != nil {
@@ -490,7 +501,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 			}
 
 			if choice.Delta.Content != "" {
-				result.Content += choice.Delta.Content
+				content.WriteString(choice.Delta.Content)
 				if onEvent != nil {
 					if err := onEvent(llm.StreamEvent{
 						Type:         llm.StreamEventContentDelta,
@@ -504,7 +515,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 			}
 
 			if choice.Delta.Refusal != "" {
-				result.Content += choice.Delta.Refusal
+				content.WriteString(choice.Delta.Refusal)
 				if onEvent != nil {
 					if err := onEvent(llm.StreamEvent{
 						Type:         llm.StreamEventContentDelta,
@@ -567,6 +578,8 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("stream read error: %w", err)
 	}
+
+	result.Content = content.String()
 
 	// If response is completely empty but finish reason indicates length or error
 	if result.Content == "" && len(result.ToolCalls) == 0 && result.StopReason != "" && result.StopReason != "stop" {

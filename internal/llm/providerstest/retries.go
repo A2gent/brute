@@ -4,8 +4,9 @@ package providerstest
 import (
 	"context"
 	"encoding/json"
-	"io"
+	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -15,18 +16,16 @@ import (
 	"github.com/A2gent/brute/internal/llm"
 )
 
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
 // CheckRetries exercises real provider clients without sockets so synctest can
 // advance backoff time and detect nested retry wrappers without slow tests.
 func CheckRetries(t *testing.T, factory func(*config.Config, config.ProviderType) (llm.Client, error)) {
 	t.Helper()
 	t.Setenv("LM_STUDIO_BASE_URL", "")
 	t.Setenv("LMSTUDIO_BASE_URL", "")
-	original := http.DefaultTransport
-	t.Cleanup(func() { http.DefaultTransport = original })
+	// LM Studio uses the shared transport explicitly, not http.DefaultTransport.
+	transport := llm.SharedHTTPTransport(0)
+	original := transport.Proxy
+	t.Cleanup(func() { transport.Proxy = original })
 	for _, tc := range []struct {
 		name    string
 		payload string
@@ -64,7 +63,7 @@ func CheckRetries(t *testing.T, factory func(*config.Config, config.ProviderType
 							},
 						}
 						calls := map[string]int{}
-						http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+						transport.Proxy = func(r *http.Request) (*url.URL, error) {
 							var body struct {
 								Model string `json:"model"`
 							}
@@ -72,8 +71,9 @@ func CheckRetries(t *testing.T, factory func(*config.Config, config.ProviderType
 								t.Fatal(err)
 							}
 							calls[body.Model]++
-							return &http.Response{StatusCode: 503, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":"service unavailable"}`)), Request: r}, nil
-						})
+							// Fail before dialing so retry backoff stays inside the synctest bubble.
+							return nil, errors.New("service unavailable")
+						}
 						provider := config.ProviderLMStudio
 						if chain {
 							provider = config.ProviderFallback

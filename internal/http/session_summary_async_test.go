@@ -47,8 +47,6 @@ func TestHandleChatStreamEmitsDoneBeforeSummaryCompletes(t *testing.T) {
 
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		var raw map[string]interface{}
-		_ = json.Unmarshal(body, &raw)
 		content := "Hello"
 		if strings.Contains(string(body), summaryPromptMarker) {
 			// Block the summary call until the test has observed `done`.
@@ -59,20 +57,16 @@ func TestHandleChatStreamEmitsDoneBeforeSummaryCompletes(t *testing.T) {
 			}
 			content = "Generated async summary"
 		}
-		if raw["stream"] == true {
-			w.Header().Set("Content-Type", "text/event-stream")
-			chunk, _ := json.Marshal(map[string]interface{}{
-				"choices": []map[string]interface{}{{"index": 0, "delta": map[string]string{"content": content}, "finish_reason": "stop"}},
-				"usage":   map[string]int{"prompt_tokens": 3, "completion_tokens": 1},
-			})
-			_, _ = w.Write([]byte("data: " + string(chunk) + "\n\ndata: [DONE]\n\n"))
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"choices": []map[string]interface{}{{"index": 0, "message": map[string]string{"role": "assistant", "content": content}, "finish_reason": "stop"}},
-			"usage":   map[string]int{"prompt_tokens": 3, "completion_tokens": 1},
+		w.Header().Set("Content-Type", "text/event-stream")
+		chunk, _ := json.Marshal(map[string]interface{}{
+			"type": "response.completed",
+			"response": map[string]interface{}{
+				"id": "resp_summary", "status": "completed",
+				"output": []map[string]interface{}{{"type": "message", "content": []map[string]string{{"type": "output_text", "text": content}}}},
+				"usage":  map[string]int{"input_tokens": 3, "output_tokens": 1},
+			},
 		})
+		_, _ = w.Write([]byte("data: " + string(chunk) + "\n\n"))
 	}))
 	defer provider.Close()
 

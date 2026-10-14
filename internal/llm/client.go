@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 )
 
 // Client defines the interface for LLM providers
@@ -34,11 +35,12 @@ type ChatRequest struct {
 
 // Message represents a chat message
 type Message struct {
-	Role        string       `json:"role"` // "user", "assistant", "tool"
-	Content     string       `json:"content"`
-	Images      []Image      `json:"images,omitempty"`
-	ToolCalls   []ToolCall   `json:"tool_calls,omitempty"`
-	ToolResults []ToolResult `json:"tool_results,omitempty"`
+	Role           string            `json:"role"` // "user", "assistant", "tool"
+	Content        string            `json:"content"`
+	Images         []Image           `json:"images,omitempty"`
+	ToolCalls      []ToolCall        `json:"tool_calls,omitempty"`
+	ToolResults    []ToolResult      `json:"tool_results,omitempty"`
+	ReasoningItems []json.RawMessage `json:"reasoning_items,omitempty"`
 }
 
 // Image represents an image attachment passed to/from an LLM.
@@ -87,6 +89,7 @@ type ChatResponse struct {
 	Usage                 TokenUsage
 	StopReason            string
 	ResponseID            string
+	ReasoningItems        []json.RawMessage
 	ProviderSessionCursor string
 }
 

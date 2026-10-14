@@ -73,6 +73,7 @@ const (
 	metadataLastLLMInputTokens             = "last_llm_input_tokens"
 	metadataLastLLMCachedInputTokens       = "last_llm_cached_input_tokens"
 	messageMetadataCompaction              = "context_compaction"
+	messageMetadataReasoningItems          = "reasoning_items"
 	messageMetadataResponseID              = "response_id"
 	messageMetadataProviderSessionCursor   = "provider_session_cursor"
 	messageMetadataProviderSessionIdentity = "provider_session_identity"

@@ -34,3 +34,16 @@ func TestProviderSessionPersistenceForConfig_ExplicitFalseDisablesAnthropic(t *t
 		t.Fatalf("Anthropic explicit stateful_responses=false keeps provider session persistence enabled")
 	}
 }
+
+func TestProviderStatefulResponsesForConfig_OpenAIOptIn(t *testing.T) {
+	server := &Server{}
+	enabled, disabled := true, false
+	for _, tc := range []struct {
+		configured *bool
+		want       bool
+	}{{nil, false}, {&disabled, false}, {&enabled, true}} {
+		if got := server.providerStatefulResponsesForConfig(config.ProviderOpenAI, tc.configured); got != tc.want {
+			t.Errorf("stateful = %v, want %v", got, tc.want)
+		}
+	}
+}

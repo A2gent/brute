@@ -87,7 +87,7 @@ func TestHandleChatStreamForwardsProviderDeltasBeforeCompletion(t *testing.T) {
 
 	providerErrors := make(chan string, 1)
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got, want := r.URL.Path, "/v1/chat/completions"; got != want {
+		if got, want := r.URL.Path, "/v1/responses"; got != want {
 			providerErrors <- fmt.Sprintf("provider path = %q, want %q", got, want)
 			http.Error(w, "wrong path", http.StatusNotFound)
 			return
@@ -113,9 +113,9 @@ func TestHandleChatStreamForwardsProviderDeltasBeforeCompletion(t *testing.T) {
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		// A provider burst must be coalesced before the completion barrier.
-		_, _ = w.Write([]byte(`data: {"choices":[{"index":0,"delta":{"content":"H"}}]}
+		_, _ = w.Write([]byte(`data: {"type":"response.output_text.delta","delta":"H"}
 
-data: {"choices":[{"index":0,"delta":{"content":"el"}}]}
+data: {"type":"response.output_text.delta","delta":"el"}
 
 `))
 		flusher.Flush()
@@ -127,7 +127,9 @@ data: {"choices":[{"index":0,"delta":{"content":"el"}}]}
 			return
 		}
 
-		_, _ = w.Write([]byte(`data: {"choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}
+		_, _ = w.Write([]byte(`data: {"type":"response.output_text.delta","delta":"lo"}
+
+data: {"type":"response.completed","response":{"id":"resp_test","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"Hello"}]}],"usage":{"input_tokens":3,"output_tokens":2}}}
 
 data: [DONE]
 
@@ -258,7 +260,7 @@ func (w *failingStreamWriter) Flush() {}
 
 func TestHandleChatStreamContinuesRunWhenInitialStatusWriteFails(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got, want := r.URL.Path, "/v1/chat/completions"; got != want {
+		if got, want := r.URL.Path, "/v1/responses"; got != want {
 			http.Error(w, "wrong path", http.StatusNotFound)
 			return
 		}
@@ -268,7 +270,9 @@ func TestHandleChatStreamContinuesRunWhenInitialStatusWriteFails(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte(`data: {"choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1}}
+		_, _ = w.Write([]byte(`data: {"type":"response.output_text.delta","delta":"Hello"}
+
+data: {"type":"response.completed","response":{"id":"resp_test","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"Hello"}]}],"usage":{"input_tokens":3,"output_tokens":1}}}
 
 data: [DONE]
 

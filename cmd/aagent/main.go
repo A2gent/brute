@@ -224,6 +224,7 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 		MaxSteps:                cfg.MaxSteps,
 		Temperature:             cfg.Temperature,
 		ContextWindow:           contextWindow,
+		UsePreviousResponse:     ref == string(config.ProviderOpenAI) && provider.StatefulResponses != nil && *provider.StatefulResponses,
 		UseProviderSession:      sessionSettings.UseProviderSession,
 		ProviderSessionIdentity: sessionSettings.ProviderSessionIdentity,
 	}
@@ -586,8 +587,18 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 			return kimicli.NewClient(model, cfg.WorkDir), model, nil
 		case config.ProviderCursor:
 			return cursorcli.NewClientWithOptions(model, cursorcli.Options{WorkDir: cfg.WorkDir, APIKey: apiKey}), model, nil
-		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle, config.ProviderOpenAI, config.ProviderOpenCodeZen, config.ProviderGrok, config.ProviderMeta:
+		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle, config.ProviderOpenCodeZen, config.ProviderGrok, config.ProviderMeta:
 			return lmstudio.NewClient(apiKey, model, baseURL), model, nil
+		case config.ProviderOpenAI:
+			return openaicodex.NewClientWithOptions(apiKey, model, baseURL, openaicodex.Options{
+				PublicAPI:         true,
+				PromptCacheKey:    provider.PromptCacheKey,
+				ReasoningEffort:   provider.ReasoningEffort,
+				TextVerbosity:     provider.TextVerbosity,
+				ServiceTier:       provider.ServiceTier,
+				MaxTokens:         provider.MaxTokens,
+				StatefulResponses: provider.StatefulResponses != nil && *provider.StatefulResponses,
+			}), model, nil
 		case config.ProviderOpenAICodex:
 			options := openaicodex.Options{
 				PromptCacheKey:    provider.PromptCacheKey,

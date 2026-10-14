@@ -246,10 +246,20 @@ func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model 
 		// Google Gemini uses a dedicated client with OpenAI-compatible API + Gemini extensions
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return gemini.NewClient(apiKey, modelName, baseURL), nil
-	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenAI, config.ProviderOpenCodeZen, config.ProviderGrok, config.ProviderMeta:
+	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenCodeZen, config.ProviderGrok, config.ProviderMeta:
 		// Other OpenAI-compatible providers
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return lmstudio.NewClient(apiKey, modelName, baseURL), nil
+	case config.ProviderOpenAI:
+		return openaicodex.NewClientWithOptions(apiKey, modelName, baseURL, openaicodex.Options{
+			PublicAPI:         true,
+			PromptCacheKey:    provider.PromptCacheKey,
+			ReasoningEffort:   provider.ReasoningEffort,
+			TextVerbosity:     provider.TextVerbosity,
+			ServiceTier:       provider.ServiceTier,
+			MaxTokens:         provider.MaxTokens,
+			StatefulResponses: provider.StatefulResponses != nil && *provider.StatefulResponses,
+		}), nil
 	case config.ProviderOpenAICodex:
 		options := openaicodex.Options{
 			PromptCacheKey:    provider.PromptCacheKey,
@@ -352,9 +362,8 @@ func (s *Scheduler) apiKeyEnvName(providerType config.ProviderType) string {
 }
 
 func (s *Scheduler) providerStatefulResponses(providerType config.ProviderType) bool {
-	// Keep OpenAI Codex stateless in background jobs; the Codex backend requires
-	// full local conversation state for tool-heavy agent runs.
-	return false
+	provider := s.config.Providers[string(providerType)]
+	return providerType == config.ProviderOpenAI && provider.StatefulResponses != nil && *provider.StatefulResponses
 }
 
 func normalizeFallbackChainNodes(raw []config.FallbackChainNode) []config.FallbackChainNode {

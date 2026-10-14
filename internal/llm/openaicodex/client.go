@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,12 +36,13 @@ type Client struct {
 }
 
 type Options struct {
+	// PublicAPI disables ChatGPT-only headers and payload restrictions.
+	PublicAPI       bool
 	PromptCacheKey  string
 	ReasoningEffort string
 	TextVerbosity   string
 	ServiceTier     string
-	// Retained for config compatibility. The ChatGPT Codex backend rejects
-	// max_output_tokens, so this client intentionally omits token caps.
+	// Token caps are supported only by the public Responses API.
 	MaxTokens             int
 	StatefulResponses     bool
 	ResponseHeaderTimeout time.Duration
@@ -61,6 +61,8 @@ type responsesRequest struct {
 	Reasoning          *responsesReasoning  `json:"reasoning,omitempty"`
 	Text               *responsesText       `json:"text,omitempty"`
 	ServiceTier        string               `json:"service_tier,omitempty"`
+	MaxOutputTokens    int                  `json:"max_output_tokens,omitempty"`
+	Include            []string             `json:"include,omitempty"`
 }
 
 type responsesReasoning struct {
@@ -72,14 +74,17 @@ type responsesText struct {
 }
 
 type responsesInputItem struct {
-	Type      string                 `json:"type,omitempty"`
-	Role      string                 `json:"role,omitempty"`
-	Content   []responsesInputPart   `json:"content,omitempty"`
-	CallID    string                 `json:"call_id,omitempty"`
-	Name      string                 `json:"name,omitempty"`
-	Arguments string                 `json:"arguments,omitempty"`
-	Output    *string                `json:"output,omitempty"`
-	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	ID               string                 `json:"id,omitempty"`
+	EncryptedContent string                 `json:"encrypted_content,omitempty"`
+	Summary          json.RawMessage        `json:"summary,omitempty"`
+	Type             string                 `json:"type,omitempty"`
+	Role             string                 `json:"role,omitempty"`
+	Content          []responsesInputPart   `json:"content,omitempty"`
+	CallID           string                 `json:"call_id,omitempty"`
+	Name             string                 `json:"name,omitempty"`
+	Arguments        string                 `json:"arguments,omitempty"`
+	Output           *string                `json:"output,omitempty"`
+	Metadata         map[string]interface{} `json:"metadata,omitempty"`
 }
 
 type responsesInputPart struct {
@@ -93,6 +98,7 @@ type responsesTool struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description,omitempty"`
 	Parameters  map[string]interface{} `json:"parameters,omitempty"`
+	Strict      *bool                  `json:"strict,omitempty"`
 }
 
 type responsesResponse struct {
@@ -117,13 +123,15 @@ type responsesResponse struct {
 }
 
 type responsesOutputItem struct {
-	Type      string `json:"type"`
-	ID        string `json:"id,omitempty"`
-	CallID    string `json:"call_id,omitempty"`
-	Name      string `json:"name,omitempty"`
-	Arguments string `json:"arguments,omitempty"`
-	Role      string `json:"role,omitempty"`
-	Content   []struct {
+	EncryptedContent string          `json:"encrypted_content,omitempty"`
+	Summary          json.RawMessage `json:"summary,omitempty"`
+	Type             string          `json:"type"`
+	ID               string          `json:"id,omitempty"`
+	CallID           string          `json:"call_id,omitempty"`
+	Name             string          `json:"name,omitempty"`
+	Arguments        string          `json:"arguments,omitempty"`
+	Role             string          `json:"role,omitempty"`
+	Content          []struct {
 		Type     string `json:"type"`
 		Text     string `json:"text,omitempty"`
 		ImageURL string `json:"image_url,omitempty"`
@@ -151,8 +159,14 @@ func NewClientWithOptions(accessToken, model, baseURL string, options Options) *
 	normalizedBaseURL := strings.TrimSpace(baseURL)
 	if normalizedBaseURL == "" {
 		normalizedBaseURL = defaultBaseURL
+		if options.PublicAPI {
+			normalizedBaseURL = "https://api.openai.com/v1"
+		}
 	}
-	normalizedBaseURL = strings.TrimSuffix(strings.TrimRight(normalizedBaseURL, "/"), "/responses")
+	normalizedBaseURL = strings.TrimRight(normalizedBaseURL, "/")
+	for _, suffix := range []string{"/responses", "/chat/completions", "/models"} {
+		normalizedBaseURL = strings.TrimSuffix(normalizedBaseURL, suffix)
+	}
 	options = normalizeOptions(options)
 	return &Client{
 		accessToken: strings.TrimSpace(accessToken),
@@ -228,6 +242,14 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	}
 
 	options := c.requestOptions(request)
+	if options.PublicAPI {
+		// Brute tools have optional parameters; automatic strict normalization
+		// would turn those into required fields and change their semantics.
+		strict := false
+		for i := range tools {
+			tools[i].Strict = &strict
+		}
+	}
 	payload := responsesRequest{
 		Model:              model,
 		Instructions:       codexInstructions(request.SystemPrompt),
@@ -246,6 +268,15 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		payload.Text = &responsesText{Verbosity: verbosity}
 	}
 
+	if options.PublicAPI {
+		payload.Instructions = strings.TrimSpace(request.SystemPrompt)
+		payload.MaxOutputTokens = options.MaxTokens
+		if !options.StatefulResponses {
+			// Encrypted items preserve reasoning without storing responses at OpenAI.
+			payload.Include = []string{"reasoning.encrypted_content"}
+		}
+	}
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal Codex request: %w", err)
@@ -257,13 +288,15 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Originator", "codex_cli_rs")
-	req.Header.Set("User-agent", UserAgent())
+	if !options.PublicAPI {
+		req.Header.Set("Originator", "codex_cli_rs")
+		req.Header.Set("User-Agent", UserAgent())
+	}
 	accessToken := c.currentAccessToken()
 	if accessToken != "" {
 		req.Header.Set("Authorization", "Bearer "+accessToken)
 	}
-	if c.accountID != "" {
+	if !options.PublicAPI && c.accountID != "" {
 		req.Header.Set("ChatGPT-Account-Id", c.accountID)
 	}
 
@@ -403,7 +436,7 @@ func parseStreamReader(reader io.Reader, onEvent func(llm.StreamEvent) error) (*
 					state.input.WriteString(strings.TrimSpace(item.Arguments))
 				}
 			}
-		case "response.completed":
+		case "response.completed", "response.incomplete", "response.failed":
 			if len(ev.Response) == 0 {
 				continue
 			}
@@ -488,6 +521,17 @@ func parseResponseObject(parsed responsesResponse) (*llm.ChatResponse, error) {
 					}
 				}
 			}
+		case "reasoning":
+			if item.EncryptedContent != "" {
+				raw, err := json.Marshal(responsesInputItem{
+					Type: "reasoning", ID: item.ID,
+					EncryptedContent: item.EncryptedContent, Summary: item.Summary,
+				})
+				if err != nil {
+					return nil, fmt.Errorf("failed to preserve reasoning item: %w", err)
+				}
+				result.ReasoningItems = append(result.ReasoningItems, raw)
+			}
 		case "function_call":
 			callID := strings.TrimSpace(item.CallID)
 			if callID == "" {
@@ -500,7 +544,7 @@ func parseResponseObject(parsed responsesResponse) (*llm.ChatResponse, error) {
 			})
 		}
 	}
-	result.Content = strings.TrimSpace(contentBuilder.String())
+	result.Content = contentBuilder.String()
 
 	toolNames := make([]string, len(result.ToolCalls))
 	for i, tc := range result.ToolCalls {
@@ -527,6 +571,12 @@ func buildInputItems(messages []llm.Message) []responsesInputItem {
 				})
 			}
 		case "assistant":
+			for _, raw := range msg.ReasoningItems {
+				var item responsesInputItem
+				if json.Unmarshal(raw, &item) == nil && item.Type == "reasoning" {
+					items = append(items, item)
+				}
+			}
 			if content != "" {
 				items = append(items, responsesInputItem{
 					Type: "message",
@@ -612,109 +662,6 @@ func extractAccountID(accessToken string) string {
 func stringClaim(v interface{}) string {
 	s, _ := v.(string)
 	return strings.TrimSpace(s)
-}
-
-func codexInstructions(systemPrompt string) string {
-	prompt := strings.TrimSpace(systemPrompt)
-	if prompt == "" {
-		return codexPrefix
-	}
-	return codexPrefix + "\n\n" + prompt
-}
-
-func normalizeOptions(options Options) Options {
-	options.PromptCacheKey = strings.TrimSpace(options.PromptCacheKey)
-	options.ReasoningEffort = strings.TrimSpace(options.ReasoningEffort)
-	options.TextVerbosity = strings.TrimSpace(options.TextVerbosity)
-	options.ServiceTier = normalizeCodexServiceTier(options.ServiceTier)
-	// The ChatGPT Codex backend rejects stored responses.
-	options.StatefulResponses = false
-	if options.MaxTokens < 0 {
-		options.MaxTokens = 0
-	}
-	if options.ResponseHeaderTimeout <= 0 {
-		options.ResponseHeaderTimeout = envDurationSeconds(
-			"AAGENT_OPENAI_CODEX_RESPONSE_HEADER_TIMEOUT_SECONDS",
-			defaultResponseHeaderTimeout,
-		)
-	}
-	return options
-}
-
-func normalizeCodexServiceTier(serviceTier string) string {
-	serviceTier = strings.TrimSpace(serviceTier)
-	// The ChatGPT Codex backend currently rejects `service_tier: "auto"`.
-	// Treat it like the default/unspecified tier and omit the field from requests.
-	if strings.EqualFold(serviceTier, "auto") {
-		return ""
-	}
-	return serviceTier
-}
-
-func (c *Client) requestOptions(request *llm.ChatRequest) Options {
-	options := c.options
-	if request == nil {
-		return options
-	}
-	if strings.TrimSpace(request.PromptCacheKey) != "" {
-		options.PromptCacheKey = strings.TrimSpace(request.PromptCacheKey)
-	}
-	if strings.TrimSpace(request.ReasoningEffort) != "" {
-		options.ReasoningEffort = strings.TrimSpace(request.ReasoningEffort)
-	}
-	if strings.TrimSpace(request.TextVerbosity) != "" {
-		options.TextVerbosity = strings.TrimSpace(request.TextVerbosity)
-	}
-	if strings.TrimSpace(request.ServiceTier) != "" {
-		options.ServiceTier = strings.TrimSpace(request.ServiceTier)
-	}
-	return normalizeOptions(options)
-}
-
-func (options Options) promptCacheKey(request *llm.ChatRequest) string {
-	if key := strings.TrimSpace(options.PromptCacheKey); key != "" {
-		return key
-	}
-	if request != nil {
-		return strings.TrimSpace(request.SessionID)
-	}
-	return ""
-}
-
-func (options Options) previousResponseID(request *llm.ChatRequest) string {
-	if !options.StatefulResponses || request == nil {
-		return ""
-	}
-	return strings.TrimSpace(request.PreviousResponseID)
-}
-
-func envBool(key string) bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
-}
-
-func envInt(key string) int {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return 0
-	}
-	value, err := strconv.Atoi(raw)
-	if err != nil || value < 0 {
-		return 0
-	}
-	return value
-}
-
-func envDurationSeconds(key string, fallback time.Duration) time.Duration {
-	value := envInt(key)
-	if value <= 0 {
-		return fallback
-	}
-	return time.Duration(value) * time.Second
 }
 
 var _ llm.Client = (*Client)(nil)

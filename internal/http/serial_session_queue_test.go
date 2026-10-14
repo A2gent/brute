@@ -24,7 +24,7 @@ func TestSerialQueuedProjectSessionsRunOneAtATime(t *testing.T) {
 	totalRequests := 0
 
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got, want := r.URL.Path, "/v1/chat/completions"; got != want {
+		if got, want := r.URL.Path, "/v1/responses"; got != want {
 			http.Error(w, "wrong path", http.StatusNotFound)
 			return
 		}
@@ -46,7 +46,7 @@ func TestSerialQueuedProjectSessionsRunOneAtATime(t *testing.T) {
 
 		time.Sleep(120 * time.Millisecond)
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"done %d\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2}}\n\n", callNumber)
+		_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"done %d\"}]}],\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}}\n\n", callNumber)
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer provider.Close()
@@ -212,7 +212,7 @@ func TestSerialQueueSkipsPausedQueuedSessions(t *testing.T) {
 		totalRequests++
 		mu.Unlock()
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2}}\n\n")
+		_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}],\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}}\n\n")
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer provider.Close()

@@ -25,7 +25,7 @@ func TestGitCommitMessageGenerationAllowsLongResponses(t *testing.T) {
 	message := "feat: preserve detailed commit messages\n\n" + strings.Repeat("- Complete change description.\n", 30)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
-			MaxTokens int `json:"max_tokens"`
+			MaxTokens int `json:"max_output_tokens"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Errorf("decode request: %v", err)
@@ -35,7 +35,8 @@ func TestGitCommitMessageGenerationAllowsLongResponses(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": message}, "finish_reason": "stop"}},
+			"id": "resp_commit", "status": "completed",
+			"output": []any{map[string]any{"type": "message", "content": []any{map[string]any{"type": "output_text", "text": message}}}},
 		})
 	}))
 	defer upstream.Close()

@@ -256,6 +256,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 		MaxSteps:                s.config.MaxSteps,
 		Temperature:             s.config.Temperature,
 		ContextWindow:           contextWindow,
+		UsePreviousResponse:     s.providerStatefulResponses(providerType),
 		UseProviderSession:      sessionSettings.UseProviderSession,
 		ProviderSessionIdentity: sessionSettings.ProviderSessionIdentity,
 	}

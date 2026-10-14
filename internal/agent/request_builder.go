@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -40,6 +41,14 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 			Role:    m.Role,
 			Content: m.Content,
 			Images:  sessionImagesToLLM(m.Images),
+		}
+
+		epoch, _ := sess.Metadata["provider_context_epoch"].(string)
+		// Opaque reasoning is valid only for the context that produced it.
+		if m.Role == "assistant" && (!transitioned || m.Metadata["reasoning_context_epoch"] == epoch) {
+			if raw, ok := m.Metadata[messageMetadataReasoningItems].(string); ok {
+				_ = json.Unmarshal([]byte(raw), &msg.ReasoningItems)
+			}
 		}
 
 		// Convert tool calls

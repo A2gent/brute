@@ -150,7 +150,7 @@ func (s *Server) providerStatefulResponses(providerType config.ProviderType) boo
 }
 
 func (s *Server) providerStatefulResponsesForConfig(providerType config.ProviderType, configured *bool) bool {
-	return false
+	return providerType == config.ProviderOpenAI && configured != nil && *configured
 }
 
 func (s *Server) providerSessionPersistence(providerType config.ProviderType) bool {
@@ -336,10 +336,20 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return gemini.NewClient(apiKey, modelName, baseURL), nil
-	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenAI, config.ProviderOpenCodeZen, config.ProviderGrok, config.ProviderMeta:
+	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenCodeZen, config.ProviderGrok, config.ProviderMeta:
 
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return lmstudio.NewClient(apiKey, modelName, baseURL), nil
+	case config.ProviderOpenAI:
+		return openaicodex.NewClientWithOptions(apiKey, modelName, baseURL, openaicodex.Options{
+			PublicAPI:         true,
+			PromptCacheKey:    provider.PromptCacheKey,
+			ReasoningEffort:   provider.ReasoningEffort,
+			TextVerbosity:     provider.TextVerbosity,
+			ServiceTier:       provider.ServiceTier,
+			MaxTokens:         provider.MaxTokens,
+			StatefulResponses: provider.StatefulResponses != nil && *provider.StatefulResponses,
+		}), nil
 	case config.ProviderOpenAICodex:
 		options := openaicodex.Options{
 			PromptCacheKey:    provider.PromptCacheKey,

@@ -76,3 +76,9 @@
 - Transition request sizing must include system/tool definitions, not just history. Use realistic target windows in tests. Verify stream-local declarations after scripted insertion; fallback tracks progress with hasStreamContent, not a guessed variable name.
 
 - In a shared worktree, distinguish another session's red-phase tests from provenance failures; validate owned patches in an isolated HEAD export before claiming component-wide success. Build typed stream fixtures with all required payload fields.
+- For scripted switch edits, anchor on the factory's client constructor, not the first provider case (credential switches use the same labels). Check the diff and compile every touched entry point, including `cmd/aagent`.
+- Session persistence tests should use `session.NewManager(store).Get(id)` for a reload; `session.Manager` has no `Load` method.
+- A provider transport migration must update all existing factory-based HTTP mocks to the new endpoint, streaming event shape, and token-cap field; otherwise unrelated-looking chat/queue/summary tests fail.
+- A configured reviewer may be unavailable when its Docker image is missing. Record the failed review as unavailable, inspect changes locally, and do not treat infrastructure failure as approval.
+- Responses content should preserve provider whitespace just like Chat Completions; trimming transport output breaks callers that require complete generated text.
+- When a hook fails intermittently, reproduce the named test repeatedly on a clean `git archive HEAD` before changing task code. SQLite history currently sorts by `(timestamp,rowid)`; equal microsecond timestamps can reorder messages across serialization. Track that baseline defect separately and never bypass hooks.

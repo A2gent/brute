@@ -146,7 +146,7 @@ func integrationToResponse(integration *storage.Integration) IntegrationResponse
 
 func isSensitiveIntegrationConfigKey(key string) bool {
 	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "api_key", "api_secret", "api_token", "access_token", "access_token_secret", "bot_token", "client_secret", "refresh_token":
+	case "api_key", "api_secret", "api_token", "access_token", "access_token_secret", "bot_token", "client_secret", "refresh_token", "api_hash", "session":
 		return true
 	default:
 		return false
@@ -157,6 +157,8 @@ func defaultIntegrationName(provider string) string {
 	switch provider {
 	case "telegram":
 		return "Telegram"
+	case "telegram_user":
+		return "Telegram (user account)"
 	case "slack":
 		return "Slack"
 	case "discord":
@@ -167,6 +169,8 @@ func defaultIntegrationName(provider string) string {
 		return "Webhook"
 	case "x":
 		return "X"
+	case "gmail":
+		return "Gmail"
 	case "google_calendar":
 		return "Google Calendar"
 	case "jira":
@@ -179,6 +183,8 @@ func defaultIntegrationName(provider string) string {
 		return "Bitbucket"
 	case "appsignal":
 		return "AppSignal"
+	case "sentry":
+		return "Sentry"
 	case "elevenlabs":
 		return "ElevenLabs"
 	case "perplexity":

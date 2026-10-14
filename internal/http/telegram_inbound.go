@@ -4,16 +4,16 @@ package http
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
+	"github.com/A2gent/brute/internal/speechengine"
 	"github.com/A2gent/brute/internal/storage"
-	"github.com/A2gent/brute/internal/tools/integrationtools"
 )
 
 func (s *Server) telegramPromptFromInboundMessage(
@@ -98,12 +98,7 @@ func (s *Server) telegramPromptFromInboundMessage(
 		logging.Info("Telegram inbound %s converted to WAV for whisper: source=%s target=%s", mediaKind, audioPath, normalizedPath)
 	}
 
-	transcript, err := s.transcribeTelegramAudioWithWhisperTool(
-		ctx,
-		normalizedPath,
-		telegramTranscriptionLanguage(integration),
-		telegramTranscriptionTranslateFlag(integration),
-	)
+	transcript, err := s.transcribeTelegramAudio(ctx, normalizedPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to transcribe %s message: %w", mediaKind, err)
 	}
@@ -182,63 +177,20 @@ func telegramVoiceTranscriptionEnabled(integration *storage.Integration) bool {
 	}
 }
 
-func telegramTranscriptionLanguage(integration *storage.Integration) string {
-	if integration == nil {
-		return ""
-	}
-	return strings.TrimSpace(integration.Config["transcribe_language"])
-}
-
-func telegramTranscriptionTranslateFlag(integration *storage.Integration) *bool {
-	if integration == nil {
-		return nil
-	}
-	return parseOptionalBool(integration.Config["transcribe_translate_to_english"])
-}
-
-func (s *Server) transcribeTelegramAudioWithWhisperTool(
-	ctx context.Context,
-	audioPath string,
-	language string,
-	translateToEnglish *bool,
-) (string, error) {
-	tool := integrationtools.NewWhisperSTTTool(strings.TrimSpace(s.config.WorkDir))
-	payload := map[string]interface{}{
-		"audio_path": audioPath,
-	}
-	if lang := strings.TrimSpace(language); lang != "" {
-		payload["language"] = lang
-	}
-	if translateToEnglish != nil {
-		payload["translate_to_english"] = *translateToEnglish
-	}
-	raw, err := json.Marshal(payload)
+// transcribeTelegramAudio uses the speech-to-text engine chosen in the Speech settings (AAGENT_STT_ENGINE, including
+// cloud engines), the same one chat voice input uses. Language and translation follow the Speech settings too, so
+// Telegram never transcribes differently from the agent.
+func (s *Server) transcribeTelegramAudio(ctx context.Context, audioPath string) (string, error) {
+	logging.Info("Telegram inbound transcription via the configured speech engine")
+	transcript, err := s.transcribePreparedAudio(ctx, "", audioPath, filepath.Base(audioPath), speechengine.TranscribeOptions{})
 	if err != nil {
-		return "", fmt.Errorf("failed to encode whisper_stt payload: %w", err)
+		return "", err
 	}
-
-	logging.Info("Telegram inbound transcription via whisper_stt tool")
-	res, err := tool.Execute(ctx, raw)
-	if err != nil {
-		return "", fmt.Errorf("whisper_stt execution failed: %w", err)
+	transcript = strings.TrimSpace(transcript)
+	if transcript == "" {
+		return "", fmt.Errorf("speech engine returned no transcript")
 	}
-	if res == nil {
-		return "", fmt.Errorf("whisper_stt returned empty result")
-	}
-	if !res.Success {
-		return "", fmt.Errorf("whisper_stt failed: %s", strings.TrimSpace(res.Error))
-	}
-	if transcript, ok := res.Metadata["transcript"].(string); ok && strings.TrimSpace(transcript) != "" {
-		return strings.TrimSpace(transcript), nil
-	}
-	out := strings.TrimSpace(res.Output)
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "Text:") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "Text:")), nil
-		}
-	}
-	return "", fmt.Errorf("whisper_stt returned no transcript")
+	return transcript, nil
 }
 
 func (s *Server) handleTelegramInboundMessage(
@@ -276,6 +228,7 @@ func (s *Server) handleTelegramInboundMessage(
 
 	newSession := sess == nil
 	createdThreadID := int64(0)
+	topicWarning := ""
 
 	if sess == nil {
 		logging.Info("Creating new Telegram session for chat=%s threadID=%d", chatID, threadID)
@@ -310,6 +263,7 @@ func (s *Server) handleTelegramInboundMessage(
 				createdThreadID, err = s.createTelegramForumTopic(ctx, botToken, chatID, topicName)
 				if err != nil {
 					logging.Warn("Failed to create Telegram topic for new session from general chat: %s", sanitizeTelegramError(err))
+					topicWarning = telegramTopicFailureHint(err)
 				} else {
 					logging.Info("Successfully created Telegram forum topic: threadID=%d name=%s", createdThreadID, topicName)
 					threadID = createdThreadID
@@ -383,7 +337,7 @@ func (s *Server) handleTelegramInboundMessage(
 		return nil, fmt.Errorf("agent run failed: %w", err)
 	}
 
-	result := &telegramInboundResponse{reply: response, sessionID: sess.ID}
+	result := &telegramInboundResponse{reply: response, sessionID: sess.ID, topicWarning: topicWarning}
 	if newSession && createdThreadID > 0 {
 		result.createdThread = createdThreadID
 	}

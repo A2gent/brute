@@ -367,6 +367,9 @@ func (s *Server) mcpBridgeCallTool(tokenCtx context.Context, sess *session.Sessi
 	}
 
 	ctx := context.WithValue(tokenCtx, "session_id", sess.ID)
+	if sess.ProjectID != nil && strings.TrimSpace(*sess.ProjectID) != "" {
+		ctx = context.WithValue(ctx, "projectID", strings.TrimSpace(*sess.ProjectID))
+	}
 	ctx = tools.WithProgressCallback(ctx, func(ev tools.ProgressEvent) {
 		s.publishSessionEvent(sess.ID, ChatStreamEvent{
 			Type: "tool_progress",

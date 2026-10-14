@@ -2,6 +2,8 @@
 package http
 
 import (
+	"strings"
+
 	"github.com/A2gent/brute/internal/session"
 )
 
@@ -52,6 +54,7 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 	currentContextTokens := int(metadataNumber(sess.Metadata, "current_context_tokens"))
 	modelContextWindow := int(metadataNumber(sess.Metadata, "context_window"))
 	isOutbound, targetAgentID, targetAgentName := sessionA2AOutboundMeta(sess)
+	channel, channelDetail := sessionChannel(sess)
 
 	return SessionResponse{
 		ID:                     sess.ID,
@@ -59,6 +62,8 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		ParentID:               parentID,
 		LinkType:               sessionLinkType(sess),
 		JobID:                  jobID,
+		Channel:                channel,
+		ChannelDetail:          channelDetail,
 		ProjectID:              projectID,
 		Provider:               provider,
 		Model:                  model,
@@ -157,4 +162,17 @@ func sessionImagesToPayload(images []session.ImageAttachment) []MessageImagePayl
 		})
 	}
 	return out
+}
+
+// sessionChannel reports the outside channel a session is linked to, taken from the session metadata the
+// integrations write (integration_provider, telegram_topic_name).
+func sessionChannel(sess *session.Session) (channel string, detail string) {
+	if sess == nil || sess.Metadata == nil {
+		return "", ""
+	}
+	channel = strings.ToLower(strings.TrimSpace(metadataString(sess.Metadata["integration_provider"])))
+	if channel == "telegram" {
+		detail = strings.TrimSpace(metadataString(sess.Metadata["telegram_topic_name"]))
+	}
+	return channel, detail
 }

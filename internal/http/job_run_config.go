@@ -19,6 +19,7 @@ func applyCreateJobRunConfig(job *storage.RecurringJob, req CreateJobRequest) {
 	job.DockerAgentID = strings.TrimSpace(req.DockerAgentID)
 	job.LLMProvider = normalizeJobLLMProvider(req.LLMProvider)
 	job.LLMModel = strings.TrimSpace(req.LLMModel)
+	job.QueueSerial = req.QueueSerial == nil || *req.QueueSerial
 }
 
 func applyUpdateJobRunConfig(job *storage.RecurringJob, req UpdateJobRequest) {
@@ -32,6 +33,9 @@ func applyUpdateJobRunConfig(job *storage.RecurringJob, req UpdateJobRequest) {
 		job.LaunchAgentRun = strings.TrimSpace(req.LaunchAgentRuntime)
 		job.UnifiedAgentID = strings.TrimSpace(req.UnifiedAgentID)
 		job.DockerAgentID = strings.TrimSpace(req.DockerAgentID)
+	}
+	if req.QueueSerial != nil {
+		job.QueueSerial = *req.QueueSerial
 	}
 	if req.LLMProvider != nil {
 		job.LLMProvider = normalizeJobLLMProvider(*req.LLMProvider)

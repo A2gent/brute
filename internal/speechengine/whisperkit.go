@@ -24,6 +24,7 @@ func transcribeWhisperKit(ctx context.Context, cfg runtimeConfig, audioPath stri
 		"transcribe",
 		"--audio-path", audioPath,
 		"--model", cfg.whisperKitModel,
+		"--verbose",
 		"--report",
 		"--report-path", reportDir,
 	}
@@ -37,7 +38,15 @@ func transcribeWhisperKit(ctx context.Context, cfg runtimeConfig, audioPath stri
 		args = append(args, "--task", "translate")
 	}
 
-	_, err = runExternal(ctx, cfg.whisperKitBin, args...)
+	progressID := EngineWhisperKit
+	startProgress(progressID)
+	defer finishProgress(progressID)
+	updateProgress(progressID, func(p *Progress) { p.Detail = cfg.whisperKitModel })
+	done := make(chan struct{})
+	defer close(done)
+	go watchModelDownload(progressID, whisperKitModelWatch(cfg.whisperKitModel), done)
+
+	_, err = runExternalStream(ctx, cfg.whisperKitBin, func(line string) { applyWhisperKitLine(progressID, line) }, args...)
 	if err != nil {
 		return "", err
 	}

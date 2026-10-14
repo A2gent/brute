@@ -98,6 +98,7 @@ type preparedJobExecution struct {
 	sess                *session.Session
 	effectiveTaskPrompt string
 	startedAt           time.Time
+	queued              bool // session waits in the serial queue; the queue worker runs it
 }
 
 // ExecuteJob runs a recurring job using the same agent routing as chat sessions.
@@ -172,9 +173,19 @@ func (s *Server) prepareJobExecution(job *storage.RecurringJob) (*preparedJobExe
 		return &preparedJobExecution{exec: exec, sess: sess, startedAt: now}, nil
 	}
 	sess.AddUserMessage(effectiveTaskPrompt)
-	sess.SetStatus(session.StatusRunning)
+	if job.QueueSerial {
+		sess.Metadata[sessionQueueModeMetadataKey] = sessionQueueModeSerial
+		sess.Metadata[sessionQueueAutoStartKey] = true
+		sess.SetStatus(session.StatusQueued)
+	} else {
+		sess.SetStatus(session.StatusRunning)
+	}
 	if err := s.sessionManager.Save(sess); err != nil {
 		logging.Warn("Failed to persist job session prompt: %v", err)
+	}
+	if job.QueueSerial {
+		s.publishSessionCatalog("session_updated", sess)
+		s.triggerSerialSessionQueueForSession(sess)
 	}
 
 	return &preparedJobExecution{
@@ -182,6 +193,7 @@ func (s *Server) prepareJobExecution(job *storage.RecurringJob) (*preparedJobExe
 		sess:                sess,
 		effectiveTaskPrompt: effectiveTaskPrompt,
 		startedAt:           now,
+		queued:              job.QueueSerial,
 	}, nil
 }
 
@@ -195,10 +207,27 @@ func (s *Server) finishJobExecution(ctx context.Context, job *storage.RecurringJ
 	effectiveTaskPrompt := prepared.effectiveTaskPrompt
 	now := prepared.startedAt
 
-	result, runErr := s.runSessionWithoutStreaming(ctx, sess, effectiveTaskPrompt)
-	if finalizeErr := s.finalizeSessionRunWithoutStreaming(ctx, sess, result, runErr); finalizeErr != nil && !isCancellationError(finalizeErr) {
-		s.failJobExecution(exec, sess, finalizeErr.Error())
-		return
+	var runErr error
+	var output string
+	if prepared.queued {
+		// The serial queue worker runs the session; wait for it to leave queued/running.
+		final, err := s.waitForQueuedJobSession(ctx, sess.ID)
+		if err != nil {
+			runErr = err
+		} else if final.Status == session.StatusFailed {
+			runErr = fmt.Errorf("session finished with status %s", final.Status)
+		}
+		if final != nil {
+			output = lastAssistantContent(final)
+		}
+	} else {
+		result, err := s.runSessionWithoutStreaming(ctx, sess, effectiveTaskPrompt)
+		runErr = err
+		if finalizeErr := s.finalizeSessionRunWithoutStreaming(ctx, sess, result, runErr); finalizeErr != nil && !isCancellationError(finalizeErr) {
+			s.failJobExecution(exec, sess, finalizeErr.Error())
+			return
+		}
+		output = result.Content
 	}
 
 	finishedAt := time.Now()
@@ -208,7 +237,7 @@ func (s *Server) finishJobExecution(ctx context.Context, job *storage.RecurringJ
 		exec.Error = runErr.Error()
 	} else {
 		exec.Status = "success"
-		output := strings.TrimSpace(result.Content)
+		output := strings.TrimSpace(output)
 		if len(output) > 10000 {
 			exec.Output = output[:10000] + "... (truncated)"
 		} else {
@@ -275,4 +304,33 @@ func (s *Server) assignSessionToJobProject(sess *session.Session, job *storage.R
 	}
 	sess.ProjectID = &projectID
 	return s.sessionManager.Save(sess)
+}
+
+// waitForQueuedJobSession blocks until a serially queued loop session is no longer queued or running.
+func (s *Server) waitForQueuedJobSession(ctx context.Context, sessionID string) (*session.Session, error) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		sess, err := s.sessionManager.Get(sessionID)
+		if err != nil {
+			return nil, fmt.Errorf("queued loop session %s unavailable: %w", sessionID, err)
+		}
+		if sess.Status != session.StatusQueued && sess.Status != session.StatusRunning {
+			return sess, nil
+		}
+		select {
+		case <-ctx.Done():
+			return sess, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func lastAssistantContent(sess *session.Session) string {
+	for i := len(sess.Messages) - 1; i >= 0; i-- {
+		if sess.Messages[i].Role == "assistant" && strings.TrimSpace(sess.Messages[i].Content) != "" {
+			return sess.Messages[i].Content
+		}
+	}
+	return ""
 }

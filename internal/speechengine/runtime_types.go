@@ -60,6 +60,9 @@ type EngineStatus struct {
 	Supported    bool   `json:"supported"`
 	RuntimeReady bool   `json:"runtime_ready"`
 	Source       string `json:"source,omitempty"`
+	// ModelPath/ModelSizeBytes describe the downloaded model on the Brute host (empty when nothing is cached).
+	ModelPath      string `json:"model_path,omitempty"`
+	ModelSizeBytes int64  `json:"model_size_bytes,omitempty"`
 }
 
 // InstallJob tracks one asynchronous install operation.

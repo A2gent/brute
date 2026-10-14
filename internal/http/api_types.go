@@ -59,11 +59,15 @@ type PromptCachePayload struct {
 
 // SessionResponse represents a session with its messages
 type SessionResponse struct {
-	ID                     string                       `json:"id"`
-	AgentID                string                       `json:"agent_id"`
-	ParentID               string                       `json:"parent_id,omitempty"`
-	LinkType               string                       `json:"link_type,omitempty"`
-	JobID                  string                       `json:"job_id,omitempty"`
+	ID       string `json:"id"`
+	AgentID  string `json:"agent_id"`
+	ParentID string `json:"parent_id,omitempty"`
+	LinkType string `json:"link_type,omitempty"`
+	JobID    string `json:"job_id,omitempty"`
+	// Channel is the outside channel the session is linked to (for example "telegram"); ChannelDetail narrows it
+	// (the Telegram topic name).
+	Channel                string                       `json:"channel,omitempty"`
+	ChannelDetail          string                       `json:"channel_detail,omitempty"`
 	ProjectID              string                       `json:"project_id,omitempty"`
 	Provider               string                       `json:"provider,omitempty"`
 	Model                  string                       `json:"model,omitempty"`
@@ -321,6 +325,8 @@ type SessionListItem struct {
 	ParentID           string                 `json:"parent_id,omitempty"`
 	LinkType           string                 `json:"link_type,omitempty"`
 	JobID              string                 `json:"job_id,omitempty"`
+	Channel            string                 `json:"channel,omitempty"`
+	ChannelDetail      string                 `json:"channel_detail,omitempty"`
 	ProjectID          string                 `json:"project_id,omitempty"`
 	Provider           string                 `json:"provider,omitempty"`
 	Model              string                 `json:"model,omitempty"`
@@ -390,6 +396,7 @@ type CreateJobRequest struct {
 	DockerAgentID      string `json:"docker_agent_id,omitempty"`
 	LLMProvider        string `json:"llm_provider,omitempty"`
 	LLMModel           string `json:"llm_model,omitempty"`
+	QueueSerial        *bool  `json:"queue_serial,omitempty"` // default true
 	Enabled            bool   `json:"enabled"`
 }
 
@@ -409,6 +416,7 @@ type UpdateJobRequest struct {
 	DockerAgentID      string  `json:"docker_agent_id,omitempty"`
 	LLMProvider        *string `json:"llm_provider,omitempty"`
 	LLMModel           string  `json:"llm_model,omitempty"`
+	QueueSerial        *bool   `json:"queue_serial,omitempty"`
 	Enabled            *bool   `json:"enabled,omitempty"`
 }
 
@@ -430,6 +438,7 @@ type JobResponse struct {
 	DockerAgentID      string     `json:"docker_agent_id,omitempty"`
 	LLMProvider        string     `json:"llm_provider,omitempty"`
 	LLMModel           string     `json:"llm_model,omitempty"`
+	QueueSerial        bool       `json:"queue_serial"`
 	Enabled            bool       `json:"enabled"`
 	LastRunAt          *time.Time `json:"last_run_at,omitempty"`
 	NextRunAt          *time.Time `json:"next_run_at,omitempty"`

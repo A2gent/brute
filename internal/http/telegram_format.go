@@ -22,7 +22,7 @@ func telegramAgentPromptContext(userMessage string, metadata map[string]interfac
 			msgType = strings.TrimSpace(raw)
 		}
 	}
-	return fmt.Sprintf("[Inbound channel: Telegram | message type: %s]\n%s", msgType, userMessage)
+	return fmt.Sprintf("[Inbound channel: Telegram | message type: %s | reply style: phone chat, short paragraphs, light formatting (bold, short lists), no tables or headings]\n%s", msgType, userMessage)
 }
 
 func telegramPartsForSessionMessage(msg session.Message) []string {
@@ -124,14 +124,31 @@ func splitTelegramText(text string, maxRunes int) []string {
 	}
 
 	parts := make([]string, 0, (len(runes)/maxRunes)+1)
-	for start := 0; start < len(runes); start += maxRunes {
-		end := start + maxRunes
-		if end > len(runes) {
-			end = len(runes)
+	for len(runes) > 0 {
+		if len(runes) <= maxRunes {
+			parts = append(parts, strings.TrimSpace(string(runes)))
+			break
 		}
-		parts = append(parts, strings.TrimSpace(string(runes[start:end])))
+		cut := telegramSplitPoint(runes, maxRunes)
+		if piece := strings.TrimSpace(string(runes[:cut])); piece != "" {
+			parts = append(parts, piece)
+		}
+		runes = []rune(strings.TrimLeft(string(runes[cut:]), "\n "))
 	}
 	return parts
+}
+
+// telegramSplitPoint finds where to cut a long text: at a blank line, else a line break, else a space, as long as
+// that keeps at least half of the allowed length; otherwise it cuts hard at the limit.
+func telegramSplitPoint(runes []rune, maxRunes int) int {
+	window := string(runes[:maxRunes])
+	minCut := len(string(runes[:maxRunes/2]))
+	for _, sep := range []string{"\n\n", "\n", " "} {
+		if idx := strings.LastIndex(window, sep); idx >= minCut {
+			return len([]rune(window[:idx]))
+		}
+	}
+	return maxRunes
 }
 
 func telegramInboundFailureReply(err error) string {

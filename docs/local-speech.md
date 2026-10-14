@@ -8,7 +8,7 @@ Brute exposes a Go package at `internal/speechengine` for on-device speech-to-te
 | --- | --- | --- | --- |
 | `parakeet` | STT | mlx-audio (Python, macOS arm64) | `mlx-community/parakeet-tdt-0.6b-v3` |
 | `moonshine` | STT | mlx-audio (Python, macOS arm64) | `UsefulSensors/moonshine-base` |
-| `whisperkit` | STT | WhisperKit native CLI (macOS) | `large-v3-turbo` |
+| `whisperkit` | STT | WhisperKit native CLI (macOS) | `large-v3_turbo` |
 | `kokoro` | TTS | mlx-audio (Python, macOS arm64) | `mlx-community/Kokoro-82M-bf16` / `af_heart` |
 | `qwen3_tts` | TTS | mlx-audio (Python, macOS arm64) | `mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit` / `Ryan` |
 
@@ -121,9 +121,9 @@ python3 internal/speechengine/scripts/local-speech-mlx.py tts --engine qwen3_tts
 WhisperKit example (upstream `argmax-cli` / `whisperkit-cli`; transcript is read from the JSON report, not stdout):
 
 ```bash
-whisperkit-cli transcribe --audio-path sample.wav --model large-v3-turbo --report --report-path /tmp/wk-report
+whisperkit-cli transcribe --audio-path sample.wav --model large-v3_turbo --report --report-path /tmp/wk-report
 # optional conditioning context:
-whisperkit-cli transcribe --audio-path sample.wav --model large-v3-turbo --prompt "Speaker names:" --report --report-path /tmp/wk-report
+whisperkit-cli transcribe --audio-path sample.wav --model large-v3_turbo --prompt "Speaker names:" --report --report-path /tmp/wk-report
 ```
 
 ## Model download

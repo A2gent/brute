@@ -308,3 +308,89 @@ func TestIntegrationCreateAcceptsAppSignalProviderAndMasksSecret(t *testing.T) {
 		t.Fatalf("expected masked api_key in response, got %q", got)
 	}
 }
+
+func TestIntegrationCreateAcceptsSentryProviderAndMasksSecret(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	sessionManager := session.NewManager(store)
+	server := NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
+
+	body, err := json.Marshal(IntegrationRequest{
+		Provider: "sentry",
+		Mode:     "notify_only",
+		Config:   map[string]string{"api_token": "sntrys_secret", "organization": "acme"},
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/integrations", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleCreateIntegration(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	var resp IntegrationResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Provider != "sentry" || resp.Name != "Sentry" {
+		t.Fatalf("unexpected provider/name: %q/%q", resp.Provider, resp.Name)
+	}
+	if got := resp.Config["api_token"]; got != "***" {
+		t.Fatalf("expected masked api_token, got %q", got)
+	}
+	if got := resp.Config["organization"]; got != "acme" {
+		t.Fatalf("expected organization preserved, got %q", got)
+	}
+}
+
+func TestHandleTestIntegrationDraftSentryDoesNotRequireSavedIntegration(t *testing.T) {
+	var gotAuth string
+	sentry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		if r.URL.Path != "/api/0/organizations/acme/projects/" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer sentry.Close()
+
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+	server := NewServer(config.DefaultConfig(), nil, tools.NewManager("."), session.NewManager(store), store, speechcache.New(0), 0)
+
+	post := func(org string) (int, IntegrationTestResponse) {
+		body, _ := json.Marshal(IntegrationRequest{
+			Provider: "sentry", Mode: "notify_only",
+			Config: map[string]string{"api_token": "tok", "organization": org, "base_url": sentry.URL},
+		})
+		rec := httptest.NewRecorder()
+		server.handleTestIntegrationDraft(rec, httptest.NewRequest(http.MethodPost, "/integrations/test", bytes.NewReader(body)))
+		var resp IntegrationTestResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+		return rec.Code, resp
+	}
+
+	if code, resp := post("acme"); code != http.StatusOK || !resp.Success {
+		t.Fatalf("expected success, got %d %+v", code, resp)
+	}
+	if gotAuth != "Bearer tok" {
+		t.Fatalf("unexpected auth header %q", gotAuth)
+	}
+	if code, resp := post("other"); code != http.StatusBadGateway || resp.Success {
+		t.Fatalf("expected failure for wrong org, got %d %+v", code, resp)
+	}
+	if list, _ := store.ListIntegrations(); len(list) != 0 {
+		t.Fatalf("draft test must not persist integrations, got %d", len(list))
+	}
+}

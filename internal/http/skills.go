@@ -20,11 +20,13 @@ import (
 )
 
 var integrationToolsByProvider = map[string][]string{
-	"google_calendar": {"google_calendar_query"},
+	"google_calendar": {"google_calendar_query", "google_calendar_create_event"},
+	"gmail":           {"gmail_query", "gmail_create_draft"},
 	"jira":            {"jira_query"},
 	"circleci":        {"circleci_query"},
 	"bitbucket":       {"code_review"},
 	"appsignal":       {"appsignal_query"},
+	"sentry":          {"sentry_query"},
 	"brave_search":    {"brave_search_query"},
 	"elevenlabs":      {"elevenlabs_tts"},
 	"leonardo":        {"leonardo_generate_image"},
@@ -34,6 +36,7 @@ var integrationToolsByProvider = map[string][]string{
 	"meshy":           {"meshy_generate_3d"},
 	"tripo":           {"tripo_generate_3d"},
 	"telegram":        {"telegram_send_message"},
+	"telegram_user":   {"telegram_user_list_chats", "telegram_user_read_messages"},
 	"discord":         {"discord_send_message"},
 	"exa":             {"exa_search"},
 	"tavily":          {"tavily_search"},

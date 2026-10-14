@@ -337,6 +337,12 @@ func inspectEngines(p *platformEnv, mlxProbe mlxProbeResult, deps []DependencySt
 		legacyPiperEngine(p),
 		legacyMacOSSayEngine(p),
 	}
+	for i := range engines {
+		if path, size := ModelCacheInfo(engines[i].ID, engines[i].Model); size > 0 {
+			engines[i].ModelPath = path
+			engines[i].ModelSizeBytes = size
+		}
+	}
 	return engines
 }
 

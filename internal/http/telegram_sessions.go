@@ -490,9 +490,9 @@ func (s *Server) syncSessionMessagesToTelegram(
 	for i := syncedCount; i < len(sess.Messages); i++ {
 		parts := telegramPartsForSessionMessage(sess.Messages[i])
 		for _, part := range parts {
-			chunks := splitTelegramText(part, telegramMaxMessageRunes)
+			chunks := splitTelegramText(part, telegramMaxRichMessageRunes)
 			for _, chunk := range chunks {
-				if err := s.sendTelegramMessage(ctx, botToken, chatID, threadID, chunk); err != nil {
+				if err := s.sendTelegramRichMessage(ctx, botToken, chatID, threadID, chunk); err != nil {
 					return err
 				}
 			}

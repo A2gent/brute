@@ -12,7 +12,7 @@ const recurringJobSelectColumns = `
 	id, project_id, name, schedule_human, schedule_cron, task_prompt, task_prompt_source, task_prompt_file,
 	run_target,
 	launch_agent_id, launch_agent_name, launch_agent_runtime, unified_agent_id, docker_agent_id,
-	llm_provider, llm_model, enabled, last_run_at, next_run_at, created_at, updated_at
+	llm_provider, llm_model, queue_serial, enabled, last_run_at, next_run_at, created_at, updated_at
 `
 
 func scanRecurringJob(
@@ -21,19 +21,20 @@ func scanRecurringJob(
 	var job RecurringJob
 	var projectID sql.NullString
 	var lastRunAt, nextRunAt sql.NullTime
-	var enabled int
+	var enabled, queueSerial int
 
 	err := scan(
 		&job.ID, &projectID, &job.Name, &job.ScheduleHuman, &job.ScheduleCron, &job.TaskPrompt, &job.TaskPromptSource, &job.TaskPromptFile,
 		&job.RunTarget,
 		&job.LaunchAgentID, &job.LaunchAgentName, &job.LaunchAgentRun, &job.UnifiedAgentID, &job.DockerAgentID,
-		&job.LLMProvider, &job.LLMModel, &enabled, &lastRunAt, &nextRunAt, &job.CreatedAt, &job.UpdatedAt,
+		&job.LLMProvider, &job.LLMModel, &queueSerial, &enabled, &lastRunAt, &nextRunAt, &job.CreatedAt, &job.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
 
 	job.Enabled = enabled == 1
+	job.QueueSerial = queueSerial == 1
 	setNullableString(&job.ProjectID, projectID)
 	if lastRunAt.Valid {
 		job.LastRunAt = &lastRunAt.Time
@@ -48,7 +49,7 @@ func scanRecurringJob(
 func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
 	_, err := s.db.Exec(`
 		INSERT INTO recurring_jobs (`+recurringJobSelectColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			project_id = excluded.project_id,
 			name = excluded.name,
@@ -65,6 +66,7 @@ func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
 			docker_agent_id = excluded.docker_agent_id,
 			llm_provider = excluded.llm_provider,
 			llm_model = excluded.llm_model,
+			queue_serial = excluded.queue_serial,
 			enabled = excluded.enabled,
 			last_run_at = excluded.last_run_at,
 			next_run_at = excluded.next_run_at,
@@ -72,7 +74,7 @@ func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
 	`, job.ID, nullableString(job.ProjectID), job.Name, job.ScheduleHuman, job.ScheduleCron, job.TaskPrompt, job.TaskPromptSource, job.TaskPromptFile,
 		job.RunTarget,
 		job.LaunchAgentID, job.LaunchAgentName, job.LaunchAgentRun, job.UnifiedAgentID, job.DockerAgentID,
-		job.LLMProvider, job.LLMModel, job.Enabled, job.LastRunAt, job.NextRunAt, job.CreatedAt, job.UpdatedAt)
+		job.LLMProvider, job.LLMModel, job.QueueSerial, job.Enabled, job.LastRunAt, job.NextRunAt, job.CreatedAt, job.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to save job: %w", err)
 	}

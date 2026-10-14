@@ -37,6 +37,10 @@ func (t *SQLQueryTool) Schema() map[string]interface{} {
 				"type":        "string",
 				"description": "Name of the configured project database (e.g., 'production', 'test database'). Required if dsn is not provided.",
 			},
+			"project_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Project ID that owns connection_name. Optional; defaults to the current session's project.",
+			},
 			"dsn": map[string]interface{}{
 				"type":        "string",
 				"description": "Raw DSN to connect to. Required if connection_name is not provided.",
@@ -119,7 +123,11 @@ func (t *SQLQueryTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 	dsn = strings.TrimSpace(dsn)
 
 	if hasConnName && connectionName != "" {
-		projectID, _ := ctx.Value("projectID").(string)
+		// An explicit project_id wins over the session context so callers can pin the project.
+		projectID, _ := args["project_id"].(string)
+		if strings.TrimSpace(projectID) == "" {
+			projectID, _ = ctx.Value("projectID").(string)
+		}
 		projectID = strings.TrimSpace(projectID)
 		if projectID == "" {
 			return &Result{Success: false, Error: "connection_name requires an active project context (project ID not found in context)"}, nil

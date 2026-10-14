@@ -32,6 +32,7 @@ import (
 
 // Server represents the HTTP API server
 type Server struct {
+	telegramUserLogins       telegramUserLoginRegistry
 	speechRuntimeMu          sync.Mutex
 	speechRuntimeInstaller   speechRuntimeInstaller
 	inspectSpeechRuntime     speechRuntimeInspector
@@ -46,6 +47,8 @@ type Server struct {
 	portMu                   sync.RWMutex
 	portReady                chan int
 	speechClips              *speechcache.Store
+	speechEngines            map[string]tools.Tool
+	speechEnginesOnce        sync.Once
 	runParentCtx             context.Context
 	activeRunsMu             sync.Mutex
 	activeRuns               map[string]map[string]context.CancelFunc

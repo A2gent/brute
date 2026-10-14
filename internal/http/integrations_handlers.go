@@ -5,8 +5,10 @@ package http
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/A2gent/brute/internal/storage"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -31,6 +33,13 @@ func (s *Server) handleCreateIntegration(w http.ResponseWriter, r *http.Request)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
 		return
+	}
+
+	if isGoogleOAuthProvider(strings.ToLower(strings.TrimSpace(req.Provider))) {
+		if err := s.applyGoogleClientReuse(&req); err != nil {
+			s.errorResponse(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 
 	integration, err := newIntegrationFromRequest(req)
@@ -87,6 +96,36 @@ func (s *Server) handleUpdateIntegration(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	if req.Provider == "telegram_user" {
+		// Login-managed state is never edited through the settings form.
+		if req.Config == nil {
+			req.Config = map[string]string{}
+		}
+		for _, key := range []string{"session", "cursors"} {
+			req.Config[key] = existing.Config[key]
+		}
+	}
+
+	if isGoogleOAuthProvider(req.Provider) {
+		if err := s.applyGoogleClientReuse(&req); err != nil {
+			s.errorResponse(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		// OAuth-managed state is written by the sign-in flow, never by the settings form.
+		if req.Config == nil {
+			req.Config = map[string]string{}
+		}
+		for _, key := range googleOAuthKeys {
+			req.Config[key] = existing.Config[key]
+		}
+		if req.Config["client_id"] != existing.Config["client_id"] {
+			// A different OAuth client invalidates the stored authorization.
+			for _, key := range googleOAuthKeys {
+				delete(req.Config, key)
+			}
+		}
+	}
+
 	next, err := newIntegrationFromRequest(req)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
@@ -133,6 +172,35 @@ func (s *Server) handleTestIntegration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.respondIntegrationTest(w, r, integration)
+}
+
+// handleTestIntegrationDraft tests an integration from the unsaved create/edit form.
+// When integration_id is given, masked secrets ("***") are resolved from the stored record.
+func (s *Server) handleTestIntegrationDraft(w http.ResponseWriter, r *http.Request) {
+	var req IntegrationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+	if id := strings.TrimSpace(r.URL.Query().Get("integration_id")); id != "" {
+		if existing, err := s.store.GetIntegration(id); err == nil && existing != nil {
+			for key, value := range req.Config {
+				if value == "***" && isSensitiveIntegrationConfigKey(key) {
+					req.Config[key] = existing.Config[key]
+				}
+			}
+		}
+	}
+	integration, err := newIntegrationFromRequest(req)
+	if err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, IntegrationTestResponse{Success: false, Message: err.Error()})
+		return
+	}
+	s.respondIntegrationTest(w, r, integration)
+}
+
+func (s *Server) respondIntegrationTest(w http.ResponseWriter, r *http.Request, integration *storage.Integration) {
 	if err := validateIntegration(*integration); err != nil {
 		s.jsonResponse(w, http.StatusBadRequest, IntegrationTestResponse{Success: false, Message: err.Error()})
 		return
@@ -140,6 +208,33 @@ func (s *Server) handleTestIntegration(w http.ResponseWriter, r *http.Request) {
 
 	if integration.Provider == "telegram" {
 		ok, message := s.testTelegramIntegration(r.Context(), integration)
+		status := http.StatusOK
+		if !ok {
+			status = http.StatusBadGateway
+		}
+		s.jsonResponse(w, status, IntegrationTestResponse{Success: ok, Message: message})
+		return
+	}
+	if integration.Provider == "telegram_user" {
+		ok, message := s.testTelegramUserIntegration(r.Context(), integration)
+		status := http.StatusOK
+		if !ok {
+			status = http.StatusBadGateway
+		}
+		s.jsonResponse(w, status, IntegrationTestResponse{Success: ok, Message: message})
+		return
+	}
+	if integration.Provider == "google_calendar" {
+		ok, message := s.testGoogleCalendarIntegration(r.Context(), integration)
+		status := http.StatusOK
+		if !ok {
+			status = http.StatusBadGateway
+		}
+		s.jsonResponse(w, status, IntegrationTestResponse{Success: ok, Message: message})
+		return
+	}
+	if integration.Provider == "gmail" {
+		ok, message := s.testGmailIntegration(r.Context(), integration)
 		status := http.StatusOK
 		if !ok {
 			status = http.StatusBadGateway
@@ -176,6 +271,15 @@ func (s *Server) handleTestIntegration(w http.ResponseWriter, r *http.Request) {
 	}
 	if integration.Provider == "appsignal" {
 		ok, message := s.testAppSignalIntegration(r.Context(), integration)
+		status := http.StatusOK
+		if !ok {
+			status = http.StatusBadGateway
+		}
+		s.jsonResponse(w, status, IntegrationTestResponse{Success: ok, Message: message})
+		return
+	}
+	if integration.Provider == "sentry" {
+		ok, message := s.testSentryIntegration(r.Context(), integration)
 		status := http.StatusOK
 		if !ok {
 			status = http.StatusBadGateway

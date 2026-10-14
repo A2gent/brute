@@ -210,3 +210,24 @@ func containsString(values []string, expected string) bool {
 	}
 	return false
 }
+
+// project_id arg must satisfy the project requirement without session context.
+func TestSQLQueryToolConnectionNameAcceptsProjectIDArg(t *testing.T) {
+	tool := NewSQLQueryTool(nil)
+
+	res, err := tool.Execute(context.Background(), json.RawMessage(`{"query":"select 1","connection_name":"x"}`))
+	if err != nil || res.Success || !strings.Contains(res.Error, "active project context") {
+		t.Fatalf("expected project context error, got %+v err=%v", res, err)
+	}
+
+	res, err = tool.Execute(context.Background(), json.RawMessage(`{"query":"select 1","connection_name":"x","project_id":"p1"}`))
+	if err != nil || res.Success || strings.Contains(res.Error, "active project context") {
+		t.Fatalf("project_id should bypass context error, got %+v err=%v", res, err)
+	}
+
+	ctx := context.WithValue(context.Background(), "projectID", "p1")
+	res, _ = tool.Execute(ctx, json.RawMessage(`{"query":"select 1","connection_name":"x"}`))
+	if strings.Contains(res.Error, "active project context") {
+		t.Fatalf("ctx projectID should be used, got %+v", res)
+	}
+}

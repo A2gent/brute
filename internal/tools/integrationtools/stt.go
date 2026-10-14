@@ -24,7 +24,7 @@ func (t *STTTool) Name() string {
 }
 
 func (t *STTTool) Description() string {
-	return "Transcribe audio to text using a local speech engine (parakeet, moonshine, whisperkit, or whisper_cpp). Accepts an audio file path or base64-encoded audio bytes."
+	return "Transcribe audio to text. Uses the speech-to-text engine selected in the app settings unless `engine` is given (parakeet, moonshine, whisperkit, whisper_cpp). Accepts an audio file path or base64-encoded audio bytes."
 }
 
 func (t *STTTool) Schema() map[string]interface{} {
@@ -33,7 +33,7 @@ func (t *STTTool) Schema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"engine": map[string]interface{}{
 				"type":        "string",
-				"description": "Optional STT engine id. Defaults to AAGENT_STT_ENGINE, then parakeet.",
+				"description": "Optional override. Omit to use the engine selected in settings (AAGENT_STT_ENGINE, else parakeet).",
 				"enum":        []string{"parakeet", "moonshine", "whisperkit", "whisper_cpp"},
 			},
 			"audio_path": map[string]interface{}{

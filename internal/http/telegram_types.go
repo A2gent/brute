@@ -10,6 +10,8 @@ import (
 
 type TelegramChatDiscoveryRequest struct {
 	BotToken string `json:"bot_token"`
+	// IntegrationID resolves the stored token when the form only has the masked value.
+	IntegrationID string `json:"integration_id,omitempty"`
 }
 
 type TelegramChatDiscoveryResponse struct {
@@ -33,6 +35,9 @@ const telegramNextPollAtConfigKey = "next_poll_at_unix"
 const telegramSyncedMessageCountMetadataKey = "telegram_synced_message_count"
 
 const telegramMaxMessageRunes = 3900
+
+// Formatted messages grow once Markdown becomes HTML tags, so they are cut earlier to stay under Telegram's 4096 limit.
+const telegramMaxRichMessageRunes = 3000
 
 const telegramMaxInboundAudioBytes = 25 * 1024 * 1024
 
@@ -151,6 +156,8 @@ type telegramInboundResponse struct {
 	reply         string
 	createdThread int64 // if > 0, a new topic was created
 	sessionID     string
+	// topicWarning explains why a topic could not be created, so the reply in General is not a silent surprise.
+	topicWarning string
 }
 
 type telegramInboundPrompt struct {

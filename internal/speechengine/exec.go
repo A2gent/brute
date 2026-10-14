@@ -18,6 +18,11 @@ type commandResult struct {
 }
 
 func runExternal(ctx context.Context, binary string, args ...string) (commandResult, error) {
+	return runExternalStream(ctx, binary, nil, args...)
+}
+
+// runExternalStream is runExternal plus a callback for every line (\n or \r separated) the command prints.
+func runExternalStream(ctx context.Context, binary string, onLine func(string), args ...string) (commandResult, error) {
 	binary = strings.TrimSpace(binary)
 	if binary == "" {
 		return commandResult{}, errors.New("executable path is empty")
@@ -27,6 +32,10 @@ func runExternal(ctx context.Context, binary string, args ...string) (commandRes
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	if onLine != nil {
+		cmd.Stdout = &lineWriter{onLine: onLine, next: &stdout}
+		cmd.Stderr = &lineWriter{onLine: onLine, next: &stderr}
+	}
 	err := cmd.Run()
 	result := commandResult{
 		stdout: stdout.Bytes(),

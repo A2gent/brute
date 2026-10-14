@@ -53,6 +53,7 @@ func (s *SQLiteStore) seedBuiltInRecurringJobs() error {
 		TaskPrompt:       archivedSessionsReviewPrompt,
 		TaskPromptSource: "text",
 		RunTarget:        "agent",
+		QueueSerial:      true,
 		Enabled:          true,
 		NextRunAt:        &nextRun,
 		CreatedAt:        now,

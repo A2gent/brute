@@ -228,6 +228,7 @@ func (s *Server) registerServerBackedTools(manager *tools.Manager) {
 	manager.Register(newChromeExtensionTool(s))
 	manager.Register(newImportAgentDefinitionYAMLTool(s))
 	manager.Register(newTasksTool(s))
+	manager.Register(newTTSTool(s))
 	manager.Register(newCreateLocalDockerAgentsBulkTool(s))
 	manager.Register(newCreateLocalDockerAgentsFromYAMLTool(s))
 	if s.contextCompressor != nil {

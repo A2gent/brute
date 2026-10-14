@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/A2gent/brute/internal/storage"
+	"github.com/A2gent/brute/internal/tgformat"
 	"github.com/A2gent/brute/internal/tools"
 )
 
@@ -107,58 +108,20 @@ func (t *TelegramSendMessageTool) Execute(ctx context.Context, params json.RawMe
 		return &tools.Result{Success: false, Error: "chat_id is required (set integration default_chat_id/chat_id or pass chat_id parameter)"}, nil
 	}
 
-	payload := map[string]interface{}{
-		"chat_id": chatID,
-		"text":    text,
-	}
-	if p.MessageThreadID > 0 {
-		payload["message_thread_id"] = p.MessageThreadID
-	}
-
-	body, err := json.Marshal(payload)
+	// Models write Markdown; Telegram shows it raw unless it is converted. If Telegram refuses the formatted
+	// version, the text is resent unchanged so the message is never lost.
+	errMsg, err := t.send(ctx, botToken, chatID, p.MessageThreadID, tgformat.MarkdownToHTML(text), "HTML")
 	if err != nil {
-		return nil, fmt.Errorf("failed to encode Telegram payload: %w", err)
+		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}
-
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		fmt.Sprintf(telegramSendMessageEndpointFmt, botToken),
-		bytes.NewReader(body),
-	)
-	if err != nil {
-		return &tools.Result{Success: false, Error: fmt.Sprintf("failed to create Telegram request: %v", err)}, nil
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := t.client.Do(req)
-	if err != nil {
-		return &tools.Result{Success: false, Error: fmt.Sprintf("telegram request failed: %v", err)}, nil
-	}
-	defer resp.Body.Close()
-
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
-	if err != nil {
-		return &tools.Result{Success: false, Error: fmt.Sprintf("failed to read Telegram response: %v", err)}, nil
-	}
-
-	var result struct {
-		OK          bool   `json:"ok"`
-		Description string `json:"description"`
-	}
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return &tools.Result{Success: false, Error: fmt.Sprintf("failed to decode Telegram response: %v", err)}, nil
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !result.OK {
-		msg := strings.TrimSpace(result.Description)
-		if msg == "" {
-			msg = strings.TrimSpace(string(raw))
+	if strings.Contains(strings.ToLower(errMsg), "can't parse entities") {
+		errMsg, err = t.send(ctx, botToken, chatID, p.MessageThreadID, text, "")
+		if err != nil {
+			return &tools.Result{Success: false, Error: err.Error()}, nil
 		}
-		if msg == "" {
-			msg = resp.Status
-		}
-		return &tools.Result{Success: false, Error: fmt.Sprintf("telegram sendMessage failed: %s", msg)}, nil
+	}
+	if errMsg != "" {
+		return &tools.Result{Success: false, Error: fmt.Sprintf("telegram sendMessage failed: %s", errMsg)}, nil
 	}
 
 	return &tools.Result{
@@ -216,3 +179,58 @@ func (t *TelegramSendMessageTool) selectIntegration(integrationID string, integr
 
 // Ensure TelegramSendMessageTool implements Tool.
 var _ tools.Tool = (*TelegramSendMessageTool)(nil)
+
+// send posts one message. It returns Telegram's error description (empty on success); err is only set for
+// transport-level failures.
+func (t *TelegramSendMessageTool) send(ctx context.Context, botToken, chatID string, threadID int64, text, parseMode string) (string, error) {
+	payload := map[string]interface{}{
+		"chat_id": chatID,
+		"text":    text,
+	}
+	if parseMode != "" {
+		payload["parse_mode"] = parseMode
+		payload["link_preview_options"] = map[string]interface{}{"is_disabled": true}
+	}
+	if threadID > 0 {
+		payload["message_thread_id"] = threadID
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode Telegram payload: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf(telegramSendMessageEndpointFmt, botToken), bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("failed to create Telegram request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("telegram request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if err != nil {
+		return "", fmt.Errorf("failed to read Telegram response: %v", err)
+	}
+	var result struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("failed to decode Telegram response: %v", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !result.OK {
+		msg := strings.TrimSpace(result.Description)
+		if msg == "" {
+			msg = strings.TrimSpace(string(raw))
+		}
+		if msg == "" {
+			msg = resp.Status
+		}
+		return msg, nil
+	}
+	return "", nil
+}

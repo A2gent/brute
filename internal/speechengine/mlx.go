@@ -41,6 +41,8 @@ func transcribeMLX(ctx context.Context, cfg runtimeConfig, engine, audioPath str
 		}
 	}
 
+	finish := trackMLXProgress(engine, model)
+	defer finish()
 	result, err := runExternal(ctx, cfg.pythonPath, args...)
 	if err != nil {
 		return "", err
@@ -100,6 +102,8 @@ func synthesizeMLX(ctx context.Context, cfg runtimeConfig, engine, text, languag
 		}
 	}
 
+	finish := trackMLXProgress(engine, mlxTTSModel(cfg, engine))
+	defer finish()
 	if _, err := runExternal(ctx, cfg.pythonPath, args...); err != nil {
 		return nil, err
 	}
@@ -152,4 +156,26 @@ func parseMLXTranscript(stdout []byte) (string, error) {
 		return "", ErrEmptyTranscript
 	}
 	return text, nil
+}
+
+func mlxTTSModel(cfg runtimeConfig, engine string) string {
+	if engine == EngineQwen3TTS {
+		return cfg.qwen3TTSModel
+	}
+	return cfg.kokoroModel
+}
+
+// trackMLXProgress reports model download/load state for a mlx-audio call. The Python script prints
+// nothing useful while Hugging Face downloads weights, so progress comes from the hub cache folder.
+func trackMLXProgress(engine, model string) (finish func()) {
+	startProgress(engine)
+	updateProgress(engine, func(p *Progress) { p.Detail = model; p.Phase = PhaseLoading })
+	done := make(chan struct{})
+	watch := hfModelWatch(model)
+	removeStaleIncomplete(watch.root)
+	go watchModelDownload(engine, watch, done)
+	return func() {
+		close(done)
+		finishProgress(engine)
+	}
 }

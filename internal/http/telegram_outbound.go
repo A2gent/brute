@@ -13,7 +13,7 @@ import (
 
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/storage"
-	"github.com/A2gent/brute/internal/tools/integrationtools"
+	"github.com/A2gent/brute/internal/tgformat"
 )
 
 func telegramReplyMode(integration *storage.Integration) string {
@@ -48,9 +48,9 @@ func (s *Server) sendTelegramConfiguredReply(
 	sendVoice := mode == "voice" || mode == "both"
 
 	if sendText {
-		parts := splitTelegramText(reply, telegramMaxMessageRunes)
+		parts := splitTelegramText(reply, telegramMaxRichMessageRunes)
 		for _, part := range parts {
-			if err := s.sendTelegramMessage(ctx, botToken, chatID, threadID, part); err != nil {
+			if err := s.sendTelegramRichMessage(ctx, botToken, chatID, threadID, part); err != nil {
 				return err
 			}
 		}
@@ -61,21 +61,21 @@ func (s *Server) sendTelegramConfiguredReply(
 		if err != nil {
 			logging.Warn("Telegram voice reply synthesis failed (mode=%s): %v", mode, err)
 			if !sendText {
-				parts := splitTelegramText(reply, telegramMaxMessageRunes)
+				parts := splitTelegramText(reply, telegramMaxRichMessageRunes)
 				for _, part := range parts {
-					if sendErr := s.sendTelegramMessage(ctx, botToken, chatID, threadID, part); sendErr != nil {
+					if sendErr := s.sendTelegramRichMessage(ctx, botToken, chatID, threadID, part); sendErr != nil {
 						return sendErr
 					}
 				}
 			}
 			return nil
 		}
-		if err := s.sendTelegramAudio(ctx, botToken, chatID, threadID, audio.data, "reply.wav", ""); err != nil {
+		if err := s.sendTelegramAudio(ctx, botToken, chatID, threadID, audio.data, telegramReplyAudioFilename(audio.contentType), ""); err != nil {
 			logging.Warn("Telegram voice reply sendAudio failed: %v", err)
 			if !sendText {
-				parts := splitTelegramText(reply, telegramMaxMessageRunes)
+				parts := splitTelegramText(reply, telegramMaxRichMessageRunes)
 				for _, part := range parts {
-					if sendErr := s.sendTelegramMessage(ctx, botToken, chatID, threadID, part); sendErr != nil {
+					if sendErr := s.sendTelegramRichMessage(ctx, botToken, chatID, threadID, part); sendErr != nil {
 						return sendErr
 					}
 				}
@@ -119,49 +119,33 @@ func (s *Server) sendLatestAssistantImagesToTelegram(
 	return nil
 }
 
+// synthesizeTelegramReplyAudio speaks the reply with the engine chosen in the Speech settings, the same one chat
+// read-aloud uses.
 func (s *Server) synthesizeTelegramReplyAudio(ctx context.Context, reply string) (*telegramReplyAudio, error) {
-	tool := integrationtools.NewPiperTTSTool(strings.TrimSpace(s.config.WorkDir), s.speechClips)
-	params := map[string]interface{}{
-		"text":            reply,
-		"output_mode":     "stream",
-		"auto_play_audio": false,
+	result, synthErr := s.synthesizeSpeech(ctx, speechCompletionRequest{Text: reply})
+	if synthErr != nil {
+		return nil, synthErr
 	}
-	raw, err := json.Marshal(params)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode piper_tts payload: %w", err)
+	clipID := result.ClipID
+	if clipID == "" && s.speechClips != nil {
+		// Cloud engines return raw audio; cache it so the clip can be attached to the session like local ones.
+		clipID = s.speechClips.Save(result.ContentType, result.Audio)
 	}
-	res, err := tool.Execute(ctx, raw)
-	if err != nil {
-		return nil, fmt.Errorf("piper_tts execution failed: %w", err)
+	return &telegramReplyAudio{clipID: clipID, contentType: result.ContentType, data: result.Audio}, nil
+}
+
+// telegramReplyAudioFilename picks an extension that matches the audio so Telegram handles it correctly.
+func telegramReplyAudioFilename(contentType string) string {
+	switch strings.ToLower(strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0])) {
+	case "audio/mpeg", "audio/mp3":
+		return "reply.mp3"
+	case "audio/ogg", "audio/opus":
+		return "reply.ogg"
+	case "audio/mp4", "audio/aac", "audio/x-m4a":
+		return "reply.m4a"
+	default:
+		return "reply.wav"
 	}
-	if res == nil || !res.Success {
-		msg := "piper_tts returned unsuccessful result"
-		if res != nil && strings.TrimSpace(res.Error) != "" {
-			msg = res.Error
-		}
-		return nil, fmt.Errorf("%s", msg)
-	}
-	audioMeta, ok := res.Metadata["audio_clip"].(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("piper_tts did not return audio_clip metadata")
-	}
-	clipID, _ := audioMeta["clip_id"].(string)
-	clipID = strings.TrimSpace(clipID)
-	if clipID == "" {
-		return nil, fmt.Errorf("piper_tts returned empty audio clip id")
-	}
-	if s.speechClips == nil {
-		return nil, fmt.Errorf("speech clip cache is unavailable")
-	}
-	contentType, data, found := s.speechClips.Load(clipID)
-	if !found {
-		return nil, fmt.Errorf("generated audio clip %s not found in cache", clipID)
-	}
-	return &telegramReplyAudio{
-		clipID:      clipID,
-		contentType: contentType,
-		data:        data,
-	}, nil
 }
 
 func (s *Server) attachTelegramReplyAudioMetadata(sessionID, clipID, contentType string) {
@@ -193,9 +177,35 @@ func (s *Server) attachTelegramReplyAudioMetadata(sessionID, clipID, contentType
 }
 
 func (s *Server) sendTelegramMessage(ctx context.Context, botToken string, chatID string, threadID int64, text string) error {
+	return s.sendTelegramMessageMode(ctx, botToken, chatID, threadID, text, "")
+}
+
+// telegramParseErrorMarker appears in Telegram's error when it rejects markup it cannot parse.
+const telegramParseErrorMarker = "can't parse entities"
+
+// sendTelegramRichMessage sends Markdown as Telegram HTML so headings, bold and lists read cleanly on a phone.
+// If Telegram refuses the markup, the original text is sent as-is so the message is never lost.
+func (s *Server) sendTelegramRichMessage(ctx context.Context, botToken string, chatID string, threadID int64, markdown string) error {
+	html := tgformat.MarkdownToHTML(markdown)
+	if strings.TrimSpace(html) == "" {
+		return nil
+	}
+	err := s.sendTelegramMessageMode(ctx, botToken, chatID, threadID, html, "HTML")
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), telegramParseErrorMarker) {
+		logging.Warn("Telegram rejected formatted message, resending as plain text: %s", sanitizeTelegramError(err))
+		return s.sendTelegramMessage(ctx, botToken, chatID, threadID, markdown)
+	}
+	return err
+}
+
+func (s *Server) sendTelegramMessageMode(ctx context.Context, botToken string, chatID string, threadID int64, text string, parseMode string) error {
 	payload := map[string]interface{}{
 		"chat_id": chatID,
 		"text":    text,
+	}
+	if parseMode != "" {
+		payload["parse_mode"] = parseMode
+		payload["link_preview_options"] = map[string]interface{}{"is_disabled": true}
 	}
 	if threadID > 0 {
 		payload["message_thread_id"] = threadID

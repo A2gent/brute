@@ -1,8 +1,11 @@
 package http
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/A2gent/brute/internal/speechengine"
+	"github.com/A2gent/brute/internal/tools"
 	"net/http"
 	"os"
 	"runtime"
@@ -111,10 +114,7 @@ func (s *Server) shouldSkipSpeechTool(toolName, modelID string) bool {
 
 func (s *Server) handleListSpeechModels(w http.ResponseWriter, r *http.Request) {
 	registered := func(name string) bool {
-		if s == nil || s.toolManager == nil {
-			return false
-		}
-		_, ok := s.toolManager.Get(name)
+		_, ok := s.speechEngineTool(name)
 		return ok
 	}
 	edgeOK := registered("edge_tts") && integrationtools.EdgeTTSAvailable()
@@ -204,4 +204,34 @@ func piperModelLanguages(id string) []string {
 	default:
 		return nil
 	}
+}
+
+// speechEngineTool finds an engine-specific TTS implementation. Engines are not model-facing tools,
+// so they live outside the tool manager; a manager registration still wins (used by tests/overrides).
+func (s *Server) speechEngineTool(name string) (tools.Tool, bool) {
+	if s == nil {
+		return nil, false
+	}
+	if s.toolManager != nil {
+		if tool, ok := s.toolManager.Get(name); ok {
+			return tool, true
+		}
+	}
+	s.speechEnginesOnce.Do(func() {
+		workDir := ""
+		if s.toolManager != nil {
+			workDir = s.toolManager.WorkDir()
+		}
+		s.speechEngines = integrationtools.SpeechEngineTools(workDir, s.store, s.speechClips)
+	})
+	tool, ok := s.speechEngines[name]
+	return tool, ok
+}
+
+func (s *Server) executeSpeechEngine(ctx context.Context, name string, payload json.RawMessage) (*tools.Result, error) {
+	tool, ok := s.speechEngineTool(name)
+	if !ok {
+		return nil, fmt.Errorf("speech engine %q is not available", name)
+	}
+	return tool.Execute(ctx, payload)
 }

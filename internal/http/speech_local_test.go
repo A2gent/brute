@@ -33,7 +33,8 @@ func TestLocalCompletionSelectionNeverFallsBackToCloud(t *testing.T) {
 			manager := tools.NewManager(".")
 			cloud := &fakeSpeechTool{name: "edge_tts", store: clips}
 			manager.Register(cloud)
-			s := &Server{toolManager: manager, speechClips: clips}
+			s := &Server{toolManager: manager, speechClips: clips, speechEngines: map[string]tools.Tool{}}
+			s.speechEnginesOnce.Do(func() {}) // no built-in engines: only the fake cloud tool exists
 			rec := httptest.NewRecorder()
 			s.handleCompletionSpeech(rec, httptest.NewRequest("POST", "/speech/completion", strings.NewReader(`{"text":"hello"}`)))
 			if rec.Code != http.StatusBadGateway || cloud.calls != 0 {

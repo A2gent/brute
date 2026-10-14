@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -197,37 +198,63 @@ func (s *Server) handleCompletionSpeech(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	reqBody.Text = text
-	reqBody.Model = effectiveCompletionModel(reqBody.Model)
-	if engine, modelID, err := parseSpeechModel(reqBody.Model); err != nil {
-		s.errorResponse(w, http.StatusBadRequest, err.Error())
+	result, synthErr := s.synthesizeSpeech(r.Context(), reqBody)
+	if synthErr != nil {
+		s.errorResponse(w, synthErr.status, synthErr.Error())
 		return
-	} else if engine == "openrouter" {
-		audioPayload, contentType, synthErr := s.synthesizeOpenRouter(r.Context(), modelID, reqBody.Text, reqBody.Language)
+	}
+	w.Header().Set("Content-Type", result.ContentType)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(result.Audio)
+}
+
+// speechSynthesisResult is synthesized audio. ClipID is set when the audio also lives in the speech clip cache.
+type speechSynthesisResult struct {
+	Audio       []byte
+	ContentType string
+	ClipID      string
+}
+
+type speechSynthesisError struct {
+	status int
+	err    error
+}
+
+func (e *speechSynthesisError) Error() string { return e.err.Error() }
+
+func newSpeechSynthesisError(status int, format string, args ...interface{}) *speechSynthesisError {
+	return &speechSynthesisError{status: status, err: fmt.Errorf(format, args...)}
+}
+
+// synthesizeSpeech turns text into audio with the engine configured in the Speech settings
+// (AAGENT_TTS_ENGINE) unless request.Model names one. Chat read-aloud and Telegram voice replies both use it,
+// so they always speak with the same engine and voice.
+func (s *Server) synthesizeSpeech(ctx context.Context, reqBody speechCompletionRequest) (*speechSynthesisResult, *speechSynthesisError) {
+	reqBody.Model = effectiveCompletionModel(reqBody.Model)
+	engine, modelID, err := parseSpeechModel(reqBody.Model)
+	if err != nil {
+		return nil, newSpeechSynthesisError(http.StatusBadRequest, "%s", err.Error())
+	}
+	if engine == "openrouter" {
+		audioPayload, contentType, synthErr := s.synthesizeOpenRouter(ctx, modelID, reqBody.Text, reqBody.Language)
 		if synthErr != nil {
 			status := http.StatusBadGateway
 			if errors.Is(synthErr, errOpenRouterAPIKeyMissing) {
 				status = http.StatusBadRequest
 			}
-			s.errorResponse(w, status, synthErr.Error())
-			return
+			return nil, newSpeechSynthesisError(status, "%s", synthErr.Error())
 		}
-		w.Header().Set("Content-Type", contentType)
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(audioPayload)
-		return
+		return &speechSynthesisResult{Audio: audioPayload, ContentType: contentType}, nil
 	}
 	toolNames, err := completionSpeechTools(reqBody.Model)
 	if err != nil {
-		s.errorResponse(w, http.StatusBadRequest, err.Error())
-		return
+		return nil, newSpeechSynthesisError(http.StatusBadRequest, "%s", err.Error())
 	}
 	if s.toolManager == nil {
-		s.errorResponse(w, http.StatusServiceUnavailable, "Built-in speech tools are unavailable")
-		return
+		return nil, newSpeechSynthesisError(http.StatusServiceUnavailable, "Built-in speech tools are unavailable")
 	}
 	if s.speechClips == nil {
-		s.errorResponse(w, http.StatusServiceUnavailable, "Speech clip store is unavailable")
-		return
+		return nil, newSpeechSynthesisError(http.StatusServiceUnavailable, "Speech clip store is unavailable")
 	}
 
 	errorsByTool := make([]string, 0, len(toolNames))
@@ -237,10 +264,9 @@ func (s *Server) handleCompletionSpeech(w http.ResponseWriter, r *http.Request) 
 		}
 		payload, err := completionSpeechPayload(reqBody, toolName)
 		if err != nil {
-			s.errorResponse(w, http.StatusInternalServerError, "Failed to build speech request payload: "+err.Error())
-			return
+			return nil, newSpeechSynthesisError(http.StatusInternalServerError, "Failed to build speech request payload: %s", err.Error())
 		}
-		result, execErr := s.toolManager.Execute(r.Context(), toolName, payload)
+		result, execErr := s.executeSpeechEngine(ctx, toolName, payload)
 		if execErr != nil {
 			errorsByTool = append(errorsByTool, fmt.Sprintf("%s: %v", toolName, execErr))
 			continue
@@ -270,17 +296,14 @@ func (s *Server) handleCompletionSpeech(w http.ResponseWriter, r *http.Request) 
 		if contentType == "" {
 			contentType = "audio/mpeg"
 		}
-		w.Header().Set("Content-Type", contentType)
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(audioPayload)
-		return
+		return &speechSynthesisResult{Audio: audioPayload, ContentType: contentType, ClipID: clipID}, nil
 	}
 
 	detail := strings.Join(errorsByTool, "; ")
 	if detail == "" {
 		detail = "no local TTS tools are registered"
 	}
-	s.errorResponse(w, http.StatusBadGateway, "Failed to synthesize completion audio with built-in TTS: "+detail)
+	return nil, newSpeechSynthesisError(http.StatusBadGateway, "Failed to synthesize completion audio with built-in TTS: %s", detail)
 }
 
 func speechClipMetadata(metadata map[string]interface{}) (string, string) {
@@ -316,10 +339,9 @@ func (s *Server) handleGetSpeechClip(w http.ResponseWriter, r *http.Request) {
 		contentType = "audio/mpeg"
 	}
 	w.Header().Set("Content-Type", contentType)
-	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write(payload); err != nil {
-		return
-	}
+	// ServeContent adds Content-Length and Range (206) support. WebKit-based
+	// webviews (Tauri desktop on macOS) refuse to play <audio> without Range.
+	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(payload))
 }
 
 func (s *Server) handleTranscribeSpeech(w http.ResponseWriter, r *http.Request) {

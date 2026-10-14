@@ -602,3 +602,14 @@ func TestMaterializeEmbeddedMLXScriptUsesUniquePaths(t *testing.T) {
 		t.Fatalf("expected unique temp script paths, got %q", first)
 	}
 }
+
+func TestResolveWhisperKitModelNormalizesHyphenatedTurbo(t *testing.T) {
+	t.Setenv("AAGENT_SPEECH_WHISPERKIT_MODEL", "large-v3-turbo")
+	if got := resolveWhisperKitModel(""); got != "large-v3_turbo" {
+		t.Fatalf("got %q, want large-v3_turbo", got)
+	}
+	t.Setenv("AAGENT_SPEECH_WHISPERKIT_MODEL", "")
+	if got := resolveWhisperKitModel(""); got != "large-v3_turbo" {
+		t.Fatalf("default got %q", got)
+	}
+}

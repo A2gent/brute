@@ -16,8 +16,10 @@ import (
 	"github.com/A2gent/brute/internal/tools"
 )
 
-const (
-	defaultGoogleTokenURL      = "https://oauth2.googleapis.com/token"
+const defaultGoogleTokenURL = "https://oauth2.googleapis.com/token"
+
+// Overridable in tests.
+var (
 	googleCalendarListEndpoint = "https://www.googleapis.com/calendar/v3/users/me/calendarList"
 	googleCalendarEventsBase   = "https://www.googleapis.com/calendar/v3/calendars"
 )
@@ -140,7 +142,7 @@ func (t *GoogleCalendarQueryTool) Execute(ctx context.Context, params json.RawMe
 
 	switch operation {
 	case "list_calendars":
-		payload, err := t.listCalendars(ctx, accessToken, p.MaxResults)
+		payload, err := t.listCalendars(ctx, accessToken, integration, p.MaxResults)
 		if err != nil {
 			return &tools.Result{Success: false, Error: err.Error()}, nil
 		}
@@ -204,86 +206,10 @@ func (t *GoogleCalendarQueryTool) selectIntegration(integrationID string, integr
 }
 
 func (t *GoogleCalendarQueryTool) resolveAccessToken(ctx context.Context, integration *storage.Integration) (string, error) {
-	if integration == nil {
-		return "", fmt.Errorf("integration is required")
-	}
-	if integration.Config == nil {
-		integration.Config = map[string]string{}
-	}
-
-	accessToken := strings.TrimSpace(integration.Config["access_token"])
-	tokenExpiry := strings.TrimSpace(integration.Config["token_expiry"])
-	if accessToken != "" && tokenExpiry != "" {
-		if expiry, err := time.Parse(time.RFC3339, tokenExpiry); err == nil {
-			if expiry.After(time.Now().Add(30 * time.Second)) {
-				return accessToken, nil
-			}
-		}
-	}
-
-	clientID := strings.TrimSpace(integration.Config["client_id"])
-	clientSecret := strings.TrimSpace(integration.Config["client_secret"])
-	refreshToken := strings.TrimSpace(integration.Config["refresh_token"])
-	tokenURL := strings.TrimSpace(integration.Config["token_url"])
-	if tokenURL == "" {
-		tokenURL = defaultGoogleTokenURL
-	}
-
-	if clientID == "" || clientSecret == "" || refreshToken == "" {
-		return "", fmt.Errorf("integration %q is missing OAuth fields; need client_id, client_secret, refresh_token", integration.Name)
-	}
-
-	form := url.Values{}
-	form.Set("client_id", clientID)
-	form.Set("client_secret", clientSecret)
-	form.Set("refresh_token", refreshToken)
-	form.Set("grant_type", "refresh_token")
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", fmt.Errorf("failed to create token refresh request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := t.client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("token refresh request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
-	if err != nil {
-		return "", fmt.Errorf("failed to read token refresh response: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("token refresh failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	var tokenResp struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int    `json:"expires_in"`
-	}
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return "", fmt.Errorf("failed to parse token refresh response: %w", err)
-	}
-	if strings.TrimSpace(tokenResp.AccessToken) == "" {
-		return "", fmt.Errorf("token refresh response did not include access_token")
-	}
-
-	integration.Config["access_token"] = tokenResp.AccessToken
-	if tokenResp.ExpiresIn > 0 {
-		integration.Config["token_expiry"] = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).UTC().Format(time.RFC3339)
-	}
-	integration.UpdatedAt = time.Now()
-	if err := t.store.SaveIntegration(integration); err != nil {
-		return "", fmt.Errorf("refreshed token but failed to persist integration: %w", err)
-	}
-
-	return tokenResp.AccessToken, nil
+	return GoogleAccessToken(ctx, t.store, t.client, integration)
 }
 
-func (t *GoogleCalendarQueryTool) listCalendars(ctx context.Context, accessToken string, maxResults int) (string, error) {
+func (t *GoogleCalendarQueryTool) listCalendars(ctx context.Context, accessToken string, integration *storage.Integration, maxResults int) (string, error) {
 	if maxResults <= 0 {
 		maxResults = 100
 	}
@@ -323,10 +249,14 @@ func (t *GoogleCalendarQueryTool) listCalendars(ctx context.Context, accessToken
 		Calendars []calendarItem `json:"calendars"`
 	}{
 		Operation: "list_calendars",
-		Count:     len(raw.Items),
 		Calendars: make([]calendarItem, 0, len(raw.Items)),
 	}
+	allowed := AllowedCalendarIDs(integration)
+	out.Calendars = out.Calendars[:0]
 	for _, item := range raw.Items {
+		if !calendarAllowed(allowed, item.ID) {
+			continue
+		}
 		out.Calendars = append(out.Calendars, calendarItem{
 			ID:          item.ID,
 			Summary:     item.Summary,
@@ -337,6 +267,7 @@ func (t *GoogleCalendarQueryTool) listCalendars(ctx context.Context, accessToken
 		})
 	}
 
+	out.Count = len(out.Calendars)
 	return marshalIndented(out)
 }
 
@@ -353,8 +284,28 @@ func (t *GoogleCalendarQueryTool) listEvents(ctx context.Context, accessToken st
 	if calendarID == "" {
 		calendarID = strings.TrimSpace(integration.Config["calendar_id"])
 	}
+	allowed := AllowedCalendarIDs(integration)
+	if calendarID == "" && len(allowed) > 0 {
+		calendarID = allowed[0]
+	}
 	if calendarID == "" {
 		calendarID = "primary"
+	}
+	if len(allowed) > 0 {
+		if calendarID == "primary" {
+			cals, err := ListGoogleCalendars(ctx, t.client, accessToken)
+			if err != nil {
+				return "", err
+			}
+			for _, c := range cals {
+				if c.Primary {
+					calendarID = c.ID
+				}
+			}
+		}
+		if !calendarAllowed(allowed, calendarID) {
+			return "", fmt.Errorf("calendar %q is not shared with the agent; allowed calendars: %s", calendarID, strings.Join(allowed, ", "))
+		}
 	}
 
 	query := url.Values{}

@@ -62,6 +62,8 @@ type projectPerson struct {
 	Status        string            `json:"status"`
 	Legacy        bool              `json:"legacy"`
 	Links         []string          `json:"links"`
+	// TelegramChats are Telegram chats (see the telegram_user integration) linked to this person.
+	TelegramChats []telegramChatLink `json:"telegram_chats"`
 }
 
 type projectPeopleResponse struct {
@@ -94,27 +96,28 @@ type projectPersonRequest struct {
 }
 
 type personFrontmatter struct {
-	Type          string            `yaml:"type"`
-	Name          string            `yaml:"name"`
-	Photo         string            `yaml:"photo"`
-	Groups        []string          `yaml:"groups"`
-	Importance    int               `yaml:"importance"`
-	Relationship  string            `yaml:"relationship"`
-	Company       string            `yaml:"company"`
-	Role          string            `yaml:"role"`
-	Location      string            `yaml:"location"`
-	Birthday      string            `yaml:"birthday"`
-	DeathDate     string            `yaml:"death_date"`
-	LastContacted string            `yaml:"last_contacted"`
-	NextFollowUp  string            `yaml:"next_follow_up"`
-	Phones        []string          `yaml:"phones"`
-	Emails        []string          `yaml:"emails"`
-	Socials       map[string]string `yaml:"socials"`
-	Interests     []string          `yaml:"interests"`
-	Traits        []string          `yaml:"traits"`
-	Aliases       []string          `yaml:"aliases"`
-	Tags          []string          `yaml:"tags"`
-	Status        string            `yaml:"status"`
+	Type          string             `yaml:"type"`
+	Name          string             `yaml:"name"`
+	Photo         string             `yaml:"photo"`
+	Groups        []string           `yaml:"groups"`
+	Importance    int                `yaml:"importance"`
+	Relationship  string             `yaml:"relationship"`
+	Company       string             `yaml:"company"`
+	Role          string             `yaml:"role"`
+	Location      string             `yaml:"location"`
+	Birthday      string             `yaml:"birthday"`
+	DeathDate     string             `yaml:"death_date"`
+	LastContacted string             `yaml:"last_contacted"`
+	NextFollowUp  string             `yaml:"next_follow_up"`
+	Phones        []string           `yaml:"phones"`
+	Emails        []string           `yaml:"emails"`
+	Socials       map[string]string  `yaml:"socials"`
+	Interests     []string           `yaml:"interests"`
+	Traits        []string           `yaml:"traits"`
+	Aliases       []string           `yaml:"aliases"`
+	Tags          []string           `yaml:"tags"`
+	Status        string             `yaml:"status"`
+	TelegramChats []telegramChatLink `yaml:"telegram_chats"`
 }
 
 func (s *Server) handleListProjectPeople(w http.ResponseWriter, r *http.Request) {
@@ -391,6 +394,7 @@ func parseProjectPerson(path, peopleDirectory, content string) (projectPerson, b
 		Socials: cleanStringMap(metadata.Socials), Interests: cleanStringList(metadata.Interests),
 		Traits: cleanStringList(metadata.Traits), Aliases: cleanStringList(metadata.Aliases),
 		Tags: cleanStringList(metadata.Tags), Status: defaultPersonStatus(metadata.Status), Legacy: legacy,
+		TelegramChats: cleanTelegramChatLinks(metadata.TelegramChats),
 	}, true
 }
 

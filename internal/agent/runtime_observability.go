@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/A2gent/brute/internal/llm"
@@ -22,6 +23,9 @@ type runtimeObservabilityAccumulator struct {
 	warningKeys        map[string]struct{}
 	tools              map[string]map[string]interface{}
 	nativeRuntime      bool
+	// textUnits counts UTF-16 code units of assistant text seen so far, so the
+	// UI can place each tool call at the point in the text where it started.
+	textUnits int
 }
 
 func newRuntimeObservabilityAccumulator(turnID string, persistReasoning bool) *runtimeObservabilityAccumulator {
@@ -35,6 +39,8 @@ func newRuntimeObservabilityAccumulator(turnID string, persistReasoning bool) *r
 
 func (a *runtimeObservabilityAccumulator) observe(ev llm.StreamEvent) {
 	switch ev.Type {
+	case llm.StreamEventContentDelta:
+		a.textUnits += len(utf16.Encode([]rune(ev.ContentDelta)))
 	case llm.StreamEventReasoningDelta:
 		a.observeReasoning(ev.ReasoningDelta)
 	case llm.StreamEventToolStarted, llm.StreamEventToolUpdated,
@@ -93,6 +99,9 @@ func (a *runtimeObservabilityAccumulator) observeToolLifecycle(ev llm.StreamEven
 	entry := a.tools[toolID]
 	if entry == nil {
 		entry = make(map[string]interface{})
+	}
+	if _, seen := entry["text_offset"]; !seen {
+		entry["text_offset"] = a.textUnits
 	}
 	entry["native_runtime"] = true
 	entry["lifecycle"] = string(ev.Type)

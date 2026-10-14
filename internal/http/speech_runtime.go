@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strings"
 
 	"github.com/A2gent/brute/internal/speechengine"
 )
@@ -81,3 +82,35 @@ func (s *Server) handleInstallSpeechRuntime(w http.ResponseWriter, r *http.Reque
 
 // Named type keeps tests able to inject diagnostics without probing host Python.
 type speechRuntimeInspector func(context.Context) speechengine.RuntimeStatus
+
+// handleSpeechProgress reports what a slow engine call (model download, first-run load) is doing,
+// so the UI can show more than an endless "Running test...".
+func (s *Server) handleSpeechProgress(w http.ResponseWriter, r *http.Request) {
+	engine := strings.TrimSpace(r.URL.Query().Get("engine"))
+	progress, ok := speechengine.CurrentProgress(engine)
+	if !ok {
+		s.jsonResponse(w, http.StatusOK, map[string]interface{}{"progress": nil})
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, map[string]interface{}{"progress": progress})
+}
+
+// handleDeleteSpeechModelCache deletes the downloaded model of one engine (finished or partial).
+// The path is derived server-side from the engine's configured model, never taken from the request.
+func (s *Server) handleDeleteSpeechModelCache(w http.ResponseWriter, r *http.Request) {
+	engine := strings.TrimSpace(r.URL.Query().Get("engine"))
+	if engine == "" {
+		s.errorResponse(w, http.StatusBadRequest, "engine is required")
+		return
+	}
+	path, err := speechengine.DeleteModelCache(engine, speechengine.ConfiguredModel(engine))
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, speechengine.ErrModelCacheBusy) {
+			status = http.StatusConflict
+		}
+		s.errorResponse(w, status, err.Error())
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, map[string]interface{}{"deleted": path})
+}

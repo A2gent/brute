@@ -113,6 +113,12 @@ func (s *Server) processTelegramDuplexIntegrations(ctx context.Context) {
 				logging.Debug("Telegram update skipped for integration %s: from bot", integration.ID)
 				continue
 			}
+			if recordSeenTelegramChat(integration, message.Chat) {
+				integration.UpdatedAt = time.Now()
+				if err := s.store.SaveIntegration(integration); err != nil {
+					logging.Warn("Failed to persist seen Telegram chat for integration %s: %v", integration.ID, err)
+				}
+			}
 			messageChatID := strconv.FormatInt(message.Chat.ID, 10)
 			chatType := strings.ToLower(strings.TrimSpace(message.Chat.Type))
 			if chatType != "group" && chatType != "supergroup" {
@@ -173,6 +179,12 @@ func (s *Server) processTelegramDuplexIntegrations(ctx context.Context) {
 					logging.Warn("Telegram failure reply send failed for integration %s: %s", integration.ID, sanitizeTelegramError(sendErr))
 				}
 				continue
+			}
+
+			if result.topicWarning != "" && s.shouldWarnTelegramTopic(messageChatID) {
+				if sendErr := s.sendTelegramMessage(ctx, botToken, messageChatID, message.MessageThreadID, result.topicWarning); sendErr != nil {
+					logging.Warn("Telegram topic warning send failed for integration %s: %s", integration.ID, sanitizeTelegramError(sendErr))
+				}
 			}
 
 			reply := strings.TrimSpace(result.reply)

@@ -83,11 +83,14 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			jobID = *sess.JobID
 		}
 		inputTokens, outputTokens := sessionInputOutputTokens(sess)
+		channel, channelDetail := sessionChannel(sess)
 		item := SessionListItem{
 			ID:                 sess.ID,
 			AgentID:            sess.AgentID,
 			ParentID:           parentID,
 			JobID:              jobID,
+			Channel:            channel,
+			ChannelDetail:      channelDetail,
 			LinkType:           sessionLinkType(sess),
 			ProjectID:          projectID,
 			Provider:           provider,

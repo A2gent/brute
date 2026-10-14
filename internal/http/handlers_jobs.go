@@ -369,6 +369,7 @@ func (s *Server) jobToResponse(job *storage.RecurringJob) JobResponse {
 		DockerAgentID:      strings.TrimSpace(job.DockerAgentID),
 		LLMProvider:        job.LLMProvider,
 		LLMModel:           strings.TrimSpace(job.LLMModel),
+		QueueSerial:        job.QueueSerial,
 		Enabled:            job.Enabled,
 		LastRunAt:          job.LastRunAt,
 		NextRunAt:          job.NextRunAt,

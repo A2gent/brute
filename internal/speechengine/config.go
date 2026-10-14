@@ -11,7 +11,7 @@ import (
 const (
 	defaultParakeetModel   = "mlx-community/parakeet-tdt-0.6b-v3"
 	defaultMoonshineModel  = "UsefulSensors/moonshine-base"
-	defaultWhisperKitModel = "large-v3-turbo"
+	defaultWhisperKitModel = "large-v3_turbo"
 	defaultKokoroModel     = "mlx-community/Kokoro-82M-bf16"
 	defaultKokoroVoice     = "af_heart"
 	defaultKokoroLangCode  = "a"
@@ -114,9 +114,18 @@ func resolveWhisperKitBin() string {
 	return resolveWhisperKitBinForPlatform(currentPlatform())
 }
 
+// normalizeWhisperKitModel maps the hyphenated turbo name to the WhisperKit repo variant
+// ("large-v3_turbo"); the hyphenated form matches no model folder and fails with "Model not found".
+func normalizeWhisperKitModel(model string) string {
+	if strings.EqualFold(strings.TrimSpace(model), "large-v3-turbo") {
+		return defaultWhisperKitModel
+	}
+	return strings.TrimSpace(model)
+}
+
 func resolveWhisperKitModel(profile string) string {
 	if raw := strings.TrimSpace(os.Getenv("AAGENT_SPEECH_WHISPERKIT_MODEL")); raw != "" {
-		return raw
+		return normalizeWhisperKitModel(raw)
 	}
 	if strings.EqualFold(strings.TrimSpace(profile), "meeting") {
 		if raw := strings.TrimSpace(os.Getenv("AAGENT_SPEECH_WHISPERKIT_MEETING_MODEL")); raw != "" {

@@ -61,6 +61,7 @@ type RecurringJob struct {
 	DockerAgentID    string
 	LLMProvider      string // Optional provider override for this job
 	LLMModel         string // Optional model override for host-agent runs
+	QueueSerial      bool   // Run sessions through the serial per-project queue instead of starting immediately
 	Enabled          bool
 	LastRunAt        *time.Time
 	NextRunAt        *time.Time

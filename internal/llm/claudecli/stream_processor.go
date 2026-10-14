@@ -274,21 +274,17 @@ func (p *streamProcessor) appendAssistantText(text string) error {
 }
 
 func (p *streamProcessor) finalContent() string {
-	parts := []string{
-		strings.TrimSpace(p.assistantContent.String()),
-		strings.TrimSpace(p.finalResult.Result),
+	assistant := strings.TrimSpace(p.assistantContent.String())
+	result := strings.TrimSpace(p.finalResult.Result)
+	// The CLI's final result event repeats the last assistant message. When the assistant envelopes already
+	// end with it, appending it again would show the whole reply twice.
+	if result == "" || strings.HasSuffix(assistant, result) {
+		return assistant
 	}
-	return strings.TrimSpace(strings.Join(nonEmptyStrings(parts), "\n\n"))
-}
-
-func nonEmptyStrings(values []string) []string {
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if value != "" {
-			result = append(result, value)
-		}
+	if assistant == "" {
+		return result
 	}
-	return result
+	return assistant + "\n\n" + result
 }
 
 func (p *streamProcessor) handleUserMessage(message cliStreamMessage) error {

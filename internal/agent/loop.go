@@ -28,6 +28,10 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 
 	// Add session ID to context for tools that need it (e.g., question tool)
 	ctx = context.WithValue(ctx, "session_id", sess.ID)
+	// WHY: sql_query resolves connection_name against this project; nothing else ever set it.
+	if sess.ProjectID != nil && strings.TrimSpace(*sess.ProjectID) != "" {
+		ctx = context.WithValue(ctx, "projectID", strings.TrimSpace(*sess.ProjectID))
+	}
 
 	// Clean up incomplete tool calls before starting
 	a.cleanupIncompleteToolCalls(sess)
@@ -588,7 +592,7 @@ func (a *Agent) callLLM(ctx context.Context, request *llm.ChatRequest, step int,
 	}
 
 	response, err := streamClient.ChatStream(ctx, request, func(ev llm.StreamEvent) error {
-		if isLLMRuntimeForwardEvent(ev) {
+		if isLLMRuntimeForwardEvent(ev) || ev.Type == llm.StreamEventContentDelta {
 			acc.observe(ev)
 		}
 		if onEvent == nil {

@@ -15,21 +15,20 @@ func Register(manager *tools.Manager, store storage.Store, clipStore *speechcach
 		return
 	}
 	manager.Register(NewGoogleCalendarQueryTool(store))
+	manager.Register(NewGoogleCalendarCreateEventTool(store))
+	manager.Register(NewGmailQueryTool(store))
+	manager.Register(NewGmailDraftTool(store))
 	manager.Register(NewJiraQueryTool(store))
 	manager.Register(NewCircleCIQueryTool(store))
 	manager.Register(NewCodeReviewTool(store))
 	manager.Register(NewAppSignalQueryTool(store))
+	manager.Register(NewSentryQueryTool(store))
 	manager.Register(NewBraveSearchQueryTool(store))
-	manager.Register(NewEdgeTTSTool(manager.WorkDir(), clipStore))
-	manager.Register(NewElevenLabsTTSTool(store, clipStore))
-	manager.Register(NewMacOSSayTTSTool(manager.WorkDir(), clipStore))
-	manager.Register(NewPiperTTSTool(manager.WorkDir(), clipStore))
-	manager.Register(NewKokoroTTSTool(clipStore))
-	manager.Register(NewQwen3TTSTool(clipStore))
 	manager.Register(NewSTTTool(manager.WorkDir()))
-	manager.Register(NewWhisperSTTTool(manager.WorkDir()))
 	manager.Register(NewNotifyWebAppTool())
 	manager.Register(NewTelegramSendMessageTool(store))
+	manager.Register(NewTelegramUserListChatsTool(store))
+	manager.Register(NewTelegramUserReadMessagesTool(store))
 	manager.Register(NewDiscordSendMessageTool(store))
 	manager.Register(NewExaSearchQueryTool(store))
 	manager.Register(NewTavilySearchTool(store))
@@ -44,4 +43,23 @@ func Register(manager *tools.Manager, store storage.Store, clipStore *speechcach
 	manager.Register(NewBlenderRunScriptTool(store, manager.WorkDir(), filepath.Join(manager.WorkDir(), "generated", "blender")))
 	manager.Register(NewMeshyGenerate3DTool(store, manager.WorkDir(), filepath.Join(manager.WorkDir(), "generated", "meshy")))
 	manager.Register(NewTripoGenerate3DTool(store, manager.WorkDir(), filepath.Join(manager.WorkDir(), "generated", "tripo")))
+}
+
+// SpeechEngineTools returns the engine-specific TTS implementations keyed by engine name. They are
+// not registered with the tool manager: the model uses the generic tts/stt tools, and the server
+// dispatches to these by name for the engine selected in the app's Speech settings.
+func SpeechEngineTools(workDir string, store storage.Store, clipStore *speechcache.Store) map[string]tools.Tool {
+	engines := []tools.Tool{
+		NewEdgeTTSTool(workDir, clipStore),
+		NewElevenLabsTTSTool(store, clipStore),
+		NewMacOSSayTTSTool(workDir, clipStore),
+		NewPiperTTSTool(workDir, clipStore),
+		NewKokoroTTSTool(clipStore),
+		NewQwen3TTSTool(clipStore),
+	}
+	out := make(map[string]tools.Tool, len(engines))
+	for _, tool := range engines {
+		out[tool.Name()] = tool
+	}
+	return out
 }

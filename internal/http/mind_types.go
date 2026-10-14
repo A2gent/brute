@@ -101,6 +101,7 @@ type ProjectGitCommitResponse struct {
 	RootFolder     string `json:"root_folder"`
 	Commit         string `json:"commit"`
 	FilesCommitted int    `json:"files_committed"`
+	Output         string `json:"output,omitempty"`
 }
 
 type ProjectGitCommitMessageRequest struct {

@@ -114,7 +114,9 @@ func (s *Server) handleProjectGitCommit(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if _, err := runGitCommand(targetRepoRoot, "commit", "-m", message); err != nil {
+	// Keep the combined output so pre-commit/commit-msg hook logs reach the UI.
+	commitOutput, err := runGitCommand(targetRepoRoot, "commit", "-m", message)
+	if err != nil {
 		lower := strings.ToLower(err.Error())
 		if strings.Contains(lower, "nothing to commit") || strings.Contains(lower, "no changes added to commit") {
 			s.errorResponse(w, http.StatusConflict, "No staged files to commit")
@@ -134,6 +136,7 @@ func (s *Server) handleProjectGitCommit(w http.ResponseWriter, r *http.Request) 
 		RootFolder:     targetRepoRoot,
 		Commit:         strings.TrimSpace(commit),
 		FilesCommitted: len(stagedFiles),
+		Output:         commitOutput,
 	})
 }
 

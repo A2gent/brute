@@ -62,6 +62,9 @@ type RecurringJob struct {
 	LLMProvider      string // Optional provider override for this job
 	LLMModel         string // Optional model override for host-agent runs
 	QueueSerial      bool   // Run sessions through the serial per-project queue instead of starting immediately
+	GateTool         string // Optional read-only fetch tool (e.g. gmail_query) run before the LLM; empty disables the Jev gate
+	GateParams       string // JSON params for GateTool
+	GateQuestion     string // Optional Jev noul question; defaults to the job task prompt
 	Enabled          bool
 	LastRunAt        *time.Time
 	NextRunAt        *time.Time
@@ -74,7 +77,7 @@ type JobExecution struct {
 	ID         string
 	JobID      string
 	SessionID  string // Reference to the agent session created for this execution
-	Status     string // "running", "success", "failed"
+	Status     string // "running", "success", "failed", "skipped" (Jev gate found nothing actionable)
 	Output     string // Summary of what the agent did
 	Error      string // Error message if failed
 	StartedAt  time.Time

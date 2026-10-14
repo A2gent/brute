@@ -103,6 +103,9 @@ type preparedJobExecution struct {
 
 // ExecuteJob runs a recurring job using the same agent routing as chat sessions.
 func (s *Server) ExecuteJob(ctx context.Context, job *storage.RecurringJob) (*storage.JobExecution, error) {
+	if decision := s.evaluateJobGate(ctx, job); !decision.Run {
+		return s.recordSkippedJobExecution(job, decision.Reason)
+	}
 	prepared, err := s.prepareJobExecution(job)
 	if err != nil {
 		return nil, err

@@ -294,6 +294,9 @@ func (s *SQLiteStore) migrate() error {
 		`ALTER TABLE recurring_jobs ADD COLUMN llm_model TEXT NOT NULL DEFAULT ''`,
 		// Existing loops default to serial queueing so concurrent runs stop colliding in one project.
 		`ALTER TABLE recurring_jobs ADD COLUMN queue_serial INTEGER NOT NULL DEFAULT 1`,
+		`ALTER TABLE recurring_jobs ADD COLUMN gate_tool TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE recurring_jobs ADD COLUMN gate_params TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE recurring_jobs ADD COLUMN gate_question TEXT NOT NULL DEFAULT ''`,
 		// Team definitions keep canonical YAML while SQLite provides fast listing.
 		`CREATE TABLE IF NOT EXISTS teams (
 				id TEXT PRIMARY KEY,

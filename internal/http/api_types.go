@@ -413,6 +413,9 @@ type CreateJobRequest struct {
 
 // UpdateJobRequest represents a request to update a recurring job
 type UpdateJobRequest struct {
+	GateTool           string `json:"gate_tool,omitempty"`
+	GateParams         string `json:"gate_params,omitempty"`
+	GateQuestion       string `json:"gate_question,omitempty"`
 	Name               string  `json:"name"`
 	ProjectID          *string `json:"project_id,omitempty"`
 	ScheduleText       string  `json:"schedule_text"`
@@ -433,6 +436,9 @@ type UpdateJobRequest struct {
 
 // JobResponse represents a recurring job response
 type JobResponse struct {
+	GateTool           *string `json:"gate_tool,omitempty"`
+	GateParams         *string `json:"gate_params,omitempty"`
+	GateQuestion       *string `json:"gate_question,omitempty"`
 	ID                 string     `json:"id"`
 	ProjectID          string     `json:"project_id,omitempty"`
 	Name               string     `json:"name"`
@@ -455,6 +461,9 @@ type JobResponse struct {
 	NextRunAt          *time.Time `json:"next_run_at,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
+	GateTool           string     `json:"gate_tool,omitempty"`
+	GateParams         string     `json:"gate_params,omitempty"`
+	GateQuestion       string     `json:"gate_question,omitempty"`
 }
 
 type SessionTemplateRequest struct {

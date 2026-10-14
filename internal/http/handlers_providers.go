@@ -564,8 +564,9 @@ func (s *Server) handleListOpenAIModels(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleListOpenAICodexModels(w http.ResponseWriter, r *http.Request) {
-	models := openaicodex.ListModelCatalog(r.Context(), s.openAICodexModelCatalogOptions())
-	s.jsonResponse(w, http.StatusOK, ListProviderModelsResponse{Models: models})
+	models, windows := openaicodex.ListModelCatalogWithContext(r.Context(), s.openAICodexModelCatalogOptions())
+	config.CacheCodexModelContextWindows(windows)
+	s.jsonResponse(w, http.StatusOK, ListProviderModelsResponse{Models: models, ContextWindows: windows})
 }
 
 // openAICodexModelCatalogOptions resolves credentials used for the Codex model
@@ -985,4 +986,13 @@ func (s *Server) handleTestAllProviders(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"results": results,
 	})
+}
+
+// refreshCodexContextWindows learns real Codex model context windows at startup so
+// session views are correct before the model picker is ever opened.
+func (s *Server) refreshCodexContextWindows(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	_, windows := openaicodex.ListModelCatalogWithContext(ctx, s.openAICodexModelCatalogOptions())
+	config.CacheCodexModelContextWindows(windows)
 }

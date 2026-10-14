@@ -220,6 +220,17 @@ type ChatStreamEvent struct {
 	Cost                   *StreamRuntimeCostEvent      `json:"cost,omitempty"`
 	RuntimeWarning         *StreamRuntimeWarningPayload `json:"runtime_warning,omitempty"`
 	Approval               *NativeToolApprovalResponse  `json:"approval,omitempty"`
+	// PendingMessages is set on queue_updated events and always carries the full list
+	// (an empty list is meaningful), so it is not omitempty.
+	PendingMessages []PendingMessageResponse `json:"pending_messages,omitempty"`
+}
+
+// PendingMessageResponse is a user message queued behind the active run.
+type PendingMessageResponse struct {
+	ID        string                `json:"id"`
+	Content   string                `json:"content"`
+	Images    []MessageImagePayload `json:"images,omitempty"`
+	CreatedAt string                `json:"created_at"`
 }
 
 // NativeToolApprovalResponse matches Caesar's pending approval DTO.
@@ -591,6 +602,8 @@ type UpdateClaudeInstanceRequest struct {
 
 type ListProviderModelsResponse struct {
 	Models []string `json:"models"`
+	// ContextWindows maps model id to its API-reported context window (tokens), when known.
+	ContextWindows map[string]int `json:"context_windows,omitempty"`
 }
 
 type UpdateSessionProjectRequest struct {

@@ -45,6 +45,9 @@ func (s *Server) unregisterActiveSessionRun(sessionID, runID string) {
 	delete(runs, runID)
 	if len(runs) == 0 {
 		delete(s.activeRuns, sessionID)
+		// The last run ended on its own (cancel removes the entry first, so a user
+		// stop never lands here): deliver anything the user queued meanwhile.
+		go s.drainSessionPendingMessages(sessionID)
 	}
 }
 

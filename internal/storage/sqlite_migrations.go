@@ -188,6 +188,18 @@ func (s *SQLiteStore) migrate() error {
 		`ALTER TABLE session_templates ADD COLUMN slash_command TEXT NOT NULL DEFAULT ''`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_session_templates_slash_command ON session_templates(slash_command COLLATE NOCASE) WHERE slash_command <> ''`,
 		`CREATE INDEX IF NOT EXISTS idx_session_templates_name ON session_templates(name COLLATE NOCASE)`,
+		// Messages the user queued while a run was active. Kept out of the
+		// transcript/sessions row so a running agent's whole-session Save cannot
+		// delete or overwrite them.
+		`CREATE TABLE IF NOT EXISTS session_pending_messages (
+				seq INTEGER PRIMARY KEY AUTOINCREMENT,
+				id TEXT NOT NULL UNIQUE,
+				session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+				content TEXT NOT NULL,
+				images TEXT NOT NULL DEFAULT '',
+				created_at TIMESTAMP NOT NULL
+			)`,
+		`CREATE INDEX IF NOT EXISTS idx_session_pending_messages_session ON session_pending_messages(session_id, seq)`,
 		// Sub-agents table
 		`CREATE TABLE IF NOT EXISTS sub_agents (
 				id TEXT PRIMARY KEY,

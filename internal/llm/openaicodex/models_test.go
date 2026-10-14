@@ -319,3 +319,18 @@ func TestUsageURLDerivation(t *testing.T) {
 		t.Fatalf("expected error for invalid URL")
 	}
 }
+
+func TestListModelCatalogWithContextReturnsOAuthWindows(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"models":[{"slug":"gpt-6-luna","context_window":272000,"visibility":"list"},{"slug":"gpt-5.5","context_window":200000,"visibility":"hide"}]}`))
+	}))
+	defer server.Close()
+
+	_, windows := ListModelCatalogWithContext(context.Background(), ModelCatalogOptions{
+		BaseURL:     server.URL,
+		AccessToken: testOAuthToken("acct"),
+	})
+	if windows["gpt-6-luna"] != 272000 || windows["gpt-5.5"] != 200000 {
+		t.Fatalf("unexpected windows: %v", windows)
+	}
+}

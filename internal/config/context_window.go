@@ -1,6 +1,10 @@
 package config
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/A2gent/brute/internal/llm/anthropic"
+)
 
 // ResolveContextWindow returns the effective context window for a provider/model pair.
 // User-configured provider context_window wins; otherwise we use known model-specific
@@ -40,6 +44,15 @@ func modelContextWindow(providerType ProviderType, model string) int {
 	}
 
 	switch providerType {
+	case ProviderAnthropic:
+		if window := anthropic.ContextWindow(normalizedModel); window > 0 {
+			return window
+		}
+	case ProviderOpenAICodex:
+		// Filled from the Codex OAuth /models context_window field.
+		if window := codexCachedContextWindow(normalizedModel); window > 0 {
+			return window
+		}
 	case ProviderOpenRouter:
 		// Cache is filled from OpenRouter /api/v1/models context_length.
 		// Candidate matching inside the cache handles openrouter/ prefix variants.

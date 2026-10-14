@@ -354,20 +354,27 @@ func (c *Client) providerSessionCursor(raw string) string {
 }
 
 func (c *Client) buildArgs(request *llm.ChatRequest, model, prompt string, bridge mcpBridgeInvocation) []string {
-	args := []string{"-p", prompt, "--output-format", "json", "--model", model}
-	return c.appendCommonArgs(args, request, bridge)
+	args := []string{"-p", "--output-format", "json", "--model", model}
+	return withPositionalPrompt(c.appendCommonArgs(args, request, bridge), prompt)
 }
 
 func (c *Client) buildStreamArgs(request *llm.ChatRequest, model, prompt string, bridge mcpBridgeInvocation) []string {
 	args := []string{
-		"-p", prompt,
+		"-p",
 		"--output-format", "stream-json",
 		"--verbose",
 		"--include-partial-messages",
 		"--model", model,
 	}
-	return c.appendCommonArgs(args, request, bridge)
+	return withPositionalPrompt(c.appendCommonArgs(args, request, bridge), prompt)
 }
+
+// withPositionalPrompt appends the prompt after `--` so prompts that start with
+// dashes (e.g. YAML front matter `---`) are not parsed as unknown CLI options.
+func withPositionalPrompt(args []string, prompt string) []string {
+	return append(args, "--", prompt)
+}
+
 func (c *Client) appendCommonArgs(args []string, request *llm.ChatRequest, bridge mcpBridgeInvocation) []string {
 	if systemPrompt := buildSystemPrompt(request.SystemPrompt); systemPrompt != "" {
 		args = append(args, "--append-system-prompt", systemPrompt)

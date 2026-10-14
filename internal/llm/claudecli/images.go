@@ -74,8 +74,8 @@ func buildStreamInput(request *llm.ChatRequest, prompt string) ([]byte, error) {
 	return append(data, '\n'), nil
 }
 
-// withStdinPrompt swaps the leading `-p <prompt>` pair for stdin stream-json input.
+// withStdinPrompt drops the trailing `-- <prompt>` pair and switches to stdin stream-json input.
 func withStdinPrompt(args []string) []string {
 	out := []string{"-p", "--input-format", "stream-json"}
-	return append(out, args[2:]...)
+	return append(out, args[1:len(args)-2]...)
 }

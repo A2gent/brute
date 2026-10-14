@@ -35,7 +35,7 @@ func TestBuildStreamInputIncludesImageBlocks(t *testing.T) {
 }
 
 func TestWithStdinPromptReplacesPromptArg(t *testing.T) {
-	got := withStdinPrompt([]string{"-p", "hello", "--model", "m"})
+	got := withStdinPrompt([]string{"-p", "--model", "m", "--", "hello"})
 	want := []string{"-p", "--input-format", "stream-json", "--model", "m"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("got %v want %v", got, want)

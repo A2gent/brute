@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/A2gent/brute/internal/storage"
+	"github.com/google/uuid"
 )
 
 // Manager manages sessions
@@ -487,4 +489,99 @@ func (m *Manager) GetPageForDisplay(id string, limit int, before string) (*Sessi
 	}
 	row, err := m.GetForDisplay(id, true)
 	return row, false, err
+}
+
+// PendingMessage is a user message queued while the session had an active run.
+type PendingMessage struct {
+	ID        string
+	SessionID string
+	Content   string
+	Images    []ImageAttachment
+	CreatedAt time.Time
+}
+
+func (m *Manager) pendingStore() (storage.PendingMessageStore, error) {
+	ps, ok := m.store.(storage.PendingMessageStore)
+	if !ok {
+		return nil, fmt.Errorf("message queue is not supported by this storage backend")
+	}
+	return ps, nil
+}
+
+func pendingFromStorage(raw *storage.PendingMessage) *PendingMessage {
+	if raw == nil {
+		return nil
+	}
+	out := &PendingMessage{ID: raw.ID, SessionID: raw.SessionID, Content: raw.Content, CreatedAt: raw.CreatedAt}
+	if raw.Images != "" {
+		_ = json.Unmarshal([]byte(raw.Images), &out.Images)
+	}
+	return out
+}
+
+// QueuePendingMessage stores a message to be delivered after the active run finishes
+// (or promoted into it later via TakePendingMessage). It never touches the transcript.
+func (m *Manager) QueuePendingMessage(sessionID, content string, images []ImageAttachment) (*PendingMessage, error) {
+	ps, err := m.pendingStore()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := m.Get(sessionID); err != nil {
+		return nil, fmt.Errorf("session not found: %w", err)
+	}
+	imagesJSON := ""
+	if len(images) > 0 {
+		raw, err := json.Marshal(images)
+		if err != nil {
+			return nil, err
+		}
+		imagesJSON = string(raw)
+	}
+	msg := &storage.PendingMessage{
+		ID:        uuid.New().String(),
+		SessionID: sessionID,
+		Content:   content,
+		Images:    imagesJSON,
+		CreatedAt: time.Now(),
+	}
+	if err := ps.AddPendingMessage(msg); err != nil {
+		return nil, err
+	}
+	return pendingFromStorage(msg), nil
+}
+
+func (m *Manager) ListPendingMessages(sessionID string) ([]*PendingMessage, error) {
+	ps, err := m.pendingStore()
+	if err != nil {
+		return nil, err
+	}
+	raws, err := ps.ListPendingMessages(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*PendingMessage, 0, len(raws))
+	for _, raw := range raws {
+		out = append(out, pendingFromStorage(raw))
+	}
+	return out, nil
+}
+
+// TakePendingMessage removes one queued message and returns it (nil when already gone).
+func (m *Manager) TakePendingMessage(sessionID, id string) (*PendingMessage, error) {
+	ps, err := m.pendingStore()
+	if err != nil {
+		return nil, err
+	}
+	raw, err := ps.TakePendingMessage(sessionID, id)
+	return pendingFromStorage(raw), err
+}
+
+// TakeNextPendingMessage removes and returns the oldest queued message (nil when empty).
+func (m *Manager) TakeNextPendingMessage(sessionID string) (*PendingMessage, error) {
+	ps, err := m.pendingStore()
+	if err != nil {
+		return nil, err
+	}
+	raw, err := ps.TakeNextPendingMessage(sessionID)
+	return pendingFromStorage(raw), err
 }

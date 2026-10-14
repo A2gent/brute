@@ -266,3 +266,11 @@ func TestNormalizeClaudeCLIErrorMessageAddsTargetedHints(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildArgsDashPromptAfterSeparator(t *testing.T) {
+	client := NewClient("claude-sonnet-4-6", t.TempDir())
+	args := client.buildArgs(&llm.ChatRequest{}, "m", "---\nname: x\n---", mcpBridgeInvocation{})
+	if n := len(args); args[n-2] != "--" || args[n-1] != "---\nname: x\n---" {
+		t.Fatalf("prompt must follow --, got %#v", args)
+	}
+}

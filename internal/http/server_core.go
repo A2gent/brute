@@ -52,6 +52,7 @@ type Server struct {
 	runParentCtx             context.Context
 	activeRunsMu             sync.Mutex
 	activeRuns               map[string]map[string]context.CancelFunc
+	pendingDrainMu           sync.Mutex // serializes queued-message promotion so two drains never start parallel runs
 	browserSessionToolsMu    sync.Mutex
 	browserSessionTools      map[string]map[*integrationtools.BrowserChromeTool]struct{}
 	sessionEventsMu          sync.Mutex
@@ -198,6 +199,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.runA2ATunnelIfConfigured()
 	go s.dockerRuntime.runIdleReaper(ctx)
 	go s.resumeSerialSessionQueues()
+	go s.refreshCodexContextWindows(ctx)
 
 	server := &http.Server{
 		Addr:    addr,

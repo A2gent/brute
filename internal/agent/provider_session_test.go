@@ -258,12 +258,11 @@ func assertClaudeArgsContainPair(t *testing.T, args []string, flag, value string
 
 func claudePromptArg(t *testing.T, args []string) string {
 	t.Helper()
-	for i := 0; i+1 < len(args); i++ {
-		if args[i] == "-p" {
-			return args[i+1]
-		}
+	// The prompt is passed positionally after `--` so leading dashes are safe.
+	if n := len(args); n >= 2 && args[n-2] == "--" {
+		return args[n-1]
 	}
-	t.Fatal(fmt.Sprintf("Claude args missing -p prompt: %#v", args))
+	t.Fatal(fmt.Sprintf("Claude args missing trailing -- prompt: %#v", args))
 	return ""
 }
 

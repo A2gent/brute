@@ -100,6 +100,14 @@ type ModelCatalogOptions struct {
 // display order, and appends discovered ids afterwards (sorted). Discovery
 // failures are ignored so the curated list is always available offline.
 func ListModelCatalog(ctx context.Context, opts ModelCatalogOptions) []string {
+	models, _ := ListModelCatalogWithContext(ctx, opts)
+	return models
+}
+
+// ListModelCatalogWithContext is ListModelCatalog plus the per-model context
+// windows (tokens) reported by the Codex OAuth /models endpoint. The map is
+// empty when discovery is unavailable (API-key mode, offline, errors).
+func ListModelCatalogWithContext(ctx context.Context, opts ModelCatalogOptions) ([]string, map[string]int) {
 	seen := make(map[string]bool, len(CuratedModels)+8)
 	ordered := make([]string, 0, len(CuratedModels)+8)
 	add := func(id string) {
@@ -115,26 +123,26 @@ func ListModelCatalog(ctx context.Context, opts ModelCatalogOptions) []string {
 		add(id)
 	}
 
-	discovered := discoverModels(ctx, opts)
+	discovered, windows := discoverModels(ctx, opts)
 	sort.Strings(discovered)
 	for _, id := range discovered {
 		add(id)
 	}
-	return ordered
+	return ordered, windows
 }
 
-func discoverModels(ctx context.Context, opts ModelCatalogOptions) []string {
+func discoverModels(ctx context.Context, opts ModelCatalogOptions) ([]string, map[string]int) {
 	client := opts.HTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: modelCatalogTimeout}
 	}
 	if strings.TrimSpace(opts.APIKey) != "" {
-		return discoverModelsFromModelsEndpoint(ctx, client, opts)
+		return discoverModelsFromModelsEndpoint(ctx, client, opts), nil
 	}
 	if strings.TrimSpace(opts.AccessToken) != "" {
 		return discoverModelsFromOAuthEndpoint(ctx, client, opts)
 	}
-	return nil
+	return nil, nil
 }
 
 type modelsEndpointResponse struct {
@@ -145,6 +153,7 @@ type modelsEndpointResponse struct {
 
 type codexModelInfo struct {
 	Slug           string  `json:"slug"`
+	ContextWindow  int     `json:"context_window"`
 	Visibility     *string `json:"visibility"`
 	SupportedInAPI *bool   `json:"supported_in_api"`
 }
@@ -206,7 +215,7 @@ func discoverModelsFromModelsEndpoint(ctx context.Context, client *http.Client, 
 	return models
 }
 
-func discoverModelsFromOAuthEndpoint(ctx context.Context, client *http.Client, opts ModelCatalogOptions) []string {
+func discoverModelsFromOAuthEndpoint(ctx context.Context, client *http.Client, opts ModelCatalogOptions) ([]string, map[string]int) {
 	base := NormalizeBaseURL(opts.BaseURL)
 	if base == "" {
 		base = NormalizeBaseURL(defaultBaseURL)
@@ -214,7 +223,7 @@ func discoverModelsFromOAuthEndpoint(ctx context.Context, client *http.Client, o
 
 	endpoint, err := url.Parse(base + "/models")
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	query := endpoint.Query()
 	query.Set("client_version", ClientVersion)
@@ -223,7 +232,7 @@ func discoverModelsFromOAuthEndpoint(ctx context.Context, client *http.Client, o
 	token := strings.TrimSpace(opts.AccessToken)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -235,29 +244,34 @@ func discoverModelsFromOAuthEndpoint(ctx context.Context, client *http.Client, o
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil
+		return nil, nil
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	var parsed codexModelsResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil
+		return nil, nil
 	}
 
 	models := make([]string, 0, len(parsed.Models))
+	windows := make(map[string]int, len(parsed.Models))
 	for _, model := range parsed.Models {
+		// Hidden models stay callable, so keep their windows even when not listed.
+		if model.ContextWindow > 0 && strings.TrimSpace(model.Slug) != "" {
+			windows[strings.TrimSpace(model.Slug)] = model.ContextWindow
+		}
 		if isOAuthDiscoverableModel(model) {
 			models = append(models, strings.TrimSpace(model.Slug))
 		}
 	}
-	return models
+	return models, windows
 }
 
 // isOAuthDiscoverableModel mirrors Codex picker rules for ChatGPT-account auth:

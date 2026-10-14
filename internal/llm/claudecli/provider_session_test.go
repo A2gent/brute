@@ -130,8 +130,8 @@ func TestClientChatProviderSessionUsesDeltaPrompt(t *testing.T) {
 	if len(args) < 2 || args[0] != "-p" {
 		t.Fatalf("expected -p prompt flag first, got %#v", args)
 	}
-	if args[1] != "latest only" {
-		t.Fatalf("prompt = %q, want delta message content", args[1])
+	if n := len(args); args[n-2] != "--" || args[n-1] != "latest only" {
+		t.Fatalf("expected trailing -- <delta prompt>, got %#v", args)
 	}
 }
 

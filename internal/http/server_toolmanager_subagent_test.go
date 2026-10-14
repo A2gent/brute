@@ -256,8 +256,8 @@ func TestBuildSystemPromptForSession_UsesSubAgentInstructions(t *testing.T) {
 	if !strings.Contains(systemPrompt, "Project root: "+projectRoot) {
 		t.Fatalf("expected sub-agent prompt to include project root %q, got: %q", projectRoot, systemPrompt)
 	}
-	if !strings.Contains(systemPrompt, "Operating system:") || !strings.Contains(systemPrompt, "Current time:") {
-		t.Fatalf("expected sub-agent prompt to include OS and current time, got: %q", systemPrompt)
+	if !strings.Contains(systemPrompt, "Operating system:") || !strings.Contains(systemPrompt, "Session created at:") {
+		t.Fatalf("expected sub-agent prompt to include OS and session creation time, got: %q", systemPrompt)
 	}
 	if strings.Contains(systemPrompt, availableConfiguredAgentsPromptHeader) {
 		t.Fatalf("expected sub-agent prompt to omit main-agent configured-agent listing")

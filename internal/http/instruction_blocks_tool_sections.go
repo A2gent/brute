@@ -62,6 +62,23 @@ func (s *Server) resolveEnabledToolDefinitions(settings map[string]string) []llm
 	return filtered
 }
 
+// Compare the whole tuple before raw-case tie-breaking; joining fields can
+// collide when user-supplied names contain a delimiter.
+func promptFieldsLess(left, right []string) bool {
+	for i := range left {
+		l, r := strings.ToLower(left[i]), strings.ToLower(right[i])
+		if l != r {
+			return l < r
+		}
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return left[i] < right[i]
+		}
+	}
+	return false
+}
+
 func builtInToolsEstimatedTokens(enabled bool, usingBuiltInDefault bool, renderedSection string) int {
 	if !enabled {
 		return 0
@@ -103,11 +120,10 @@ func (s *Server) resolveIntegrationSkillsSection(blockNumber int) (string, strin
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
-		left := strings.ToLower(entries[i].provider + "|" + entries[i].name + "|" + entries[i].mode)
-		right := strings.ToLower(entries[j].provider + "|" + entries[j].name + "|" + entries[j].mode)
-		return left < right
+		left := []string{entries[i].provider, entries[i].name, entries[i].mode}
+		right := []string{entries[j].provider, entries[j].name, entries[j].mode}
+		return promptFieldsLess(left, right)
 	})
-
 	lines := make([]string, 0, len(entries)+2)
 	lines = append(lines, fmt.Sprintf("Instruction block %d (integration-backed skills):", blockNumber))
 	lines = append(lines, "Enabled integrations available to the agent (integration mode controls channel behavior, not tool availability):")
@@ -170,11 +186,12 @@ func (s *Server) resolveMCPServersSection(blockNumber int, projectID string) (st
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
-		left := strings.ToLower(entries[i].name + "|" + entries[i].transport)
-		right := strings.ToLower(entries[j].name + "|" + entries[j].transport)
-		return left < right
+		left, right := entries[i], entries[j]
+		return promptFieldsLess(
+			[]string{left.name, left.transport, left.scope, fmt.Sprint(left.tools), fmt.Sprint(left.tokens)},
+			[]string{right.name, right.transport, right.scope, fmt.Sprint(right.tools), fmt.Sprint(right.tokens)},
+		)
 	})
-
 	lines := make([]string, 0, len(entries)+4)
 	lines = append(lines, fmt.Sprintf("Instruction block %d (MCP servers):", blockNumber))
 	lines = append(lines, "Enabled MCP servers available to the agent. Use `mcp_list_tools` to inspect callable MCP tools, then `mcp_call` to invoke the selected MCP tool. Manage server configuration in MCP section: /mcp")
@@ -263,10 +280,17 @@ func (s *Server) resolveExternalMarkdownSkillsSection(settings map[string]string
 	}
 
 	sort.Slice(alwaysSkills, func(i, j int) bool {
+		if alwaysSkills[i].Priority == alwaysSkills[j].Priority {
+			return alwaysSkills[i].Path < alwaysSkills[j].Path
+		}
 		return alwaysSkills[i].Priority < alwaysSkills[j].Priority
 	})
 	sort.Slice(onDemandSkills, func(i, j int) bool {
-		return strings.ToLower(onDemandSkills[i].Name) < strings.ToLower(onDemandSkills[j].Name)
+		left, right := strings.ToLower(onDemandSkills[i].Name), strings.ToLower(onDemandSkills[j].Name)
+		if left == right {
+			return onDemandSkills[i].Path < onDemandSkills[j].Path
+		}
+		return left < right
 	})
 
 	// Build prompt sections

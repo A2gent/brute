@@ -78,6 +78,8 @@ func (s *Server) ensureSystemPromptSnapshot(sess *session.Session, displayOnly b
 		settings = map[string]string{}
 	}
 
+	// Preserve existing snapshots, including legacy time labels: migrating them
+	// mid-session would itself invalidate the provider's cached prefix.
 	if snapshot := sessionSystemPromptSnapshot(sess); snapshot != nil && snapshotHasEnvironmentContext(snapshot) {
 		if resolvedSubAgent != nil {
 			subAgentIdentity := fmt.Sprintf(`You are a sub-agent named "%s".`, strings.TrimSpace(resolvedSubAgent.Name))
@@ -162,7 +164,6 @@ func (s *Server) composeSystemPromptSnapshot(sess *session.Session) *systemPromp
 }
 
 func (s *Server) resolveEnvironmentContextSection(sess *session.Session) (string, int) {
-	now := time.Now()
 	workDir := absoluteCleanPath(strings.TrimSpace(s.config.WorkDir), ".")
 	projectName := ""
 	projectID := ""
@@ -182,7 +183,11 @@ func (s *Server) resolveEnvironmentContextSection(sess *session.Session) (string
 	var sb strings.Builder
 	sb.WriteString("Environment context:\n")
 	sb.WriteString(fmt.Sprintf("- Operating system: %s/%s\n", runtime.GOOS, runtime.GOARCH))
-	sb.WriteString(fmt.Sprintf("- Current time: %s (%s)\n", now.Format(time.RFC3339), now.Location().String()))
+	// Keep the cached system prefix stable, including when its snapshot is rebuilt.
+	// UTC also avoids changing bytes when the server's local timezone changes.
+	if sess != nil && !sess.CreatedAt.IsZero() {
+		sb.WriteString(fmt.Sprintf("- Session created at: %s\n", sess.CreatedAt.UTC().Format(time.RFC3339)))
+	}
 	if workDir != "" {
 		sb.WriteString(fmt.Sprintf("- Server working directory: %s\n", workDir))
 	}

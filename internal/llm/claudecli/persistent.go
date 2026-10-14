@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +20,9 @@ import (
 )
 
 const defaultPersistentIdle = 10 * time.Minute
+
+// Each idle CLI process pins ~0.3 GB RSS (T-129 benchmark), so the pool is capped.
+const defaultPersistentMaxProcesses = 4
 
 // Clients are rebuilt between HTTP turns. The pool must outlive a Client, but
 // never share a process across sessions, identities, environments or workdirs.
@@ -42,6 +47,7 @@ type persistentProcess struct {
 	cursor               string
 	busy                 bool
 	idle                 *time.Timer
+	lastUsed             time.Time
 }
 
 func persistentKey(opts Options, sessionID string) string {
@@ -53,6 +59,40 @@ func (c *Client) persistentEnabled(req *llm.ChatRequest) bool {
 	// --max-budget-usd is process-cumulative: reusing it would change per-turn
 	// budget semantics. Non-persisted sessions cannot safely establish continuity.
 	return runtime.GOOS != "windows" && c.options.Persistent && !c.options.NoSessionPersistence && c.options.MaxBudgetUSD == "" && strings.TrimSpace(req.SessionID) != ""
+}
+
+func (c *Client) persistentMaxProcesses() int {
+	if c.options.PersistentMaxProcesses > 0 {
+		return c.options.PersistentMaxProcesses
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_PERSISTENT_MAX"))); err == nil && n > 0 {
+		return n
+	}
+	return defaultPersistentMaxProcesses
+}
+
+// reservePersistentSlot evicts least recently used idle processes until a new
+// one fits. Busy processes are never evicted; when all slots are busy the caller
+// uses the spawn transport. Must be called with persistentPool locked.
+func reservePersistentSlot(max int) bool {
+	for len(persistentPool.processes) >= max {
+		var oldestKey string
+		var oldest *persistentProcess
+		for key, p := range persistentPool.processes {
+			if !p.busy && (oldest == nil || p.lastUsed.Before(oldest.lastUsed)) {
+				oldestKey, oldest = key, p
+			}
+		}
+		if oldest == nil {
+			return false
+		}
+		delete(persistentPool.processes, oldestKey)
+		if oldest.idle != nil {
+			oldest.idle.Stop()
+		}
+		oldest.close()
+	}
+	return true
 }
 
 func (c *Client) persistentFingerprint(req *llm.ChatRequest, model string) ([32]byte, error) {
@@ -229,6 +269,10 @@ func (c *Client) chatPersistent(ctx context.Context, req *llm.ChatRequest, model
 			p = nil
 		}
 	}
+	if p == nil && !reservePersistentSlot(c.persistentMaxProcesses()) {
+		persistentPool.Unlock()
+		return nil, nil, false
+	}
 	if p == nil {
 		p, err = c.startPersistent(ctx, req, model, fingerprint, timing)
 		if err != nil {
@@ -248,6 +292,7 @@ func (c *Client) chatPersistent(ctx context.Context, req *llm.ChatRequest, model
 		persistentPool.Lock()
 		if success {
 			p.busy = false
+			p.lastUsed = time.Now()
 			idle := c.options.PersistentIdleTimeout
 			if idle <= 0 {
 				idle = defaultPersistentIdle

@@ -225,6 +225,8 @@ printf '{"type":"result","subtype":"success","result":"%s","session_id":"claude-
 	}
 	t.Setenv("ARGS_FILE", argsFile)
 	t.Setenv("CALL_FILE", callFile)
+	// The fake speaks the one-shot spawn protocol; persistent mode is on by default.
+	t.Setenv("AAGENT_CLAUDE_CLI_PERSISTENT", "0")
 	return fakeClaude
 }
 

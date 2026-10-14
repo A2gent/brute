@@ -264,3 +264,33 @@ func TestPersistentCallbackFailureEvictsProcess(t *testing.T) {
 		t.Fatal("process remained cached")
 	}
 }
+
+func TestPersistentPoolCapEvictsLeastRecentlyUsedIdle(t *testing.T) {
+	opts, dir := persistentFixture(t)
+	opts.PersistentMaxProcesses = 2
+	revoked := map[string]*atomic.Int32{}
+	opts.MCPBridge = func(_ context.Context, sessionID string) (string, func(), error) {
+		if revoked[sessionID] == nil {
+			revoked[sessionID] = &atomic.Int32{}
+		}
+		counter := revoked[sessionID]
+		return `{"mcpServers":{}}`, func() { counter.Add(1) }, nil
+	}
+	turn := func(session string) {
+		t.Helper()
+		_, err := NewClientWithOptions("sonnet", opts).ChatStream(t.Context(), &llm.ChatRequest{SessionID: session, Messages: []llm.Message{{Role: "user", Content: "hi"}}}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	a, b, c := dir+"/a", dir+"/b", dir+"/c"
+	turn(a)
+	turn(b)
+	turn(c) // pool full: a is the least recently used idle process
+	if revoked[a].Load() != 1 || revoked[b].Load() != 0 || revoked[c].Load() != 0 {
+		t.Fatalf("revoked a=%d b=%d c=%d", revoked[a].Load(), revoked[b].Load(), revoked[c].Load())
+	}
+	for _, s := range []string{b, c} {
+		closePersistentSession(opts, s)
+	}
+}

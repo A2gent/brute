@@ -40,9 +40,11 @@ type Options struct {
 	MaxBudgetUSD         string
 	NoSessionPersistence bool
 
-	// Persistent is an opt-in streaming-input prototype; budgets remain per-spawn.
-	Persistent            bool
-	PersistentIdleTimeout time.Duration
+	// Persistent keeps one streaming-input CLI process per session; budgets
+	// remain per-spawn. On by default, AAGENT_CLAUDE_CLI_PERSISTENT=0 disables it.
+	Persistent             bool
+	PersistentIdleTimeout  time.Duration
+	PersistentMaxProcesses int
 
 	// MCPBridge exposes A2gent tools (question, integrations) to the CLI over a
 	// loopback MCP server; only used on the direct (non-sidecar) path.
@@ -122,7 +124,7 @@ func NewClient(model, workDir string) *Client {
 }
 
 func NewClientWithOptions(model string, options Options) *Client {
-	options.Persistent = options.Persistent || envBoolDefault("AAGENT_CLAUDE_CLI_PERSISTENT", false)
+	options.Persistent = options.Persistent || envBoolDefault("AAGENT_CLAUDE_CLI_PERSISTENT", true)
 	options.Executable = normalizeExecutable(options.Executable)
 	options.WorkDir = normalizeWorkDir(options.WorkDir)
 	options.PermissionMode = strings.TrimSpace(options.PermissionMode)

@@ -32,9 +32,22 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	leaseCtx, release, leaseErr := s.sessionManager.AcquireRun(s.sessionRunParentContext(), sessionID)
+	if leaseErr != nil || s.activeSessionRunCount(sessionID) > 0 {
+		if release != nil {
+			release()
+		}
+		s.errorResponse(w, 409, "Session already has an active run")
+		return
+	}
+	defer release()
 	sess, err := s.sessionManager.Get(sessionID)
 	if err != nil {
 		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
+		return
+	}
+	if t := session.CurrentProviderTransition(sess); t != nil && !t.Terminal() {
+		s.errorResponse(w, 409, "Resolve the pending provider transition first")
 		return
 	}
 	defer s.queueTelegramSessionMessageSync(sess.ID)
@@ -52,7 +65,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	s.publishSessionCatalog("session_updated", sess)
 
-	runCtx, cancelRun := context.WithCancel(s.sessionRunParentContext())
+	runCtx, cancelRun := context.WithCancel(leaseCtx)
 	runID := s.registerActiveSessionRun(sessionID, cancelRun)
 	defer func() {
 		cancelRun()

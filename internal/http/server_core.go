@@ -136,6 +136,7 @@ func NewServer(
 		writeTaskSource:        os.WriteFile,
 		removeTaskSource:       os.Remove,
 	}
+	s.recoverProviderTransitions()
 	s.initApprovalBroker()
 	s.dockerRuntime = newDockerRuntimeManager(s)
 

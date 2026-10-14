@@ -16,14 +16,15 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 	// Convert session messages to LLM messages
 	activeMessages := a.getActiveConversationMessages(sess)
 	previousResponseID := ""
-	if a.config.UsePreviousResponse {
+	transitioned := len(session.ProviderTransitions(sess)) > 0 && sess.Metadata["provider_context_epoch"] != nil
+	if a.config.UsePreviousResponse && !transitioned {
 		previousResponseID = lastResponseIDForStatefulRequest(sess)
 	}
 	if previousResponseID != "" {
 		activeMessages = messagesAfterResponseID(activeMessages, previousResponseID)
 	}
 	providerSessionCursor := ""
-	if a.config.UseProviderSession {
+	if a.config.UseProviderSession && !transitioned {
 		storedIdentity := lastProviderSessionIdentityForRequest(sess)
 		storedCursor := lastProviderSessionCursorForRequest(sess)
 		configIdentity := strings.TrimSpace(a.config.ProviderSessionIdentity)
@@ -69,6 +70,11 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 			}
 		}
 
+		if transitioned {
+			for i := range msg.ToolCalls {
+				msg.ToolCalls[i].ThoughtSignature = ""
+			}
+		}
 		messages = append(messages, msg)
 		// Tool-role image metadata is not supported by every provider. Normalize
 		// extracted screenshots into the shared user-image channel after the batch.
@@ -106,6 +112,11 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 		SessionID:             sess.ID,
 		PreviousResponseID:    previousResponseID,
 		ProviderSessionCursor: providerSessionCursor,
+	}
+	if transitioned {
+		if epoch, ok := sess.Metadata["provider_context_epoch"].(string); ok {
+			request.SessionID = epoch
+		}
 	}
 	for _, msg := range messages {
 		for _, tr := range msg.ToolResults {

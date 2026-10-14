@@ -10,6 +10,7 @@ import (
 	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/filesearch"
 	"github.com/A2gent/brute/internal/runtimeenv"
+	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/storage"
 )
 
@@ -38,7 +39,9 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to load custom env: "+err.Error())
 		return
 	}
-	s.jsonResponse(w, http.StatusOK, s.settingsResponseWithJev(settings, customEnv))
+	response := s.settingsResponseWithJev(settings, customEnv)
+	response.EffectiveProviderTransitionMode = s.transitionMode()
+	s.jsonResponse(w, http.StatusOK, response)
 }
 
 func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
@@ -49,6 +52,13 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Settings == nil {
 		req.Settings = map[string]string{}
+	}
+
+	if mode, ok := req.Settings[providerTransitionModeSetting]; ok {
+		if _, err := session.TransitionMode(mode); err != nil {
+			s.errorResponse(w, 400, err.Error())
+			return
+		}
 	}
 
 	previousSettings, err := s.store.GetSettings()
@@ -63,9 +73,21 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Single-setting editors must not round-trip a filtered GET response as a
+	// replacement: hidden settings and custom environment values would be lost.
+	if req.Merge {
+		for key, value := range previousSettings {
+			if _, supplied := req.Settings[key]; !supplied {
+				req.Settings[key] = value
+			}
+		}
+	}
+
 	nextCustomEnv := map[string]string{}
 	if req.CustomEnv != nil {
 		nextCustomEnv = *req.CustomEnv
+	} else if req.Merge {
+		nextCustomEnv = oldCustomEnv
 	}
 
 	if customStore, ok := s.store.(storage.CustomEnvStore); ok {
@@ -88,7 +110,9 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		folder = filepath.Join(s.config.DataPath, "sessions")
 	}
 	s.sessionManager.SetJSONLFolder(folder)
-	s.jsonResponse(w, http.StatusOK, s.settingsResponseWithJev(req.Settings, nextCustomEnv))
+	response := s.settingsResponseWithJev(req.Settings, nextCustomEnv)
+	response.EffectiveProviderTransitionMode = s.transitionMode()
+	s.jsonResponse(w, http.StatusOK, response)
 }
 
 func settingsResponse(settings map[string]string, customEnv map[string]string) SettingsResponse {

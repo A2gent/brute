@@ -168,8 +168,24 @@ func (s *Server) drainSessionPendingMessages(sessionID string) {
 // startPendingRunLocked appends msg as a user turn and starts a background run.
 // Caller must hold pendingDrainMu; it is always released before returning.
 func (s *Server) startPendingRunLocked(sessionID string, msg *session.PendingMessage) bool {
+	leaseCtx, release, err := s.sessionManager.AcquireRun(s.sessionRunParentContext(), sessionID)
+	if err != nil {
+		s.pendingDrainMu.Unlock()
+		return false
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			release()
+		}
+	}()
+
 	sess, err := s.sessionManager.Get(sessionID)
 	if err != nil {
+		s.pendingDrainMu.Unlock()
+		return false
+	}
+	if t := session.CurrentProviderTransition(sess); t != nil && !t.Terminal() {
 		s.pendingDrainMu.Unlock()
 		return false
 	}
@@ -181,7 +197,7 @@ func (s *Server) startPendingRunLocked(sessionID string, msg *session.PendingMes
 		return false
 	}
 
-	runCtx, cancelRun := context.WithCancel(s.sessionRunParentContext())
+	runCtx, cancelRun := context.WithCancel(leaseCtx)
 	runID := s.registerActiveSessionRun(sessionID, cancelRun)
 	// Registered while still holding the lock, so a concurrent drain sees a live run.
 	s.pendingDrainMu.Unlock()
@@ -190,7 +206,9 @@ func (s *Server) startPendingRunLocked(sessionID string, msg *session.PendingMes
 	s.publishSessionEvent(sessionID, s.sessionSnapshotStreamEvent(sess))
 	logging.LogSession("queued_message_started", sessionID, "queued message promoted to a new run")
 
+	transferred = true
 	go func() {
+		defer release()
 		defer s.queueTelegramSessionMessageSync(sess.ID)
 		defer func() {
 			cancelRun()

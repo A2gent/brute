@@ -30,6 +30,11 @@ func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, 
 		return llm.TokenUsage{}, false, nil
 	}
 
+	// Work on an isolated candidate: empty summaries, cancellation and save failures
+	// must not mutate the active context or archived transcript.
+	original := sess
+	sess = cloneTransitionSession(sess)
+
 	// If the latest message is a user prompt awaiting the next response, keep it after compaction.
 	var pendingUser *session.Message
 	if len(sess.Messages) > 0 && sess.Messages[len(sess.Messages)-1].Role == "user" {
@@ -58,6 +63,10 @@ func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, 
 	// If len <= parserKeepMessages, we compact everything to avoid infinite loops if messages are just huge.
 	if len(activeMessages) > parserKeepMessages {
 		splitIdx := len(activeMessages) - parserKeepMessages
+		// Keep whole tool batches together, never start the retained tail with a result.
+		for splitIdx > 0 && activeMessages[splitIdx].Role == "tool" {
+			splitIdx--
+		}
 		messagesToSummarize = activeMessages[:splitIdx]
 		messagesToKeep = activeMessages[splitIdx:]
 	} else {
@@ -77,13 +86,20 @@ func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, 
 	logging.Info("Context compaction starting: session=%s messages_to_summarize=%d", sess.ID, len(messagesToSummarize))
 
 	llmStartedAt := time.Now()
-	response, err := a.llmClient.Chat(ctx, request)
+	response, err := llm.WithProvenance(a.llmClient, a.config.Provider, a.config.Model).Chat(ctx, request)
 	if err != nil {
 		logging.Warn("Context compaction LLM error: %v", err)
 		if pendingUser != nil {
 			sess.AddMessage(*pendingUser)
 		}
 		return llm.TokenUsage{}, false, fmt.Errorf("compaction LLM error: %w", err)
+	}
+
+	if err := ctx.Err(); err != nil {
+		return llm.TokenUsage{}, false, err
+	}
+	if response == nil || strings.TrimSpace(response.Content) == "" || len(response.ToolCalls) > 0 {
+		return llm.TokenUsage{}, false, fmt.Errorf("compaction returned no usable summary")
 	}
 
 	logging.Info("Context compaction LLM response: content_len=%d usage=%+v", len(response.Content), response.Usage)
@@ -97,17 +113,14 @@ func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, 
 	metadataSetString(sess, metadataLastCompactionAt, time.Now().UTC().Format(time.RFC3339))
 
 	summary := strings.TrimSpace(response.Content)
-	if summary == "" {
-		logging.Warn("Context compaction returned empty content, using fallback")
-		summary = "Context was compacted to continue in a fresh window."
-	}
 
 	// Create summary message
 	summaryMsg := session.Message{
-		ID:        "", // will be generated
-		Role:      "assistant",
-		Content:   summary,
-		Timestamp: time.Now(),
+		Provenance: response.Provenance,
+		ID:         "", // will be generated
+		Role:       "assistant",
+		Content:    summary,
+		Timestamp:  time.Now(),
 		Metadata: map[string]interface{}{
 			messageMetadataCompaction: true,
 			"compaction_index":        compactionCount,
@@ -174,12 +187,15 @@ func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, 
 	// fresh session so the summary and kept messages become its only history.
 	// Empty tombstones keep a concurrent state merge from restoring the pre-compaction
 	// provider session if persisting this reset fails.
+	metadataSetString(sess, metadataLastResponseID, "")
 	metadataSetString(sess, metadataProviderSessionCursor, "")
 	metadataSetString(sess, metadataProviderSessionIdentity, "")
 
 	if err := a.sessionManager.Save(sess); err != nil {
-		logging.Warn("Failed to save compacted session state: %v", err)
+		return llm.TokenUsage{}, false, fmt.Errorf("save compacted context: %w", err)
 	}
+
+	*original = *sess
 
 	logging.Info("Context compaction completed: session=%s current_tokens=%.0f threshold=%.1f%% kept=%d", sess.ID, currentTokens, cfg.TriggerPercent, len(messagesToKeep))
 	return response.Usage, true, nil

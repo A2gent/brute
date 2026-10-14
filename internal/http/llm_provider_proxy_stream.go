@@ -27,8 +27,10 @@ func (s *Server) handleLLMProxyChatCompletionsStream(
 	createdAt := time.Now().Unix()
 	usage := llm.TokenUsage{}
 	finishReason := "stop"
+	var provenance *llm.Provenance
 
 	writeChunk := func(chunk proxyChatStreamChunk) error {
+		chunk.Provenance = provenance
 		payload, err := json.Marshal(chunk)
 		if err != nil {
 			return err
@@ -73,6 +75,7 @@ func (s *Server) handleLLMProxyChatCompletionsStream(
 			flusher.Flush()
 			return
 		}
+		provenance = resp.Provenance
 		contentChunk := proxyChatStreamChunk{
 			ID:      requestID,
 			Object:  "chat.completion.chunk",
@@ -134,6 +137,9 @@ func (s *Server) handleLLMProxyChatCompletionsStream(
 	streamedContent := false
 	streamedToolArguments := map[int]bool{}
 	finalResp, streamErr := streamingClient.ChatStream(r.Context(), chatReq, func(event llm.StreamEvent) error {
+		if event.Provenance != nil {
+			provenance = event.Provenance
+		}
 		switch event.Type {
 		case llm.StreamEventContentDelta:
 			if strings.TrimSpace(event.ContentDelta) == "" {
@@ -188,6 +194,7 @@ func (s *Server) handleLLMProxyChatCompletionsStream(
 	}
 
 	if finalResp != nil {
+		provenance = finalResp.Provenance
 		if len(finalResp.ToolCalls) > 0 {
 			finishReason = "tool_calls"
 		} else if strings.TrimSpace(finalResp.StopReason) != "" {

@@ -14,6 +14,7 @@ func isManagedAppSettingKey(key string) bool {
 	}
 
 	exact := map[string]struct{}{
+		"A2GENT_PROVIDER_TRANSITION_MODE":                     {},
 		"A2GENT_JEV_ADMISSION_ENABLED":                        {},
 		"A2GENT_JEV_TOOLSETS_ENABLED":                         {},
 		"AAGENT_AGENT_DEFINITIONS_FOLDER":                     {},

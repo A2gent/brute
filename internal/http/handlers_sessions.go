@@ -509,62 +509,7 @@ func (s *Server) handleUpdateSessionNeedsFeedback(w http.ResponseWriter, r *http
 }
 
 func (s *Server) handleUpdateSessionProvider(w http.ResponseWriter, r *http.Request) {
-	sessionID := chi.URLParam(r, "sessionID")
-
-	sess, err := s.sessionManager.Get(sessionID)
-	if err != nil {
-		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
-		return
-	}
-
-	var req UpdateSessionProviderRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
-		return
-	}
-
-	provider := strings.TrimSpace(req.Provider)
-	if provider == "" {
-		s.errorResponse(w, http.StatusBadRequest, "Provider is required")
-		return
-	}
-
-	providerType := config.ProviderType(provider)
-	if !s.config.IsValidProvider(providerType) {
-		s.errorResponse(w, http.StatusBadRequest, "Invalid provider: "+provider)
-		return
-	}
-
-	if sess.Metadata == nil {
-		sess.Metadata = make(map[string]interface{})
-	}
-
-	sess.Metadata["provider"] = provider
-
-	if req.Model != nil {
-		model := normalizeModelForProvider(providerType, *req.Model)
-		if model == "" {
-			delete(sess.Metadata, "model")
-		} else {
-			sess.Metadata["model"] = model
-		}
-	}
-
-	delete(sess.Metadata, "routed_provider")
-	delete(sess.Metadata, "routed_model")
-
-	// A previously recorded active fallback node is stale once the session no longer targets a fallback provider.
-	if !config.IsFallbackAggregateRef(provider) && providerType != config.ProviderFallback {
-		delete(sess.Metadata, fallbackActiveProviderMetadataKey)
-		delete(sess.Metadata, fallbackActiveModelMetadataKey)
-	}
-
-	if err := s.sessionManager.Save(sess); err != nil {
-		s.errorResponse(w, http.StatusInternalServerError, "Failed to update session provider: "+err.Error())
-		return
-	}
-
-	s.jsonResponse(w, http.StatusOK, s.sessionToResponse(sess))
+	s.handleUpdateSessionProviderTransition(w, r)
 }
 
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {

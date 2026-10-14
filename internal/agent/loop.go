@@ -12,6 +12,7 @@ import (
 	"github.com/A2gent/brute/internal/contextcompress"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/claudecli"
+	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/tools"
@@ -31,6 +32,10 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 	// WHY: sql_query resolves connection_name against this project; nothing else ever set it.
 	if sess.ProjectID != nil && strings.TrimSpace(*sess.ProjectID) != "" {
 		ctx = context.WithValue(ctx, "projectID", strings.TrimSpace(*sess.ProjectID))
+	}
+
+	if err := a.transitionBoundary(ctx, sess, onEvent); err != nil {
+		return "", totalUsage, err
 	}
 
 	// Clean up incomplete tool calls before starting
@@ -53,6 +58,10 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			logging.Info("Context deadline exceeded for session %s, continuing to let agent handle errors", sess.ID)
 		}
 
+		if err := a.transitionBoundary(ctx, sess, onEvent); err != nil {
+			return "", totalUsage, err
+		}
+
 		// Check step limit
 		if step >= a.config.MaxSteps {
 			content, usage, err := a.finalizeAfterStepLimit(ctx, sess, step, onEvent)
@@ -69,7 +78,17 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		// Compact conversation before the next normal step once threshold is reached.
 		compactionUsage, compacted, err := a.maybeCompactContext(ctx, sess, step)
 		if err != nil {
-			logging.Warn("Context compaction failed (continuing without compaction): %v", err)
+			var next *fallback.TransitionRequired
+			if errors.As(err, &next) {
+				if err := a.requestFallbackTransition(sess, next, onEvent); err != nil {
+					return "", totalUsage, err
+				}
+				step--
+				continue
+			}
+			sess.SetStatus(session.StatusPaused)
+			_ = a.sessionManager.Save(sess)
+			return "", totalUsage, fmt.Errorf("%w: context compaction failed: %v", ErrTransitionPaused, err)
 		} else if compacted {
 			totalUsage.InputTokens += compactionUsage.InputTokens
 			totalUsage.OutputTokens += compactionUsage.OutputTokens
@@ -96,6 +115,17 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		response, runtimeAcc, err := a.callLLM(ctx, request, step, onEvent)
 		llmCompleted := time.Now()
 		if err != nil {
+			var next *fallback.TransitionRequired
+			if errors.As(err, &next) {
+				if err := a.requestFallbackTransition(sess, next, onEvent); err != nil {
+					return "", totalUsage, err
+				}
+				step--
+				continue
+			}
+			if t := session.CurrentProviderTransition(sess); t != nil && t.Phase == "continuing" {
+				return "", totalUsage, a.pauseTransition(sess, t, err, onEvent)
+			}
 			if runtimeAcc != nil && runtimeAcc.hasDurablePayload() {
 				sess.AddAssistantMessageWithMetadata("", nil, mergeRuntimeMetadata(
 					llmTimingMetadata(llmStart, llmCompleted, a.config.Provider, a.config.Model),
@@ -152,15 +182,17 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 					continue
 				}
 				message := "Model returned an empty final response without tool calls after a retry. Check provider health, quota/usage, and child-agent logs; an upstream CLI or proxy may have failed without surfacing a normal error."
-				sess.AddAssistantMessageWithMetadata(message, nil, llmTimingMetadata(llmStart, llmCompleted, a.config.Provider, a.config.Model, map[string]interface{}{
-					"empty_final_response": true,
-				}))
+				assistantMetadata["empty_final_response"] = true
+				sess.AddAssistantMessageWithMetadata(message, nil, assistantMetadata)
 				sess.SetStatus(session.StatusFailed)
 				a.sessionManager.Save(sess)
 				return "", totalUsage, errors.New(message)
 			}
 			emptyFinalResponseRetries = 0
 			sess.AddAssistantMessageWithImagesAndMetadata(finalContent, llmImagesToSession(response.Images), nil, assistantMetadata)
+			if err := a.completeTransition(sess, onEvent); err != nil {
+				return "", totalUsage, err
+			}
 			if a.mergeFreshSessionState(sess) {
 				if err := a.sessionManager.Save(sess); err != nil {
 					_ = err
@@ -199,6 +231,9 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 
 		// Add assistant message with tool calls
 		sess.AddAssistantMessageWithImagesAndMetadata(response.Content, llmImagesToSession(response.Images), sessionToolCalls, assistantMetadata)
+		if err := a.completeTransition(sess, onEvent); err != nil {
+			return "", totalUsage, err
+		}
 		// Persist the assistant tool-call message before executing tools so
 		// async tools that park the session (for example webhook-backed image
 		// generation) still leave behind a valid transcript for resume.
@@ -586,13 +621,20 @@ func (a *Agent) callLLM(ctx context.Context, request *llm.ChatRequest, step int,
 	turnID := uuid.NewString()
 	acc := newRuntimeObservabilityAccumulator(turnID, a.config.PersistRuntimeReasoning)
 
-	streamClient, ok := a.llmClient.(llm.StreamingClient)
+	client := llm.WithProvenance(a.llmClient, a.config.Provider, a.config.Model)
+	streamClient, ok := client.(llm.StreamingClient)
 	if !ok {
-		response, err := a.llmClient.Chat(ctx, request)
+		response, err := client.Chat(ctx, request)
+		if response != nil {
+			acc.provenance = response.Provenance
+		}
 		return response, acc, err
 	}
 
 	response, err := streamClient.ChatStream(ctx, request, func(ev llm.StreamEvent) error {
+		if ev.Provenance != nil && llm.IsResponseProgressEvent(ev) {
+			acc.provenance = ev.Provenance
+		}
 		if isLLMRuntimeForwardEvent(ev) || ev.Type == llm.StreamEventContentDelta {
 			acc.observe(ev)
 		}
@@ -601,10 +643,11 @@ func (a *Agent) callLLM(ctx context.Context, request *llm.ChatRequest, step int,
 		}
 		if ev.Type == llm.StreamEventContentDelta && ev.ContentDelta != "" {
 			onEvent(Event{
-				Type:   EventAssistantDelta,
-				TurnID: turnID,
-				Step:   step,
-				Delta:  ev.ContentDelta,
+				Type:       EventAssistantDelta,
+				Provenance: ev.Provenance,
+				TurnID:     turnID,
+				Step:       step,
+				Delta:      ev.ContentDelta,
 			})
 		}
 		if ev.Type == llm.StreamEventProviderTrace {
@@ -629,14 +672,18 @@ func (a *Agent) callLLM(ctx context.Context, request *llm.ChatRequest, step int,
 		if isLLMRuntimeForwardEvent(ev) {
 			runtime := ev
 			onEvent(Event{
-				Type:    EventLLMRuntime,
-				TurnID:  turnID,
-				Step:    step,
-				Runtime: &runtime,
+				Type:       EventLLMRuntime,
+				Provenance: ev.Provenance,
+				TurnID:     turnID,
+				Step:       step,
+				Runtime:    &runtime,
 			})
 		}
 		return nil
 	})
+	if response != nil {
+		acc.provenance = response.Provenance
+	}
 	return response, acc, err
 }
 

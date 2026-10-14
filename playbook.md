@@ -70,3 +70,9 @@
 - Read workspace conventions before exploration; restrict discovery to the component instead of running `find ..`, which traverses unrelated repositories and dependency trees and can time out.
 - Claude CLI's `read` capability expands to `Glob,Grep,LS,Read`; tests of persistent transport must preserve the existing mapping instead of assuming a single native Read permission.
 - Persistent CLI reuse must fingerprint a stable MCP config generation, not only hook presence. A failed bridge hook must fall back before sending input, rather than cache a bridge-less process; do not replay submitted turns because tools may already have side effects.
+
+- Read workspace AGENTS.md before Git discovery; this workspace root is not a repository. Discover concrete filenames before using shell globs in rg.
+- Before exploratory commands, read workspace conventions and discover exact filenames; guessed Makefiles/provider helpers and unbounded workspace find waste tool calls. Brute is its own repository and uses justfile.
+- Transition request sizing must include system/tool definitions, not just history. Use realistic target windows in tests. Verify stream-local declarations after scripted insertion; fallback tracks progress with hasStreamContent, not a guessed variable name.
+
+- In a shared worktree, distinguish another session's red-phase tests from provenance failures; validate owned patches in an isolated HEAD export before claiming component-wide success. Build typed stream fixtures with all required payload fields.

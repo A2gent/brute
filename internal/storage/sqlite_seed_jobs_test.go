@@ -1,6 +1,17 @@
 package storage
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestArchivedSessionsReviewPromptBoundsPlaybook(t *testing.T) {
+	for _, required := range []string{"at most 30 active lessons", "remove stale/session-specific entries", "merge duplicates", "keep each lesson to one line"} {
+		if !strings.Contains(archivedSessionsReviewPrompt, required) {
+			t.Errorf("archived review prompt must include %q", required)
+		}
+	}
+}
 
 func TestBuiltInArchivedSessionsReviewJobIsSeededOnce(t *testing.T) {
 	dir := t.TempDir()

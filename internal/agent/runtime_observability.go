@@ -14,6 +14,7 @@ const (
 )
 
 type runtimeObservabilityAccumulator struct {
+	provenance         *llm.Provenance
 	turnID             string
 	persistReasoning   bool
 	reasoning          string
@@ -173,6 +174,11 @@ func mergeRuntimeMetadata(base map[string]interface{}, acc *runtimeObservability
 func (a *runtimeObservabilityAccumulator) metadata() map[string]interface{} {
 	md := map[string]interface{}{
 		"runtime_turn_id": a.turnID,
+	}
+	if a.provenance != nil {
+		md["llm_provenance"] = *a.provenance
+		md["llm_provider"] = a.provenance.Provider
+		md["llm_model"] = a.provenance.Model
 	}
 	if a.nativeRuntime {
 		md["runtime_native"] = true

@@ -8,6 +8,7 @@ import (
 
 	"github.com/A2gent/brute/internal/contextcompress"
 	"github.com/A2gent/brute/internal/llm"
+	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/tools"
@@ -15,11 +16,12 @@ import (
 
 // Agent represents an AI agent that can execute tasks
 type Agent struct {
-	config         Config
-	llmClient      llm.Client
-	toolManager    *tools.Manager
-	sessionManager *session.Manager
-	compressor     *contextcompress.Compressor
+	activeTransitionID string
+	config             Config
+	llmClient          llm.Client
+	toolManager        *tools.Manager
+	sessionManager     *session.Manager
+	compressor         *contextcompress.Compressor
 }
 
 // New creates a new agent
@@ -88,6 +90,13 @@ func (a *Agent) Run(ctx context.Context, sess *session.Session, task string) (st
 
 // RunWithEvents executes the agent and emits streaming events when available.
 func (a *Agent) RunWithEvents(ctx context.Context, sess *session.Session, task string, onEvent func(Event)) (string, llm.TokenUsage, error) {
+	ctx, release, err := a.sessionManager.AcquireRun(ctx, sess.ID)
+	if err != nil {
+		return "", llm.TokenUsage{}, err
+	}
+	defer release()
+	a.activeTransitionID = ""
+	ctx = fallback.WithSessionBoundary(ctx)
 	logging.Info("Agent run started: session=%s", sess.ID)
 	// Note: User message is already added by the TUI before calling Run
 	// Run the agentic loop

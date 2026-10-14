@@ -75,6 +75,7 @@ func NewClient(nodes []Node, opts ...ClientOption) *Client {
 		if node.Client == nil {
 			continue
 		}
+		node.Client = llm.WithProvenance(node.Client, node.Name, node.Model)
 		copied = append(copied, node)
 	}
 	c := &Client{
@@ -106,7 +107,13 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	var failures []string
 	for i := start; i < len(c.nodes); i++ {
 		node := c.nodes[i]
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if skip, reason := c.shouldSkipNode(ctx, node); skip {
+			if err := c.boundary(ctx, i, reason); err != nil {
+				return nil, err
+			}
 			failures = append(failures, formatSkippedFailure(node.Name, reason))
 			c.setCurrentIndex(i + 1)
 			continue
@@ -137,8 +144,14 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 			logging.Warn("Provider %s failed (attempt %d/%d): %v", node.Name, attempt+1, c.maxRetries+1, err)
 		}
 
+		if boundaryEnabled(ctx) && llm.IsUnsafeForRetry(lastErr) {
+			return nil, lastErr
+		}
 		if !isFallbackableError(ctx, lastErr) {
 			return nil, fmt.Errorf("%s failed: %w", node.Name, lastErr)
+		}
+		if err := c.boundary(ctx, i, lastErr.Error()); err != nil {
+			return nil, err
 		}
 		failures = append(failures, fmt.Sprintf("%s: %v", node.Name, lastErr))
 		logging.Warn("Fallback chain provider %s exhausted retries, trying next provider: %v", node.Name, lastErr)
@@ -161,6 +174,9 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	var failures []string
 	for i := start; i < len(c.nodes); i++ {
 		node := c.nodes[i]
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if skip, reason := c.shouldSkipNode(ctx, node); skip {
 			nextNode := ""
 			nextModel := ""
@@ -179,6 +195,9 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 				FallbackTo:    nextNode,
 				FallbackModel: nextModel,
 			})
+			if err := c.boundary(ctx, i, reason); err != nil {
+				return nil, err
+			}
 			failures = append(failures, formatSkippedFailure(node.Name, reason))
 			c.setCurrentIndex(i + 1)
 			continue
@@ -220,13 +239,20 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 			}
 
 			emitted := false
-			wrappedOnEvent := onEvent
-			if onEvent != nil {
+			nativeToolsStarted := false
+			var wrappedOnEvent func(llm.StreamEvent) error
+			{
 				wrappedOnEvent = func(ev llm.StreamEvent) error {
+					if ev.Type == llm.StreamEventToolStarted || ev.Type == llm.StreamEventToolCompleted || ev.Type == llm.StreamEventToolOutput {
+						nativeToolsStarted = true
+					}
 					if llm.IsResponseProgressEvent(ev) {
 						emitted = true
 					}
-					return onEvent(ev)
+					if onEvent != nil {
+						return onEvent(ev)
+					}
+					return nil
 				}
 			}
 
@@ -302,6 +328,9 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 				return resp, nil
 			}
 
+			if nativeToolsStarted {
+				return nil, llm.UnsafeForRetry(fmt.Errorf("native tools observed before provider failure: %w", err))
+			}
 			lastErr = err
 			reason := enrichTraceReason(ctx, err)
 			if emitted {
@@ -361,8 +390,14 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 			})
 		}
 
+		if boundaryEnabled(ctx) && llm.IsUnsafeForRetry(lastErr) {
+			return nil, lastErr
+		}
 		if !isFallbackableError(ctx, lastErr) {
 			return nil, fmt.Errorf("%s failed: %w", node.Name, lastErr)
+		}
+		if err := c.boundary(ctx, i, lastErr.Error()); err != nil {
+			return nil, err
 		}
 		failures = append(failures, fmt.Sprintf("%s: %v", node.Name, lastErr))
 		logging.Warn("Fallback chain provider %s exhausted retries, trying next provider: %v", node.Name, lastErr)

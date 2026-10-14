@@ -47,7 +47,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		}
 		if onEvent != nil {
 			if strings.TrimSpace(resp.Content) != "" {
-				_ = onEvent(llm.StreamEvent{Type: llm.StreamEventContentDelta, ContentDelta: resp.Content})
+				_ = onEvent(llm.StreamEvent{Type: llm.StreamEventContentDelta, ContentDelta: resp.Content, Provenance: resp.Provenance})
 			}
 			_ = onEvent(llm.StreamEvent{Type: llm.StreamEventUsage, Usage: resp.Usage})
 		}
@@ -98,7 +98,7 @@ func (c *Client) resolveTarget(ctx context.Context, request *llm.ChatRequest) (*
 	return &resolvedTarget{
 		Provider: chosen.Provider,
 		Model:    cloned.Model,
-		Client:   targetClient,
+		Client:   llm.WithProvenance(targetClient, chosen.Provider, cloned.Model),
 	}, &cloned, nil
 }
 

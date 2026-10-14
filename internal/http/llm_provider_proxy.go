@@ -129,13 +129,14 @@ type proxyTool struct {
 }
 
 type proxyChatResponse struct {
-	ID      string              `json:"id"`
-	Object  string              `json:"object"`
-	Created int64               `json:"created"`
-	Model   string              `json:"model"`
-	Choices []proxyChoice       `json:"choices"`
-	Usage   proxyUsage          `json:"usage"`
-	XA2gent *proxyRoutingDetail `json:"x_a2gent,omitempty"`
+	Provenance *llm.Provenance     `json:"provenance,omitempty"`
+	ID         string              `json:"id"`
+	Object     string              `json:"object"`
+	Created    int64               `json:"created"`
+	Model      string              `json:"model"`
+	Choices    []proxyChoice       `json:"choices"`
+	Usage      proxyUsage          `json:"usage"`
+	XA2gent    *proxyRoutingDetail `json:"x_a2gent,omitempty"`
 }
 
 type proxyChoice struct {
@@ -155,11 +156,12 @@ type proxyRoutingDetail struct {
 }
 
 type proxyChatStreamChunk struct {
-	ID      string                 `json:"id"`
-	Object  string                 `json:"object"`
-	Created int64                  `json:"created"`
-	Model   string                 `json:"model"`
-	Choices []proxyChatStreamDelta `json:"choices"`
+	Provenance *llm.Provenance        `json:"provenance,omitempty"`
+	ID         string                 `json:"id"`
+	Object     string                 `json:"object"`
+	Created    int64                  `json:"created"`
+	Model      string                 `json:"model"`
+	Choices    []proxyChatStreamDelta `json:"choices"`
 }
 
 type proxyChatStreamDelta struct {
@@ -375,6 +377,7 @@ func (s *Server) handleLLMProxyChatCompletionsWithProvider(providerHint string, 
 		return
 	}
 
+	client = llm.WithProvenance(client, string(resolvedProvider), resolvedModel)
 	if req.Stream {
 		s.handleLLMProxyChatCompletionsStream(w, r, client, chatReq, resolvedModel)
 		return
@@ -436,10 +439,11 @@ func proxyChatResponseFromLLM(resp *llm.ChatResponse, providerType config.Provid
 	}
 
 	return proxyChatResponse{
-		ID:      "chatcmpl-" + strings.ReplaceAll(uuid.NewString(), "-", ""),
-		Object:  "chat.completion",
-		Created: time.Now().Unix(),
-		Model:   model,
+		Provenance: resp.Provenance,
+		ID:         "chatcmpl-" + strings.ReplaceAll(uuid.NewString(), "-", ""),
+		Object:     "chat.completion",
+		Created:    time.Now().Unix(),
+		Model:      model,
 		Choices: []proxyChoice{
 			{
 				Index:        0,

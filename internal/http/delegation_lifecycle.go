@@ -78,7 +78,11 @@ func emptyDockerDelegationMessage(agentName string, childSessionID string, chatR
 // its lifetime to the request even before run registration to close the race
 // where the parent's /cancel arrives before there is an active run to cancel.
 func (s *Server) chatStreamRunContext(request context.Context, sess *session.Session) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(s.sessionRunParentContext())
+	return s.chatStreamRunContextWithParent(request, s.sessionRunParentContext(), sess)
+}
+
+func (s *Server) chatStreamRunContextWithParent(request, parent context.Context, sess *session.Session) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(parent)
 	if !isDelegatedSession(sess) {
 		return ctx, cancel
 	}

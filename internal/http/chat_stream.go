@@ -3,6 +3,7 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/logging"
@@ -34,9 +35,22 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	leaseCtx, release, leaseErr := s.sessionManager.AcquireRun(s.sessionRunParentContext(), sessionID)
+	if leaseErr != nil || s.activeSessionRunCount(sessionID) > 0 {
+		if release != nil {
+			release()
+		}
+		s.errorResponse(w, 409, "Session already has an active run")
+		return
+	}
+	defer release()
 	sess, err := s.sessionManager.Get(sessionID)
 	if err != nil {
 		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
+		return
+	}
+	if t := session.CurrentProviderTransition(sess); t != nil && !t.Terminal() {
+		s.errorResponse(w, 409, "Resolve the pending provider transition first")
 		return
 	}
 	defer s.queueTelegramSessionMessageSync(sess.ID)
@@ -64,7 +78,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 	s.publishSessionCatalog("session_updated", sess)
 
-	runCtx, cancelRun := s.chatStreamRunContext(r.Context(), sess)
+	runCtx, cancelRun := s.chatStreamRunContextWithParent(r.Context(), leaseCtx, sess)
 	runID := s.registerActiveSessionRun(sessionID, cancelRun)
 	defer func() {
 		cancelRun()
@@ -189,6 +203,11 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
+		if errors.Is(err, agent.ErrTransitionPaused) {
+			s.publishSessionCatalog("session_updated", sess)
+			_ = writeEvent(ChatStreamEvent{Type: "provider_transition", Transition: session.CurrentProviderTransition(sess), Status: string(sess.Status), Error: err.Error()})
+			return
+		}
 		if isCancellationError(err) {
 			sess.SetStatus(session.StatusPaused)
 			s.sessionManager.Save(sess)

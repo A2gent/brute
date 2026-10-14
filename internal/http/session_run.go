@@ -38,6 +38,11 @@ func (e *sessionProviderConfigError) Unwrap() error {
 }
 
 func (s *Server) runSessionWithoutStreaming(ctx context.Context, sess *session.Session, userMessage string) (sessionRunResult, error) {
+	ctx, release, leaseErr := s.sessionManager.AcquireRun(ctx, sess.ID)
+	if leaseErr != nil {
+		return sessionRunResult{}, leaseErr
+	}
+	defer release()
 	result := sessionRunResult{}
 	publishEvent := func(event ChatStreamEvent) {
 		s.publishSessionEvent(sess.ID, event)
@@ -92,6 +97,12 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 			Messages: s.messagesToResponse(sess.Messages),
 		})
 	}
+	if errors.Is(runErr, agent.ErrTransitionPaused) {
+		s.publishSessionCatalog("session_updated", sess)
+		publishError(runErr.Error())
+		return nil
+	}
+
 	if runErr != nil {
 		if isCancellationError(runErr) {
 			sess.SetStatus(session.StatusPaused)

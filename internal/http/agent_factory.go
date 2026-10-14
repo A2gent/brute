@@ -39,6 +39,8 @@ func (s *Server) agentConfigFromTarget(sess *session.Session, target *executionT
 }
 
 func (s *Server) newAgentFromConfig(cfg agent.Config, client llm.Client, manager *tools.Manager) *agent.Agent {
+	cfg.TransitionMode = s.transitionMode()
+	cfg.ResolveTransitionTarget = s.resolveTransitionTarget
 	cfg.CompressToolResults = s.toolResultCompressionEnabled()
 	cfg.RelevanceGate = s.relevanceGate()
 	cfg.ToolSelector = s.toolSelector()

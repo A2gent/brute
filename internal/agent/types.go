@@ -3,10 +3,13 @@ package agent
 import (
 	"github.com/A2gent/brute/internal/contextcompress"
 	"github.com/A2gent/brute/internal/llm"
+	"github.com/A2gent/brute/internal/session"
 )
 
 // Config holds agent configuration
 type Config struct {
+	TransitionMode           string
+	ResolveTransitionTarget  func(*session.Session, session.ProviderEndpoint) (llm.Client, int, error)
 	Name                     string
 	Description              string
 	Provider                 string
@@ -34,13 +37,14 @@ type Config struct {
 type EventType string
 
 const (
-	EventAssistantDelta EventType = "assistant_delta"
-	EventStepCompleted  EventType = "step_completed"
-	EventToolExecuting  EventType = "tool_executing"
-	EventToolProgress   EventType = "tool_progress"
-	EventToolCompleted  EventType = "tool_completed"
-	EventProviderTrace  EventType = "provider_trace"
-	EventLLMRuntime     EventType = "llm_runtime"
+	EventProviderTransition EventType = "provider_transition"
+	EventAssistantDelta     EventType = "assistant_delta"
+	EventStepCompleted      EventType = "step_completed"
+	EventToolExecuting      EventType = "tool_executing"
+	EventToolProgress       EventType = "tool_progress"
+	EventToolCompleted      EventType = "tool_completed"
+	EventProviderTrace      EventType = "provider_trace"
+	EventLLMRuntime         EventType = "llm_runtime"
 )
 
 const (
@@ -110,6 +114,8 @@ type compactionConfig struct {
 
 // Event describes a streaming update from the agent.
 type Event struct {
+	Transition   *session.ProviderTransition
+	Provenance   *llm.Provenance
 	Type         EventType
 	TurnID       string
 	Step         int

@@ -10,17 +10,18 @@ import (
 
 // Config holds the application configuration
 type Config struct {
-	DefaultModel       string              `json:"default_model"`
-	ActiveProvider     string              `json:"active_provider"` // Provider reference: built-in provider or named fallback aggregate
-	MaxSteps           int                 `json:"max_steps"`
-	Temperature        float64             `json:"temperature"`
-	LLMRetries         int                 `json:"llm_retries"` // Number of retries per LLM provider on transient errors (default 3)
-	DataPath           string              `json:"data_path"`
-	WorkDir            string              `json:"work_dir"`
-	CORSAllowedOrigins []string            `json:"cors_allowed_origins,omitempty"` // Allowed web origins for HTTP API CORS. Default: ["*"].
-	Providers          map[string]Provider `json:"providers"`
-	FallbackAggregates []FallbackAggregate `json:"fallback_aggregates,omitempty"`
-	Tools              ToolsConfig         `json:"tools"`
+	ProviderTransitionMode string              `json:"provider_transition_mode,omitempty"`
+	DefaultModel           string              `json:"default_model"`
+	ActiveProvider         string              `json:"active_provider"` // Provider reference: built-in provider or named fallback aggregate
+	MaxSteps               int                 `json:"max_steps"`
+	Temperature            float64             `json:"temperature"`
+	LLMRetries             int                 `json:"llm_retries"` // Number of retries per LLM provider on transient errors (default 3)
+	DataPath               string              `json:"data_path"`
+	WorkDir                string              `json:"work_dir"`
+	CORSAllowedOrigins     []string            `json:"cors_allowed_origins,omitempty"` // Allowed web origins for HTTP API CORS. Default: ["*"].
+	Providers              map[string]Provider `json:"providers"`
+	FallbackAggregates     []FallbackAggregate `json:"fallback_aggregates,omitempty"`
+	Tools                  ToolsConfig         `json:"tools"`
 }
 
 // Provider configuration for LLM providers

@@ -137,6 +137,12 @@ func serialQueueScopeForSession(sess *session.Session) string {
 }
 
 func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) bool {
+	ctx, release, leaseErr := s.sessionManager.AcquireRun(ctx, sessionID)
+	if leaseErr != nil {
+		return true
+	}
+	defer release()
+
 	sess, err := s.sessionManager.Get(sessionID)
 	if err != nil {
 		logging.Warn("Serial session queue could not load session %s: %v", sessionID, err)

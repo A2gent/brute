@@ -105,3 +105,26 @@ func TestValidateAutoRouterProviderRejectsJevAsTarget(t *testing.T) {
 		t.Fatalf("error = %v, want classifier target rejection", err)
 	}
 }
+
+func TestProvenanceOnNonStreamingRoutedTarget(t *testing.T) {
+	cfg := routerTestConfig()
+	provider := cfg.Providers[string(config.ProviderAutoRouter)]
+	provider.RouterRules = []config.RouterRule{{Match: "all", Provider: "anthropic:work", Model: "model-a"}}
+	cfg.Providers[string(config.ProviderAutoRouter)] = provider
+	client := New(cfg, func(ref, model string) (llm.Client, string, error) {
+		return &routerTestClient{response: &llm.ChatResponse{Content: "answer"}}, model, nil
+	})
+	seen := false
+	response, err := client.ChatStream(context.Background(), &llm.ChatRequest{Messages: []llm.Message{{Role: "user", Content: "hi"}}}, func(ev llm.StreamEvent) error {
+		if ev.Type == llm.StreamEventContentDelta {
+			seen = true
+			if ev.Provenance == nil || ev.Provenance.Provider != "anthropic:work" || ev.Provenance.Model != "model-a" {
+				t.Fatalf("delta = %+v", ev)
+			}
+		}
+		return nil
+	})
+	if err != nil || !seen || response.Provenance == nil {
+		t.Fatalf("response=%+v err=%v seen=%v", response, err, seen)
+	}
+}

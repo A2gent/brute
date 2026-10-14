@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/A2gent/brute/internal/storage"
@@ -14,6 +15,7 @@ import (
 
 // Manager manages sessions
 type Manager struct {
+	runLeases   sync.Map
 	store       storage.Store
 	jsonlWriter *JSONLWriter
 }

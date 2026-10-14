@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -392,5 +393,53 @@ func TestHandleTestIntegrationDraftSentryDoesNotRequireSavedIntegration(t *testi
 	}
 	if list, _ := store.ListIntegrations(); len(list) != 0 {
 		t.Fatalf("draft test must not persist integrations, got %d", len(list))
+	}
+}
+
+func TestHandleTestIntegrationDraftCloudflareReportsAccountAndDomains(t *testing.T) {
+	cf := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/user/tokens/verify":
+			if r.Header.Get("Authorization") != "Bearer good" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"success":false,"errors":[{"code":1000,"message":"Invalid API Token"}]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"success":true,"result":{"status":"active"}}`))
+		case "/accounts":
+			_, _ = w.Write([]byte(`{"success":true,"result":[{"id":"acc1","name":"Me"}]}`))
+		case "/zones":
+			_, _ = w.Write([]byte(`{"success":true,"result":[{"name":"example.com"}],"result_info":{"total_count":1}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer cf.Close()
+
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+	server := NewServer(config.DefaultConfig(), nil, tools.NewManager("."), session.NewManager(store), store, speechcache.New(0), 0)
+
+	post := func(token string) (int, IntegrationTestResponse) {
+		body, _ := json.Marshal(IntegrationRequest{
+			Provider: "cloudflare", Mode: "notify_only",
+			Config: map[string]string{"api_token": token, "base_url": cf.URL},
+		})
+		rec := httptest.NewRecorder()
+		server.handleTestIntegrationDraft(rec, httptest.NewRequest(http.MethodPost, "/integrations/test", bytes.NewReader(body)))
+		var resp IntegrationTestResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+		return rec.Code, resp
+	}
+
+	code, resp := post("good")
+	if code != http.StatusOK || !resp.Success || !strings.Contains(resp.Message, "Me (ID acc1)") || !strings.Contains(resp.Message, "example.com") {
+		t.Fatalf("expected success summary, got %d %+v", code, resp)
+	}
+	if code, resp := post("bad"); code != http.StatusBadGateway || resp.Success || !strings.Contains(resp.Message, "Invalid API Token") {
+		t.Fatalf("expected failure for bad token, got %d %+v", code, resp)
 	}
 }

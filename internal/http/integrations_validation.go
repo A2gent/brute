@@ -185,6 +185,8 @@ func defaultIntegrationName(provider string) string {
 		return "AppSignal"
 	case "sentry":
 		return "Sentry"
+	case "cloudflare":
+		return "Cloudflare"
 	case "elevenlabs":
 		return "ElevenLabs"
 	case "perplexity":

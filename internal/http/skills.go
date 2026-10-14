@@ -27,6 +27,7 @@ var integrationToolsByProvider = map[string][]string{
 	"bitbucket":       {"code_review"},
 	"appsignal":       {"appsignal_query"},
 	"sentry":          {"sentry_query"},
+	"cloudflare":      {"cloudflare_query"},
 	"brave_search":    {"brave_search_query"},
 	"elevenlabs":      {"elevenlabs_tts"},
 	"leonardo":        {"leonardo_generate_image"},

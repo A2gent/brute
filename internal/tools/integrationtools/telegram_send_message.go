@@ -27,7 +27,6 @@ type TelegramSendMessageParams struct {
 	Text            string `json:"text"`
 	IntegrationID   string `json:"integration_id,omitempty"`
 	IntegrationName string `json:"integration_name,omitempty"`
-	ChatID          string `json:"chat_id,omitempty"`
 	MessageThreadID int64  `json:"message_thread_id,omitempty"`
 }
 
@@ -64,10 +63,6 @@ func (t *TelegramSendMessageTool) Schema() map[string]interface{} {
 				"type":        "string",
 				"description": "Specific Telegram integration name to use (optional)",
 			},
-			"chat_id": map[string]interface{}{
-				"type":        "string",
-				"description": "Override destination chat ID. Defaults to integration chat_id.",
-			},
 			"message_thread_id": map[string]interface{}{
 				"type":        "integer",
 				"description": "Optional topic/thread ID inside the destination chat",
@@ -97,15 +92,13 @@ func (t *TelegramSendMessageTool) Execute(ctx context.Context, params json.RawMe
 		return &tools.Result{Success: false, Error: "selected telegram integration is missing bot_token"}, nil
 	}
 
-	chatID := strings.TrimSpace(p.ChatID)
-	if chatID == "" {
-		chatID = strings.TrimSpace(integration.Config["chat_id"])
-	}
+	// The destination is always the integration's configured chat; models must not choose it (they invent IDs).
+	chatID := strings.TrimSpace(integration.Config["chat_id"])
 	if chatID == "" {
 		chatID = strings.TrimSpace(integration.Config["default_chat_id"])
 	}
 	if chatID == "" {
-		return &tools.Result{Success: false, Error: "chat_id is required (set integration default_chat_id/chat_id or pass chat_id parameter)"}, nil
+		return &tools.Result{Success: false, Error: "chat_id is required (set integration default_chat_id/chat_id in the Telegram integration settings)"}, nil
 	}
 
 	// Models write Markdown; Telegram shows it raw unless it is converted. If Telegram refuses the formatted

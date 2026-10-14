@@ -23,6 +23,7 @@ func Register(manager *tools.Manager, store storage.Store, clipStore *speechcach
 	manager.Register(NewCodeReviewTool(store))
 	manager.Register(NewAppSignalQueryTool(store))
 	manager.Register(NewSentryQueryTool(store))
+	manager.Register(NewCloudflareQueryTool(store))
 	manager.Register(NewBraveSearchQueryTool(store))
 	manager.Register(NewSTTTool(manager.WorkDir()))
 	manager.Register(NewNotifyWebAppTool())

@@ -287,6 +287,15 @@ func (s *Server) respondIntegrationTest(w http.ResponseWriter, r *http.Request, 
 		s.jsonResponse(w, status, IntegrationTestResponse{Success: ok, Message: message})
 		return
 	}
+	if integration.Provider == "cloudflare" {
+		ok, message := s.testCloudflareIntegration(r.Context(), integration)
+		status := http.StatusOK
+		if !ok {
+			status = http.StatusBadGateway
+		}
+		s.jsonResponse(w, status, IntegrationTestResponse{Success: ok, Message: message})
+		return
+	}
 	if integration.Provider == "blender" {
 		ok, message := s.testBlenderIntegration(r.Context(), integration)
 		status := http.StatusOK

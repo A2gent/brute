@@ -1,4 +1,4 @@
-# 🗡️ A²gent/brute terminal agent
+# Agent² brute agent
 
 [![Go Version](https://img.shields.io/badge/go-1.24+-00ADD8.svg)](https://golang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)

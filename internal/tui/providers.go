@@ -538,9 +538,6 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 				return nil, "", fmt.Errorf("%s requires at least two valid fallback model nodes", normalizedRef)
 			}
 			retries := m.appConfig.LLMRetries
-			if retries <= 0 {
-				retries = fallback.DefaultMaxRetries
-			}
 			return fallback.NewClient(nodes, fallback.WithMaxRetries(retries)), "", nil
 		}
 
@@ -549,9 +546,6 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 			return nil, model, err
 		}
 		retries := m.appConfig.LLMRetries
-		if retries <= 0 {
-			retries = retry.DefaultMaxRetries
-		}
 		return retry.Wrap(client, retry.WithMaxRetries(retries)), model, nil
 	}
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/fallback"
@@ -38,6 +39,7 @@ func (a *Agent) pauseTransition(sess *session.Session, t *session.ProviderTransi
 	t.Error = err.Error()
 	if previousPhase == "continuing" {
 		t.Error = "continuation interrupted: " + t.Error
+		t.TargetOutcome = "failed"
 	}
 	sess.SetStatus(session.StatusPaused)
 	if saveErr := a.saveTransition(sess, t, onEvent); saveErr != nil {
@@ -48,7 +50,8 @@ func (a *Agent) pauseTransition(sess *session.Session, t *session.ProviderTransi
 func (a *Agent) requestFallbackTransition(sess *session.Session, next *fallback.TransitionRequired, onEvent func(Event)) error {
 	if previous := session.CurrentProviderTransition(sess); previous != nil && !previous.Terminal() {
 		previous.Phase = "completed"
-		previous.Error = "target failed; another transition required"
+		previous.TargetOutcome = next.SourceOutcome
+		previous.Error = "target did not respond successfully; another transition required"
 		if err := a.saveTransition(sess, previous, onEvent); err != nil {
 			return err
 		}
@@ -58,6 +61,8 @@ func (a *Agent) requestFallbackTransition(sess *session.Session, next *fallback.
 		return fmt.Errorf("%w: %v", ErrTransitionPaused, err)
 	}
 	t.Reason = next.Reason
+	t.SourceOutcome = next.SourceOutcome
+	t.RetryCount = &next.RetryCount
 	t.FallbackIndex = next.Index
 	if chain, _ := sess.Metadata["provider"].(string); chain != "" {
 		t.ChainProvider = chain
@@ -129,6 +134,10 @@ func (a *Agent) transitionBoundary(ctx context.Context, sess *session.Session, o
 				return a.pauseTransition(sess, t, err, onEvent)
 			}
 			a.activateTransitionSummary(candidate, summary, t.ID)
+			// The summary is produced by the concrete target, never the source.
+			msg := &candidate.Messages[len(sess.Messages)]
+			msg.Provenance = llm.NewProvenance(t.Target.Provider, t.Target.Model)
+			msg.Metadata["llm_provenance"] = map[string]interface{}{"provider": t.Target.Provider, "model": t.Target.Model}
 			a.addTokenUsageMetadata(candidate, usage)
 			t.Compaction.Outcome = "succeeded"
 		}
@@ -165,6 +174,7 @@ func (a *Agent) transitionBoundary(ctx context.Context, sess *session.Session, o
 		}
 		candidate.Metadata["context_window"] = window
 		t.Phase = "ready"
+		t.TargetOutcome = "selected"
 		if err := a.saveTransition(candidate, t, onEvent); err != nil {
 			return a.pauseTransition(sess, t, err, onEvent)
 		}
@@ -189,11 +199,18 @@ func (a *Agent) transitionBoundary(ctx context.Context, sess *session.Session, o
 	return nil
 }
 func (a *Agent) completeTransition(sess *session.Session, onEvent func(Event)) error {
+	return a.finishTransition(sess, "succeeded", onEvent)
+}
+
+// finishTransition closes a continuing transition with the given target outcome,
+// so step-limit finalization does not leave a stale "continuing" state behind.
+func (a *Agent) finishTransition(sess *session.Session, outcome string, onEvent func(Event)) error {
 	t := session.CurrentProviderTransition(sess)
 	if t == nil || t.Phase != "continuing" {
 		return nil
 	}
 	t.Phase = "completed"
+	t.TargetOutcome = outcome
 	return a.saveTransition(sess, t, onEvent)
 }
 func invalidateTransitionState(sess *session.Session) {
@@ -214,6 +231,8 @@ func (a *Agent) activateTransitionSummary(sess *session.Session, summary, id str
 	sess.AddAssistantMessageWithMetadata(summary, nil, map[string]interface{}{messageMetadataCompaction: true, "provider_transition_id": id})
 	for _, msg := range pending {
 		msg.ID = ""
+		// Fresh timestamp keeps the copy after the summary when history is reloaded in time order.
+		msg.Timestamp = time.Time{}
 		sess.AddMessage(msg)
 	}
 	if len(pending) == 0 {

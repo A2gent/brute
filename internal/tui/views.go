@@ -242,34 +242,93 @@ func (m Model) renderEmptySessionView() string {
 	if inputWidth < 20 {
 		inputWidth = m.width
 	}
-
-	artStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#7D56F4")).
-		Bold(true).
-		Width(m.width).
-		Align(lipgloss.Center)
-	inputStyle := lipgloss.NewStyle().
-		Width(m.width).
-		Align(lipgloss.Center)
-
-	parts := []string{
-		artStyle.Render(renderLogo(m.logoFrame)),
-		inputStyle.Render(m.renderInputView(inputWidth)),
-		inputStyle.Render(m.renderActiveAgentLine(inputWidth)),
+	if inputWidth < 1 {
+		inputWidth = 1
 	}
+
+	centerStyle := lipgloss.NewStyle().
+		Width(inputWidth).
+		Align(lipgloss.Center)
+
+	// Hide the cube in short terminals so the input stays on screen.
+	var logoCells [][]string
+	if m.viewport.Height >= logoCanvasHeight+8 {
+		logoCells = renderLogoCells(m.logoFrame)
+	}
+	var parts []string
+	if logoCells != nil {
+		parts = append(parts, centerStyle.Render(renderLogo(m.logoFrame)))
+	}
+	parts = append(parts,
+		centerStyle.Render(m.renderInputView(inputWidth)),
+		centerStyle.Render(m.renderActiveAgentLine(inputWidth)),
+	)
 	if m.showCommandMenu {
-		parts = append(parts, inputStyle.Render(m.renderCommandMenu()))
+		parts = append(parts, centerStyle.Render(m.renderCommandMenu()))
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
-	contentHeight := lipgloss.Height(content)
-	topPad := (m.viewport.Height - contentHeight) / 2
+	contentRows := strings.Split(content, "\n")
+	for len(contentRows) > 0 && contentRows[len(contentRows)-1] == "" {
+		contentRows = contentRows[:len(contentRows)-1]
+	}
+	height := m.viewport.Height
+	if height < 1 {
+		height = 1
+	}
+	width := m.width
+	if width < 1 {
+		width = 1
+	}
+	topPad := (height - len(contentRows)) / 2
 	if topPad < 0 {
 		topPad = 0
 	}
 
-	return lipgloss.NewStyle().
-		Width(m.width).
-		Height(m.viewport.Height).
-		Render(strings.Repeat("\n", topPad) + content)
+	leftPad := (width - inputWidth) / 2
+	if leftPad < 0 {
+		leftPad = 0
+	}
+	contentWidth := inputWidth
+	if contentWidth+leftPad > width {
+		contentWidth = width - leftPad
+	}
+	rightPad := width - leftPad - contentWidth
+	background := renderMatrixBackground(width, height, m.logoFrame)
+	logoLeft := leftPad + max(0, (inputWidth-logoCanvasWidth)/2)
+
+	var out strings.Builder
+	for row := 0; row < height; row++ {
+		if row > 0 {
+			out.WriteByte('\n')
+		}
+		contentRow := row - topPad
+		if contentRow < 0 || contentRow >= len(contentRows) {
+			for _, cell := range background[row] {
+				out.WriteString(cell)
+			}
+			continue
+		}
+		if contentRow < len(logoCells) && logoLeft+logoCanvasWidth <= width {
+			// Composite the cube over the rain so empty canvas cells keep the
+			// same background columns as the rest of the screen.
+			for col, cell := range background[row] {
+				if col >= logoLeft && col < logoLeft+logoCanvasWidth {
+					if logoCell := logoCells[contentRow][col-logoLeft]; logoCell != "" {
+						cell = logoCell
+					}
+				}
+				out.WriteString(cell)
+			}
+			continue
+		}
+		for _, cell := range background[row][:leftPad] {
+			out.WriteString(cell)
+		}
+		out.WriteString(contentRows[contentRow])
+		for _, cell := range background[row][leftPad+contentWidth : leftPad+contentWidth+rightPad] {
+			out.WriteString(cell)
+		}
+	}
+	return out.String()
 }

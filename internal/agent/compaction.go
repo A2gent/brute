@@ -14,7 +14,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, step int) (llm.TokenUsage, bool, error) {
+func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, step int, observers ...func(Event)) (llm.TokenUsage, bool, error) {
 	cfg := a.resolveCompactionConfig()
 	if !cfg.Enabled || sess == nil {
 		return llm.TokenUsage{}, false, nil
@@ -85,7 +85,29 @@ func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, 
 
 	logging.Info("Context compaction starting: session=%s messages_to_summarize=%d", sess.ID, len(messagesToSummarize))
 
+	for _, onEvent := range observers {
+		if onEvent != nil {
+			onEvent(Event{Type: EventProviderTrace, Step: step, Provider: &ProviderTraceEvent{
+				Provider: a.config.Provider, Model: a.config.Model,
+				Phase: "compaction_started", Reason: "Compacting context...",
+			}})
+		}
+	}
 	llmStartedAt := time.Now()
+	outcome := "error"
+	timingRecorded := false
+	recordTiming := func() {
+		if !timingRecorded {
+			// The candidate may be discarded on failure, but its timing must not be.
+			recordAuxiliaryCall(original, "compaction", llmStartedAt, outcome)
+			for _, suffix := range []string{"attempt_count", "total_duration_ms", "last_duration_ms", "last_started_at", "last_outcome"} {
+				key := "compaction_" + suffix
+				sess.Metadata[key] = original.Metadata[key]
+			}
+			timingRecorded = true
+		}
+	}
+	defer recordTiming()
 	response, err := llm.WithProvenance(a.llmClient, a.config.Provider, a.config.Model).Chat(ctx, request)
 	if err != nil {
 		logging.Warn("Context compaction LLM error: %v", err)
@@ -191,7 +213,10 @@ func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, 
 	metadataSetString(sess, metadataProviderSessionCursor, "")
 	metadataSetString(sess, metadataProviderSessionIdentity, "")
 
+	outcome = "success"
+	recordTiming()
 	if err := a.sessionManager.Save(sess); err != nil {
+		metadataSetString(original, "compaction_last_outcome", "save_error")
 		return llm.TokenUsage{}, false, fmt.Errorf("save compacted context: %w", err)
 	}
 

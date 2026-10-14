@@ -11,7 +11,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -96,22 +95,22 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var streamWriteMu sync.Mutex
 	streamWritable := true
-	writeEvent := func(event ChatStreamEvent) bool {
+	encoder := json.NewEncoder(w)
+	stream := newChatStreamFlusher(func(event ChatStreamEvent) bool {
 		s.publishSessionEvent(sessionID, event)
-		streamWriteMu.Lock()
-		defer streamWriteMu.Unlock()
 		if !streamWritable {
 			return false
 		}
-		if err := json.NewEncoder(w).Encode(event); err != nil {
+		if err := encoder.Encode(event); err != nil {
 			streamWritable = false
 			return false
 		}
 		flusher.Flush()
 		return true
-	}
+	}, chatStreamFlushWindow, chatStreamFlushBytes)
+	defer stream.Close()
+	writeEvent := stream.Write
 
 	streamConnected := writeEvent(ChatStreamEvent{Type: "status", Status: string(sess.Status)})
 	var heartbeatDone chan struct{}

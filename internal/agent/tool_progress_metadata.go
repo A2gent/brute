@@ -120,7 +120,9 @@ func pendingToolResultFromProgress(progress tools.ProgressEvent, previous *sessi
 		"name":         result.Name,
 		"content":      result.Content,
 		"is_error":     result.IsError,
-		"metadata":     metadata,
+		// The result below adds stepProgress to metadata; sharing that same map
+		// here would create a cycle and make pending progress impossible to persist.
+		"metadata": cloneInterfaceMap(metadata),
 	}
 	result.Metadata[toolMetadataParallelStepProgress] = stepProgress
 	return result

@@ -431,7 +431,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		return nil, err
 	}
 
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := llm.DoStream(c.httpClient, httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}

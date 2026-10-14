@@ -99,6 +99,7 @@ func (s *Server) sessionSnapshotStreamEvent(sess *session.Session) ChatStreamEve
 	fallbackActiveProvider, fallbackActiveModel := sessionFallbackActiveProviderAndModel(sess)
 	return ChatStreamEvent{
 		Type:                   "session_snapshot",
+		ProviderTransitions:    session.ProviderTransitions(sess),
 		Status:                 string(sess.Status),
 		Messages:               s.messagesToResponse(sess.Messages),
 		RoutedProvider:         routedProvider,

@@ -44,9 +44,12 @@ func (s *Server) runSessionWithoutStreaming(ctx context.Context, sess *session.S
 	}
 	defer release()
 	result := sessionRunResult{}
-	publishEvent := func(event ChatStreamEvent) {
+	stream := newChatStreamFlusher(func(event ChatStreamEvent) bool {
 		s.publishSessionEvent(sess.ID, event)
-	}
+		return true
+	}, chatStreamFlushWindow, chatStreamFlushBytes)
+	defer stream.Close()
+	publishEvent := func(event ChatStreamEvent) { stream.Write(event) }
 	if s.hasDirectAgentTarget(sess) {
 		result.DirectAgent = true
 		chatResp, err := s.runDirectAgentSession(ctx, sess, userMessage, publishEvent)

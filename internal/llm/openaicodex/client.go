@@ -267,7 +267,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		req.Header.Set("ChatGPT-Account-Id", c.accountID)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := llm.DoStream(c.httpClient, req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}

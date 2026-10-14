@@ -112,7 +112,10 @@ func TestHandleChatStreamForwardsProviderDeltasBeforeCompletion(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte(`data: {"choices":[{"index":0,"delta":{"content":"Hel"}}]}
+		// A provider burst must be coalesced before the completion barrier.
+		_, _ = w.Write([]byte(`data: {"choices":[{"index":0,"delta":{"content":"H"}}]}
+
+data: {"choices":[{"index":0,"delta":{"content":"el"}}]}
 
 `))
 		flusher.Flush()

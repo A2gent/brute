@@ -310,7 +310,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := llm.DoStream(c.httpClient, httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}

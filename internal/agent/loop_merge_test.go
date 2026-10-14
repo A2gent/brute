@@ -77,3 +77,41 @@ func TestMergeFreshSessionStateApprovalAuditFreshWins(t *testing.T) {
 		t.Fatalf("in-flight metadata should win for non-audit keys: %#v", inFlight.Metadata["token_usage"])
 	}
 }
+
+func TestMergeFreshLiveStateKeepsNotesBeforeUnsavedTail(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	sm := session.NewManager(store)
+	sess, err := sm.Create("build")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.AddAssistantMessage("tool call", []session.ToolCall{{ID: "call"}})
+	if err := sm.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sm.InjectUserMessage(sess.ID, "in-flight note", nil); err != nil {
+		t.Fatal(err)
+	}
+	sess.AddToolResult([]session.ToolResult{{ToolCallID: "call", Content: "local unsaved result"}})
+	ag := New(Config{}, nil, nil, sm)
+	if !ag.mergeFreshSessionState(sess) {
+		t.Fatal("DB-only note was not merged")
+	}
+	if len(sess.Messages) != 3 || sess.Messages[1].Role != "tool" || sess.Messages[2].Content != "in-flight note" {
+		t.Fatalf("invalid ordering: %#v", sess.Messages)
+	}
+	if ag.mergeFreshSessionState(sess) {
+		t.Fatal("note was merged twice")
+	}
+	if err := sm.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := sm.Get(sess.ID)
+	if err != nil || len(fresh.Messages) != 3 {
+		t.Fatalf("note lost after save: %#v, %v", fresh, err)
+	}
+}

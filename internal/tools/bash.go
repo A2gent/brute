@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -11,8 +12,9 @@ import (
 )
 
 const (
-	defaultBashTimeout = 30 * time.Second
-	maxOutputSize      = 50 * 1024 // code_execution legacy output limit
+	defaultBashTimeout  = 30 * time.Second
+	bashOutputWaitDelay = time.Second
+	maxOutputSize       = 50 * 1024 // code_execution legacy output limit
 )
 
 // BashTool executes shell commands
@@ -39,7 +41,10 @@ func (t *BashTool) Name() string {
 func (t *BashTool) Description() string {
 	return `Execute shell commands in the project environment.
 Use this for running terminal commands like git, npm, make, etc.
-Commands run in the project's working directory by default.`
+Commands run in the project's working directory by default.
+Timeouts are in milliseconds and terminate the command and its child processes.
+For long-lived preview/dev servers, launch in the background with stdin from /dev/null
+and stdout/stderr redirected to a log file, and record the PID for cleanup.`
 }
 
 func (t *BashTool) Schema() map[string]interface{} {
@@ -56,7 +61,7 @@ func (t *BashTool) Schema() map[string]interface{} {
 			},
 			"timeout": map[string]interface{}{
 				"type":        "integer",
-				"description": "Timeout in milliseconds (default: 120000)",
+				"description": "Timeout in milliseconds (default: 30000). On timeout, the command and its child processes are terminated.",
 			},
 		},
 		"required": []string{"command"},
@@ -92,12 +97,22 @@ func (t *BashTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 	// Execute command
 	cmd := exec.CommandContext(ctx, "bash", "-c", p.Command)
 	cmd.Dir = workDir
+	configureBashProcess(cmd)
+	// A child can inherit the output pipes even after Bash exits, or escape its
+	// process group. Bound pipe draining so neither case can stall the agent.
+	cmd.WaitDelay = bashOutputWaitDelay
+	cmd.Cancel = func() error { return killBashProcess(cmd) }
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
+	if err != nil {
+		// Bash may have exited before cancellation, leaving children holding its
+		// pipes open. Clean up the group when the bounded pipe wait returns too.
+		_ = killBashProcess(cmd)
+	}
 
 	// Combine output
 	output := stdout.String()
@@ -125,10 +140,21 @@ func (t *BashTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 	}
 
 	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return &Result{Success: false, Error: "command canceled", Output: output, Metadata: metadata}, nil
+		}
 		if ctx.Err() == context.DeadlineExceeded {
 			return &Result{
 				Success:  false,
 				Error:    fmt.Sprintf("command timed out after %v", timeout),
+				Output:   output,
+				Metadata: metadata,
+			}, nil
+		}
+		if errors.Is(err, exec.ErrWaitDelay) {
+			return &Result{
+				Success:  false,
+				Error:    "command exited but child processes kept output pipes open; launch background servers with stdin from /dev/null and stdout/stderr redirected to a log file",
 				Output:   output,
 				Metadata: metadata,
 			}, nil

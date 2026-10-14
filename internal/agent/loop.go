@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/A2gent/brute/internal/contextcompress"
@@ -76,7 +75,7 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		logging.Debug("Agent step %d/%d", step, a.config.MaxSteps)
 
 		// Compact conversation before the next normal step once threshold is reached.
-		compactionUsage, compacted, err := a.maybeCompactContext(ctx, sess, step)
+		compactionUsage, compacted, err := a.maybeCompactContext(ctx, sess, step, onEvent)
 		if err != nil {
 			var next *fallback.TransitionRequired
 			if errors.As(err, &next) {
@@ -255,19 +254,10 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			onEvent(Event{Type: EventToolExecuting, Step: step, ToolCalls: toolCallEvents})
 		}
 		toolCtx := ctx
-		var progressSaveMu sync.Mutex
+		var progressPersistence *toolProgressPersistence
 		if onEvent != nil {
+			progressPersistence = a.startToolProgressPersistence(sess, toolProgressSaveInterval)
 			toolCtx = tools.WithProgressCallback(ctx, func(progress tools.ProgressEvent) {
-				progressSaveMu.Lock()
-				a.mergeFreshSessionState(sess)
-				if recordPendingToolProgress(sess, progress) {
-					sess.UpdatedAt = time.Now()
-					if err := a.sessionManager.Save(sess); err != nil {
-						logging.Warn("Failed to persist tool progress for session %s: %v", sess.ID, err)
-					}
-				}
-				progressSaveMu.Unlock()
-
 				onEvent(Event{
 					Type: EventToolProgress,
 					Step: step,
@@ -279,9 +269,13 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 						Metadata:   progress.Metadata,
 					},
 				})
+				progressPersistence.record(progress)
 			})
 		}
 		toolResults := a.toolManager.ExecuteParallel(toolCtx, response.ToolCalls)
+		if progressPersistence != nil {
+			progressPersistence.finish() // Final flush and join before modifying the live session.
+		}
 		for i, tr := range toolResults {
 			toolResults[i] = a.compressor.AdmitToolResultWithGate(ctx, sess, tr, a.config.ToolResultMaxTokens, a.config.RelevanceGate)
 		}
@@ -308,20 +302,25 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		// Merge in any user notes that were injected while tools were running
 		// before saving this step, otherwise the agent's in-memory transcript
 		// could overwrite them.
-		a.mergeFreshSessionState(sess)
+		freshSess, _ := a.mergeFreshSessionLiveState(sess)
 
-		// Reload session to check if status was changed by tools (e.g., question tool)
-		// Also sync any fields that tools may have updated (e.g., task_progress)
-		// IMPORTANT: Do this BEFORE Save() so we can detect status changes made by tools
-		freshSess, reloadErr := a.sessionManager.Get(sess.ID)
-		if reloadErr == nil {
+		// The same lightweight snapshot detects tool-owned status/task_progress.
+		// IMPORTANT: inspect it BEFORE Save() can overwrite a parking status.
+		if freshSess != nil {
 			if freshSess.Status == session.StatusInputRequired || freshSess.Status == session.StatusWaitingExternal || hasExternalWaitResult(sessionResults) {
 				// Parking tools own the fresh transcript/status, but admission owns
 				// new originals. Persist their union before returning to the caller.
-				contextcompress.MergeSessionEntries(freshSess, sess)
-				if err := a.sessionManager.Save(freshSess); err != nil {
+				// Only parking needs the full tool-owned transcript for persistence:
+				// a partial live-state session must never be passed to Save().
+				parked, err := a.sessionManager.Get(sess.ID)
+				if err != nil {
+					return "", totalUsage, fmt.Errorf("reload parked transcript: %w", err)
+				}
+				contextcompress.MergeSessionEntries(parked, sess)
+				if err := a.sessionManager.Save(parked); err != nil {
 					return "", totalUsage, fmt.Errorf("persist admitted originals: %w", err)
 				}
+				freshSess = parked
 			}
 			// Sync task_progress from DB (may have been updated by session_task_progress tool)
 			sess.TaskProgress = freshSess.TaskProgress
@@ -386,6 +385,7 @@ func (a *Agent) finalizeAfterStepLimit(ctx context.Context, sess *session.Sessio
 			}),
 			runtimeAcc,
 		))
+		a.finishTransition(sess, "failed", onEvent)
 		sess.SetStatus(session.StatusFailed)
 		a.sessionManager.Save(sess)
 		return "", llm.TokenUsage{}, errors.New(message)
@@ -422,6 +422,7 @@ func (a *Agent) finalizeAfterStepLimit(ctx context.Context, sess *session.Sessio
 		message := fmt.Sprintf("Agent stopped after reaching maximum step limit (%d), and the finalization request attempted to call tools instead of producing a final answer.", a.config.MaxSteps)
 		metadata["finalization_tool_call_count"] = len(response.ToolCalls)
 		sess.AddAssistantMessageWithMetadata(message, nil, metadata)
+		a.finishTransition(sess, "failed", onEvent)
 		sess.SetStatus(session.StatusFailed)
 		a.sessionManager.Save(sess)
 		return "", usage, errors.New(message)
@@ -432,12 +433,14 @@ func (a *Agent) finalizeAfterStepLimit(ctx context.Context, sess *session.Sessio
 		message := fmt.Sprintf("Agent stopped after reaching maximum step limit (%d), and the finalization request returned an empty answer.", a.config.MaxSteps)
 		metadata["empty_final_response"] = true
 		sess.AddAssistantMessageWithMetadata(message, nil, metadata)
+		a.finishTransition(sess, "failed", onEvent)
 		sess.SetStatus(session.StatusFailed)
 		a.sessionManager.Save(sess)
 		return "", usage, errors.New(message)
 	}
 
 	sess.AddAssistantMessageWithImagesAndMetadata(finalContent, llmImagesToSession(response.Images), nil, metadata)
+	a.finishTransition(sess, "succeeded", onEvent)
 	sess.SetStatus(session.StatusCompleted)
 	a.sessionManager.Save(sess)
 	if onEvent != nil {
@@ -495,105 +498,6 @@ func (a *Agent) cleanupIncompleteToolCalls(sess *session.Session) {
 		}
 	}
 }
-func (a *Agent) mergeFreshSessionState(sess *session.Session) bool {
-	if a == nil || a.sessionManager == nil || sess == nil || sess.ID == "" {
-		return false
-	}
-	fresh, err := a.sessionManager.Get(sess.ID)
-	if err != nil || fresh == nil {
-		return false
-	}
-
-	changed := false
-	if len(fresh.Messages) > len(sess.Messages) && sessionMessagePrefixMatches(fresh.Messages, sess.Messages) {
-		sess.Messages = append(sess.Messages, fresh.Messages[len(sess.Messages):]...)
-		changed = true
-	} else {
-		// WHY: users can inject notes while an LLM call or tool batch is running. The
-		// active agent has an older in-memory transcript; without merging these DB-only
-		// messages before Save(), the storage layer treats them as stale and deletes
-		// them. Append only injected user notes here so we preserve the valid
-		// assistant-tool-result ordering while still making the user's note visible to
-		// the next LLM turn.
-		existing := make(map[string]struct{}, len(sess.Messages))
-		for _, msg := range sess.Messages {
-			if msg.ID != "" {
-				existing[msg.ID] = struct{}{}
-			}
-		}
-		for _, msg := range fresh.Messages {
-			if !isInjectedUserMessage(msg) {
-				continue
-			}
-			if msg.ID != "" {
-				if _, ok := existing[msg.ID]; ok {
-					continue
-				}
-				existing[msg.ID] = struct{}{}
-			}
-			sess.Messages = append(sess.Messages, msg)
-			changed = true
-		}
-	}
-	if fresh.Metadata != nil {
-		contextcompress.MergeSessionEntries(fresh, sess)
-		merged := make(map[string]interface{}, len(fresh.Metadata)+len(sess.Metadata))
-		for key, value := range fresh.Metadata {
-			merged[key] = value
-		}
-		// Preserve metadata produced by the in-flight turn (for example token
-		// estimates) because it may not have been saved when we reload DB-only
-		// injected messages. Approval audit is written by the HTTP server while
-		// the agent turn is in flight, so the fresh DB copy must win.
-		for key, value := range sess.Metadata {
-			if key == "approval_audit" {
-				continue
-			}
-			merged[key] = value
-		}
-		sess.Metadata = merged
-		contextcompress.MergeSessionEntries(sess, fresh)
-	}
-	sess.TaskProgress = fresh.TaskProgress
-	if fresh.Status == session.StatusInputRequired || fresh.Status == session.StatusWaitingExternal {
-		sess.Status = fresh.Status
-	}
-	if fresh.UpdatedAt.After(sess.UpdatedAt) {
-		sess.UpdatedAt = fresh.UpdatedAt
-	}
-	return changed
-}
-
-func isInjectedUserMessage(msg session.Message) bool {
-	if msg.Role != "user" || msg.Metadata == nil {
-		return false
-	}
-	raw, ok := msg.Metadata["injected_during_run"]
-	if !ok {
-		return false
-	}
-	switch value := raw.(type) {
-	case bool:
-		return value
-	case string:
-		return strings.EqualFold(strings.TrimSpace(value), "true")
-	default:
-		return false
-	}
-}
-
-func sessionMessagePrefixMatches(full []session.Message, prefix []session.Message) bool {
-	if len(prefix) > len(full) {
-		return false
-	}
-	for i := range prefix {
-		if full[i].ID == "" || prefix[i].ID == "" || full[i].ID != prefix[i].ID {
-			return false
-		}
-	}
-	return true
-}
-
 func hasExternalWaitResult(results []session.ToolResult) bool {
 	for _, result := range results {
 		if result.Metadata == nil {
@@ -631,7 +535,11 @@ func (a *Agent) callLLM(ctx context.Context, request *llm.ChatRequest, step int,
 		return response, acc, err
 	}
 
+	started := time.Now()
 	response, err := streamClient.ChatStream(ctx, request, func(ev llm.StreamEvent) error {
+		if acc.ttftMS < 0 && isFirstTokenEvent(ev) {
+			acc.ttftMS = time.Since(started).Milliseconds()
+		}
 		if ev.Provenance != nil && llm.IsResponseProgressEvent(ev) {
 			acc.provenance = ev.Provenance
 		}
@@ -685,6 +593,17 @@ func (a *Agent) callLLM(ctx context.Context, request *llm.ChatRequest, step int,
 		acc.provenance = response.Provenance
 	}
 	return response, acc, err
+}
+
+// isFirstTokenEvent excludes traces, usage, reasoning and completion so TTFT reflects visible output.
+func isFirstTokenEvent(ev llm.StreamEvent) bool {
+	switch ev.Type {
+	case llm.StreamEventContentDelta:
+		return ev.ContentDelta != ""
+	case llm.StreamEventToolCallDelta, llm.StreamEventToolStarted:
+		return true
+	}
+	return false
 }
 
 func isLLMRuntimeForwardEvent(ev llm.StreamEvent) bool {

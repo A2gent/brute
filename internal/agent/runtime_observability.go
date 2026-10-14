@@ -24,6 +24,8 @@ type runtimeObservabilityAccumulator struct {
 	warningKeys        map[string]struct{}
 	tools              map[string]map[string]interface{}
 	nativeRuntime      bool
+	// ttftMS is the time to the first assistant content or tool delta; -1 until seen.
+	ttftMS int64
 	// textUnits counts UTF-16 code units of assistant text seen so far, so the
 	// UI can place each tool call at the point in the text where it started.
 	textUnits int
@@ -32,6 +34,7 @@ type runtimeObservabilityAccumulator struct {
 func newRuntimeObservabilityAccumulator(turnID string, persistReasoning bool) *runtimeObservabilityAccumulator {
 	return &runtimeObservabilityAccumulator{
 		turnID:           turnID,
+		ttftMS:           -1,
 		persistReasoning: persistReasoning,
 		warningKeys:      make(map[string]struct{}),
 		tools:            make(map[string]map[string]interface{}),
@@ -166,6 +169,10 @@ func mergeRuntimeMetadata(base map[string]interface{}, acc *runtimeObservability
 		merged[key] = value
 	}
 	for key, value := range runtime {
+		// A provider-measured TTFT is more accurate than the agent-side estimate.
+		if _, exists := base[key]; exists && key == "llm_ttft_ms" {
+			continue
+		}
 		merged[key] = value
 	}
 	return merged
@@ -174,6 +181,9 @@ func mergeRuntimeMetadata(base map[string]interface{}, acc *runtimeObservability
 func (a *runtimeObservabilityAccumulator) metadata() map[string]interface{} {
 	md := map[string]interface{}{
 		"runtime_turn_id": a.turnID,
+	}
+	if a.ttftMS >= 0 {
+		md["llm_ttft_ms"] = a.ttftMS
 	}
 	if a.provenance != nil {
 		md["llm_provenance"] = *a.provenance

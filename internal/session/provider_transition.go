@@ -33,7 +33,18 @@ type TransitionCompaction struct {
 	AfterEstimate  int               `json:"after_estimate,omitempty"`
 	TargetWindow   int               `json:"target_window,omitempty"`
 }
+
+// Timeline anchors the notice in the archived transcript, not in LLM messages.
+type TransitionTimeline struct {
+	AfterMessageID string `json:"after_message_id"`
+	MessageCount   int    `json:"message_count"`
+	Sequence       int    `json:"sequence"`
+}
 type ProviderTransition struct {
+	Timeline        *TransitionTimeline  `json:"timeline,omitempty"`
+	SourceOutcome   string               `json:"source_outcome,omitempty"`
+	TargetOutcome   string               `json:"target_outcome,omitempty"`
+	RetryCount      *int                 `json:"retry_count,omitempty"`
 	Version         int                  `json:"version"`
 	ID              string               `json:"id"`
 	Source          ProviderEndpoint     `json:"source"`
@@ -123,12 +134,18 @@ func PutProviderTransition(sess *Session, t *ProviderTransition) {
 	found := false
 	for i := range ts {
 		if ts[i].ID == t.ID {
+			t.Timeline = ts[i].Timeline
 			ts[i] = *t
 			found = true
 			break
 		}
 	}
 	if !found {
+		after := ""
+		if len(sess.Messages) > 0 {
+			after = sess.Messages[len(sess.Messages)-1].ID
+		}
+		t.Timeline = &TransitionTimeline{AfterMessageID: after, MessageCount: len(sess.Messages), Sequence: len(ts) + 1}
 		ts = append(ts, *t)
 	}
 	if sess.Metadata == nil {

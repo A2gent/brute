@@ -122,9 +122,6 @@ func (s *Scheduler) createLLMClient(providerType config.ProviderType, model stri
 		return nil, err
 	}
 	retries := s.config.LLMRetries
-	if retries <= 0 {
-		retries = retry.DefaultMaxRetries
-	}
 	return retry.Wrap(client, retry.WithMaxRetries(retries)), nil
 }
 
@@ -306,9 +303,6 @@ func (s *Scheduler) createFallbackChainClient(providerRef config.ProviderType, w
 		})
 	}
 	retries := s.config.LLMRetries
-	if retries <= 0 {
-		retries = fallback.DefaultMaxRetries
-	}
 	return fallback.NewClient(nodes, fallback.WithMaxRetries(retries)), nil
 }
 

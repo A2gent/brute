@@ -72,7 +72,7 @@ func (r *flushRecorder) waitFor(needle string, timeout time.Duration) bool {
 }
 
 func TestSessionEventSubscriptionReceivesPublishedEvents(t *testing.T) {
-	s := &Server{sessionEventSubs: make(map[string]map[chan ChatStreamEvent]struct{})}
+	s := &Server{sessionEventSubs: make(map[string]map[chan ChatStreamEvent]*sessionEventSubscription)}
 	events, unsubscribe := s.SubscribeSessionEvents("session-1")
 	defer unsubscribe()
 
@@ -89,7 +89,7 @@ func TestSessionEventSubscriptionReceivesPublishedEvents(t *testing.T) {
 }
 
 func TestSessionEventSubscriptionIgnoresOtherSessionsAndHeartbeats(t *testing.T) {
-	s := &Server{sessionEventSubs: make(map[string]map[chan ChatStreamEvent]struct{})}
+	s := &Server{sessionEventSubs: make(map[string]map[chan ChatStreamEvent]*sessionEventSubscription)}
 	events, unsubscribe := s.SubscribeSessionEvents("session-1")
 	defer unsubscribe()
 
@@ -174,7 +174,7 @@ func TestHandleSessionEventsReplaysSnapshotAndPublishedEvents(t *testing.T) {
 }
 
 func TestSubscribeSessionEventsReplaysLiveTurn(t *testing.T) {
-	s := &Server{sessionEventSubs: make(map[string]map[chan ChatStreamEvent]struct{})}
+	s := &Server{sessionEventSubs: make(map[string]map[chan ChatStreamEvent]*sessionEventSubscription)}
 	s.publishSessionEvent("s1", ChatStreamEvent{Type: "assistant_delta", TurnID: "t1", Delta: "he"})
 	s.publishSessionEvent("s1", ChatStreamEvent{Type: "assistant_delta", TurnID: "t1", Delta: "llo"})
 	s.publishSessionEvent("s1", ChatStreamEvent{Type: "tool_started", TurnID: "t1"})

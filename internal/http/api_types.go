@@ -196,6 +196,7 @@ type ChatResponse struct {
 }
 
 type ChatStreamEvent struct {
+	ProviderTransitions    []session.ProviderTransition `json:"provider_transitions,omitempty"`
 	Transition             *session.ProviderTransition  `json:"transition,omitempty"`
 	Provenance             *llm.Provenance              `json:"provenance,omitempty"`
 	Type                   string                       `json:"type"`

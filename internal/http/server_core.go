@@ -57,8 +57,8 @@ type Server struct {
 	browserSessionToolsMu    sync.Mutex
 	browserSessionTools      map[string]map[*integrationtools.BrowserChromeTool]struct{}
 	sessionEventsMu          sync.Mutex
-	sessionEventSubs         map[string]map[chan ChatStreamEvent]struct{}
-	liveTurnEvents           map[string][]ChatStreamEvent // guarded by sessionEventsMu
+	sessionEventSubs         map[string]map[chan ChatStreamEvent]*sessionEventSubscription
+	liveTurnEvents           map[string][]*bufferedStreamEvent // guarded by sessionEventsMu
 	sessionCatalogMu         sync.Mutex
 	sessionCatalogSubs       map[chan SessionCatalogEvent]string
 	serialQueueMu            sync.Mutex
@@ -125,7 +125,7 @@ func NewServer(
 		speechClips:            speechClips,
 		runParentCtx:           context.Background(),
 		activeRuns:             make(map[string]map[string]context.CancelFunc),
-		sessionEventSubs:       make(map[string]map[chan ChatStreamEvent]struct{}),
+		sessionEventSubs:       make(map[string]map[chan ChatStreamEvent]*sessionEventSubscription),
 		sessionCatalogSubs:     make(map[chan SessionCatalogEvent]string),
 		serialQueueWorkers:     make(map[string]struct{}),
 		chromeExtensionBridge:  newChromeExtensionBridge(),

@@ -213,9 +213,6 @@ func (s *Server) createLLMClient(providerType config.ProviderType, model string,
 		return nil, err
 	}
 	retries := s.config.LLMRetries
-	if retries <= 0 {
-		retries = retry.DefaultMaxRetries
-	}
 	return retry.Wrap(client, retry.WithMaxRetries(retries)), nil
 }
 
@@ -392,9 +389,6 @@ func (s *Server) createFallbackChainClient(providerRef config.ProviderType, sess
 		})
 	}
 	retries := s.config.LLMRetries
-	if retries <= 0 {
-		retries = fallback.DefaultMaxRetries
-	}
 	start := sessionFallbackStartIndex(sess, providerRef)
 	opts := []fallback.ClientOption{
 		fallback.WithMaxRetries(retries),

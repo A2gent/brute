@@ -48,6 +48,7 @@ func (s *SQLiteStore) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_sessions_project_created ON sessions(project_id, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_session_timestamp ON messages(session_id, timestamp)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_injected_user ON messages(session_id, timestamp) WHERE ` + injectedUserMessageSQL,
 		// Recurring jobs table
 		`CREATE TABLE IF NOT EXISTS recurring_jobs (
 				id TEXT PRIMARY KEY,

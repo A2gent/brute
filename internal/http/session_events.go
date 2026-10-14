@@ -1,8 +1,5 @@
 package http
 
-// maxLiveTurnEvents bounds the replay buffer of a single in-flight LLM turn.
-const maxLiveTurnEvents = 2000
-
 // isLiveTurnEvent reports whether an event carries in-flight turn content that is
 // not persisted until the turn ends (streamed text and native runtime tool events).
 func isLiveTurnEvent(event ChatStreamEvent) bool {
@@ -32,18 +29,17 @@ func (s *Server) bufferLiveTurnEvent(sessionID string, event ChatStreamEvent) {
 		return
 	}
 	if s.liveTurnEvents == nil {
-		s.liveTurnEvents = make(map[string][]ChatStreamEvent)
+		s.liveTurnEvents = make(map[string][]*bufferedStreamEvent)
 	}
 	buf := s.liveTurnEvents[sessionID]
-	if n := len(buf); n > 0 && (event.Type == "assistant_delta" || event.Type == "reasoning_delta") &&
-		buf[n-1].Type == event.Type && buf[n-1].TurnID == event.TurnID {
-		buf[n-1].Delta += event.Delta
+	if n := len(buf); n > 0 && canMergeTextDelta(buf[n-1].event, event) {
+		buf[n-1].text.WriteString(event.Delta)
 		return
 	}
-	if len(buf) >= maxLiveTurnEvents {
-		return
-	}
-	s.liveTurnEvents[sessionID] = append(buf, event)
+	// Keep the complete unpersisted turn; truncation here cannot be recovered by
+	// fetching the persisted snapshot. Adjacent text is compacted above and the
+	// entire replay is released at the persistence barrier.
+	s.liveTurnEvents[sessionID] = append(buf, newBufferedStreamEvent(event))
 }
 
 func (s *Server) SubscribeSessionEvents(sessionID string) (<-chan ChatStreamEvent, func()) {
@@ -54,51 +50,55 @@ func (s *Server) SubscribeSessionEvents(sessionID string) (<-chan ChatStreamEven
 // the in-flight turn, skipping turns already present in the persisted snapshot
 // (persistedTurns) to avoid duplicating their text.
 func (s *Server) subscribeSessionEventsWithReplay(sessionID string, persistedTurns map[string]bool) (<-chan ChatStreamEvent, func()) {
-	events := make(chan ChatStreamEvent, 128)
 	if s == nil || sessionID == "" {
+		events := make(chan ChatStreamEvent)
 		close(events)
 		return events, func() {}
 	}
+	sub := newSessionEventSubscription()
 
 	s.sessionEventsMu.Lock()
 	for _, ev := range s.liveTurnEvents[sessionID] {
-		if persistedTurns[ev.TurnID] {
+		if persistedTurns[ev.event.TurnID] {
 			continue
 		}
-		select {
-		case events <- ev:
-		default:
-		}
+		sub.enqueue(ev.snapshot())
 	}
 	if s.sessionEventSubs == nil {
-		s.sessionEventSubs = make(map[string]map[chan ChatStreamEvent]struct{})
+		s.sessionEventSubs = make(map[string]map[chan ChatStreamEvent]*sessionEventSubscription)
 	}
 	subs := s.sessionEventSubs[sessionID]
 	if subs == nil {
-		subs = make(map[chan ChatStreamEvent]struct{})
+		subs = make(map[chan ChatStreamEvent]*sessionEventSubscription)
 		s.sessionEventSubs[sessionID] = subs
 	}
-	subs[events] = struct{}{}
+	subs[sub.events] = sub
 	s.sessionEventsMu.Unlock()
 
 	unsubscribe := func() {
 		s.sessionEventsMu.Lock()
-		defer s.sessionEventsMu.Unlock()
 		subs := s.sessionEventSubs[sessionID]
 		if subs == nil {
+			s.sessionEventsMu.Unlock()
 			return
 		}
-		if _, ok := subs[events]; !ok {
+		if _, ok := subs[sub.events]; !ok {
+			s.sessionEventsMu.Unlock()
 			return
 		}
-		delete(subs, events)
-		close(events)
+		delete(subs, sub.events)
+		close(sub.stop)
 		if len(subs) == 0 {
 			delete(s.sessionEventSubs, sessionID)
 		}
+		s.sessionEventsMu.Unlock()
+		<-sub.done
+		sub.mu.Lock()
+		sub.pending = nil
+		sub.mu.Unlock()
 	}
 
-	return events, unsubscribe
+	return sub.events, unsubscribe
 }
 
 func (s *Server) publishSessionEvent(sessionID string, event ChatStreamEvent) {
@@ -109,10 +109,7 @@ func (s *Server) publishSessionEvent(sessionID string, event ChatStreamEvent) {
 	s.sessionEventsMu.Lock()
 	defer s.sessionEventsMu.Unlock()
 	s.bufferLiveTurnEvent(sessionID, event)
-	for ch := range s.sessionEventSubs[sessionID] {
-		select {
-		case ch <- event:
-		default:
-		}
+	for _, sub := range s.sessionEventSubs[sessionID] {
+		sub.enqueue(event)
 	}
 }

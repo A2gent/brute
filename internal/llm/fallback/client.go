@@ -111,7 +111,7 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 			return nil, err
 		}
 		if skip, reason := c.shouldSkipNode(ctx, node); skip {
-			if err := c.boundary(ctx, i, reason); err != nil {
+			if err := c.boundary(ctx, i, reason, "skipped_usage_limit", 0); err != nil {
 				return nil, err
 			}
 			failures = append(failures, formatSkippedFailure(node.Name, reason))
@@ -120,7 +120,9 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 		}
 		nodeReq := cloneRequestForNode(request, node)
 		var lastErr error
+		attempts := 0
 		for attempt := 0; attempt <= c.maxRetries; attempt++ {
+			attempts = attempt + 1
 			if attempt > 0 {
 				logging.Info("Retrying provider %s (attempt %d/%d)", node.Name, attempt+1, c.maxRetries+1)
 				if err := sleepWithContext(ctx, retryBackoff(attempt)); err != nil {
@@ -150,7 +152,7 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 		if !isFallbackableError(ctx, lastErr) {
 			return nil, fmt.Errorf("%s failed: %w", node.Name, lastErr)
 		}
-		if err := c.boundary(ctx, i, lastErr.Error()); err != nil {
+		if err := c.boundary(ctx, i, lastErr.Error(), "failed", attempts); err != nil {
 			return nil, err
 		}
 		failures = append(failures, fmt.Sprintf("%s: %v", node.Name, lastErr))
@@ -195,7 +197,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 				FallbackTo:    nextNode,
 				FallbackModel: nextModel,
 			})
-			if err := c.boundary(ctx, i, reason); err != nil {
+			if err := c.boundary(ctx, i, reason, "skipped_usage_limit", 0); err != nil {
 				return nil, err
 			}
 			failures = append(failures, formatSkippedFailure(node.Name, reason))
@@ -215,7 +217,9 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		})
 
 		var lastErr error
+		attempts := 0
 		for attempt := 0; attempt <= c.maxRetries; attempt++ {
+			attempts = attempt + 1
 			if attempt > 0 {
 				logging.Info("Retrying provider %s (attempt %d/%d)", node.Name, attempt+1, c.maxRetries+1)
 				retryReason := ""
@@ -396,7 +400,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		if !isFallbackableError(ctx, lastErr) {
 			return nil, fmt.Errorf("%s failed: %w", node.Name, lastErr)
 		}
-		if err := c.boundary(ctx, i, lastErr.Error()); err != nil {
+		if err := c.boundary(ctx, i, lastErr.Error(), "failed", attempts); err != nil {
 			return nil, err
 		}
 		failures = append(failures, fmt.Sprintf("%s: %v", node.Name, lastErr))
@@ -411,7 +415,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 			Type:          llm.StreamEventProviderTrace,
 			Provider:      node.Name,
 			Model:         strings.TrimSpace(node.Model),
-			Attempt:       c.maxRetries + 1,
+			Attempt:       attempts,
 			MaxAttempts:   c.maxRetries + 1,
 			NodeIndex:     i + 1,
 			TotalNodes:    len(c.nodes),

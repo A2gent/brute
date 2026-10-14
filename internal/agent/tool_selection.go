@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -17,7 +18,7 @@ const (
 	// Absent means "all tools" (feature off or legacy session).
 	metadataToolGroups        = "tool_groups"
 	defaultToolGroupThreshold = 0.3
-	toolGroupSelectionTimeout = 15 * time.Second
+	toolGroupSelectionTimeout = 3 * time.Second
 )
 
 // ToolSelector enables Jev-based tool-group selection. Nil disables it.
@@ -56,8 +57,16 @@ func (a *Agent) ensureToolGroups(ctx context.Context, sess *session.Session) {
 			threshold = defaultToolGroupThreshold
 		}
 		selectCtx, cancel := context.WithTimeout(ctx, toolGroupSelectionTimeout)
+		started := time.Now()
 		selected, err := tools.SelectToolGroups(selectCtx, selector.Client, prompt, threshold)
 		cancel()
+		outcome := "success"
+		if errors.Is(err, context.DeadlineExceeded) {
+			outcome = "timeout"
+		} else if err != nil {
+			outcome = "error"
+		}
+		recordAuxiliaryCall(sess, "tool_selection", started, outcome)
 		if err != nil {
 			logging.Warn("Tool group selection failed for session %s, enabling all tools: %v", sess.ID, err)
 		} else {

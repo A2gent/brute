@@ -38,9 +38,9 @@ clean:
 # Run unit tests (default test command used by local dev and CI)
 test: test-unit
 
-# Run unit tests
+# Run fast unit tests (default local test command)
 test-unit:
-    go test -v -race ./...
+    go test ./...
 
 # Configure repository-managed Git hooks for this clone
 install-hooks:

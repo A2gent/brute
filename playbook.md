@@ -1,3 +1,4 @@
+- Exact string replacements fail if they contain even one whitespace character not present in the target. Re-read the fragment and copy it verbatim, or use a line-range edit.
 - Before delegating edits, check the agent workspace mount mode: read-only agents can review or propose patches but cannot implement them. Use a writable coding agent or apply the reviewed patch locally.
 - Scope file discovery to the component repository and verify files/recipes exist before reading them; this workspace root is not a Git repository.
 - Discover component repositories and source filenames before Git commands or reads; the workspace root is not a Git worktree and tool interfaces live in `internal/tools/manager.go`, not `tool.go`. Verify delegated compression claims against actual request construction and nested tool outputs.

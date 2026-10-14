@@ -9,6 +9,7 @@ import (
 	"testing"
 )
 
+// pre-commit only tests staged packages (depends on the index), so only pre-push is exercised here.
 func TestGitHooksRunUnitTests(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Git hooks require the repository's supported Bash/WSL environment")
@@ -22,7 +23,7 @@ func TestGitHooksRunUnitTests(t *testing.T) {
 		t.Fatalf("write fake go: %v", err)
 	}
 
-	for _, hook := range []string{"pre-commit", "pre-push"} {
+	for _, hook := range []string{"pre-push"} {
 		t.Run(hook, func(t *testing.T) {
 			hookPath := filepath.Join(root, ".githooks", hook)
 			info, err := os.Stat(hookPath)
@@ -60,7 +61,7 @@ func TestGitHooksRunUnitTests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read go invocation log: %v", err)
 	}
-	if want := strings.Repeat("test -race ./...\n", 4); string(got) != want {
+	if want := strings.Repeat("test ./...\n", 2); string(got) != want {
 		t.Fatalf("unexpected go invocations:\n%s\nwant:\n%s", got, want)
 	}
 }

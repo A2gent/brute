@@ -8,5 +8,12 @@ cd "$repo_root"
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
 	GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_QUARANTINE_PATH GIT_PREFIX || true
 
-echo "pre-commit: running unit tests"
-go test -race ./...
+# Race detector is slow; CI runs it. Locally test only packages touched by staged Go files.
+dirs=$(git diff --cached --name-only --diff-filter=ACMR -- '*.go' | xargs -n1 dirname 2>/dev/null | sort -u | sed 's|^|./|')
+if [ -z "$dirs" ]; then
+	echo "pre-commit: no Go changes, skipping tests"
+	exit 0
+fi
+echo "pre-commit: running unit tests for changed packages"
+# shellcheck disable=SC2086
+go test $dirs

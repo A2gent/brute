@@ -300,8 +300,9 @@ func DefaultConfig() *Config {
 	workDir, _ := os.Getwd()
 
 	return &Config{
+		// The router picks a provider/model per request; DefaultModel is only a fallback.
 		DefaultModel:   "kimi-k2.5",
-		ActiveProvider: string(ProviderKimi),
+		ActiveProvider: string(ProviderAutoRouter),
 		// Complex coding runs routinely exceed the old 50-step budget.
 		MaxSteps:    100,
 		Temperature: 0.0,

@@ -253,7 +253,7 @@ func (m Model) renderEmptySessionView() string {
 		Align(lipgloss.Center)
 
 	parts := []string{
-		artStyle.Render(asciiArt),
+		artStyle.Render(renderLogo(m.logoFrame)),
 		inputStyle.Render(m.renderInputView(inputWidth)),
 		inputStyle.Render(m.renderActiveAgentLine(inputWidth)),
 	}

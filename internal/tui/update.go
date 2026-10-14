@@ -67,6 +67,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m, tickCmds = m.updateTick()
 		cmds = append(cmds, tickCmds...)
 
+	case logoTickMsg:
+		m.logoFrame++
+		cmds = append(cmds, logoTickCmd())
+
 	case memoryUpdateMsg:
 		m = m.updateMemory(msg)
 

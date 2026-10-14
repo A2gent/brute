@@ -54,6 +54,7 @@ type Model struct {
 	processing        bool
 	loadingFrames     []string
 	loadingIndex      int
+	logoFrame         int
 	activeRunStatus   string
 	activeRunDetail   string
 
@@ -238,6 +239,7 @@ func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		textarea.Blink,
 		tickCmd(),
+		logoTickCmd(),
 		updateMemoryCmd(),
 		serverPortCmd(m.serverPortUpdates),
 		sessionEventCmd(m.sessionEvents),

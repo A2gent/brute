@@ -316,7 +316,7 @@ func TestDefaultConfigUsesEnvironmentDataPathAndSafeToolDefaults(t *testing.T) {
 	if cfg.WorkDir != cwd {
 		t.Fatalf("WorkDir = %q, want %q", cfg.WorkDir, cwd)
 	}
-	if cfg.ActiveProvider != string(ProviderKimi) || cfg.DefaultModel == "" {
+	if cfg.ActiveProvider != string(ProviderAutoRouter) || cfg.DefaultModel == "" {
 		t.Fatalf("unexpected default provider/model: provider=%q model=%q", cfg.ActiveProvider, cfg.DefaultModel)
 	}
 	if cfg.LLMRetries != 3 {

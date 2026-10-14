@@ -4,6 +4,9 @@ import "testing"
 
 func TestContextWindow(t *testing.T) {
 	cases := map[string]int{
+		"opus":                  1000000,
+		"sonnet":                1000000,
+		"haiku":                 1000000,
 		"claude-sonnet-5-5":     1000000,
 		"claude-opus-4-8":       1000000,
 		"claude-sonnet-4.6":     1000000,

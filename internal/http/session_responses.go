@@ -4,6 +4,7 @@ package http
 import (
 	"strings"
 
+	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/session"
 )
 
@@ -53,6 +54,11 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 	reasoningTokens := int(metadataNumber(sess.Metadata, "total_reasoning_tokens"))
 	currentContextTokens := int(metadataNumber(sess.Metadata, "current_context_tokens"))
 	modelContextWindow := int(metadataNumber(sess.Metadata, "context_window"))
+	if config.IsClaudeProviderRef(provider) {
+		// Re-resolve Anthropic limits for existing sessions too; historical metadata
+		// can contain the old provider-wide 200K default for aliases like "opus".
+		modelContextWindow = config.ResolveContextWindowForRef(provider, s.config.Providers[config.NormalizeProviderRef(provider)], model)
+	}
 	isOutbound, targetAgentID, targetAgentName := sessionA2AOutboundMeta(sess)
 	channel, channelDetail := sessionChannel(sess)
 

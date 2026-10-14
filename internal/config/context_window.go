@@ -45,8 +45,18 @@ func modelContextWindow(providerType ProviderType, model string) int {
 
 	switch providerType {
 	case ProviderAnthropic:
+		// Anthropic's Models API is authoritative when available; the static model
+		// rules below keep session context accurate before that catalog is fetched.
+		if window := anthropicCachedContextWindow(normalizedModel); window > 0 {
+			return window
+		}
 		if window := anthropic.ContextWindow(normalizedModel); window > 0 {
 			return window
+		}
+		// Provider default is 1M (for the default Opus model); older explicit Claude
+		// models without a 1M window must not inherit it.
+		if strings.HasPrefix(normalizedModel, "claude-") {
+			return 200000
 		}
 	case ProviderOpenAICodex:
 		// Filled from the Codex OAuth /models context_window field.

@@ -680,8 +680,13 @@ func (s *Server) handleListAnthropicModels(w http.ResponseWriter, r *http.Reques
 		apiKey = s.apiKeyFromEnv(config.ProviderAnthropic)
 	}
 
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	models, windows := anthropic.ListModelsWithContext(ctx, apiKey)
+	config.CacheAnthropicModelContextWindows(windows)
 	s.jsonResponse(w, http.StatusOK, ListProviderModelsResponse{
-		Models: anthropic.CLIModels(apiKey),
+		Models:         append([]string{"opus", "sonnet", "haiku"}, models...),
+		ContextWindows: windows,
 	})
 }
 
@@ -986,6 +991,20 @@ func (s *Server) handleTestAllProviders(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"results": results,
 	})
+}
+
+// refreshAnthropicContextWindows learns model context windows from Anthropic's
+// Models API so session views reflect the current API limits as early as possible.
+func (s *Server) refreshAnthropicContextWindows(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	provider := s.config.Providers[string(config.ProviderAnthropic)]
+	apiKey := strings.TrimSpace(provider.APIKey)
+	if apiKey == "" {
+		apiKey = s.apiKeyFromEnv(config.ProviderAnthropic)
+	}
+	_, windows := anthropic.ListModelsWithContext(ctx, apiKey)
+	config.CacheAnthropicModelContextWindows(windows)
 }
 
 // refreshCodexContextWindows learns real Codex model context windows at startup so

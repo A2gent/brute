@@ -108,7 +108,7 @@ func TestResolveContextWindowForFallbackUsesCustomClaudeDefault(t *testing.T) {
 	}
 	cfg.Providers[string(config.ProviderFallback)] = config.Provider{
 		FallbackChainNodes: []config.FallbackChainNode{
-			{Provider: customRef, Model: "claude-sonnet-4-5"},
+			{Provider: customRef, Model: "claude-opus-4-8"},
 			{Provider: string(config.ProviderOpenAI), Model: "gpt-5.5"},
 		},
 	}

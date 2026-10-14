@@ -200,6 +200,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.dockerRuntime.runIdleReaper(ctx)
 	go s.resumeSerialSessionQueues()
 	go s.refreshCodexContextWindows(ctx)
+	go s.refreshAnthropicContextWindows(ctx)
 
 	server := &http.Server{
 		Addr:    addr,

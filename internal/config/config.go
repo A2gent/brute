@@ -179,7 +179,7 @@ func SupportedProviders() []ProviderDefinition {
 			DefaultURL:    "",
 			RequiresKey:   false,
 			DefaultModel:  "claude-opus-4-8",
-			ContextWindow: 200000,
+			ContextWindow: 1000000,
 		},
 		{
 			Type:          ProviderCursor,

@@ -295,6 +295,9 @@ func TestResolveContextWindowForRefUsesBaseAnthropicDefinition(t *testing.T) {
 	if def == nil || got != def.ContextWindow {
 		t.Fatalf("custom ref window = %d, want base anthropic default %d", got, def.ContextWindow)
 	}
+	if got != 1000000 {
+		t.Fatalf("Anthropic default context window = %d, want 1000000", got)
+	}
 }
 
 func TestDefaultConfigUsesEnvironmentDataPathAndSafeToolDefaults(t *testing.T) {

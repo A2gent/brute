@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/storage"
 	"github.com/google/uuid"
 )
@@ -43,6 +44,7 @@ type Session struct {
 
 // Message represents a conversation message
 type Message struct {
+	Provenance  *llm.Provenance        `json:"provenance,omitempty"`
 	ID          string                 `json:"id"`
 	Role        string                 `json:"role"` // "user", "assistant", "tool"
 	Content     string                 `json:"content"`
@@ -119,6 +121,12 @@ func NewWithJob(agentID string, jobID string) *Session {
 
 // AddMessage adds a message to the session
 func (s *Session) AddMessage(msg Message) {
+	if msg.Provenance == nil {
+		msg.Provenance = provenanceFromMetadata(msg.Metadata)
+	} else {
+		msg.Provenance = llm.NewProvenance(msg.Provenance.Provider, msg.Provenance.Model)
+	}
+	msg.Metadata = metadataWithProvenance(msg.Metadata, msg.Provenance)
 	if msg.ID == "" {
 		msg.ID = uuid.New().String()
 	}
@@ -240,7 +248,7 @@ func (s *Session) SetSummary(summary string) {
 func messageToStorage(m Message) storage.Message {
 	toolCalls, _ := json.Marshal(m.ToolCalls)
 	toolResults, _ := json.Marshal(m.ToolResults)
-	return storage.Message{ID: m.ID, Role: m.Role, Content: m.Content, ToolCalls: toolCalls, ToolResults: toolResults, Metadata: metadataWithImages(m.Metadata, m.Images), Timestamp: m.Timestamp}
+	return storage.Message{ID: m.ID, Role: m.Role, Content: m.Content, ToolCalls: toolCalls, ToolResults: toolResults, Metadata: metadataWithImages(metadataWithProvenance(m.Metadata, m.Provenance), m.Images), Timestamp: m.Timestamp}
 }
 
 func (s *Session) MarkMessageChanged(id string) {
@@ -289,6 +297,7 @@ func FromStorage(ss *storage.Session) *Session {
 		json.Unmarshal(m.ToolResults, &toolResults)
 
 		messages[i] = Message{
+			Provenance:  provenanceFromMetadata(metadata),
 			ID:          m.ID,
 			Role:        m.Role,
 			Content:     m.Content,

@@ -152,9 +152,8 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 					continue
 				}
 				message := "Model returned an empty final response without tool calls after a retry. Check provider health, quota/usage, and child-agent logs; an upstream CLI or proxy may have failed without surfacing a normal error."
-				sess.AddAssistantMessageWithMetadata(message, nil, llmTimingMetadata(llmStart, llmCompleted, a.config.Provider, a.config.Model, map[string]interface{}{
-					"empty_final_response": true,
-				}))
+				assistantMetadata["empty_final_response"] = true
+				sess.AddAssistantMessageWithMetadata(message, nil, assistantMetadata)
 				sess.SetStatus(session.StatusFailed)
 				a.sessionManager.Save(sess)
 				return "", totalUsage, errors.New(message)
@@ -586,13 +585,20 @@ func (a *Agent) callLLM(ctx context.Context, request *llm.ChatRequest, step int,
 	turnID := uuid.NewString()
 	acc := newRuntimeObservabilityAccumulator(turnID, a.config.PersistRuntimeReasoning)
 
-	streamClient, ok := a.llmClient.(llm.StreamingClient)
+	client := llm.WithProvenance(a.llmClient, a.config.Provider, a.config.Model)
+	streamClient, ok := client.(llm.StreamingClient)
 	if !ok {
-		response, err := a.llmClient.Chat(ctx, request)
+		response, err := client.Chat(ctx, request)
+		if response != nil {
+			acc.provenance = response.Provenance
+		}
 		return response, acc, err
 	}
 
 	response, err := streamClient.ChatStream(ctx, request, func(ev llm.StreamEvent) error {
+		if ev.Provenance != nil && llm.IsResponseProgressEvent(ev) {
+			acc.provenance = ev.Provenance
+		}
 		if isLLMRuntimeForwardEvent(ev) || ev.Type == llm.StreamEventContentDelta {
 			acc.observe(ev)
 		}
@@ -601,10 +607,11 @@ func (a *Agent) callLLM(ctx context.Context, request *llm.ChatRequest, step int,
 		}
 		if ev.Type == llm.StreamEventContentDelta && ev.ContentDelta != "" {
 			onEvent(Event{
-				Type:   EventAssistantDelta,
-				TurnID: turnID,
-				Step:   step,
-				Delta:  ev.ContentDelta,
+				Type:       EventAssistantDelta,
+				Provenance: ev.Provenance,
+				TurnID:     turnID,
+				Step:       step,
+				Delta:      ev.ContentDelta,
 			})
 		}
 		if ev.Type == llm.StreamEventProviderTrace {
@@ -629,14 +636,18 @@ func (a *Agent) callLLM(ctx context.Context, request *llm.ChatRequest, step int,
 		if isLLMRuntimeForwardEvent(ev) {
 			runtime := ev
 			onEvent(Event{
-				Type:    EventLLMRuntime,
-				TurnID:  turnID,
-				Step:    step,
-				Runtime: &runtime,
+				Type:       EventLLMRuntime,
+				Provenance: ev.Provenance,
+				TurnID:     turnID,
+				Step:       step,
+				Runtime:    &runtime,
 			})
 		}
 		return nil
 	})
+	if response != nil {
+		acc.provenance = response.Provenance
+	}
 	return response, acc, err
 }
 

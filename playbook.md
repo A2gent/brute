@@ -70,3 +70,10 @@
 - Read workspace conventions before exploration; restrict discovery to the component instead of running `find ..`, which traverses unrelated repositories and dependency trees and can time out.
 - Claude CLI's `read` capability expands to `Glob,Grep,LS,Read`; tests of persistent transport must preserve the existing mapping instead of assuming a single native Read permission.
 - Persistent CLI reuse must fingerprint a stable MCP config generation, not only hook presence. A failed bridge hook must fall back before sending input, rather than cache a bridge-less process; do not replay submitted turns because tools may already have side effects.
+
+- Read workspace conventions before discovery: Git belongs to the component, and concrete filenames must be discovered before searches. Build typed stream test fixtures with all required fields.
+- Concurrent sessions can leave incomplete tests/imports in the shared worktree. Validate and commit task-only changes in an isolated worktree rather than staging their work or bypassing hooks.
+
+- Test provenance across the actual proxy encode/decode path: final-response coverage alone misses provenance dropped from streamed text/refusal deltas.
+
+- Isolate legacy unkeyed text deltas without changing runtime-tool reconciliation semantics; shared helper changes require both text and orphan-tool regression tests.

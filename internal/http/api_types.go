@@ -4,6 +4,7 @@ package http
 import (
 	"encoding/json"
 	"github.com/A2gent/brute/internal/config"
+	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/session"
 	"time"
 )
@@ -140,6 +141,7 @@ type SystemPromptBlockSnapshotPayload struct {
 
 // MessageResponse represents a message in a session
 type MessageResponse struct {
+	Provenance   *llm.Provenance        `json:"provenance,omitempty"`
 	ID           string                 `json:"id,omitempty"`
 	Role         string                 `json:"role"`
 	Content      string                 `json:"content"`
@@ -194,6 +196,7 @@ type ChatResponse struct {
 }
 
 type ChatStreamEvent struct {
+	Provenance             *llm.Provenance              `json:"provenance,omitempty"`
 	Type                   string                       `json:"type"`
 	Delta                  string                       `json:"delta,omitempty"`
 	Content                string                       `json:"content,omitempty"`

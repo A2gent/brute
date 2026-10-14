@@ -110,6 +110,7 @@ type compactionConfig struct {
 
 // Event describes a streaming update from the agent.
 type Event struct {
+	Provenance   *llm.Provenance
 	Type         EventType
 	TurnID       string
 	Step         int

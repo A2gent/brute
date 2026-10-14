@@ -75,6 +75,7 @@ func NewClient(nodes []Node, opts ...ClientOption) *Client {
 		if node.Client == nil {
 			continue
 		}
+		node.Client = llm.WithProvenance(node.Client, node.Name, node.Model)
 		copied = append(copied, node)
 	}
 	c := &Client{

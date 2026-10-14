@@ -13,9 +13,10 @@ func (s *Server) agentEventToStreamEvent(sess *session.Session, providerType con
 	switch ev.Type {
 	case agent.EventAssistantDelta:
 		return ChatStreamEvent{
-			Type:   "assistant_delta",
-			TurnID: ev.TurnID,
-			Delta:  ev.Delta,
+			Type:       "assistant_delta",
+			TurnID:     ev.TurnID,
+			Provenance: ev.Provenance,
+			Delta:      ev.Delta,
 		}, true
 	case agent.EventToolExecuting:
 		toolCalls := make([]StreamToolCallEvent, len(ev.ToolCalls))
@@ -108,16 +109,18 @@ func runtimeAgentEventToStreamEvent(ev agent.Event) (ChatStreamEvent, bool) {
 	switch runtime.Type {
 	case llm.StreamEventReasoningDelta:
 		return ChatStreamEvent{
-			Type:   "reasoning_delta",
-			TurnID: ev.TurnID,
-			Step:   ev.Step,
-			Delta:  runtime.ReasoningDelta,
+			Type:       "reasoning_delta",
+			TurnID:     ev.TurnID,
+			Provenance: ev.Provenance,
+			Step:       ev.Step,
+			Delta:      runtime.ReasoningDelta,
 		}, true
 	case llm.StreamEventToolStarted, llm.StreamEventToolUpdated, llm.StreamEventToolInputCompleted, llm.StreamEventToolCompleted:
 		return ChatStreamEvent{
-			Type:   string(runtime.Type),
-			TurnID: ev.TurnID,
-			Step:   ev.Step,
+			Type:       string(runtime.Type),
+			TurnID:     ev.TurnID,
+			Provenance: ev.Provenance,
+			Step:       ev.Step,
 			RuntimeTool: &StreamRuntimeToolEvent{
 				ID:        runtime.ToolCallID,
 				Name:      runtime.ToolCallName,
@@ -127,9 +130,10 @@ func runtimeAgentEventToStreamEvent(ev agent.Event) (ChatStreamEvent, bool) {
 		}, true
 	case llm.StreamEventToolOutput:
 		return ChatStreamEvent{
-			Type:   "tool_output",
-			TurnID: ev.TurnID,
-			Step:   ev.Step,
+			Type:       "tool_output",
+			TurnID:     ev.TurnID,
+			Provenance: ev.Provenance,
+			Step:       ev.Step,
 			ToolResult: &StreamToolResultEvent{
 				ToolCallID: runtime.ToolCallID,
 				Name:       runtime.ToolCallName,
@@ -139,9 +143,10 @@ func runtimeAgentEventToStreamEvent(ev agent.Event) (ChatStreamEvent, bool) {
 		}, true
 	case llm.StreamEventCost:
 		return ChatStreamEvent{
-			Type:   "cost",
-			TurnID: ev.TurnID,
-			Step:   ev.Step,
+			Type:       "cost",
+			TurnID:     ev.TurnID,
+			Provenance: ev.Provenance,
+			Step:       ev.Step,
 			Cost: &StreamRuntimeCostEvent{
 				TotalCostUSD:  runtime.TotalCostUSD,
 				DurationMS:    runtime.DurationMS,
@@ -151,9 +156,10 @@ func runtimeAgentEventToStreamEvent(ev agent.Event) (ChatStreamEvent, bool) {
 		}, true
 	case llm.StreamEventRuntimeWarning:
 		return ChatStreamEvent{
-			Type:   "runtime_warning",
-			TurnID: ev.TurnID,
-			Step:   ev.Step,
+			Type:       "runtime_warning",
+			TurnID:     ev.TurnID,
+			Provenance: ev.Provenance,
+			Step:       ev.Step,
 			RuntimeWarning: &StreamRuntimeWarningPayload{
 				Status:  runtime.RuntimeStatus,
 				Message: runtime.RuntimeWarning,

@@ -76,6 +76,9 @@ type ToolDefinition struct {
 
 // ChatResponse represents a chat completion response
 type ChatResponse struct {
+	// Model is the actual model reported by the transport, when available.
+	Model      string
+	Provenance *Provenance
 	// TimingMetadata contains provider transport milestones, merged into assistant metadata.
 	TimingMetadata        map[string]interface{}
 	Content               string
@@ -107,7 +110,8 @@ const (
 
 // StreamEvent is emitted during a streaming LLM response.
 type StreamEvent struct {
-	Type StreamEventType
+	Provenance *Provenance
+	Type       StreamEventType
 
 	ContentDelta   string
 	ReasoningDelta string

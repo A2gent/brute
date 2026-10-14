@@ -77,7 +77,7 @@ func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, 
 	logging.Info("Context compaction starting: session=%s messages_to_summarize=%d", sess.ID, len(messagesToSummarize))
 
 	llmStartedAt := time.Now()
-	response, err := a.llmClient.Chat(ctx, request)
+	response, err := llm.WithProvenance(a.llmClient, a.config.Provider, a.config.Model).Chat(ctx, request)
 	if err != nil {
 		logging.Warn("Context compaction LLM error: %v", err)
 		if pendingUser != nil {
@@ -104,10 +104,11 @@ func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, 
 
 	// Create summary message
 	summaryMsg := session.Message{
-		ID:        "", // will be generated
-		Role:      "assistant",
-		Content:   summary,
-		Timestamp: time.Now(),
+		Provenance: response.Provenance,
+		ID:         "", // will be generated
+		Role:       "assistant",
+		Content:    summary,
+		Timestamp:  time.Now(),
 		Metadata: map[string]interface{}{
 			messageMetadataCompaction: true,
 			"compaction_index":        compactionCount,

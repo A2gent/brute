@@ -279,9 +279,19 @@ type WebRelevanceConfig struct {
 	MaxPageBytes  int     `json:"max_page_bytes,omitempty"`
 }
 
+// JevAdmissionConfig opts in to Jev relevance gating of large bash/grep/read
+// results before they enter the transcript. Zero values use package defaults.
+type JevAdmissionConfig struct {
+	Enabled       bool    `json:"enabled,omitempty"`
+	MinTokens     int     `json:"min_tokens,omitempty"`
+	Threshold     float64 `json:"threshold,omitempty"`
+	MinConfidence float64 `json:"min_confidence,omitempty"`
+}
+
 // ToolsConfig configures tool permissions.
 type ToolsConfig struct {
 	WebRelevance          WebRelevanceConfig `json:"web_relevance,omitempty"`
+	JevAdmission          JevAdmissionConfig `json:"jev_admission,omitempty"`
 	RelevanceGateDisabled bool               `json:"relevance_gate_disabled,omitempty"`
 	// BrowserActEnabled opts in to the Jev-driven browser loop. Off by default: it is a prototype and
 	// it holds the shared Chrome lock for the duration of a multi-step run.

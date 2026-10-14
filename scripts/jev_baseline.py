@@ -41,6 +41,39 @@ def tokens(text: str) -> int:
 # Tools that wrap other tools; their result payload is a JSON array of steps.
 WRAPPER_TOOLS = {"parallel", "pipeline"}
 
+# Mirrors internal/contextcompress/jev_admission.go: which results the Jev
+# admission gate would see, and how it chunks them.
+GATE_TOOLS = {"bash", "grep", "read"}
+GATE_MIN_TOKENS = 2000
+GATE_CHUNK_LINES = 40
+GATE_CHUNK_BYTES = 3000
+
+
+GATE_IMPORTANT = ("error", "fatal", "panic", "failed", "failure", "exception", "traceback", "cannot",
+                  "undefined", "exit status", "fail:", " fail", "timeout")
+
+
+def gate_protected(tool: str, chunk: str) -> bool:
+    """Mirrors relevanceProtected (+ "Exit code:") - bash diagnostics are always kept."""
+    if tool != "bash":
+        return False
+    return any(l.startswith("Exit code:") or any(n in l.lower() for n in GATE_IMPORTANT)
+               for l in chunk.split("\n"))
+
+
+def gate_chunks(text: str) -> list[str]:
+    chunks, cur, size = [], [], 0
+    for line in text.splitlines(keepends=True):
+        n = len(line.encode())
+        if cur and (len(cur) >= GATE_CHUNK_LINES or size + n > GATE_CHUNK_BYTES):
+            chunks.append("".join(cur))
+            cur, size = [], 0
+        cur.append(line)
+        size += n
+    if cur:
+        chunks.append("".join(cur))
+    return chunks
+
 # Identifier-ish tokens used for the "was this ever referenced later" heuristic.
 IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_\-.]{3,}")
 
@@ -119,6 +152,14 @@ class Stats:
         self.read_waste_union_tokens = 0
         self.wrapper_overhead_tokens = 0
         self.per_session_tool_tokens = []
+        # Jev admission gate (T-119): eligible volume and an echo-heuristic oracle
+        # that drops middle chunks with no term the model or user used later.
+        self.gate_calls = Counter()
+        self.gate_tokens = Counter()
+        self.gate_weighted = Counter()
+        self.gate_oracle_tokens = Counter()
+        self.gate_oracle_weighted = Counter()
+        self.gate_candidates: list[dict] | None = None
 
 
 def unwrap(name: str, content: str, args: dict) -> list[tuple[str, str, dict]]:
@@ -234,6 +275,7 @@ def analyze_session(msgs: list[dict], st: Stats) -> None:
 
     reads_seen: Counter = Counter()
     session_tool_tokens = 0
+    last_user = last_assistant = ""
 
     for i, m in enumerate(msgs):
         st.messages += 1
@@ -244,6 +286,10 @@ def analyze_session(msgs: list[dict], st: Stats) -> None:
             st.image_payload_chars += len(jsonish(img))
 
         content_tok = tokens(m.get("content") or "")
+        if role == "user" and (m.get("content") or "").strip():
+            last_user, last_assistant = m["content"].strip(), ""
+        elif role == "assistant" and (m.get("content") or "").strip():
+            last_assistant = m["content"].strip()
         if role == "user":
             st.bucket_tokens["user_text"] += content_tok
             st.bucket_weighted["user_text"] += content_tok * weight
@@ -270,6 +316,24 @@ def analyze_session(msgs: list[dict], st: Stats) -> None:
             st.bucket_tokens["tool_result"] += raw_tok
             st.bucket_weighted["tool_result"] += raw_tok * weight
             session_tool_tokens += raw_tok
+
+            # The gate sees only direct results; wrapper steps are admitted as one JSON.
+            if (name in GATE_TOOLS and raw_tok > GATE_MIN_TOKENS and not entry.get("is_error")
+                    and not raw.startswith("[brute-compressed ")):
+                chunks = gate_chunks(raw)
+                future = future_terms_at[i]
+                kept = sum(tokens(c) for j, c in enumerate(chunks)
+                           if j in (0, len(chunks) - 1) or gate_protected(name, c) or distinctive(c) & future)
+                st.gate_calls[name] += 1
+                st.gate_tokens[name] += raw_tok
+                st.gate_weighted[name] += raw_tok * weight
+                st.gate_oracle_tokens[name] += kept
+                st.gate_oracle_weighted[name] += kept * weight
+                if st.gate_candidates is not None and last_user:
+                    task = "User request:\n" + last_user
+                    if last_assistant:
+                        task += "\nAssistant plan:\n" + last_assistant
+                    st.gate_candidates.append({"tool": name, "weight": weight, "task": task, "content": raw})
 
             parts = unwrap(name, raw, args)
             if len(parts) > 1 or name in WRAPPER_TOOLS:
@@ -541,6 +605,20 @@ def report(st: Stats, args) -> str:
         ss = sorted(st.per_session_tool_tokens)
         w(f"- tool-result tokens per session: median **{statistics.median(ss):,.0f}**, "
           f"p95 **{ss[min(len(ss)-1, int(0.95*len(ss)))]:,}**, max **{max(ss):,}**")
+    if st.gate_calls:
+        w("")
+        w(f"### Jev admission gate eligibility (bash/grep/read > {GATE_MIN_TOKENS:,} tokens)")
+        w("")
+        w("Oracle keeps head/tail chunks and chunks sharing a distinctive term with later "
+          "user/assistant text - an upper bound for a perfect relevance scorer, not Jev output.")
+        w("")
+        w("| Tool | Eligible calls | Tokens | Weighted tokens | % of weighted spend | Oracle kept | Oracle weighted saving |")
+        w("|---|---:|---:|---:|---:|---:|---:|")
+        for name in sorted(st.gate_calls):
+            saving = st.gate_weighted[name] - st.gate_oracle_weighted[name]
+            w(f"| {name} | {st.gate_calls[name]:,} | {st.gate_tokens[name]:,} | {st.gate_weighted[name]:,} | "
+              f"{pct(st.gate_weighted[name], total_weighted)} | {pct(st.gate_oracle_tokens[name], st.gate_tokens[name])} | "
+              f"{saving:,} ({pct(saving, total_weighted)} of spend) |")
     return "\n".join(out)
 
 
@@ -554,6 +632,8 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--top", type=int, default=18, help="tools to show in tables")
     ap.add_argument("--json", default="", help="also dump raw counters as JSON here")
+    ap.add_argument("--gate-candidates", default="",
+                    help="write Jev-gate-eligible results as JSONL for TestJevAdmissionReplay")
     ap.add_argument("--selftest", action="store_true", help="verify the accounting rules and exit")
     args = ap.parse_args()
 
@@ -561,6 +641,8 @@ def main() -> int:
         return selftest()
 
     st = Stats()
+    if args.gate_candidates:
+        st.gate_candidates = []
     skipped = 0
 
     if args.sessions_dir and os.path.isdir(args.sessions_dir):
@@ -586,6 +668,12 @@ def main() -> int:
 
     print(f"(skipped {skipped} sessions below the tool-result threshold)", file=sys.stderr)
     print(report(st, args))
+
+    if args.gate_candidates:
+        with open(args.gate_candidates, "w") as fh:
+            for row in st.gate_candidates:
+                fh.write(json.dumps(row) + "\n")
+        print(f"(wrote {len(st.gate_candidates)} gate candidates to {args.gate_candidates})", file=sys.stderr)
 
     if args.json:
         with open(args.json, "w") as fh:

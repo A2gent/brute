@@ -1,6 +1,9 @@
 package agent
 
-import "github.com/A2gent/brute/internal/llm"
+import (
+	"github.com/A2gent/brute/internal/contextcompress"
+	"github.com/A2gent/brute/internal/llm"
+)
 
 // Config holds agent configuration
 type Config struct {
@@ -19,8 +22,10 @@ type Config struct {
 	UseProviderSession       bool
 	ProviderSessionIdentity  string
 	ToolResultMaxTokens      int
-	CompressToolResults      bool
-	PersistRuntimeReasoning  bool
+	// RelevanceGate is nil unless Jev admission gating is enabled and credentialed.
+	RelevanceGate           *contextcompress.RelevanceGate
+	CompressToolResults     bool
+	PersistRuntimeReasoning bool
 }
 
 // EventType is emitted while the agent executes a run.

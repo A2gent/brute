@@ -117,3 +117,23 @@ func TestWebRelevanceCredentialRefresh(t *testing.T) {
 		t.Fatal("failed secret inventory retained stale client")
 	}
 }
+
+func TestRelevanceGateRequiresFlagAndCredentials(t *testing.T) {
+	t.Setenv("TYPESAFE_API_KEY", "")
+	server, _ := newClassifyRegistrationTestServer(t, config.Provider{APIKey: "jev-key"}, nil)
+	if server.relevanceGate() != nil {
+		t.Fatal("gate must be off by default")
+	}
+	server.config.Tools.JevAdmission = config.JevAdmissionConfig{Enabled: true, MinTokens: 3000}
+	gate := server.relevanceGate()
+	if gate == nil || gate.Client == nil || gate.MinTokens != 3000 {
+		t.Fatalf("expected configured gate, got %+v", gate)
+	}
+	if !strings.Contains(strings.Join(gate.Secrets, "\n"), "jev-key") {
+		t.Fatal("Jev key must be guarded from egress")
+	}
+	server.config.Providers["jev"] = config.Provider{}
+	if server.relevanceGate() != nil {
+		t.Fatal("missing credentials must disable gating")
+	}
+}

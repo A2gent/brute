@@ -50,6 +50,10 @@ func (c *Compressor) restoreCommandPreview(sessionID string, tr *llm.ToolResult)
 		return Item{}, false
 	}
 	first, _, _ := strings.Cut(tr.Content, "\n")
+	// Jev-gated text is already the chosen view; a bash preview would discard it.
+	if strings.Contains(first, "kind=jev_relevance") {
+		return Item{}, false
+	}
 	hash := ""
 	for _, field := range strings.Fields(first) {
 		if strings.HasPrefix(field, "hash=") {

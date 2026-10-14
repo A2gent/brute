@@ -191,3 +191,31 @@ answered by a count-first response than by a full match dump.
   (that is intentional) and away from short chat sessions.
 - The corpus is one developer's local archive across several projects, so tool mix reflects those
   habits; `tasks` at 5.0% of context, for example, is unlikely to generalise.
+
+## Jev admission gate (T-119)
+
+`tools.jev_admission.enabled` (default off) makes admission score bash/grep/read results above
+2,000 tokens with Jev (`internal/contextcompress/jev_admission.go`). Head/tail chunks, bash
+diagnostics and secret-bearing chunks are kept verbatim; dropped line ranges are listed and the
+original is stored for `context_retrieve`. Every error or low-confidence answer falls back to the
+deterministic 8k admission cap.
+
+Eligibility on the default 600-session sample (2026-10-14, `jev_baseline.py`):
+
+| Tool | Eligible calls | Tokens | Weighted tokens | % of weighted spend |
+|---|---:|---:|---:|---:|
+| bash | 340 | 1,747,242 | 38,393,436 | 6.7% |
+| grep | 156 | 829,892 | 26,222,566 | 4.6% |
+| read | 619 | 2,958,371 | 86,304,304 | 15.1% |
+
+So at most ~26% of resend-weighted spend passes through the gate. The script's echo-heuristic
+oracle keeps 90-99% of these tokens because any shared 4+ char identifier counts as "used"; it is
+too lenient to estimate savings. Real reduction needs a replay against Jev:
+
+```sh
+python3 scripts/jev_baseline.py --gate-candidates /tmp/gate.jsonl
+JEV_GATE_CANDIDATES=/tmp/gate.jsonl TYPESAFE_API_KEY=... \
+  go test ./internal/contextcompress -run '^TestJevAdmissionReplay$' -count=1 -v
+```
+
+The replay sends archived tool output (minus guarded secrets) to Jev, so run it deliberately.

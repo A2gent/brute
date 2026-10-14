@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/A2gent/brute/internal/contextcompress"
 	"github.com/A2gent/brute/internal/llm/jev"
 	"github.com/A2gent/brute/internal/tools"
 	"github.com/A2gent/brute/internal/tools/integrationtools"
@@ -21,50 +22,80 @@ func (s *Server) registerWebRelevanceTools(manager *tools.Manager) {
 		if key != "" {
 			client = jev.NewClient(key, model, baseURL)
 		}
-		// Only credential values are used by the local egress guard, never serialized
-		// into classifier state. Integration IDs, settings and raw params stay local.
-		for _, provider := range s.config.Providers {
-			options.Secrets = append(options.Secrets, provider.APIKey)
-			if provider.OAuth != nil {
-				options.Secrets = append(options.Secrets, provider.OAuth.AccessToken, provider.OAuth.RefreshToken)
-			}
-			for _, value := range provider.SensitiveSecrets {
-				options.Secrets = append(options.Secrets, value)
-			}
-			for name, value := range provider.EnvOverrides {
-				if webCredentialName(name) {
-					options.Secrets = append(options.Secrets, value)
-				}
-			}
+		secrets, ok := s.jevEgressSecrets(key)
+		if !ok {
+			client = nil
 		}
-		options.Secrets = append(options.Secrets, key)
-		if s.store != nil {
-			if integrations, err := s.store.ListIntegrations(); err == nil {
-				for _, integration := range integrations {
-					if integration != nil {
-						for name, value := range integration.Config {
-							if webCredentialName(name) {
-								options.Secrets = append(options.Secrets, value)
-							}
-						}
-					}
-				}
-			} else {
-				client = nil
-			}
-		}
-		for _, entry := range os.Environ() {
-			name, value, ok := strings.Cut(entry, "=")
-			if ok && webCredentialName(name) {
-				options.Secrets = append(options.Secrets, value)
-			}
-		}
+		options.Secrets = secrets
 	}
 	for _, name := range []string{"fetch_url", "tavily_search", "exa_search", "brave_search_query"} {
 		if source, ok := manager.Get(name); ok {
 			manager.Register(integrationtools.NewWebRelevanceTool(source, client, options))
 		}
 	}
+}
+
+// jevEgressSecrets lists configured credential values for the local egress guard.
+// Only values are used, never serialized into classifier state. ok is false when
+// integrations cannot be listed: an incomplete list must disable Jev egress.
+func (s *Server) jevEgressSecrets(jevKey string) ([]string, bool) {
+	var secrets []string
+	for _, provider := range s.config.Providers {
+		secrets = append(secrets, provider.APIKey)
+		if provider.OAuth != nil {
+			secrets = append(secrets, provider.OAuth.AccessToken, provider.OAuth.RefreshToken)
+		}
+		for _, value := range provider.SensitiveSecrets {
+			secrets = append(secrets, value)
+		}
+		for name, value := range provider.EnvOverrides {
+			if webCredentialName(name) {
+				secrets = append(secrets, value)
+			}
+		}
+	}
+	secrets = append(secrets, jevKey)
+	ok := true
+	if s.store != nil {
+		if integrations, err := s.store.ListIntegrations(); err == nil {
+			for _, integration := range integrations {
+				if integration != nil {
+					for name, value := range integration.Config {
+						if webCredentialName(name) {
+							secrets = append(secrets, value)
+						}
+					}
+				}
+			}
+		} else {
+			ok = false
+		}
+	}
+	for _, entry := range os.Environ() {
+		name, value, found := strings.Cut(entry, "=")
+		if found && webCredentialName(name) {
+			secrets = append(secrets, value)
+		}
+	}
+	return secrets, ok
+}
+
+// relevanceGate returns nil (gating off) unless tools.jev_admission is enabled
+// and a Jev credential resolves, so a missing key fails open silently.
+func (s *Server) relevanceGate() *contextcompress.RelevanceGate {
+	if s == nil || s.config == nil || !s.config.Tools.JevAdmission.Enabled {
+		return nil
+	}
+	key, model, baseURL := s.resolveClassifyCredentials()
+	if key == "" {
+		return nil
+	}
+	secrets, ok := s.jevEgressSecrets(key)
+	if !ok {
+		return nil
+	}
+	policy := s.config.Tools.JevAdmission
+	return &contextcompress.RelevanceGate{Client: jev.NewClient(key, model, baseURL), MinTokens: policy.MinTokens, Threshold: policy.Threshold, MinConfidence: policy.MinConfidence, Secrets: secrets}
 }
 
 func webCredentialName(name string) bool {

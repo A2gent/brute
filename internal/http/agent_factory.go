@@ -40,6 +40,7 @@ func (s *Server) agentConfigFromTarget(sess *session.Session, target *executionT
 
 func (s *Server) newAgentFromConfig(cfg agent.Config, client llm.Client, manager *tools.Manager) *agent.Agent {
 	cfg.CompressToolResults = s.toolResultCompressionEnabled()
+	cfg.RelevanceGate = s.relevanceGate()
 	return agent.NewWithCompressor(cfg, client, manager, s.sessionManager, s.contextCompressor)
 }
 

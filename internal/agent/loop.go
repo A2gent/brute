@@ -247,7 +247,7 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		}
 		toolResults := a.toolManager.ExecuteParallel(toolCtx, response.ToolCalls)
 		for i, tr := range toolResults {
-			toolResults[i] = a.compressor.AdmitToolResult(sess, tr, a.config.ToolResultMaxTokens)
+			toolResults[i] = a.compressor.AdmitToolResultWithGate(ctx, sess, tr, a.config.ToolResultMaxTokens, a.config.RelevanceGate)
 		}
 
 		// Convert results

@@ -64,3 +64,5 @@
 - Leonardo v2 can return HTTP 200 with a JSON array of API errors. Check extensions.statusCode/code before reading generationId or polling; validation details.message and top-level billing messages carry the actionable cause. Confirm model dimensions against live API validation, not stale mock fixtures.
 - A bounded full-suite command that times out is not a passing check. Preserve its log, report incomplete verification, and ask whether to rerun with a longer budget rather than bypassing commit hooks.
 - Claude CLI applies MCP_TOOL_TIMEOUT to every MCP tool, including delegate_to_agent. Brute sets it to 10 min; longer delegations and media tools fail with "The operation timed out." while the work continues; long-running tools must return a resumable handle (see meshy_generate_3d task_id) instead of blocking.
+
+- `delegate_to_agent` reviews of a multi-file diff can exceed the 300s MCP idle timeout and return nothing. Give the reviewer a narrow scope (a few files, specific questions) or start it before long local validations, and budget for self-review if it times out.

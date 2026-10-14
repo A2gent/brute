@@ -51,6 +51,7 @@ func (s *Server) claudecliOptionsForRef(ref string) claudecli.Options {
 		PermissionMode:       strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_PERMISSION_MODE")),
 		MaxBudgetUSD:         strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_CLI_MAX_BUDGET_USD")),
 		MCPBridge:            s.claudecliMCPBridgeHook,
+		MCPBridgeGeneration:  fmt.Sprintf("%p:%d", s.mcpBridge, s.Port()),
 	}
 	if strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_AGENT_SDK_SIDECAR_PATH")) != "" && s.approvalBroker != nil {
 		opts.SidecarPath = strings.TrimSpace(os.Getenv("AAGENT_CLAUDE_AGENT_SDK_SIDECAR_PATH"))

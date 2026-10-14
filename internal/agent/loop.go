@@ -107,7 +107,7 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			return "", totalUsage, fmt.Errorf("LLM error: %w", err)
 		}
 		assistantMetadata := mergeRuntimeMetadata(
-			llmTimingMetadata(llmStart, llmCompleted, a.config.Provider, a.config.Model),
+			llmTimingMetadata(llmStart, llmCompleted, a.config.Provider, a.config.Model, response.TimingMetadata),
 			runtimeAcc,
 		)
 		if a.config.UsePreviousResponse && strings.TrimSpace(response.ResponseID) != "" {

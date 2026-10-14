@@ -265,7 +265,7 @@ func TestLoopStoresLLMTimingMetadataOnAssistantMessage(t *testing.T) {
 	sess.AddUserMessage("hello")
 
 	mockLLM := &MockLLM{
-		Response: &llm.ChatResponse{Content: "hi there"},
+		Response: &llm.ChatResponse{Content: "hi there", TimingMetadata: map[string]interface{}{"llm_ttft_ms": int64(42)}},
 	}
 	ag := New(Config{Provider: "test-provider", Model: "test-model", MaxSteps: 3}, mockLLM, tools.NewManager(t.TempDir()), sm)
 
@@ -277,6 +277,9 @@ func TestLoopStoresLLMTimingMetadataOnAssistantMessage(t *testing.T) {
 	lastMsg := sess.Messages[len(sess.Messages)-1]
 	if lastMsg.Role != "assistant" {
 		t.Fatalf("expected assistant message, got %s", lastMsg.Role)
+	}
+	if lastMsg.Metadata["llm_ttft_ms"] != int64(42) {
+		t.Fatal("provider timing metadata not persisted")
 	}
 	if lastMsg.Metadata == nil {
 		t.Fatal("expected assistant message metadata")

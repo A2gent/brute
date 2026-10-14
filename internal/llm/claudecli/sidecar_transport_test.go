@@ -17,8 +17,8 @@ import (
 
 func testApprovalLimits() approval.Limits {
 	return approval.Limits{
-		MaxPending:     8,
-		MaxInputBytes:  65536,
+		MaxPending:    8,
+		MaxInputBytes: 65536,
 		// Keep interactive sidecar tests above process-scheduling jitter; the
 		// dedicated timeout test overrides ApprovalTimeout to a short value.
 		DefaultTimeout: 5 * time.Second,
@@ -347,6 +347,9 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"ok"}'
 	})
 	if err != nil {
 		t.Fatalf("ChatStream: %v", err)
+	}
+	if resp.TimingMetadata["llm_transport"] != "sdk_spawn" || resp.TimingMetadata["llm_result_at"] == nil {
+		t.Fatal(resp.TimingMetadata)
 	}
 	if resp.Content != "ok" || len(warnings) == 0 {
 		t.Fatalf("resp=%#v warnings=%#v", resp, warnings)

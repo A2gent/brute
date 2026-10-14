@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/logging"
@@ -57,6 +58,9 @@ func (c *Client) chatViaSidecar(
 	stderr.limit = defaultMaxOutputBytes
 	cmd.Stderr = &stderr
 
+	timing := newTurnTiming("sdk_spawn", false)
+	timing.spawn = time.Now()
+	defer timing.log(request.SessionID)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start Claude Agent SDK sidecar: %w", err)
 	}
@@ -170,6 +174,7 @@ func (c *Client) chatViaSidecar(
 			_ = cmd.Wait()
 			return nil, unsafeAfterStart(err)
 		}
+		timing.observe(event)
 		if err := processor.handleEnvelope(event); err != nil {
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
@@ -216,6 +221,7 @@ func (c *Client) chatViaSidecar(
 	}
 	logging.LogResponseWithContent(processor.usage.InputTokens, processor.usage.OutputTokens, 0, finalContent, nil)
 	return &llm.ChatResponse{
+		TimingMetadata:        timing.metadata(),
 		Content:               finalContent,
 		Usage:                 processor.usage,
 		StopReason:            firstNonEmpty(processor.stopReason, processor.finalResult.StopReason, processor.finalResult.Subtype),

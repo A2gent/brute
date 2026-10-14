@@ -66,3 +66,6 @@
 - Claude CLI applies MCP_TOOL_TIMEOUT to every MCP tool, including delegate_to_agent. Brute sets it to 10 min; longer delegations and media tools fail with "The operation timed out." while the work continues; long-running tools must return a resumable handle (see meshy_generate_3d task_id) instead of blocking.
 
 - `delegate_to_agent` reviews of a multi-file diff can exceed the 300s MCP idle timeout and return nothing. Give the reviewer a narrow scope (a few files, specific questions) or start it before long local validations, and budget for self-review if it times out.
+- Read workspace conventions before exploration; restrict discovery to the component instead of running `find ..`, which traverses unrelated repositories and dependency trees and can time out.
+- Claude CLI's `read` capability expands to `Glob,Grep,LS,Read`; tests of persistent transport must preserve the existing mapping instead of assuming a single native Read permission.
+- Persistent CLI reuse must fingerprint a stable MCP config generation, not only hook presence. A failed bridge hook must fall back before sending input, rather than cache a bridge-less process; do not replay submitted turns because tools may already have side effects.

@@ -22,7 +22,7 @@ const (
 	claudeCodePromptPrefix = "You are running through Claude Code CLI. Use Claude Code's native tools directly when you need to inspect or modify files, then return the final answer to A2gent. Use the a2gent MCP tools when available for integrations and delegation (mcp__a2gent__delegate_to_agent). Include relevant context, file paths, and the expected deliverable in the task; the child does not inherit this conversation. Read its returned response before continuing. Do not print JSON tool calls for A2gent to execute."
 )
 
-// MCPBridgeHook builds the per-invocation MCP bridge configuration for a
+// MCPBridgeHook builds the per-process MCP bridge configuration for a
 // session-scoped CLI run. It returns the inline --mcp-config JSON and a revoke
 // callback tied to the CLI process lifetime; an empty configJSON disables the
 // bridge for that invocation.
@@ -40,9 +40,15 @@ type Options struct {
 	MaxBudgetUSD         string
 	NoSessionPersistence bool
 
+	// Persistent is an opt-in streaming-input prototype; budgets remain per-spawn.
+	Persistent            bool
+	PersistentIdleTimeout time.Duration
+
 	// MCPBridge exposes A2gent tools (question, integrations) to the CLI over a
 	// loopback MCP server; only used on the direct (non-sidecar) path.
 	MCPBridge MCPBridgeHook
+	// Stable endpoint/config generation, excluding the per-process bearer token.
+	MCPBridgeGeneration string
 
 	// Optional Claude Agent SDK sidecar transport (enabled only when
 	// AAGENT_CLAUDE_AGENT_SDK_SIDECAR_PATH is set and Broker is non-nil).
@@ -65,6 +71,7 @@ type mcpBridgeInvocation struct {
 	args         []string
 	allowedTools string
 	revoke       func()
+	err          error
 }
 
 func (c *Client) newMCPBridgeInvocation(ctx context.Context) mcpBridgeInvocation {
@@ -78,10 +85,17 @@ func (c *Client) newMCPBridgeInvocation(ctx context.Context) mcpBridgeInvocation
 	}
 	configJSON, revoke, err := c.options.MCPBridge(ctx, sessionID)
 	if err != nil {
+		if revoke != nil {
+			revoke()
+		}
+		inv.err = err
 		logging.Warn("MCP bridge config failed, continuing without bridge: %v", err)
 		return inv
 	}
 	if strings.TrimSpace(configJSON) == "" {
+		if revoke != nil {
+			revoke()
+		}
 		return inv
 	}
 	if revoke != nil {
@@ -108,6 +122,7 @@ func NewClient(model, workDir string) *Client {
 }
 
 func NewClientWithOptions(model string, options Options) *Client {
+	options.Persistent = options.Persistent || envBoolDefault("AAGENT_CLAUDE_CLI_PERSISTENT", false)
 	options.Executable = normalizeExecutable(options.Executable)
 	options.WorkDir = normalizeWorkDir(options.WorkDir)
 	options.PermissionMode = strings.TrimSpace(options.PermissionMode)
@@ -142,11 +157,14 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	}
 	logging.LogRequestWithContent(model, len(request.Messages), len(request.Tools) > 0, lastMsg)
 
+	if request.SessionID != "" && (!c.persistentEnabled(request) || SidecarEnabled(c.options)) {
+		closePersistentSession(c.options, request.SessionID)
+	}
 	if SidecarEnabled(c.options) {
 		return c.chatViaSidecar(ctx, request, model, nil)
 	}
 
-	if hasInlineImages(request) {
+	if c.persistentEnabled(request) || hasInlineImages(request) {
 		// WHY: --input-format stream-json (needed for image blocks) requires stream-json output.
 		return c.ChatStream(ctx, request, func(llm.StreamEvent) error { return nil })
 	}
@@ -233,8 +251,17 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	}
 	logging.LogRequestWithContent(model, len(request.Messages), len(request.Tools) > 0, lastMsg)
 
+	if request.SessionID != "" && (!c.persistentEnabled(request) || SidecarEnabled(c.options)) {
+		closePersistentSession(c.options, request.SessionID)
+	}
 	if SidecarEnabled(c.options) {
 		return c.chatViaSidecar(ctx, request, model, onEvent)
+	}
+
+	if c.persistentEnabled(request) {
+		if resp, err, handled := c.chatPersistent(ctx, request, model, onEvent); handled {
+			return resp, err
+		}
 	}
 
 	prompt := buildPrompt(request)
@@ -273,6 +300,9 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	stderr.limit = defaultMaxOutputBytes
 	cmd.Stderr = &stderr
 
+	timing := newTurnTiming("cli_spawn", false)
+	timing.spawn = time.Now()
+	defer timing.log(request.SessionID)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start Claude CLI: %w", err)
 	}
@@ -301,6 +331,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 			_ = cmd.Wait()
 			return nil, unsafeAfterStart(err)
 		}
+		timing.observe(event)
 		if err := processor.handleEnvelope(event); err != nil {
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
@@ -339,6 +370,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	}
 	logging.LogResponseWithContent(processor.usage.InputTokens, processor.usage.OutputTokens, 0, finalContent, nil)
 	return &llm.ChatResponse{
+		TimingMetadata:        timing.metadata(),
 		Content:               finalContent,
 		Usage:                 processor.usage,
 		StopReason:            firstNonEmpty(processor.stopReason, processor.finalResult.StopReason, processor.finalResult.Subtype),

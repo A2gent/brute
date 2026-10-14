@@ -20,6 +20,7 @@ import (
 	"github.com/A2gent/brute/internal/contextcompress"
 	"github.com/A2gent/brute/internal/filesearch"
 	"github.com/A2gent/brute/internal/llm"
+	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/runtimeenv"
 	"github.com/A2gent/brute/internal/session"
@@ -214,6 +215,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go func() {
 		<-ctx.Done()
 		logging.Info("Shutting down HTTP server...")
+		claudecli.ClosePersistentProcesses()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		server.Shutdown(shutdownCtx)

@@ -76,6 +76,8 @@ type ToolDefinition struct {
 
 // ChatResponse represents a chat completion response
 type ChatResponse struct {
+	// TimingMetadata contains provider transport milestones, merged into assistant metadata.
+	TimingMetadata        map[string]interface{}
 	Content               string
 	Images                []Image
 	ToolCalls             []ToolCall

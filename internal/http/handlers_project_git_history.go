@@ -59,7 +59,27 @@ func (s *Server) handleProjectGitBranchChanges(w http.ResponseWriter, r *http.Re
 		return
 	}
 	response.Files = mergeProjectGitCommitFiles(statuses, statsOutput)
+	fillProjectGitNewLines(targetRepoRoot, response.Files)
 	s.jsonResponse(w, http.StatusOK, response)
+}
+
+// fillProjectGitNewLines sets NewLines (line count at HEAD) so the UI can scale
+// change bars relative to file size. Deleted/binary files are skipped (0 lines).
+func fillProjectGitNewLines(repoRoot string, files []ProjectGitCommitFile) {
+	for i := range files {
+		f := &files[i]
+		if f.Binary || strings.HasPrefix(f.Status, "D") {
+			continue
+		}
+		content, err := runGitCommandPreserveLeading(repoRoot, "show", "HEAD:"+f.Path)
+		if err != nil || content == "" {
+			continue
+		}
+		f.NewLines = strings.Count(content, "\n")
+		if !strings.HasSuffix(content, "\n") {
+			f.NewLines++
+		}
+	}
 }
 
 func (s *Server) handleProjectGitBranchDiff(w http.ResponseWriter, r *http.Request) {

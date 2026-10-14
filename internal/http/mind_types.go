@@ -157,6 +157,8 @@ type ProjectGitCommitFile struct {
 	Additions int    `json:"additions"`
 	Deletions int    `json:"deletions"`
 	Binary    bool   `json:"binary"`
+	// NewLines is the line count of the file at HEAD; only filled for branch changes.
+	NewLines int `json:"new_lines,omitempty"`
 }
 
 type ProjectGitCommitFilesResponse struct {

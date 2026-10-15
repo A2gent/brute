@@ -95,3 +95,6 @@
 - Full speech tests in a shared worktree may exercise other sessions' staged normalization changes. Reproduce those failures separately, leave their files untouched, and initialize Git before validating an archived clean snapshot because hook tests invoke `git rev-parse`.
 - Arithmetic speech normalization must preserve slash-separated dates before matching division; test both dates and numeric division so a new operator rule does not regress path/date handling.
 - A test-fix review could not start because the reviewer Docker image `a2gent-brute:latest` was missing and registry access was denied; report review as unavailable and perform explicit local review and validation.
+- Read workspace instructions before Git discovery: the workspace root is not a repository. Verify filenames with `file_search` instead of guessing singular/plural names before reads. Complete function-signature edits atomically before concurrent validation reads them.
+- `image_inline` can contain only a path and a provider size limit. Normalize only real base64/URL payloads; otherwise preserve the provider metadata and test that path-only images are not replaced by empty attachments.
+- `content_search.path` must be a directory (its index root), not a filename. For a single file use `grep` with the containing directory and an include pattern, or read a bounded range.

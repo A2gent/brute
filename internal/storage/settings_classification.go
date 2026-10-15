@@ -17,6 +17,7 @@ func isManagedAppSettingKey(key string) bool {
 		"A2GENT_PROVIDER_TRANSITION_MODE":                     {},
 		"A2GENT_JEV_ADMISSION_ENABLED":                        {},
 		"A2GENT_JEV_TOOLSETS_ENABLED":                         {},
+		"A2GENT_JEV_SCREENSHOTS_ENABLED":                      {},
 		"A2GENT_SYSTEM_ONE_BACKEND":                           {},
 		"A2GENT_SYSTEM_ONE_MODEL":                             {},
 		"AAGENT_AGENT_DEFINITIONS_FOLDER":                     {},

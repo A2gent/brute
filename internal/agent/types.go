@@ -25,6 +25,8 @@ type Config struct {
 	UseProviderSession       bool
 	ProviderSessionIdentity  string
 	ToolResultMaxTokens      int
+	ScreenshotKeepLatest     int
+	ScreenshotGate           *ScreenshotGate
 	// RelevanceGate is nil unless Jev admission gating is enabled and credentialed.
 	RelevanceGate *contextcompress.RelevanceGate
 	// ToolSelector is nil unless Jev tool-group selection is enabled and credentialed.

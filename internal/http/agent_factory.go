@@ -43,6 +43,10 @@ func (s *Server) newAgentFromConfig(cfg agent.Config, client llm.Client, manager
 	cfg.ResolveTransitionTarget = s.resolveTransitionTarget
 	cfg.CompressToolResults = s.toolResultCompressionEnabled()
 	cfg.RelevanceGate = s.relevanceGate()
+	if s != nil && s.config != nil {
+		cfg.ScreenshotKeepLatest = s.config.Tools.ScreenshotKeepLatest
+	}
+	cfg.ScreenshotGate = s.screenshotGate()
 	cfg.ToolSelector = s.toolSelector()
 	return agent.NewWithCompressor(cfg, client, manager, s.sessionManager, s.contextCompressor)
 }

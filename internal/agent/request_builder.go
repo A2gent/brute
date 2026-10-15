@@ -16,6 +16,7 @@ import (
 func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 	// Convert session messages to LLM messages
 	activeMessages := a.getActiveConversationMessages(sess)
+	a.prepareScreenshotRetention(sess, activeMessages)
 	previousResponseID := ""
 	transitioned := len(session.ProviderTransitions(sess)) > 0 && sess.Metadata["provider_context_epoch"] != nil
 	if a.config.UsePreviousResponse && !transitioned {
@@ -88,13 +89,16 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 		// Tool-role image metadata is not supported by every provider. Normalize
 		// extracted screenshots into the shared user-image channel after the batch.
 		var screenshots []llm.Image
+		var omitted []string
 		for i, tr := range msg.ToolResults {
-			images, _ := tr.Metadata["admission_images"].([]interface{})
-			for _, raw := range images {
-				image, _ := raw.(map[string]interface{})
-				mediaType, _ := image["media_type"].(string)
-				data, _ := image["data_base64"].(string)
-				screenshots = append(screenshots, llm.Image{MediaType: mediaType, DataBase64: data})
+			images := toolScreenshotImages(tr.Metadata)
+			for j, image := range images {
+				decision := screenshotDecision(m, tr.ToolCallID, j)
+				if decision != "" && decision != "keep" {
+					omitted = append(omitted, decision)
+				} else {
+					screenshots = append(screenshots, image)
+				}
 			}
 			if len(images) > 0 {
 				metadata := make(map[string]interface{}, len(tr.Metadata))
@@ -103,11 +107,16 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 				}
 				delete(metadata, "image_inline") // Avoid sending the first image twice to Anthropic.
 				delete(metadata, "admission_images")
+				delete(metadata, "image_original_text")
 				messages[len(messages)-1].ToolResults[i].Metadata = metadata
 			}
 		}
-		if len(screenshots) > 0 {
-			messages = append(messages, llm.Message{Role: "user", Content: "Screenshots from the preceding tool results.", Images: screenshots})
+		if len(screenshots) > 0 || len(omitted) > 0 {
+			content := "Screenshots from the preceding tool results."
+			if len(omitted) > 0 {
+				content += "\n" + strings.Join(omitted, "\n")
+			}
+			messages = append(messages, llm.Message{Role: "user", Content: content, Images: screenshots})
 		}
 	}
 

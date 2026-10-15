@@ -297,12 +297,24 @@ type JevToolsetsConfig struct {
 	Threshold float64 `json:"threshold,omitempty"`
 }
 
+// JevScreenshotsConfig optionally retains relevant screenshots outside the latest-N
+// window. Noul certainty is max(p, 1-p); defaults are threshold .5, confidence .8.
+// Errors keep every candidate image and the resulting decision is persisted.
+type JevScreenshotsConfig struct {
+	Enabled       bool    `json:"enabled"`
+	Threshold     float64 `json:"threshold,omitempty"`
+	MinConfidence float64 `json:"min_confidence,omitempty"`
+}
+
 // ToolsConfig configures tool permissions.
 type ToolsConfig struct {
-	WebRelevance          WebRelevanceConfig `json:"web_relevance,omitempty"`
-	JevAdmission          JevAdmissionConfig `json:"jev_admission,omitempty"`
-	JevToolsets           JevToolsetsConfig  `json:"jev_toolsets,omitempty"`
-	RelevanceGateDisabled bool               `json:"relevance_gate_disabled,omitempty"`
+	// ScreenshotKeepLatest defaults to 2 when non-positive. User images are exempt.
+	ScreenshotKeepLatest  int                  `json:"screenshot_keep_latest,omitempty"`
+	JevScreenshots        JevScreenshotsConfig `json:"jev_screenshots,omitempty"`
+	WebRelevance          WebRelevanceConfig   `json:"web_relevance,omitempty"`
+	JevAdmission          JevAdmissionConfig   `json:"jev_admission,omitempty"`
+	JevToolsets           JevToolsetsConfig    `json:"jev_toolsets,omitempty"`
+	RelevanceGateDisabled bool                 `json:"relevance_gate_disabled,omitempty"`
 	// BrowserActEnabled opts in to the Jev-driven browser loop. Off by default: it is a prototype and
 	// it holds the shared Chrome lock for the duration of a multi-step run.
 	BrowserActEnabled bool   `json:"browser_act_enabled,omitempty"`
@@ -334,15 +346,16 @@ func DefaultConfig() *Config {
 		},
 		Providers: make(map[string]Provider),
 		Tools: ToolsConfig{
-			JevAdmission: JevAdmissionConfig{Enabled: true},
-			JevToolsets:  JevToolsetsConfig{Enabled: true},
-			Bash:         "allow",
-			Read:         "allow",
-			Write:        "allow",
-			Edit:         "allow",
-			Glob:         "allow",
-			Grep:         "allow",
-			Task:         "allow",
+			ScreenshotKeepLatest: 2,
+			JevAdmission:         JevAdmissionConfig{Enabled: true},
+			JevToolsets:          JevToolsetsConfig{Enabled: true},
+			Bash:                 "allow",
+			Read:                 "allow",
+			Write:                "allow",
+			Edit:                 "allow",
+			Glob:                 "allow",
+			Grep:                 "allow",
+			Task:                 "allow",
 		},
 	}
 }

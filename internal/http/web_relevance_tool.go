@@ -123,3 +123,18 @@ func webCredentialName(name string) bool {
 	}
 	return false
 }
+
+// screenshotGate preserves opt-in even without credentials so an unavailable Jev
+// pass keeps screenshots instead of silently switching to deterministic omission.
+func (s *Server) screenshotGate() *agent.ScreenshotGate {
+	if s == nil || s.config == nil || !s.jevAutomationEnabled(jevScreenshotsSettingKey, s.config.Tools.JevScreenshots.Enabled) {
+		return nil
+	}
+	policy := s.config.Tools.JevScreenshots
+	gate := &agent.ScreenshotGate{Threshold: policy.Threshold, MinConfidence: policy.MinConfidence}
+	client, key := s.systemOneClient()
+	if secrets, ok := s.jevEgressSecrets(key); ok {
+		gate.Client, gate.Secrets = client, secrets
+	}
+	return gate
+}

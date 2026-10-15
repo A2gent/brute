@@ -7,8 +7,9 @@ import (
 )
 
 const (
-	jevAdmissionSettingKey = "A2GENT_JEV_ADMISSION_ENABLED"
-	jevToolsetsSettingKey  = "A2GENT_JEV_TOOLSETS_ENABLED"
+	jevAdmissionSettingKey   = "A2GENT_JEV_ADMISSION_ENABLED"
+	jevToolsetsSettingKey    = "A2GENT_JEV_TOOLSETS_ENABLED"
+	jevScreenshotsSettingKey = "A2GENT_JEV_SCREENSHOTS_ENABLED"
 )
 
 // App settings override legacy config flags. Environment overrides remain an
@@ -32,6 +33,7 @@ func (s *Server) settingsResponseWithJev(settings, customEnv map[string]string) 
 	if s != nil && s.config != nil {
 		response.Settings[jevAdmissionSettingKey] = strconv.FormatBool(s.jevAutomationEnabled(jevAdmissionSettingKey, s.config.Tools.JevAdmission.Enabled))
 		response.Settings[jevToolsetsSettingKey] = strconv.FormatBool(s.jevAutomationEnabled(jevToolsetsSettingKey, s.config.Tools.JevToolsets.Enabled))
+		response.Settings[jevScreenshotsSettingKey] = strconv.FormatBool(s.jevAutomationEnabled(jevScreenshotsSettingKey, s.config.Tools.JevScreenshots.Enabled))
 	}
 	return response
 }

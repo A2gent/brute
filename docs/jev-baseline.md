@@ -235,3 +235,91 @@ Measured 2026-10-14 on the live server (77 tools, name+description as returned b
 integrations 911, media 749, web 225, git_review 88. Including input schemas (MCP `tools/list`,
 54 non-file tools) optional groups are 13,801 of 17,207 tokens. A core-only session therefore
 sends roughly 40% of the previous tool-list tokens; each enabled group adds its share.
+
+## Screenshot retention (vision payload baseline)
+
+`internal/agent/screenshot_retention.go` now bounds the screenshots reattached by
+`internal/agent/request_builder.go`. This is independent of text admission/compression:
+
+- Keep the latest **2 tool screenshots** by default. Set `tools.screenshot_keep_latest`
+  to a positive integer to change the window; non-positive values use 2.
+- User-attached images are exempt, including **every attachment in the latest user
+  message**. Older user attachments are also preserved rather than silently losing
+  reference material. They do not consume the screenshot window.
+- When an older tool screenshot first leaves the window, replace its outgoing image
+  with `[screenshot from step K omitted; re-capture if needed]`. Original image data
+  stays in the session. Multiple screenshots in one tool result count individually.
+- Decisions live in the owning message's `metadata.screenshot_retention`, keyed by
+  tool-call ID / image index. Historical messages are marked dirty for incremental
+  SQLite saves. Both `keep` and the exact omission stub survive reloads, new tasks,
+  and classifier outages. They are **not** reconsidered every request.
+- Leaving the latest-N window necessarily changes that part of the request once.
+  After that transition, the decided prefix is byte-stable; this is not a claim of
+  perfect prefix reuse across all rolling-window transitions. Changing the policy
+  does not reclassify already-decided older images.
+
+The optional Jev pass is **off by default**, separate from `tools.jev_admission`:
+
+```json
+{
+  "tools": {
+    "screenshot_keep_latest": 2,
+    "jev_screenshots": {
+      "enabled": true,
+      "threshold": 0.5,
+      "min_confidence": 0.8
+    }
+  }
+}
+```
+
+`A2GENT_JEV_SCREENSHOTS_ENABLED` is an operator override. The pass uses
+`contextcompress.RelevanceTask`, the existing credential/egress guard and resized
+Jev image assets with `TypeSafe-Danger-Zone-Images`. It asks one **noul** question
+per older, undecided screenshot in batches of at most four, under one 20-second
+pass deadline. Keep when `p >= threshold`. Noul supplies no separate confidence;
+`max(p, 1-p)` is the binary decision certainty checked against `min_confidence`.
+A missing key/client, unsafe task, unreadable/invalid image, uncertain/missing answer,
+timeout or failed/partial batch **keeps all candidates in that pass**. That fail-open
+outcome is sticky too. No user attachment is sent to this classifier.
+
+The retained channel is `admission_images` (also inline `image_inline` payloads).
+Path-only `image_inline` remains provider-managed, preserving its file/size policy
+instead of substituting an empty image.
+
+### Browser-heavy archived replay
+
+Read-only replay of archived session `b6f62773-f478-498b-b6fc-2fff6aa25833`:
+**103 assistant requests, 14 browser screenshots**, Jev disabled, latest-N = 2.
+
+This older archive records screenshots as `image_file.bytes`; the original PNGs
+have been deleted. The explicitly opted-in **size-only reconstruction** maps those
+14 recorded byte sizes into today's `admission_images` with placeholder base64 of
+exact length `4 * ceil(file_bytes / 3)`. It then runs the real request builder for
+every archived assistant request. Duplicate JSONL message IDs are ignored. The
+before baseline sums the same active images without retention; the after count
+comes from the built request. It does not contact a provider or alter the archive.
+These are payload-byte measurements of the archived workload in the current image
+channel, **not a captured historical wire trace or measured vision-token costs**.
+
+| Base64 payload metric | Before | After |
+|---|---:|---:|
+| Mean bytes/request | 765,973.4 | 174,316.2 |
+| Peak bytes/request | 2,262,820 | 435,592 |
+| Last request bytes | 2,262,820 | 289,844 |
+| Total resend-weighted bytes | 78,895,256 | 17,954,572 |
+| Total reduction | | **77.24%** |
+
+Reproduce from `brute/`:
+
+```bash
+BRUTE_SCREENSHOT_REPLAY="$HOME/.local/share/aagent/sessions/b6f62773-f478-498b-b6fc-2fff6aa25833.jsonl" \
+BRUTE_SCREENSHOT_REPLAY_LEGACY_BYTES=true \
+go test ./internal/agent -run '^TestScreenshotRetentionArchiveReplay$' -v -count=1
+```
+
+For archives already containing inline `admission_images`, omit
+`BRUTE_SCREENSHOT_REPLAY_LEGACY_BYTES`. Normal tests skip the external replay;
+unit tests cover window sizes, multi-image results, user attachments, stable stubs,
+incremental save/reload, batched Jev decisions, sticky fail-open outcomes including
+partial-batch failure, and path-only provider attachments.

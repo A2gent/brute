@@ -160,7 +160,6 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 			logging.Warn("Serial session queue failed to mark session %s failed: %v", sess.ID, err)
 			return true
 		}
-		s.publishSessionCatalog("session_updated", sess)
 		return true
 	}
 
@@ -169,7 +168,6 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 		logging.Warn("Serial session queue failed to mark session %s running: %v", sess.ID, err)
 		return true
 	}
-	s.publishSessionCatalog("session_updated", sess)
 	defer s.queueTelegramSessionMessageSync(sess.ID)
 
 	runCtx, cancelRun := context.WithCancel(ctx)

@@ -22,15 +22,26 @@ func (s *Server) handleSessionCatalogEvents(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	events, unsubscribe := s.SubscribeSessionCatalogEvents(projectID)
-	defer unsubscribe()
+	// fetch-based clients cannot set EventSource's header, so accept a query too.
+	lastEventID := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+	if lastEventID == "" {
+		lastEventID = strings.TrimSpace(r.URL.Query().Get("last_event_id"))
+	}
+	hub := s.catalogHub()
+	sub := hub.subscribe(projectID, lastEventID, true)
+	defer hub.unsubscribe(sub)
+	events := sub.events
 
 	writeSSE := func(event SessionCatalogEvent) bool {
 		payload, err := json.Marshal(event)
 		if err != nil {
 			return true
 		}
-		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Type, payload); err != nil {
+		idLine := ""
+		if event.ID != "" {
+			idLine = "id: " + event.ID + "\n"
+		}
+		if _, err := fmt.Fprintf(w, "%sevent: %s\ndata: %s\n\n", idLine, event.Type, payload); err != nil {
 			return false
 		}
 		flusher.Flush()
@@ -43,10 +54,6 @@ func (s *Server) handleSessionCatalogEvents(w http.ResponseWriter, r *http.Reque
 		}
 		flusher.Flush()
 		return true
-	}
-
-	if !writeSSE(SessionCatalogEvent{Type: "catalog_ready"}) {
-		return
 	}
 
 	ticker := time.NewTicker(15 * time.Second)

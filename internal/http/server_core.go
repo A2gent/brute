@@ -60,7 +60,7 @@ type Server struct {
 	sessionEventSubs         map[string]map[chan ChatStreamEvent]*sessionEventSubscription
 	liveTurnEvents           map[string][]*bufferedStreamEvent // guarded by sessionEventsMu
 	sessionCatalogMu         sync.Mutex
-	sessionCatalogSubs       map[chan SessionCatalogEvent]string
+	sessionCatalog           *sessionCatalogHub
 	serialQueueMu            sync.Mutex
 	serialQueueWorkers       map[string]struct{}
 	sessionSummaryWG         sync.WaitGroup // tracks async session summary goroutines (tests wait on it)
@@ -126,7 +126,7 @@ func NewServer(
 		runParentCtx:           context.Background(),
 		activeRuns:             make(map[string]map[string]context.CancelFunc),
 		sessionEventSubs:       make(map[string]map[chan ChatStreamEvent]*sessionEventSubscription),
-		sessionCatalogSubs:     make(map[chan SessionCatalogEvent]string),
+		sessionCatalog:         newSessionCatalogHub(),
 		serialQueueWorkers:     make(map[string]struct{}),
 		chromeExtensionBridge:  newChromeExtensionBridge(),
 		contextCompressor:      contextcompress.NewCompressorWithSessionStore(contextcompress.Config{Enabled: true}, sessionManager),
@@ -135,6 +135,9 @@ func NewServer(
 		mcpBridge:              newMCPBridgeState(),
 		writeTaskSource:        os.WriteFile,
 		removeTaskSource:       os.Remove,
+	}
+	if sessionManager != nil {
+		sessionManager.SetChangeListener(s.handleSessionChange)
 	}
 	s.recoverProviderTransitions()
 	s.installPronunciationResolver()

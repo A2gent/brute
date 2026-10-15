@@ -365,6 +365,8 @@ type SessionListItem struct {
 	A2AInbound         bool   `json:"a2a_inbound,omitempty"`
 	A2ASourceAgentID   string `json:"a2a_source_agent_id,omitempty"`
 	A2ASourceAgentName string `json:"a2a_source_agent_name,omitempty"`
+	// Deleted marks an updated_since tombstone; only ID/ProjectID are set.
+	Deleted bool `json:"deleted,omitempty"`
 }
 
 // SubAgentRequest represents a request to create or update a sub-agent.

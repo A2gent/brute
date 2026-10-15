@@ -202,7 +202,6 @@ func (s *Server) startPendingRunLocked(sessionID string, msg *session.PendingMes
 	// Registered while still holding the lock, so a concurrent drain sees a live run.
 	s.pendingDrainMu.Unlock()
 
-	s.publishSessionCatalog("session_updated", sess)
 	s.publishSessionEvent(sessionID, s.sessionSnapshotStreamEvent(sess))
 	logging.LogSession("queued_message_started", sessionID, "queued message promoted to a new run")
 

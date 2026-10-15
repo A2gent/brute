@@ -58,7 +58,6 @@ func (s *Server) handleCreateA2AOutboundSession(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	s.publishSessionCatalog("session_created", sess)
 	s.jsonResponse(w, http.StatusCreated, s.sessionToResponse(sess))
 }
 

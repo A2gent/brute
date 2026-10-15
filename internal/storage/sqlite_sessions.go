@@ -578,3 +578,37 @@ func (s *SQLiteStore) DeleteSession(id string) error {
 
 	return tx.Commit()
 }
+
+// SessionRef identifies a session row and its project.
+type SessionRef struct {
+	ID        string
+	ProjectID string
+}
+
+// ListSessionTree returns the root and every descendant that DeleteSession
+// would remove, so callers can announce the cascade after it commits.
+func (s *SQLiteStore) ListSessionTree(rootID string) ([]SessionRef, error) {
+	rows, err := s.sessionReader().Query(`
+		WITH RECURSIVE descendants(id) AS (
+			SELECT id FROM sessions WHERE id = ?
+			UNION ALL
+			SELECT s.id
+			FROM sessions s
+			INNER JOIN descendants d ON s.parent_id = d.id
+		)
+		SELECT id, COALESCE(project_id, '') FROM sessions WHERE id IN (SELECT id FROM descendants)
+	`, rootID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var refs []SessionRef
+	for rows.Next() {
+		var ref SessionRef
+		if err := rows.Scan(&ref.ID, &ref.ProjectID); err != nil {
+			return nil, err
+		}
+		refs = append(refs, ref)
+	}
+	return refs, rows.Err()
+}

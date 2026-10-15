@@ -101,7 +101,6 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 		})
 	}
 	if errors.Is(runErr, agent.ErrTransitionPaused) {
-		s.publishSessionCatalog("session_updated", sess)
 		publishError(runErr.Error())
 		return nil
 	}
@@ -167,7 +166,6 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 		},
 	})
 	s.triggerSerialSessionQueueIfAdvanceable(sess)
-	s.publishSessionCatalog("session_updated", sess)
 	return nil
 }
 

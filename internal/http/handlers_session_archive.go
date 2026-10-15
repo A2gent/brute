@@ -118,7 +118,6 @@ func (s *Server) setSessionArchived(w http.ResponseWriter, sessionID string, arc
 			s.errorResponse(w, http.StatusInternalServerError, "Failed to update session archive state: "+saveErr.Error())
 			return
 		}
-		s.publishSessionCatalog("session_updated", sess)
 	}
 
 	s.jsonResponse(w, http.StatusOK, s.sessionToResponse(root))

@@ -18,6 +18,9 @@ type Manager struct {
 	runLeases   sync.Map
 	store       storage.Store
 	jsonlWriter *JSONLWriter
+	writeLocks  sync.Map
+	changeMu    sync.RWMutex
+	onChange    func(Change)
 }
 
 // NewManager creates a new session manager
@@ -95,7 +98,7 @@ func expandTilde(path string) string {
 // Create creates a new session
 func (m *Manager) Create(agentID string) (*Session, error) {
 	sess := New(agentID)
-	if err := m.store.SaveSession(sess.ToStorage()); err != nil {
+	if err := m.createAndNotify(sess); err != nil {
 		return nil, fmt.Errorf("failed to save session: %w", err)
 	}
 	return sess, nil
@@ -104,7 +107,7 @@ func (m *Manager) Create(agentID string) (*Session, error) {
 // CreateQueued creates a new queued session (not started)
 func (m *Manager) CreateQueued(agentID string) (*Session, error) {
 	sess := NewQueued(agentID)
-	if err := m.store.SaveSession(sess.ToStorage()); err != nil {
+	if err := m.createAndNotify(sess); err != nil {
 		return nil, fmt.Errorf("failed to save session: %w", err)
 	}
 	return sess, nil
@@ -113,7 +116,7 @@ func (m *Manager) CreateQueued(agentID string) (*Session, error) {
 // CreateWithParent creates a new sub-session
 func (m *Manager) CreateWithParent(agentID, parentID string) (*Session, error) {
 	sess := NewWithParent(agentID, parentID)
-	if err := m.store.SaveSession(sess.ToStorage()); err != nil {
+	if err := m.createAndNotify(sess); err != nil {
 		return nil, fmt.Errorf("failed to save session: %w", err)
 	}
 	return sess, nil
@@ -122,7 +125,7 @@ func (m *Manager) CreateWithParent(agentID, parentID string) (*Session, error) {
 // CreateWithJob creates a new session associated with a recurring job
 func (m *Manager) CreateWithJob(agentID, jobID string) (*Session, error) {
 	sess := NewWithJob(agentID, jobID)
-	if err := m.store.SaveSession(sess.ToStorage()); err != nil {
+	if err := m.createAndNotify(sess); err != nil {
 		return nil, fmt.Errorf("failed to save session: %w", err)
 	}
 	return sess, nil
@@ -148,6 +151,8 @@ func (m *Manager) GetSummary(id string) (*Session, error) {
 
 // Save saves a session and appends new messages to the JSONL log (if configured).
 func (m *Manager) Save(sess *Session) error {
+	unlock := m.lockSession(sess.ID)
+	defer unlock()
 	var err error
 	if store, ok := m.store.(interface {
 		SaveSessionIncremental(*storage.Session, []string, map[string]bool, func(int) storage.Message) error
@@ -164,6 +169,7 @@ func (m *Manager) Save(sess *Session) error {
 		return err
 	}
 	sess.dirtyMessageIDs = nil
+	m.notify(Change{Kind: ChangeUpdated, ID: sess.ID, Session: sess})
 	// Best-effort JSONL flush – do not fail the save if writing fails.
 	if m.jsonlWriter != nil {
 		if err := m.jsonlWriter.Flush(sess); err != nil {
@@ -204,7 +210,14 @@ func (m *Manager) SearchDialogueSessionIDs(query, projectID string) (map[string]
 
 // Delete deletes a session
 func (m *Manager) Delete(id string) error {
-	return m.store.DeleteSession(id)
+	removed := m.deletedSubtree(id)
+	if err := m.store.DeleteSession(id); err != nil {
+		return err
+	}
+	for _, change := range removed {
+		m.notify(change)
+	}
+	return nil
 }
 
 // QuestionData represents a question asked to the user
@@ -330,7 +343,13 @@ func (m *Manager) SetSessionSummary(sessionID, summary string) error {
 	if store, ok := m.store.(interface {
 		UpdateSessionSummary(id, summary string) error
 	}); ok {
-		return store.UpdateSessionSummary(sessionID, summary)
+		unlock := m.lockSession(sessionID)
+		defer unlock()
+		if err := store.UpdateSessionSummary(sessionID, summary); err != nil {
+			return err
+		}
+		m.notify(Change{Kind: ChangeUpdated, ID: sessionID})
+		return nil
 	}
 	sess, err := m.Get(sessionID)
 	if err != nil {

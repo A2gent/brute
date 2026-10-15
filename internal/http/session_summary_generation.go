@@ -34,7 +34,7 @@ func (s *Server) refreshSessionSummaryAsync(sess *session.Session) {
 	fallbackSummary := strings.TrimSpace(snapshot.Summary)
 	if fallbackSummary != "" && fallbackSummary != sess.Summary {
 		sess.SetSummary(fallbackSummary)
-		s.persistSessionSummary(sess.ID, fallbackSummary, false)
+		s.persistSessionSummary(sess.ID, fallbackSummary)
 	}
 
 	prompt := s.renderSessionSummaryPrompt(&snapshot)
@@ -54,7 +54,7 @@ func (s *Server) refreshSessionSummaryAsync(sess *session.Session) {
 		if !s.finishSessionSummary(snapshot.ID, token) || summary == "" || summary == fallbackSummary {
 			return
 		}
-		s.persistSessionSummary(snapshot.ID, summary, true)
+		s.persistSessionSummary(snapshot.ID, summary)
 	}()
 }
 
@@ -82,18 +82,11 @@ func (s *Server) finishSessionSummary(sessionID string, token uint64) bool {
 	return true
 }
 
-func (s *Server) persistSessionSummary(sessionID, summary string, publish bool) {
+// persistSessionSummary writes only the summary column; the session manager
+// announces the change to catalog subscribers.
+func (s *Server) persistSessionSummary(sessionID, summary string) {
 	if err := s.sessionManager.SetSessionSummary(sessionID, summary); err != nil {
 		logging.Warn("Failed to save session summary: %v", err)
-		return
-	}
-	if !publish {
-		return
-	}
-	// Publish the current DB state, not the snapshot: a newer run may have
-	// changed the status since the summary generation started.
-	if fresh, err := s.sessionManager.GetSummary(sessionID); err == nil {
-		s.publishSessionCatalog("session_updated", fresh)
 	}
 }
 

@@ -75,7 +75,6 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to update session: "+err.Error())
 		return
 	}
-	s.publishSessionCatalog("session_updated", sess)
 
 	runCtx, cancelRun := s.chatStreamRunContextWithParent(r.Context(), leaseCtx, sess)
 	runID := s.registerActiveSessionRun(sessionID, cancelRun)
@@ -162,7 +161,6 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		s.refreshSessionSummaryAsync(sess)
 		_ = writeEvent(ChatStreamEvent{Type: "done", Content: chatResp.Content, Messages: s.messagesToResponse(sess.Messages), Status: string(sess.Status), Usage: &chatResp.Usage})
 		s.triggerSerialSessionQueueIfAdvanceable(sess)
-		s.publishSessionCatalog("session_updated", sess)
 		return
 	}
 
@@ -203,7 +201,6 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		if errors.Is(err, agent.ErrTransitionPaused) {
-			s.publishSessionCatalog("session_updated", sess)
 			_ = writeEvent(ChatStreamEvent{Type: "provider_transition", Transition: session.CurrentProviderTransition(sess), Status: string(sess.Status), Error: err.Error()})
 			return
 		}
@@ -250,7 +247,6 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	s.triggerSerialSessionQueueIfAdvanceable(sess)
-	s.publishSessionCatalog("session_updated", sess)
 }
 
 func (s *Server) inputRequiredStreamEvent(sess *session.Session) *ChatStreamEvent {

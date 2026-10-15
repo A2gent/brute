@@ -42,6 +42,17 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	// Archived (completed) sessions are hidden unless explicitly requested.
 	archiveFilter := normalizeSessionArchiveFilter(r.URL.Query().Get("archived"))
 
+	var since time.Time
+	var recentChanges map[string]sessionCatalogChange
+	if raw := strings.TrimSpace(r.URL.Query().Get("updated_since")); raw != "" {
+		since, err = time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			s.errorResponse(w, http.StatusBadRequest, "Invalid updated_since: expected RFC3339 timestamp")
+			return
+		}
+		recentChanges = s.catalogHub().changesSince(since)
+	}
+
 	var dialogueMatches map[string]struct{}
 	if searchQuery != "" {
 		dialogueMatches, err = s.sessionManager.SearchDialogueSessionIDs(searchQuery, filterProjectID)
@@ -61,57 +72,17 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		isInbound, sourceAgentID, sourceAgentName := sessionA2AMeta(sess)
-		if filterA2A && !isInbound {
+		item := s.sessionListItem(sess)
+		if filterA2A && !item.A2AInbound {
 			continue
 		}
-		parentID := ""
-		if sess.ParentID != nil {
-			parentID = *sess.ParentID
-		}
-		provider, model := sessionProviderAndModel(sess)
-		routedProvider, routedModel := sessionRoutedProviderAndModel(sess)
-		projectID := ""
-		if sess.ProjectID != nil {
-			projectID = strings.TrimSpace(*sess.ProjectID)
-		}
-		if filterProjectID != "" && projectID != filterProjectID {
+		if filterProjectID != "" && item.ProjectID != filterProjectID {
 			continue
 		}
-		jobID := ""
-		if sess.JobID != nil {
-			jobID = *sess.JobID
-		}
-		inputTokens, outputTokens := sessionInputOutputTokens(sess)
-		channel, channelDetail := sessionChannel(sess)
-		item := SessionListItem{
-			ID:                 sess.ID,
-			AgentID:            sess.AgentID,
-			ParentID:           parentID,
-			JobID:              jobID,
-			Channel:            channel,
-			ChannelDetail:      channelDetail,
-			LinkType:           sessionLinkType(sess),
-			ProjectID:          projectID,
-			Provider:           provider,
-			Model:              model,
-			RoutedProvider:     routedProvider,
-			RoutedModel:        routedModel,
-			Title:              sess.Title,
-			Summary:            sess.Summary,
-			Status:             string(sess.Status),
-			TotalTokens:        inputTokens + outputTokens,
-			InputTokens:        inputTokens,
-			OutputTokens:       outputTokens,
-			RunDurationSeconds: sessionRunDurationSeconds(sess.CreatedAt, sess.UpdatedAt, string(sess.Status)),
-			TaskProgress:       sess.TaskProgress,
-			PromptCache:        sessionPromptCache(sess, s.config),
-			CreatedAt:          sess.CreatedAt,
-			UpdatedAt:          sess.UpdatedAt,
-			ArchivedAt:         sessionArchivedAt(sess),
-			A2AInbound:         isInbound,
-			A2ASourceAgentID:   sourceAgentID,
-			A2ASourceAgentName: sourceAgentName,
+		if !since.IsZero() && sess.UpdatedAt.Before(since) {
+			if _, changed := recentChanges[sess.ID]; !changed {
+				continue
+			}
 		}
 		if includeMetadata {
 			item.Metadata = filterSessionListMetadata(sess.Metadata, metadataKeys)
@@ -119,7 +90,67 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		items = append(items, item)
 	}
 
+	if !since.IsZero() {
+		// Tombstones let a resyncing client drop sessions deleted while it was away.
+		for id, change := range recentChanges {
+			if change.deleted && (filterProjectID == "" || change.projectID == filterProjectID) {
+				items = append(items, SessionListItem{ID: id, ProjectID: change.projectID, Deleted: true, UpdatedAt: change.at})
+			}
+		}
+	}
+
 	s.jsonResponse(w, http.StatusOK, items)
+}
+
+// sessionListItem builds the /sessions row; catalog events reuse it so a
+// streamed row is identical to a listed one.
+func (s *Server) sessionListItem(sess *session.Session) SessionListItem {
+	isInbound, sourceAgentID, sourceAgentName := sessionA2AMeta(sess)
+	parentID := ""
+	if sess.ParentID != nil {
+		parentID = *sess.ParentID
+	}
+	provider, model := sessionProviderAndModel(sess)
+	routedProvider, routedModel := sessionRoutedProviderAndModel(sess)
+	projectID := ""
+	if sess.ProjectID != nil {
+		projectID = strings.TrimSpace(*sess.ProjectID)
+	}
+	jobID := ""
+	if sess.JobID != nil {
+		jobID = *sess.JobID
+	}
+	inputTokens, outputTokens := sessionInputOutputTokens(sess)
+	channel, channelDetail := sessionChannel(sess)
+	return SessionListItem{
+		ID:                 sess.ID,
+		AgentID:            sess.AgentID,
+		ParentID:           parentID,
+		JobID:              jobID,
+		Channel:            channel,
+		ChannelDetail:      channelDetail,
+		LinkType:           sessionLinkType(sess),
+		ProjectID:          projectID,
+		Provider:           provider,
+		Model:              model,
+		RoutedProvider:     routedProvider,
+		RoutedModel:        routedModel,
+		Title:              sess.Title,
+		Summary:            sess.Summary,
+		Status:             string(sess.Status),
+		TotalTokens:        inputTokens + outputTokens,
+		InputTokens:        inputTokens,
+		OutputTokens:       outputTokens,
+		RunDurationSeconds: sessionRunDurationSeconds(sess.CreatedAt, sess.UpdatedAt, string(sess.Status)),
+		TaskProgress:       sess.TaskProgress,
+		PromptCache:        sessionPromptCache(sess, s.config),
+		CreatedAt:          sess.CreatedAt,
+		UpdatedAt:          sess.UpdatedAt,
+		ArchivedAt:         sessionArchivedAt(sess),
+		A2AInbound:         isInbound,
+		A2ASourceAgentID:   sourceAgentID,
+		A2ASourceAgentName: sourceAgentName,
+	}
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -378,7 +409,6 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}(sess.ID, req.Task)
 
 	logging.LogSession("created", sess.ID, fmt.Sprintf("agent=%s via HTTP", req.AgentID))
-	s.publishSessionCatalog("session_created", sess)
 
 	projectID := ""
 	if sess.ProjectID != nil {
@@ -432,7 +462,6 @@ func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		logging.LogSession("started", sess.ID, fmt.Sprintf("agent=%s manual override removed serial queue auto-start", sess.AgentID))
-		s.publishSessionCatalog("session_updated", sess)
 		s.jsonResponse(w, http.StatusOK, s.sessionToResponse(sess))
 		return
 	}
@@ -444,7 +473,6 @@ func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logging.LogSession("started", sess.ID, fmt.Sprintf("agent=%s via HTTP", sess.AgentID))
-	s.publishSessionCatalog("session_updated", sess)
 
 	s.jsonResponse(w, http.StatusOK, s.sessionToResponse(sess))
 }
@@ -480,7 +508,6 @@ func (s *Server) handleUpdateSessionProject(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	s.publishSessionCatalog("session_updated", sess)
 	s.jsonResponse(w, http.StatusOK, s.sessionToResponse(sess))
 }
 
@@ -619,7 +646,6 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 				s.errorResponse(w, http.StatusInternalServerError, "Failed to detach running child session: "+saveErr.Error())
 				return
 			}
-			s.publishSessionCatalog("session_updated", survivor)
 		}
 	}
 
@@ -628,31 +654,20 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		s.closeBrowserPageForSession(id)
 	}
 
-	type catalogDelete struct {
-		sessionID string
-		projectID string
-	}
-	deletes := make([]catalogDelete, 0, len(sessionIDsToDelete))
-
 	sess, err := s.sessionManager.Get(sessionID)
 	if err == nil {
-		deletes = append(deletes, catalogDelete{sessionID: sessionID, projectID: sessionProjectID(sess)})
 		cleanupCtx, cleanupCancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cleanupCancel()
 		if cleanupErr := s.deleteTelegramTopicForSession(cleanupCtx, sess); cleanupErr != nil {
 			logging.Warn("Telegram topic cleanup failed for session %s: %s", sessionID, sanitizeTelegramError(cleanupErr))
 		}
-	} else {
-		deletes = append(deletes, catalogDelete{sessionID: sessionID})
 	}
 
 	for _, childSessionID := range sessionIDsToDelete[1:] {
 		childSess, getErr := s.sessionManager.Get(childSessionID)
 		if getErr != nil {
-			deletes = append(deletes, catalogDelete{sessionID: childSessionID})
 			continue
 		}
-		deletes = append(deletes, catalogDelete{sessionID: childSessionID, projectID: sessionProjectID(childSess)})
 		cleanupCtx, cleanupCancel := context.WithTimeout(r.Context(), 20*time.Second)
 		if cleanupErr := s.deleteTelegramTopicForSession(cleanupCtx, childSess); cleanupErr != nil {
 			logging.Warn("Telegram topic cleanup failed for session %s: %s", childSessionID, sanitizeTelegramError(cleanupErr))
@@ -663,14 +678,6 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	if err := s.sessionManager.Delete(sessionID); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete session: "+err.Error())
 		return
-	}
-
-	for _, item := range deletes {
-		s.publishSessionCatalogEvent(SessionCatalogEvent{
-			Type:      "session_deleted",
-			SessionID: item.sessionID,
-			ProjectID: item.projectID,
-		})
 	}
 
 	logging.LogSession("deleted", sessionID, "via HTTP")
@@ -695,7 +702,6 @@ func (s *Server) handleCancelSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.publishSessionCatalog("session_updated", sess)
 	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"session_id":      sessionID,
 		"cancelled_runs":  cancelledRuns,

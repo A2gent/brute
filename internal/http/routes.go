@@ -24,6 +24,9 @@ func (s *Server) setupRoutes() {
 	// streams. The default request timeout is sized for agent runs, not catalog
 	// subscriptions that must stay open while Caesar is on the sessions page.
 	r.Use(timeoutExceptEventStreams)
+	// WHY: /sessions lists are hundreds of KB of repetitive JSON. Only JSON is
+	// compressed; SSE and NDJSON streams must flush each event unbuffered.
+	r.Use(middleware.Compress(5, "application/json"))
 
 	// CORS configuration - allow all origins for flexibility
 	allowedOrigins := s.config.EffectiveCORSAllowedOrigins()
@@ -37,7 +40,7 @@ func (s *Server) setupRoutes() {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Last-Event-ID"},
 		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: allowCredentials,
 		MaxAge:           300,

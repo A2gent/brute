@@ -50,7 +50,6 @@ func (s *Server) resolveTransitionTarget(sess *session.Session, endpoint session
 }
 func (s *Server) publishTransition(sess *session.Session, t *session.ProviderTransition) {
 	s.publishSessionEvent(sess.ID, ChatStreamEvent{Type: "provider_transition", Transition: t, Status: string(sess.Status)})
-	s.publishSessionCatalog("session_updated", sess)
 }
 func (s *Server) handleListProviderTransitions(w http.ResponseWriter, r *http.Request) {
 	sess, err := s.sessionManager.Get(chi.URLParam(r, "sessionID"))
@@ -275,7 +274,6 @@ func (s *Server) startTransitionRun(ctx context.Context, release func(), sess *s
 			if err != nil && !errors.Is(err, agent.ErrTransitionPaused) {
 				s.publishSessionEvent(sess.ID, ChatStreamEvent{Type: "error", Error: err.Error()})
 			}
-			s.publishSessionCatalog("session_updated", sess)
 			if linked := session.CurrentProviderTransition(sess); linked != nil && linked.Phase == "linked" {
 				if child, e := s.sessionManager.Get(linked.LinkedSessionID); e == nil && child.Status == session.StatusQueued {
 					if childCtx, childRelease, e := s.sessionManager.AcquireRun(s.sessionRunParentContext(), child.ID); e == nil {

@@ -76,16 +76,18 @@ func TestHandleCreateSessionPublishesCatalogEvent(t *testing.T) {
 		t.Fatalf("failed to decode create response: %v", err)
 	}
 
+	// The row is created first and assigned to the project by a later save, so a
+	// project subscriber first sees it as an update carrying the full row.
 	select {
 	case event := <-events:
-		if event.Type != "session_created" {
-			t.Fatalf("type = %q, want session_created", event.Type)
+		if event.Type != "session_created" && event.Type != "session_updated" {
+			t.Fatalf("type = %q, want session_created/updated", event.Type)
 		}
 		if event.SessionID != created.ID {
 			t.Fatalf("session_id = %q, want %q", event.SessionID, created.ID)
 		}
-		if event.ProjectID != "proj-1" {
-			t.Fatalf("project_id = %q, want proj-1", event.ProjectID)
+		if event.ProjectID != "proj-1" || event.Session == nil || event.Session.ProjectID != "proj-1" {
+			t.Fatalf("event lacks project row: %#v", event)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for session_created catalog event")

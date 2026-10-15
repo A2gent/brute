@@ -16,9 +16,6 @@ import (
 )
 
 const (
-	chromeExtensionPageStaleAfter   = 90 * time.Second
-	chromeExtensionDefaultPollWait  = 25 * time.Second
-	chromeExtensionMaxPollWait      = 30 * time.Second
 	chromeExtensionDefaultToolWait  = 45 * time.Second
 	chromeExtensionMaxToolWait      = 120 * time.Second
 	chromeExtensionMinCommandWaitMS = 1000
@@ -46,7 +43,6 @@ type chromeExtensionPageState struct {
 	RegisteredAt     time.Time
 	LastSeenAt       time.Time
 	Queue            []string
-	Notify           chan struct{}
 	// WS is set while the page is reachable through the extension WebSocket.
 	WS *chromeExtensionWSConn
 }
@@ -77,13 +73,6 @@ type chromeExtensionRegisterRequest struct {
 	Page             chromeExtensionPageSnapshot `json:"page,omitempty"`
 }
 
-type chromeExtensionPollRequest struct {
-	ClientID         string                      `json:"client_id,omitempty"`
-	ExtensionVersion string                      `json:"extension_version,omitempty"`
-	Page             chromeExtensionPageSnapshot `json:"page,omitempty"`
-	TimeoutMS        int                         `json:"timeout_ms,omitempty"`
-}
-
 type chromeExtensionResultRequest struct {
 	PageID   string          `json:"page_id,omitempty"`
 	ClientID string          `json:"client_id,omitempty"`
@@ -105,20 +94,6 @@ func newChromeExtensionBridge() *chromeExtensionBridge {
 		pages:    make(map[string]*chromeExtensionPageState),
 		commands: make(map[string]*chromeExtensionCommandState),
 	}
-}
-
-func (b *chromeExtensionBridge) register(req chromeExtensionRegisterRequest) (map[string]interface{}, error) {
-	pageID := strings.TrimSpace(req.PageID)
-	if pageID == "" {
-		return nil, fmt.Errorf("page_id is required")
-	}
-
-	now := time.Now().UTC()
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.cleanupLocked(now)
-	page := b.upsertPageLocked(pageID, req.ClientID, req.ExtensionVersion, req.Page, now)
-	return page.toResponse(now), nil
 }
 
 func (b *chromeExtensionBridge) listPages() []map[string]interface{} {
@@ -147,13 +122,13 @@ func (b *chromeExtensionBridge) enqueue(pageID, action string, params map[string
 
 	pageID = strings.TrimSpace(pageID)
 	if pageID == "" {
-		pageID = b.defaultPageIDLocked(now)
+		pageID = b.defaultPageIDLocked()
 	}
 	if pageID == "" {
 		return nil, fmt.Errorf("no active Chrome extension pages are registered; open a page with the A2gent Chrome extension loaded first")
 	}
 	page, ok := b.pages[pageID]
-	if !ok || !page.activeAt(now) {
+	if !ok || !page.activeAt() {
 		return nil, fmt.Errorf("Chrome extension page is not active: %s", pageID)
 	}
 
@@ -168,52 +143,8 @@ func (b *chromeExtensionBridge) enqueue(pageID, action string, params map[string
 	}
 	b.commands[command.ID] = command
 	page.Queue = append(page.Queue, command.ID)
-	b.signalPageLocked(page)
+	page.WS.wakeUp()
 	return command, nil
-}
-
-func (b *chromeExtensionBridge) poll(ctx context.Context, pageID string, req chromeExtensionPollRequest) (*chromeExtensionCommandWire, error) {
-	pageID = strings.TrimSpace(pageID)
-	if pageID == "" {
-		return nil, fmt.Errorf("page_id is required")
-	}
-	wait := durationFromMS(req.TimeoutMS, chromeExtensionDefaultPollWait, chromeExtensionMaxPollWait)
-	if wait <= 0 {
-		wait = chromeExtensionDefaultPollWait
-	}
-
-	deadline := time.NewTimer(wait)
-	defer deadline.Stop()
-
-	for {
-		now := time.Now().UTC()
-		b.mu.Lock()
-		b.cleanupLocked(now)
-		page := b.upsertPageLocked(pageID, req.ClientID, req.ExtensionVersion, req.Page, now)
-		if len(page.Queue) > 0 {
-			commandID := page.Queue[0]
-			page.Queue = page.Queue[1:]
-			command, ok := b.commands[commandID]
-			if ok {
-				wire := command.toWire()
-				b.mu.Unlock()
-				return wire, nil
-			}
-			b.mu.Unlock()
-			continue
-		}
-		notify := page.Notify
-		b.mu.Unlock()
-
-		select {
-		case <-notify:
-			continue
-		case <-deadline.C:
-			return nil, nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
 }
 
 func (c *chromeExtensionCommandState) toWire() *chromeExtensionCommandWire {
@@ -282,7 +213,6 @@ func (b *chromeExtensionBridge) upsertPageLocked(pageID, clientID, extensionVers
 		page = &chromeExtensionPageState{
 			PageID:       pageID,
 			RegisteredAt: now,
-			Notify:       make(chan struct{}),
 		}
 		b.pages[pageID] = page
 	}
@@ -297,7 +227,7 @@ func (b *chromeExtensionBridge) upsertPageLocked(pageID, clientID, extensionVers
 
 func (b *chromeExtensionBridge) cleanupLocked(now time.Time) {
 	for pageID, page := range b.pages {
-		if !page.activeAt(now) {
+		if !page.activeAt() {
 			for _, commandID := range page.Queue {
 				delete(b.commands, commandID)
 			}
@@ -312,10 +242,10 @@ func (b *chromeExtensionBridge) cleanupLocked(now time.Time) {
 	}
 }
 
-func (b *chromeExtensionBridge) defaultPageIDLocked(now time.Time) string {
+func (b *chromeExtensionBridge) defaultPageIDLocked() string {
 	var best *chromeExtensionPageState
 	for _, page := range b.pages {
-		if !page.activeAt(now) {
+		if !page.activeAt() {
 			continue
 		}
 		if best == nil {
@@ -350,20 +280,9 @@ func (b *chromeExtensionBridge) removeFromPageQueueLocked(pageID, commandID stri
 	page.Queue = filtered
 }
 
-func (b *chromeExtensionBridge) signalPageLocked(page *chromeExtensionPageState) {
-	// WHY: poll handlers may be long-polling without holding the mutex.
-	// WHAT: close-and-replace the notification channel so every current waiter wakes once.
-	close(page.Notify)
-	page.Notify = make(chan struct{})
-	if page.WS != nil {
-		page.WS.wakeUp()
-	}
-}
-
-// activeAt reports whether commands can still reach the page: either it holds a
-// live WebSocket or it polled/registered recently over HTTP.
-func (p *chromeExtensionPageState) activeAt(now time.Time) bool {
-	return p.WS != nil || now.Sub(p.LastSeenAt) <= chromeExtensionPageStaleAfter
+// activeAt reports whether commands can still reach the page over WebSocket.
+func (p *chromeExtensionPageState) activeAt() bool {
+	return p.WS != nil
 }
 
 func (p *chromeExtensionPageState) toResponse(now time.Time) map[string]interface{} {
@@ -405,10 +324,7 @@ func durationFromMS(raw int, fallback, max time.Duration) time.Duration {
 func (s *Server) registerBrowserExtensionRoutes(r chi.Router) {
 	r.Route("/browser-extension", func(r chi.Router) {
 		r.Get("/pages", s.handleChromeExtensionListPages)
-		r.Post("/pages/register", s.handleChromeExtensionRegisterPage)
 		r.Get("/ws", s.handleChromeExtensionWS)
-		// Legacy HTTP long-poll transport, kept for older extension builds.
-		r.Post("/pages/{pageID}/poll", s.handleChromeExtensionPollPage)
 		r.Post("/commands/{commandID}/result", s.handleChromeExtensionCommandResult)
 	})
 }
@@ -416,40 +332,6 @@ func (s *Server) registerBrowserExtensionRoutes(r chi.Router) {
 func (s *Server) handleChromeExtensionListPages(w http.ResponseWriter, r *http.Request) {
 	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"pages": s.chromeExtensionBridge.listPages(),
-	})
-}
-
-func (s *Server) handleChromeExtensionRegisterPage(w http.ResponseWriter, r *http.Request) {
-	var req chromeExtensionRegisterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.errorResponse(w, http.StatusBadRequest, "invalid request body: "+err.Error())
-		return
-	}
-	page, err := s.chromeExtensionBridge.register(req)
-	if err != nil {
-		s.errorResponse(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	s.jsonResponse(w, http.StatusOK, map[string]interface{}{"ok": true, "page": page})
-}
-
-func (s *Server) handleChromeExtensionPollPage(w http.ResponseWriter, r *http.Request) {
-	pageID := chi.URLParam(r, "pageID")
-	var req chromeExtensionPollRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.errorResponse(w, http.StatusBadRequest, "invalid request body: "+err.Error())
-		return
-	}
-	command, err := s.chromeExtensionBridge.poll(r.Context(), pageID, req)
-	if err != nil {
-		s.errorResponse(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"ok":          true,
-		"page_id":     strings.TrimSpace(pageID),
-		"command":     command,
-		"server_time": time.Now().UTC().Format(time.RFC3339Nano),
 	})
 }
 

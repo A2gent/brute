@@ -10,31 +10,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/A2gent/brute/internal/config"
-	"github.com/A2gent/brute/internal/session"
-	"github.com/A2gent/brute/internal/speechcache"
-	"github.com/A2gent/brute/internal/storage"
 	"github.com/A2gent/brute/internal/tools"
+	"nhooyr.io/websocket"
+	"nhooyr.io/websocket/wsjson"
 )
 
 func TestChromeExtensionToolRoundTripQueuesCommandForRegisteredPage(t *testing.T) {
-	store, err := storage.NewSQLiteStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("failed to create sqlite store: %v", err)
-	}
-	defer store.Close()
-
-	sessionManager := session.NewManager(store)
-	server := NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
-
-	postJSON(t, server, http.MethodPost, "/browser-extension/pages/register", map[string]any{
-		"page_id":           "page-1",
-		"client_id":         "client-1",
-		"extension_version": "0.1.0",
-		"page": map[string]any{
-			"url":              "https://example.test/app",
-			"title":            "Example App",
-			"visibility_state": "visible",
+	server, httpServer := newChromeExtensionWSTestServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn := registerChromeExtensionWSTestPage(t, ctx, server, httpServer, chromeExtensionRegisterRequest{
+		PageID: "page-1", ClientID: "client-1", ExtensionVersion: "0.1.0",
+		Page: chromeExtensionPageSnapshot{
+			URL: "https://example.test/app", Title: "Example App", VisibilityState: "visible",
 		},
 	})
 
@@ -56,36 +44,21 @@ func TestChromeExtensionToolRoundTripQueuesCommandForRegisteredPage(t *testing.T
 		resultCh <- result
 	}()
 
-	pollRec := postJSON(t, server, http.MethodPost, "/browser-extension/pages/page-1/poll", map[string]any{
-		"client_id": "client-1",
-		"page": map[string]any{
-			"url":              "https://example.test/app",
-			"title":            "Example App",
-			"visibility_state": "visible",
-		},
-	})
-
-	var pollResp struct {
-		Command *struct {
-			ID     string         `json:"id"`
-			Action string         `json:"action"`
-			Params map[string]any `json:"params"`
-		} `json:"command"`
+	var frame chromeExtensionWSCommand
+	if err := wsjson.Read(ctx, conn, &frame); err != nil {
+		t.Fatalf("read command: %v", err)
 	}
-	if err := json.Unmarshal(pollRec.Body.Bytes(), &pollResp); err != nil {
-		t.Fatalf("failed to decode poll response: %v", err)
+	if frame.Type != "command" || frame.PageID != "page-1" || frame.Command == nil {
+		t.Fatalf("unexpected command frame: %+v", frame)
 	}
-	if pollResp.Command == nil {
-		t.Fatalf("expected queued command in poll response, got %s", pollRec.Body.String())
+	if frame.Command.Action != "eval" {
+		t.Fatalf("expected eval command, got %q", frame.Command.Action)
 	}
-	if pollResp.Command.Action != "eval" {
-		t.Fatalf("expected eval command, got %q", pollResp.Command.Action)
-	}
-	if pollResp.Command.Params["script"] != "document.title" {
-		t.Fatalf("expected script to be forwarded, got %#v", pollResp.Command.Params)
+	if frame.Command.Params["script"] != "document.title" {
+		t.Fatalf("expected script to be forwarded, got %#v", frame.Command.Params)
 	}
 
-	postJSON(t, server, http.MethodPost, "/browser-extension/commands/"+pollResp.Command.ID+"/result", map[string]any{
+	postJSON(t, server, http.MethodPost, "/browser-extension/commands/"+frame.Command.ID+"/result", map[string]any{
 		"page_id": "page-1",
 		"ok":      true,
 		"result":  map[string]any{"value": "Example App"},
@@ -107,22 +80,13 @@ func TestChromeExtensionToolRoundTripQueuesCommandForRegisteredPage(t *testing.T
 }
 
 func TestChromeExtensionToolListsActivePages(t *testing.T) {
-	store, err := storage.NewSQLiteStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("failed to create sqlite store: %v", err)
-	}
-	defer store.Close()
-
-	sessionManager := session.NewManager(store)
-	server := NewServer(config.DefaultConfig(), nil, tools.NewManager("."), sessionManager, store, speechcache.New(0), 0)
-
-	postJSON(t, server, http.MethodPost, "/browser-extension/pages/register", map[string]any{
-		"page_id":   "visible-page",
-		"client_id": "client-1",
-		"page": map[string]any{
-			"url":              "https://example.test/visible",
-			"title":            "Visible",
-			"visibility_state": "visible",
+	server, httpServer := newChromeExtensionWSTestServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	registerChromeExtensionWSTestPage(t, ctx, server, httpServer, chromeExtensionRegisterRequest{
+		PageID: "visible-page", ClientID: "client-1",
+		Page: chromeExtensionPageSnapshot{
+			URL: "https://example.test/visible", Title: "Visible", VisibilityState: "visible",
 		},
 	})
 
@@ -139,6 +103,53 @@ func TestChromeExtensionToolListsActivePages(t *testing.T) {
 	}
 	if !strings.Contains(result.Output, `"page_id": "visible-page"`) || !strings.Contains(result.Output, `"url": "https://example.test/visible"`) {
 		t.Fatalf("expected registered page in output, got %s", result.Output)
+	}
+}
+
+// A successful write only sends the frame; wait for server-side registration
+// before invoking a tool so the test does not race the WebSocket reader.
+func registerChromeExtensionWSTestPage(t *testing.T, ctx context.Context, server *Server, httpServer *httptest.Server, req chromeExtensionRegisterRequest) *websocket.Conn {
+	t.Helper()
+	conn, _, err := dialChromeExtensionWS(t, ctx, httpServer, "chrome-extension://abcdef")
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { conn.CloseNow() })
+	if err := wsjson.Write(ctx, conn, chromeExtensionWSMessage{Type: "register", chromeExtensionRegisterRequest: req}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	for {
+		for _, page := range server.chromeExtensionBridge.listPages() {
+			if page["page_id"] == req.PageID {
+				return conn
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("page was not registered over WebSocket: %v", ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func TestChromeExtensionLegacyRoutesRemoved(t *testing.T) {
+	server, _ := newChromeExtensionWSTestServer(t)
+	for _, path := range []string{
+		"/browser-extension/pages/register",
+		"/browser-extension/pages/page-1/poll",
+	} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"page_id":"page-1"}`))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			server.router.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("expected removed route to return 404, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+	if pages := server.chromeExtensionBridge.listPages(); len(pages) != 0 {
+		t.Fatalf("legacy requests must not register pages, got %v", pages)
 	}
 }
 

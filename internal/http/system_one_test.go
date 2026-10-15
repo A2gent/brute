@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/A2gent/brute/internal/config"
@@ -46,5 +47,34 @@ func TestSystemOneLMStudioBackendWorksWithoutJevKey(t *testing.T) {
 	}
 	if server.relevanceGate() == nil {
 		t.Fatal("automation must use the local backend")
+	}
+}
+
+func TestSystemOneProbeUsesUnsavedSelectionAndReportsTiming(t *testing.T) {
+	t.Setenv("TYPESAFE_API_KEY", "")
+	lmstudio := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"role": "assistant", "content": `{"answer": {"0": 0.1, "1": 0.2, "2": 0.7}}`}}},
+		})
+	}))
+	defer lmstudio.Close()
+	t.Setenv("LM_STUDIO_BASE_URL", lmstudio.URL+"/v1")
+	server, _ := newClassifyRegistrationTestServer(t, config.Provider{}, nil)
+
+	rec := httptest.NewRecorder()
+	server.handleTestSystemOne(rec, httptest.NewRequest(http.MethodPost, "/system-one/test", strings.NewReader(
+		`{"backend":"lmstudio","model":"local/model","text":"hello","question":"how urgent?","type":"score","criteria":{"0":"low","1":"mid","2":"high"}}`)))
+	var out systemOneProbeResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("probe: %d %s", rec.Code, rec.Body.String())
+	}
+	if out.Error != "" || out.Answer == nil || out.Answer.Score == nil || *out.Answer.Score < 1.59 || *out.Answer.Score > 1.61 || out.Model != "local/model" {
+		t.Fatalf("probe response = %+v", out)
+	}
+
+	rec = httptest.NewRecorder()
+	server.handleTestSystemOne(rec, httptest.NewRequest(http.MethodPost, "/system-one/test", strings.NewReader(`{"backend":"jev","text":"x","question":"?","type":"noul"}`)))
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.Error == "" {
+		t.Fatalf("missing Jev key must be reported, got %s", rec.Body.String())
 	}
 }

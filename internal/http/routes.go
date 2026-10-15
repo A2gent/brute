@@ -295,6 +295,7 @@ func (s *Server) registerBrowserChromeRoutes(r chi.Router) {
 func (s *Server) registerBrowserActRoutes(r chi.Router) {
 	r.Get("/browser-act/settings", s.handleGetBrowserActSettings)
 	r.Put("/browser-act/settings", s.handleUpdateBrowserActSettings)
+	r.Post("/system-one/test", s.handleTestSystemOne)
 }
 
 func (s *Server) registerSessionRoutes(r chi.Router) {

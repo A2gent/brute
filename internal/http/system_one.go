@@ -36,7 +36,12 @@ func (s *Server) systemOneSelection() (backend, model string) {
 // admission, toolsets, browser_act, job gates). nil means "not configured" and consumers fail open.
 // egressKey is the credential the egress guard must redact; local backends have none.
 func (s *Server) systemOneClient() (client *jev.Client, egressKey string) {
-	backend, model := s.systemOneSelection()
+	return s.systemOneClientFor(s.systemOneSelection())
+}
+
+// systemOneClientFor builds a client for an explicit backend/model, so the settings page
+// can test an unsaved selection.
+func (s *Server) systemOneClientFor(backend, model string) (client *jev.Client, egressKey string) {
 	if backend == systemOneBackendLMStudio {
 		if model == "" && s.config != nil {
 			model = s.resolveModelForProvider(config.ProviderLMStudio)

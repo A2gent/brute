@@ -56,7 +56,7 @@ func TestMessageProvenanceSwitchReloadAndFallback(t *testing.T) {
 		{Name: "anthropic:failed", Model: "model-a", Client: &MockLLM{Err: context.DeadlineExceeded}},
 		{Name: "openai:backup", Model: "model-b", Client: &mockStreamingLLM{streamEvents: []llm.StreamEvent{{Type: llm.StreamEventContentDelta, ContentDelta: "backup"}}, response: &llm.ChatResponse{Content: "backup"}}},
 	}, fallback.WithMaxRetries(0))
-	ag := New(Config{MaxSteps: 3, Provider: "fallback_chain:work"}, chain, tools.NewManager(t.TempDir()), sm)
+	ag := New(Config{MaxSteps: 3, Provider: "fallback_chain:work", TransitionMode: "switch_auto"}, chain, tools.NewManager(t.TempDir()), sm)
 	_, _, err = ag.RunWithEvents(context.Background(), sess, "fallback", func(ev Event) {
 		if ev.Type == EventAssistantDelta && (ev.Provenance == nil || ev.Provenance.Provider != "openai:backup" || ev.Provenance.Model != "model-b") {
 			t.Errorf("fallback delta = %+v", ev.Provenance)

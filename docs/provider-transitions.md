@@ -2,12 +2,12 @@
 
 ## Decisions and scope
 
-Manual provider changes and fallback default to compaction followed by automatic continuation **in the same session**. A linked continuation is opt-in and is not a delegated child agent. Policy is captured at transition creation; later settings changes do not alter pending consent.
+Manual provider changes and fallback default to explicit confirmation before compaction or any target request. Approval compacts context and continues **in the same session**. Composer selections remain local drafts until the user requests the switch or submits a message. A linked continuation is opt-in and is not a delegated child agent. Policy is captured at transition creation; later settings changes do not alter pending consent.
 
 Routing modes (`mode`):
-- `compact_auto` (default): summarize, commit target, rebuild request, continue.
+- `compact_auto`: summarize, commit target, rebuild request, continue.
 - `switch_auto`: keep active context, invalidate provider state, rebuild, continue. Pause if the estimated request does not fit the target window.
-- `confirm`: persist `awaiting_confirmation` before ANY target request (including summarization). Approve performs compact_auto; reject leaves provider and history unchanged.
+- `confirm` (default): persist `awaiting_confirmation` before ANY target request (including summarization). Approve performs compact_auto; reject leaves provider and history unchanged.
 - `linked_session`: compact and create an explicitly linked continuation, leaving the source transcript/provider intact. Never use delegated agent parentage.
 
 Config: `provider_transition_mode`. Settings override: `A2GENT_PROVIDER_TRANSITION_MODE`. Explicit API `mode` overrides settings/config. Unknown values are rejected (runtime misconfiguration pauses rather than silently bypassing consent).

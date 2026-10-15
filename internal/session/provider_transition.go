@@ -9,7 +9,7 @@ import (
 )
 
 const TransitionMetadataKey = "provider_transitions"
-const DefaultTransitionMode = "compact_auto"
+const DefaultTransitionMode = "confirm"
 
 func TransitionMode(raw string) (string, error) {
 	switch raw {

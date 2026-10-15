@@ -18,8 +18,10 @@ Use exactly one of `input` and `path`. Relative paths resolve against the sessio
 
 Output always has `answer`, `confidence`, and `probabilities`. Choice answers are strings; score/noul answers are numbers, including zero. Noul has no separate confidence or probabilities in the API, so those fields are `null`, not invented metrics.
 
-## PR open question
+## Context limits
 
-What is the maximum state size accepted by `POST /v1/systemone`, and is the limit measured in bytes, characters, or tokens? The 64 KiB tool cap is a conservative local policy, not a verified API limit. Confirm this with TypeSafe before tuning the cap.
+Jev limits are measured in tokens: 64k per request and 32k per question (state plus one question), see https://docs.typesafe.ai/models#context-length. The 64 KiB tool cap is a local byte policy and can still exceed 32k tokens for dense non-English text; the API then returns `400 max_tokens_exceeded`.
+
+The automatic router caps the routed prompt at 32 KiB (head and tail) and, on `max_tokens_exceeded`, retries with the prompt halved. Images from the latest user message are forwarded to Jev only (resized JPEG, `TypeSafe-Danger-Zone-Images` header) and dropped if Jev rejects them.
 
 References: https://docs.typesafe.ai/primitives/choice, https://docs.typesafe.ai/primitives/score, https://docs.typesafe.ai/primitives/noul.

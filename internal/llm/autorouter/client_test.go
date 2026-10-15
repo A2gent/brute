@@ -128,3 +128,33 @@ func TestProvenanceOnNonStreamingRoutedTarget(t *testing.T) {
 		t.Fatalf("response=%+v err=%v seen=%v", response, err, seen)
 	}
 }
+
+func TestRouterPromptIsCappedAndImagesGoOnlyToJev(t *testing.T) {
+	long := "goal: " + strings.Repeat("контекст ", 20_000) + " final ask"
+	images := []llm.Image{{Name: "shot.png", DataBase64: "AAAA"}}
+	for _, routerProvider := range []string{string(config.ProviderLMStudio), string(config.ProviderJev)} {
+		cfg := routerTestConfig()
+		provider := cfg.Providers[string(config.ProviderAutoRouter)]
+		provider.RouterProvider = routerProvider
+		cfg.Providers[string(config.ProviderAutoRouter)] = provider
+		router := &routerTestClient{response: &llm.ChatResponse{Content: `{"index":2}`}}
+		client := New(cfg, func(ref, model string) (llm.Client, string, error) {
+			if ref == routerProvider {
+				return router, model, nil
+			}
+			return &routerTestClient{}, model, nil
+		})
+		if _, _, err := client.resolveTarget(context.Background(), &llm.ChatRequest{
+			Messages: []llm.Message{{Role: "user", Content: long, Images: images}},
+		}); err != nil {
+			t.Fatalf("%s: resolveTarget: %v", routerProvider, err)
+		}
+		msg := router.request.Messages[0]
+		if len(msg.Content) > routerPromptMaxBytes+1024 || !strings.Contains(msg.Content, "goal:") || !strings.HasSuffix(msg.Content, "final ask") {
+			t.Fatalf("%s: router prompt not capped with head and tail kept (%d bytes)", routerProvider, len(msg.Content))
+		}
+		if wantImages := routerProvider == string(config.ProviderJev); (len(msg.Images) > 0) != wantImages {
+			t.Fatalf("%s: images forwarded = %d, want %v", routerProvider, len(msg.Images), wantImages)
+		}
+	}
+}

@@ -73,8 +73,8 @@ func (c *Client) resolveTarget(ctx context.Context, request *llm.ChatRequest) (*
 	}
 
 	rules := normalizeRouterRules(autoCfg.RouterRules)
-	userPrompt := extractUserPrompt(request.Messages)
-	chosen, reason, err := c.selectRoutingRule(ctx, userPrompt, autoCfg, rules)
+	userPrompt, images := extractUserPrompt(request.Messages)
+	chosen, reason, err := c.selectRoutingRule(ctx, userPrompt, images, autoCfg, rules)
 	if err != nil {
 		return nil, nil, fmt.Errorf("automatic router failed: %w", err)
 	}
@@ -162,22 +162,26 @@ func normalizeRouterRules(raw []config.RouterRule) []config.RouterRule {
 	return rules
 }
 
-func extractUserPrompt(messages []llm.Message) string {
+// routerPromptMaxBytes keeps the routed prompt far below router context limits
+// (Jev allows 32k tokens per question); intent survives in the head and tail.
+const routerPromptMaxBytes = 32 * 1024
+
+func extractUserPrompt(messages []llm.Message) (string, []llm.Image) {
 	for i := len(messages) - 1; i >= 0; i-- {
 		msg := messages[i]
 		if strings.EqualFold(msg.Role, "user") && strings.TrimSpace(msg.Content) != "" {
-			return strings.TrimSpace(msg.Content)
+			return llm.HeadTail(strings.TrimSpace(msg.Content), routerPromptMaxBytes), msg.Images
 		}
 	}
 	for i := len(messages) - 1; i >= 0; i-- {
 		if strings.TrimSpace(messages[i].Content) != "" {
-			return strings.TrimSpace(messages[i].Content)
+			return llm.HeadTail(strings.TrimSpace(messages[i].Content), routerPromptMaxBytes), nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
-func (c *Client) selectRoutingRule(ctx context.Context, userPrompt string, autoCfg config.Provider, rules []config.RouterRule) (*config.RouterRule, string, error) {
+func (c *Client) selectRoutingRule(ctx context.Context, userPrompt string, images []llm.Image, autoCfg config.Provider, rules []config.RouterRule) (*config.RouterRule, string, error) {
 	if len(rules) == 0 {
 		return nil, "", nil
 	}
@@ -188,7 +192,7 @@ func (c *Client) selectRoutingRule(ctx context.Context, userPrompt string, autoC
 		return &rules[0], "empty prompt fallback", nil
 	}
 
-	rule, reason, err := c.selectRoutingRuleViaLLM(ctx, userPrompt, autoCfg, rules)
+	rule, reason, err := c.selectRoutingRuleViaLLM(ctx, userPrompt, images, autoCfg, rules)
 	if err != nil {
 		logging.Error("Automatic router model decision failed: %v", err)
 		return nil, "", err
@@ -196,7 +200,7 @@ func (c *Client) selectRoutingRule(ctx context.Context, userPrompt string, autoC
 	return rule, reason, nil
 }
 
-func (c *Client) selectRoutingRuleViaLLM(ctx context.Context, userPrompt string, autoCfg config.Provider, rules []config.RouterRule) (*config.RouterRule, string, error) {
+func (c *Client) selectRoutingRuleViaLLM(ctx context.Context, userPrompt string, images []llm.Image, autoCfg config.Provider, rules []config.RouterRule) (*config.RouterRule, string, error) {
 	routerProviderRef := config.NormalizeProviderRef(autoCfg.RouterProvider)
 	routerProviderType := config.ProviderType(routerProviderRef)
 	routerModel := strings.TrimSpace(autoCfg.RouterModel)
@@ -234,6 +238,11 @@ func (c *Client) selectRoutingRuleViaLLM(ctx context.Context, userPrompt string,
 	}
 	if routerModel != "" {
 		req.Model = routerModel
+	}
+	// Only Jev gets attachments: it resizes them to its limits, while an arbitrary
+	// router model may be text-only and fail on images.
+	if routerProviderType == config.ProviderJev {
+		req.Messages[0].Images = images
 	}
 
 	resp, err := routerClient.Chat(ctx, req)

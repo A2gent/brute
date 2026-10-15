@@ -237,7 +237,7 @@ func SupportedProviders() []ProviderDefinition {
 			DisplayName:   "Jev (TypeSafe AI)",
 			DefaultURL:    "https://api.typesafe.ai/v1",
 			RequiresKey:   true,
-			DefaultModel:  "jev-latest",
+			DefaultModel:  "jev-1.14.0",
 			ContextWindow: 64000,
 		},
 	}

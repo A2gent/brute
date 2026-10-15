@@ -120,7 +120,7 @@ func (m Model) showStaticModels() (tea.Model, tea.Cmd) {
 	case config.ProviderMeta:
 		m.availableModels = []string{"muse-spark-1.3", "muse-spark-1.2", "muse-spark-1.1"}
 	case config.ProviderJev:
-		m.availableModels = []string{"jev-latest", "jev-preview", "jev-1.13.0"}
+		m.availableModels = []string{"jev-1.14.0", "jev-latest", "jev-preview", "jev-1.13.0"}
 	default:
 		m.availableModels = []string{providerDef.DefaultModel}
 	}

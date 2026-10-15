@@ -3,7 +3,10 @@ package jev
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,11 +15,16 @@ import (
 	"time"
 
 	"github.com/A2gent/brute/internal/llm"
+	"github.com/A2gent/brute/internal/logging"
 )
 
 const (
 	defaultBaseURL = "https://api.typesafe.ai/v1"
-	defaultModel   = "jev-latest"
+	// Pinned instead of jev-latest so confidence behavior changes only on purpose.
+	defaultModel = "jev-1.14.0"
+	// Routing reads the intent, so a short state is enough and avoids max_tokens_exceeded.
+	maxRouteAttempts = 4
+	minRouteState    = 2 * 1024
 )
 
 // Client talks to TypeSafe System One. Jev is a routing classifier, not a coding LLM.
@@ -59,6 +67,31 @@ type SystemOneRequest struct {
 	State     any                 `json:"state"`
 	Model     string              `json:"model,omitempty"`
 	Questions map[string]Question `json:"questions"`
+	// Assets holds images keyed by the reference string used in state/instructions.
+	Assets map[string]Asset `json:"assets,omitempty"`
+}
+
+// StatusError is a non-2xx System One response; callers branch on StatusCode/Body.
+type StatusError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("jev request failed: HTTP %d: %s", e.StatusCode, e.Body)
+}
+
+func statusCode(err error) int {
+	var statusErr *StatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.StatusCode
+	}
+	return 0
+}
+
+func isMaxTokensExceeded(err error) bool {
+	var statusErr *StatusError
+	return errors.As(err, &statusErr) && strings.Contains(statusErr.Body, "max_tokens_exceeded")
 }
 
 type Question struct {
@@ -141,7 +174,7 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	}
 
 	if userPrompt, criteria, ok := parseRouterUserMessage(userContent); ok {
-		return c.classifyRoute(ctx, model, request.SystemPrompt, userPrompt, criteria)
+		return c.classifyRoute(ctx, model, request.SystemPrompt, userPrompt, criteria, collectImages(request))
 	}
 
 	return c.connectivityCheck(ctx, model, userContent)
@@ -189,23 +222,45 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-func (c *Client) classifyRoute(ctx context.Context, model, instructions, userPrompt string, criteria map[string]string) (*llm.ChatResponse, error) {
+func (c *Client) classifyRoute(ctx context.Context, model, instructions, userPrompt string, criteria map[string]string, images []llm.Image) (*llm.ChatResponse, error) {
 	if strings.TrimSpace(instructions) == "" {
 		instructions = "Choose the routing rule that best matches the user's primary requested action. Classify by deliverable and action, not incidental words."
 	}
-	resp, err := c.SystemOne(ctx, SystemOneRequest{
-		State: userPrompt,
-		Model: model,
-		Questions: map[string]Question{
-			"route": {
-				Type:         "choice",
-				Instructions: instructions,
-				Criteria:     criteria,
+	refs, assets := routerAssets(images)
+	var resp *SystemOneResponse
+	for attempt := 1; ; attempt++ {
+		var err error
+		resp, err = c.SystemOne(ctx, SystemOneRequest{
+			State: routeState(userPrompt, refs),
+			Model: model,
+			Questions: map[string]Question{
+				"route": {
+					Type:         "choice",
+					Instructions: instructions,
+					Criteria:     criteria,
+				},
 			},
-		},
-	})
-	if err != nil {
-		return nil, err
+			Assets: assets,
+		})
+		if err == nil {
+			break
+		}
+		if attempt >= maxRouteAttempts {
+			return nil, err
+		}
+		// Images are an experimental Jev feature and cost context: drop them first,
+		// then halve the text, so an oversized prompt still gets routed.
+		code := statusCode(err)
+		switch {
+		case len(assets) > 0 && (code == http.StatusBadRequest || code == http.StatusRequestEntityTooLarge):
+			logging.Warn("Jev router rejected images, retrying text-only: %v", err)
+			refs, assets = nil, nil
+		case isMaxTokensExceeded(err) && len(userPrompt) > minRouteState:
+			userPrompt = llm.HeadTail(userPrompt, len(userPrompt)/2)
+			logging.Warn("Jev router prompt exceeded context, retrying with %d bytes", len(userPrompt))
+		default:
+			return nil, err
+		}
 	}
 	answer, ok := resp.Answers["route"]
 	if !ok || strings.TrimSpace(answer.Choice) == "" {
@@ -274,6 +329,9 @@ func (c *Client) SystemOne(ctx context.Context, payload SystemOneRequest) (respo
 	}
 	c.applyAuth(req)
 	req.Header.Set("Content-Type", "application/json")
+	if len(payload.Assets) > 0 {
+		req.Header.Set(imagesHeader, "true")
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -282,7 +340,7 @@ func (c *Client) SystemOne(ctx context.Context, payload SystemOneRequest) (respo
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		err := fmt.Errorf("jev request failed: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		err := &StatusError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(body))}
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusUnprocessableEntity {
 			return nil, llm.UnsafeForRetry(err)
 		}
@@ -310,6 +368,55 @@ func collectUserContent(request *llm.ChatRequest) string {
 		parts = append(parts, msg.Content)
 	}
 	return strings.TrimSpace(strings.Join(parts, "\n"))
+}
+
+// collectImages returns inline images of the latest user message that has any.
+func collectImages(request *llm.ChatRequest) []llm.Image {
+	for i := len(request.Messages) - 1; i >= 0; i-- {
+		if msg := request.Messages[i]; strings.EqualFold(msg.Role, "user") && len(msg.Images) > 0 {
+			return msg.Images
+		}
+	}
+	return nil
+}
+
+// routerAssets converts attachments into Jev assets; images Jev cannot take are skipped
+// so a screenshot in an unusual format never blocks routing.
+func routerAssets(images []llm.Image) ([]string, map[string]Asset) {
+	var refs []string
+	assets := map[string]Asset{}
+	for _, img := range images {
+		if len(refs) >= routerMaxImage {
+			break
+		}
+		asset, err := prepareImage(img)
+		if err != nil {
+			logging.Warn("Jev router skipped image %q: %v", img.Name, err)
+			continue
+		}
+		// References are matched as plain text anywhere in the request, so make them unguessable.
+		ref := "img-" + randomHex()
+		refs = append(refs, ref)
+		assets[ref] = asset
+	}
+	if len(assets) == 0 {
+		return nil, nil
+	}
+	return refs, assets
+}
+
+func randomHex() string {
+	buf := make([]byte, 8)
+	_, _ = rand.Read(buf)
+	return hex.EncodeToString(buf)
+}
+
+// routeState keeps the plain-string state for text-only prompts and adds image refs otherwise.
+func routeState(userPrompt string, refs []string) any {
+	if len(refs) == 0 {
+		return userPrompt
+	}
+	return map[string]any{"prompt": userPrompt, "attached_images": refs}
 }
 
 func parseRouterUserMessage(content string) (string, map[string]string, bool) {

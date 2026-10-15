@@ -176,7 +176,7 @@ func TestJevProviderDefinition(t *testing.T) {
 	if def.DefaultURL != "https://api.typesafe.ai/v1" {
 		t.Fatalf("default URL = %q", def.DefaultURL)
 	}
-	if def.DefaultModel != "jev-latest" {
+	if def.DefaultModel != "jev-1.14.0" {
 		t.Fatalf("default model = %q", def.DefaultModel)
 	}
 	if !def.RequiresKey {

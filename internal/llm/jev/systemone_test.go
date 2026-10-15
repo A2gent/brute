@@ -22,7 +22,7 @@ func TestSystemOneRequestAndAnswers(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Error(err)
 		}
-		if got.State != "report" || got.Model != "jev-latest" || len(got.Questions) != 3 {
+		if got.State != "report" || got.Model != defaultModel || len(got.Questions) != 3 {
 			t.Errorf("request = %+v", got)
 		}
 		if !reflect.DeepEqual(got.Questions["choice"].Criteria, map[string]any{"a": "code", "b": "docs"}) {

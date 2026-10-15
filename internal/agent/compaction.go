@@ -74,7 +74,9 @@ func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, 
 		messagesToKeep = []session.Message{}
 	}
 
-	request := a.buildCompactionRequestFromMessages(messagesToSummarize, cfg.Prompt)
+	// original still holds the pending user prompt, which anchors the relevance task.
+	filtered, jevStats := filterHistoryWithJev(ctx, a.config.RelevanceGate, compactionRelevanceTask(original), messagesToSummarize)
+	request := a.buildCompactionRequestFromMessages(filtered, cfg.Prompt)
 	if len(request.Messages) == 0 {
 		// Nothing to summarize? Should not happen if logic above is correct
 		if pendingUser != nil {
@@ -149,6 +151,11 @@ func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, 
 			"trigger_percent":         cfg.TriggerPercent,
 			"triggered_at_step":       step,
 		},
+	}
+	if jevStats.Used {
+		for key, value := range jevStats.metadata() {
+			summaryMsg.Metadata[key] = value
+		}
 	}
 
 	// Insert summary message BEFORE the kept messages.

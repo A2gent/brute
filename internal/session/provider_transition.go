@@ -35,6 +35,12 @@ type TransitionCompaction struct {
 	// StartedAt lets clients show live elapsed time; DurationMs is set once summarization ends.
 	StartedAt  *time.Time `json:"started_at,omitempty"`
 	DurationMs int64      `json:"duration_ms,omitempty"`
+	// JevUsed means Jev scored history tool outputs before summarization;
+	// JevDropped of JevScored outputs were replaced by placeholders.
+	JevUsed         bool `json:"jev_used,omitempty"`
+	JevScored       int  `json:"jev_scored,omitempty"`
+	JevDropped      int  `json:"jev_dropped,omitempty"`
+	JevDroppedBytes int  `json:"jev_dropped_bytes,omitempty"`
 }
 
 // Timeline anchors the notice in the archived transcript, not in LLM messages.

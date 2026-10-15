@@ -70,7 +70,7 @@ func (c *Compressor) gateRelevance(ctx context.Context, sess *session.Session, t
 	if originalTokens <= minTokens || strings.HasPrefix(tr.Content, "[brute-compressed ") || !utf8.ValidString(tr.Content) || strings.Contains(tr.Content, "base64") {
 		return tr, false
 	}
-	task := relevanceTask(sess)
+	task := RelevanceTask(sess)
 	if task == "" || !jev.SafeEgressText(task, gate.Secrets) {
 		return tr, false
 	}
@@ -94,14 +94,7 @@ func (c *Compressor) gateRelevance(ctx context.Context, sess *session.Session, t
 	if len(candidates) == 0 {
 		return tr, false
 	}
-	threshold := gate.Threshold
-	if threshold <= 0 || threshold > 4 || math.IsNaN(threshold) {
-		threshold = 2
-	}
-	minConfidence := gate.MinConfidence
-	if minConfidence <= 0 || minConfidence > 1 || math.IsNaN(minConfidence) {
-		minConfidence = .85
-	}
+	threshold, minConfidence := gate.Policy()
 	scoreCtx, cancel := context.WithTimeout(ctx, relevanceTimeout)
 	defer cancel()
 	scores, err := jev.ScoreRelevance(scoreCtx, gate.Client, task, candidates, minConfidence)
@@ -150,13 +143,26 @@ func (c *Compressor) gateRelevance(ctx context.Context, sess *session.Session, t
 	return tr, true
 }
 
+// Policy returns the keep threshold (0..4) and minimum confidence, with defaults
+// for unset or invalid values. Shared with history filtering before compaction.
+func (g *RelevanceGate) Policy() (threshold, minConfidence float64) {
+	threshold, minConfidence = g.Threshold, g.MinConfidence
+	if threshold <= 0 || threshold > 4 || math.IsNaN(threshold) {
+		threshold = 2
+	}
+	if minConfidence <= 0 || minConfidence > 1 || math.IsNaN(minConfidence) {
+		minConfidence = .85
+	}
+	return threshold, minConfidence
+}
+
 func relevanceGatedTool(name string) bool {
 	return name == "bash" || name == "grep" || name == "read"
 }
 
-// The current task is the latest user request plus the latest assistant text
+// RelevanceTask is the latest user request plus the latest assistant text
 // (usually the plan that triggered this tool call).
-func relevanceTask(sess *session.Session) string {
+func RelevanceTask(sess *session.Session) string {
 	var user, assistant string
 	for i := len(sess.Messages) - 1; i >= 0 && (user == "" || assistant == ""); i-- {
 		content := strings.TrimSpace(sess.Messages[i].Content)

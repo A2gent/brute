@@ -16,6 +16,8 @@ import (
 
 var ErrTransitionPaused = errors.New("provider transition paused")
 
+const transitionContinuationPrompt = "Continue the task from the summary; do not repeat completed tools."
+
 func cloneTransitionSession(sess *session.Session) *session.Session {
 	data, _ := json.Marshal(sess)
 	var copy session.Session
@@ -127,7 +129,7 @@ func (a *Agent) transitionBoundary(ctx context.Context, sess *session.Session, o
 		}
 		candidate := cloneTransitionSession(sess)
 		if t.ContextStrategy == "compact" {
-			summary, usage, before, err := a.summarizeTransition(ctx, sess, target, t.Target.Model, window)
+			summary, usage, before, err := a.summarizeTransition(ctx, sess, target, t.Target.Model, window, &t.Compaction)
 			if t.Compaction.StartedAt != nil {
 				t.Compaction.DurationMs = time.Since(*t.Compaction.StartedAt).Milliseconds()
 			}
@@ -241,7 +243,7 @@ func (a *Agent) activateTransitionSummary(sess *session.Session, summary, id str
 		sess.AddMessage(msg)
 	}
 	if len(pending) == 0 {
-		sess.AddUserMessage("Continue the task from the summary; do not repeat completed tools.")
+		sess.AddUserMessage(transitionContinuationPrompt)
 	}
 }
 func (a *Agent) linkTransition(source, candidate *session.Session, t *session.ProviderTransition, onEvent func(Event)) error {
@@ -284,7 +286,9 @@ func transitionRequestEstimate(req *llm.ChatRequest) int {
 	return len(raw) + len(defs) + len(req.SystemPrompt) + 128
 }
 
-func (a *Agent) summarizeTransition(ctx context.Context, sess *session.Session, client llm.Client, model string, window int) (string, llm.TokenUsage, int, error) {
+// summarizeTransition records Jev history filtering into stats; before stays the
+// unfiltered history size so the notice reflects the real reduction.
+func (a *Agent) summarizeTransition(ctx context.Context, sess *session.Session, client llm.Client, model string, window int, stats *session.TransitionCompaction) (string, llm.TokenUsage, int, error) {
 	messages := a.getActiveConversationMessages(sess)
 	for len(messages) > 0 && messages[len(messages)-1].Role == "user" {
 		messages = messages[:len(messages)-1]
@@ -298,8 +302,17 @@ func (a *Agent) summarizeTransition(ctx context.Context, sess *session.Session, 
 	if before > 16*1024*1024 {
 		return "", usage, before, errors.New("history exceeds bounded summarization budget")
 	}
+	// A retry after a pause must not show the previous attempt's Jev result.
+	stats.JevUsed, stats.JevScored, stats.JevDropped, stats.JevDroppedBytes = false, 0, 0, 0
 	if len(messages) == 0 {
 		return "No prior completed work. Follow the pending user prompt.", usage, before, nil
+	}
+	// The pending user prompt is still in sess, so it anchors the relevance task.
+	if filtered, jevStats := filterHistoryWithJev(ctx, a.config.RelevanceGate, compactionRelevanceTask(sess), messages); jevStats.Used {
+		stats.JevUsed, stats.JevScored, stats.JevDropped, stats.JevDroppedBytes = true, jevStats.Scored, jevStats.Dropped, jevStats.DroppedBytes
+		if raw, err = json.Marshal(filtered); err != nil {
+			return "", usage, before, err
+		}
 	}
 	if window <= 0 {
 		window = 8192

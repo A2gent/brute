@@ -2,12 +2,18 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/A2gent/brute/internal/contextcompress"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/fallback"
+	"github.com/A2gent/brute/internal/llm/jev"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/storage"
 	"github.com/A2gent/brute/internal/tools"
@@ -158,5 +164,135 @@ func TestProviderFallbackRebuildsRequest(t *testing.T) {
 	}
 	if len(target.CapturedRequests) != 2 || target.CapturedRequests[1].Messages[0].Content != "summary" {
 		t.Fatalf("not rebuilt: %+v", target.CapturedRequests)
+	}
+}
+
+// fakeRelevanceJev scores a candidate 4 when it contains "RELEVANT", else 0.
+func fakeRelevanceJev(t *testing.T, status int) *jev.Client {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			return
+		}
+		var req jev.SystemOneRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		state := req.StateString()
+		answers := map[string]jev.Answer{}
+		for key := range req.Questions {
+			body := state[strings.Index(state, key+":\n"):]
+			if next := strings.Index(body[1:], "\nitem_"); next >= 0 {
+				body = body[:next+1]
+			}
+			score := 0.0
+			if strings.Contains(body, "RELEVANT") {
+				score = 4
+			}
+			answers[key] = jev.Answer{Type: "score", Score: &score, Confidence: 0.95}
+		}
+		_ = json.NewEncoder(w).Encode(jev.SystemOneResponse{Answers: answers})
+	}))
+	t.Cleanup(server.Close)
+	return jev.NewClient("key", "", server.URL+"/v1")
+}
+
+func addJevHistory(sess *session.Session) {
+	sess.AddAssistantMessage("", []session.ToolCall{{ID: "c1", Name: "bash", Input: json.RawMessage(`{}`)}, {ID: "c2", Name: "read", Input: json.RawMessage(`{}`)}})
+	sess.AddToolResult([]session.ToolResult{
+		{ToolCallID: "c1", Name: "bash", Content: "RELEVANT\n" + strings.Repeat("kept line\n", 300)},
+		{ToolCallID: "c2", Name: "read", Content: strings.Repeat("noise line\n", 300)},
+	})
+}
+
+func TestProviderTransitionJevFiltersHistory(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusInternalServerError} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			target := &MockLLM{Responses: []*llm.ChatResponse{{Content: "summary"}, {Content: "answer"}}, Response: &llm.ChatResponse{Content: "answer"}}
+			a, sess, _ := transitionAgent(t, "compact_auto", target)
+			pending := sess.Messages[len(sess.Messages)-1]
+			sess.Messages = sess.Messages[:len(sess.Messages)-1]
+			addJevHistory(sess)
+			sess.AddMessage(pending)
+			a.config.RelevanceGate = &contextcompress.RelevanceGate{Client: fakeRelevanceJev(t, status)}
+			if _, _, err := a.Run(context.Background(), sess, "ignored"); err != nil {
+				t.Fatal(err)
+			}
+			c := session.CurrentProviderTransition(sess).Compaction
+			chunk := target.CapturedRequests[0].Messages[0].Content
+			if status != http.StatusOK {
+				// Fail-open: no Jev badge, full history summarized.
+				if c.JevUsed || !strings.Contains(chunk, "noise line") {
+					t.Fatalf("jev failure must keep history: %+v", c)
+				}
+				return
+			}
+			if !c.JevUsed || c.JevScored != 2 || c.JevDropped != 1 || c.JevDroppedBytes != 3300 {
+				t.Fatalf("jev stats %+v", c)
+			}
+			if !strings.Contains(chunk, "RELEVANT") || strings.Contains(chunk, "noise line") || !strings.Contains(chunk, "omitted before summarization") {
+				t.Fatalf("summarizer input not filtered: %.200s", chunk)
+			}
+			if c.BeforeEstimate < 6000 {
+				t.Fatalf("before must measure unfiltered history: %d", c.BeforeEstimate)
+			}
+			// The archived transcript keeps the original output.
+			for _, m := range sess.Messages {
+				for _, tr := range m.ToolResults {
+					if tr.ToolCallID == "c2" && !strings.Contains(tr.Content, "noise line") {
+						t.Fatal("archived tool output was mutated")
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestContextCompactionJevFiltersHistory(t *testing.T) {
+	t.Setenv(envCompactionTriggerPercent, "50")
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	sm := session.NewManager(store)
+	sess, err := sm.Create("test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.AddUserMessage("fix the bug")
+	addJevHistory(sess)
+	sess.AddAssistantMessage("checked", nil)
+	// Two more turns push the tool batch out of the retained tail into the summarized part.
+	sess.AddUserMessage("next step")
+	sess.AddAssistantMessage("done", nil)
+	sess.AddUserMessage("continue")
+	metadataSetFloat(sess, metadataCurrentContextTokens, 600)
+	client := &MockLLM{Response: &llm.ChatResponse{Content: "summary"}}
+	ag := New(Config{ContextWindow: 1000, RelevanceGate: &contextcompress.RelevanceGate{Client: fakeRelevanceJev(t, http.StatusOK)}}, client, nil, sm)
+	if _, compacted, err := ag.maybeCompactContext(context.Background(), sess, 1); !compacted || err != nil {
+		t.Fatalf("compacted=%v err=%v", compacted, err)
+	}
+	var summary *session.Message
+	for i := range sess.Messages {
+		if sess.Messages[i].Metadata[messageMetadataCompaction] == true {
+			summary = &sess.Messages[i]
+		}
+	}
+	if summary == nil || summary.Metadata["jev_used"] != true || summary.Metadata["jev_dropped"] != 1 || summary.Metadata["jev_scored"] != 2 {
+		t.Fatalf("summary metadata: %+v", summary)
+	}
+	raw, _ := json.Marshal(client.CapturedRequests[0].Messages)
+	if strings.Contains(string(raw), "noise line") || !strings.Contains(string(raw), "RELEVANT") {
+		t.Fatal("compaction request not filtered")
+	}
+}
+
+func TestCompactionRelevanceTaskSkipsSyntheticPrompts(t *testing.T) {
+	sess := &session.Session{}
+	sess.AddUserMessage("fix the parser")
+	sess.AddMessage(session.Message{Role: "user", Content: "Continue with the task based on the summary above.", Metadata: map[string]interface{}{"synthetic_continuation": true}})
+	sess.AddUserMessage(transitionContinuationPrompt)
+	if task := compactionRelevanceTask(sess); !strings.Contains(task, "fix the parser") || strings.Contains(task, "Continue") {
+		t.Fatalf("task = %q", task)
 	}
 }

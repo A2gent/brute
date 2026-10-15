@@ -79,7 +79,7 @@ func (s *Server) setupRoutes() {
 func timeoutExceptEventStreams(next http.Handler) http.Handler {
 	timeout := middleware.Timeout(serverRequestTimeout())
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && (strings.HasSuffix(r.URL.Path, "/events") || r.URL.Path == "/browser-chrome/preview/frames") {
+		if r.Method == http.MethodGet && (strings.HasSuffix(r.URL.Path, "/events") || r.URL.Path == "/browser-chrome/preview/frames" || r.URL.Path == "/browser-extension/ws") {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -47,6 +47,8 @@ type chromeExtensionPageState struct {
 	LastSeenAt       time.Time
 	Queue            []string
 	Notify           chan struct{}
+	// WS is set while the page is reachable through the extension WebSocket.
+	WS *chromeExtensionWSConn
 }
 
 type chromeExtensionCommandState struct {
@@ -151,7 +153,7 @@ func (b *chromeExtensionBridge) enqueue(pageID, action string, params map[string
 		return nil, fmt.Errorf("no active Chrome extension pages are registered; open a page with the A2gent Chrome extension loaded first")
 	}
 	page, ok := b.pages[pageID]
-	if !ok || now.Sub(page.LastSeenAt) > chromeExtensionPageStaleAfter {
+	if !ok || !page.activeAt(now) {
 		return nil, fmt.Errorf("Chrome extension page is not active: %s", pageID)
 	}
 
@@ -193,16 +195,7 @@ func (b *chromeExtensionBridge) poll(ctx context.Context, pageID string, req chr
 			page.Queue = page.Queue[1:]
 			command, ok := b.commands[commandID]
 			if ok {
-				wire := &chromeExtensionCommandWire{
-					ID:        command.ID,
-					Action:    command.Action,
-					Params:    cloneMap(command.Params),
-					TimeoutMS: int(time.Until(command.ExpiresAt).Milliseconds()),
-					CreatedAt: command.CreatedAt.Format(time.RFC3339Nano),
-				}
-				if wire.TimeoutMS < chromeExtensionMinCommandWaitMS {
-					wire.TimeoutMS = chromeExtensionMinCommandWaitMS
-				}
+				wire := command.toWire()
 				b.mu.Unlock()
 				return wire, nil
 			}
@@ -221,6 +214,20 @@ func (b *chromeExtensionBridge) poll(ctx context.Context, pageID string, req chr
 			return nil, ctx.Err()
 		}
 	}
+}
+
+func (c *chromeExtensionCommandState) toWire() *chromeExtensionCommandWire {
+	wire := &chromeExtensionCommandWire{
+		ID:        c.ID,
+		Action:    c.Action,
+		Params:    cloneMap(c.Params),
+		TimeoutMS: int(time.Until(c.ExpiresAt).Milliseconds()),
+		CreatedAt: c.CreatedAt.Format(time.RFC3339Nano),
+	}
+	if wire.TimeoutMS < chromeExtensionMinCommandWaitMS {
+		wire.TimeoutMS = chromeExtensionMinCommandWaitMS
+	}
+	return wire
 }
 
 func (b *chromeExtensionBridge) complete(commandID string, req chromeExtensionResultRequest) error {
@@ -290,7 +297,7 @@ func (b *chromeExtensionBridge) upsertPageLocked(pageID, clientID, extensionVers
 
 func (b *chromeExtensionBridge) cleanupLocked(now time.Time) {
 	for pageID, page := range b.pages {
-		if now.Sub(page.LastSeenAt) > chromeExtensionPageStaleAfter {
+		if !page.activeAt(now) {
 			for _, commandID := range page.Queue {
 				delete(b.commands, commandID)
 			}
@@ -308,7 +315,7 @@ func (b *chromeExtensionBridge) cleanupLocked(now time.Time) {
 func (b *chromeExtensionBridge) defaultPageIDLocked(now time.Time) string {
 	var best *chromeExtensionPageState
 	for _, page := range b.pages {
-		if now.Sub(page.LastSeenAt) > chromeExtensionPageStaleAfter {
+		if !page.activeAt(now) {
 			continue
 		}
 		if best == nil {
@@ -348,6 +355,15 @@ func (b *chromeExtensionBridge) signalPageLocked(page *chromeExtensionPageState)
 	// WHAT: close-and-replace the notification channel so every current waiter wakes once.
 	close(page.Notify)
 	page.Notify = make(chan struct{})
+	if page.WS != nil {
+		page.WS.wakeUp()
+	}
+}
+
+// activeAt reports whether commands can still reach the page: either it holds a
+// live WebSocket or it polled/registered recently over HTTP.
+func (p *chromeExtensionPageState) activeAt(now time.Time) bool {
+	return p.WS != nil || now.Sub(p.LastSeenAt) <= chromeExtensionPageStaleAfter
 }
 
 func (p *chromeExtensionPageState) toResponse(now time.Time) map[string]interface{} {
@@ -390,6 +406,8 @@ func (s *Server) registerBrowserExtensionRoutes(r chi.Router) {
 	r.Route("/browser-extension", func(r chi.Router) {
 		r.Get("/pages", s.handleChromeExtensionListPages)
 		r.Post("/pages/register", s.handleChromeExtensionRegisterPage)
+		r.Get("/ws", s.handleChromeExtensionWS)
+		// Legacy HTTP long-poll transport, kept for older extension builds.
 		r.Post("/pages/{pageID}/poll", s.handleChromeExtensionPollPage)
 		r.Post("/commands/{commandID}/result", s.handleChromeExtensionCommandResult)
 	})
@@ -487,7 +505,7 @@ Actions:
 - get_diagnostics: fetch page, DOM, console, and network diagnostics on demand
 - screenshot: capture the visible tab through the extension
 
-Use list_pages first unless the page_id is already known. Commands require an active tab where the extension content script is loaded and polling local Brute.`
+Use list_pages first unless the page_id is already known. Commands require an active tab where the extension content script is loaded and connected to local Brute.`
 }
 
 func (t *chromeExtensionTool) Schema() map[string]interface{} {

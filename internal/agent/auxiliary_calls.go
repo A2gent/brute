@@ -10,6 +10,11 @@ import (
 // Record failed attempts as well as successful calls: otherwise the slowest
 // auxiliary requests disappear from session-level latency measurements.
 func recordAuxiliaryCall(sess *session.Session, operation string, started time.Time, outcome string) {
+	RecordAuxiliaryCall(sess, operation, started, outcome)
+}
+
+// RecordAuxiliaryCall also records pre-run decisions made by the HTTP server.
+func RecordAuxiliaryCall(sess *session.Session, operation string, started time.Time, outcome string) {
 	duration := time.Since(started).Milliseconds()
 	metadataSetFloat(sess, operation+"_attempt_count", metadataFloat(sess.Metadata, operation+"_attempt_count")+1)
 	metadataSetFloat(sess, operation+"_total_duration_ms", metadataFloat(sess.Metadata, operation+"_total_duration_ms")+float64(duration))

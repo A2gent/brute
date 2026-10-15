@@ -131,8 +131,14 @@ func activeToolGroups(sess *session.Session) (map[string]bool, bool) {
 func (a *Agent) toolDefinitions(sess *session.Session) []llm.ToolDefinition {
 	defs := a.toolManager.GetDefinitions()
 	active, restricted := activeToolGroups(sess)
+	if sess.IsAutoReadOnly() {
+		defs = readOnlyDefinitions(defs)
+	}
 	out := defs[:0]
 	for _, def := range defs {
+		if def.Name == requestWriteToolName && !sess.IsAutoReadOnly() {
+			continue
+		}
 		if def.Name == tools.EnableToolsToolName {
 			if restricted {
 				out = append(out, def)

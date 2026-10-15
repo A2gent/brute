@@ -65,6 +65,7 @@ func NewWithCompressor(config Config, llmClient llm.Client, toolManager *tools.M
 		}
 	}
 	if toolManager != nil {
+		toolManager.Register(requestWriteTool{})
 		if _, ok := toolManager.Get(contextcompress.RetrievalToolName); !ok {
 			toolManager.Register(contextcompress.NewRetrieveTool(compressor))
 		}

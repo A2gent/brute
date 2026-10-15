@@ -123,6 +123,7 @@ func (s *Server) sessionListItem(sess *session.Session) SessionListItem {
 	inputTokens, outputTokens := sessionInputOutputTokens(sess)
 	channel, channelDetail := sessionChannel(sess)
 	return SessionListItem{
+		RunModeDecision:    sess.RunModeDecision(),
 		ID:                 sess.ID,
 		AgentID:            sess.AgentID,
 		ParentID:           parentID,
@@ -276,6 +277,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if linkedContinuation != nil {
 		applyLinkedContinuationSessionMetadata(sess, *linkedContinuation)
 	}
+	s.applySessionRunMode(r.Context(), &req, sess)
 	if req.QueueMode != "" {
 		if sess.Metadata == nil {
 			sess.Metadata = make(map[string]interface{})
@@ -416,6 +418,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.jsonResponse(w, http.StatusCreated, CreateSessionResponse{
+		RunModeDecision: sess.RunModeDecision(),
 		ID:              sess.ID,
 		AgentID:         sess.AgentID,
 		ParentID:        req.ParentID,

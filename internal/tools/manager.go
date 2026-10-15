@@ -202,6 +202,11 @@ func (m *Manager) Get(name string) (Tool, bool) {
 // Execute executes a tool by name with the given parameters
 func (m *Manager) Execute(ctx context.Context, name string, params json.RawMessage) (*Result, error) {
 	toolName := normalizeToolName(name)
+	if guard, ok := ctx.Value(executionGuardKey{}).(func(string) error); ok {
+		if err := guard(toolName); err != nil {
+			return nil, err
+		}
+	}
 	tool, ok := m.Get(toolName)
 	if !ok {
 		return nil, fmt.Errorf("tool not found: %s", toolName)

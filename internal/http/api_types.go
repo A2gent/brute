@@ -29,22 +29,23 @@ type CreateSessionRequest struct {
 	// Optional team launch target. When set, create a team_run header for the parent session.
 	TeamID    string                 `json:"team_id,omitempty"`
 	Queued    bool                   `json:"queued,omitempty"`     // If true, create session without starting it
-	QueueMode string                 `json:"queue_mode,omitempty"` // Optional queue behavior. "serial" runs queued project sessions one at a time.
+	QueueMode string                 `json:"queue_mode,omitempty"` // "serial" queues, "now" starts immediately, "auto" classifies task effects.
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // CreateSessionResponse represents a response after creating a session
 type CreateSessionResponse struct {
-	ID              string    `json:"id"`
-	AgentID         string    `json:"agent_id"`
-	ParentID        string    `json:"parent_id,omitempty"`
-	LinkType        string    `json:"link_type,omitempty"`
-	ProjectID       string    `json:"project_id,omitempty"`
-	Provider        string    `json:"provider,omitempty"`
-	Model           string    `json:"model,omitempty"`
-	ReasoningEffort string    `json:"reasoning_effort,omitempty"`
-	Status          string    `json:"status"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID              string                   `json:"id"`
+	AgentID         string                   `json:"agent_id"`
+	ParentID        string                   `json:"parent_id,omitempty"`
+	LinkType        string                   `json:"link_type,omitempty"`
+	ProjectID       string                   `json:"project_id,omitempty"`
+	Provider        string                   `json:"provider,omitempty"`
+	Model           string                   `json:"model,omitempty"`
+	ReasoningEffort string                   `json:"reasoning_effort,omitempty"`
+	Status          string                   `json:"status"`
+	CreatedAt       time.Time                `json:"created_at"`
+	RunModeDecision *session.RunModeDecision `json:"run_mode_decision,omitempty"`
 }
 
 type PromptCachePayload struct {
@@ -102,9 +103,10 @@ type SessionResponse struct {
 	SystemPromptSnapshot   *SystemPromptSnapshotPayload `json:"system_prompt_snapshot,omitempty"`
 	Metadata               map[string]interface{}       `json:"metadata,omitempty"`
 	// A2A outbound fields — set for sessions used to contact remote agents.
-	A2AOutbound        bool   `json:"a2a_outbound,omitempty"`
-	A2ATargetAgentID   string `json:"a2a_target_agent_id,omitempty"`
-	A2ATargetAgentName string `json:"a2a_target_agent_name,omitempty"`
+	A2AOutbound        bool                     `json:"a2a_outbound,omitempty"`
+	A2ATargetAgentID   string                   `json:"a2a_target_agent_id,omitempty"`
+	A2ATargetAgentName string                   `json:"a2a_target_agent_name,omitempty"`
+	RunModeDecision    *session.RunModeDecision `json:"run_mode_decision,omitempty"`
 }
 
 type ProviderFailurePayload struct {
@@ -366,7 +368,8 @@ type SessionListItem struct {
 	A2ASourceAgentID   string `json:"a2a_source_agent_id,omitempty"`
 	A2ASourceAgentName string `json:"a2a_source_agent_name,omitempty"`
 	// Deleted marks an updated_since tombstone; only ID/ProjectID are set.
-	Deleted bool `json:"deleted,omitempty"`
+	Deleted         bool                     `json:"deleted,omitempty"`
+	RunModeDecision *session.RunModeDecision `json:"run_mode_decision,omitempty"`
 }
 
 // SubAgentRequest represents a request to create or update a sub-agent.

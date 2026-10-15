@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/A2gent/brute/internal/llm"
@@ -24,6 +25,10 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 	totalUsage := llm.TokenUsage{}
 	emptyFinalResponseRetries := 0
 	transientUserPrompt := ""
+	var writeRequested atomic.Bool
+	if sess.IsAutoReadOnly() {
+		ctx = readOnlyExecutionContext(ctx, &writeRequested)
+	}
 
 	// Add session ID to context for tools that need it (e.g., question tool)
 	ctx = context.WithValue(ctx, "session_id", sess.ID)
@@ -32,6 +37,9 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		ctx = context.WithValue(ctx, "projectID", strings.TrimSpace(*sess.ProjectID))
 	}
 
+	if a.readOnlyNeedsSerialRuntime(sess) {
+		return "", totalUsage, a.queueReadOnlyEscalation(sess)
+	}
 	if err := a.transitionBoundary(ctx, sess, onEvent); err != nil {
 		return "", totalUsage, err
 	}
@@ -56,6 +64,9 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			logging.Info("Context deadline exceeded for session %s, continuing to let agent handle errors", sess.ID)
 		}
 
+		if a.readOnlyNeedsSerialRuntime(sess) {
+			return "", totalUsage, a.queueReadOnlyEscalation(sess)
+		}
 		if err := a.transitionBoundary(ctx, sess, onEvent); err != nil {
 			return "", totalUsage, err
 		}
@@ -297,6 +308,16 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		sess.AddToolResult(sessionResults)
 		if clearPendingToolProgressMetadata(sess) {
 			sess.UpdatedAt = time.Now()
+		}
+
+		if writeRequested.Load() {
+			if err := a.queueReadOnlyEscalation(sess); err != nil {
+				return "", totalUsage, err
+			}
+			if onEvent != nil {
+				onEvent(Event{Type: EventToolCompleted, Step: step})
+			}
+			return "", totalUsage, nil
 		}
 
 		// Merge in any user notes that were injected while tools were running

@@ -19,6 +19,10 @@ func (s *Server) triggerSerialSessionQueueForSession(sess *session.Session) {
 }
 
 func (s *Server) triggerSerialSessionQueueIfAdvanceable(sess *session.Session) {
+	if sess.WriteRequested() && sess.Status == session.StatusQueued {
+		s.triggerSerialSessionQueueForSession(sess)
+		return
+	}
 	if !sessionIsSerialQueuedAutoRun(sess) || !serialQueueCanAdvanceAfterStatus(sess.Status) {
 		return
 	}
@@ -163,6 +167,11 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 		return true
 	}
 
+	// Only the project queue owner may lift the read-only execution guard.
+	if sess.WriteRequested() {
+		delete(sess.Metadata, session.RunModeReadOnlyKey)
+		delete(sess.Metadata, session.RunModeWriteRequestedKey)
+	}
 	sess.SetStatus(session.StatusRunning)
 	if err := s.sessionManager.Save(sess); err != nil {
 		logging.Warn("Serial session queue failed to mark session %s running: %v", sess.ID, err)

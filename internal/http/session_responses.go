@@ -69,6 +69,7 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 	channel, channelDetail := sessionChannel(sess)
 
 	return SessionResponse{
+		RunModeDecision:        sess.RunModeDecision(),
 		ID:                     sess.ID,
 		AgentID:                sess.AgentID,
 		ParentID:               parentID,

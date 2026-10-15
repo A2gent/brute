@@ -36,11 +36,12 @@ func TestAdmissionCap(t *testing.T) {
 			if !reflect.DeepEqual(got, tr) {
 				t.Fatal("tool result fields changed")
 			}
-			stored := readSessionEntries(sess.Metadata)
+			stored := c.store.entries
 			if len(stored) != 1 {
 				t.Fatalf("stored %d entries", len(stored))
 			}
-			for hash := range stored {
+			for _, value := range stored {
+				hash := value.Hash
 				full, ok := c.Retrieve(sess.ID, hash, "")
 				if !ok || full != original {
 					t.Fatal("original not retrievable")
@@ -65,7 +66,7 @@ func TestAdmissionUnderCapUntouched(t *testing.T) {
 		if !reflect.DeepEqual(got, tr) {
 			t.Fatal("under-cap result changed (image metadata must not count)")
 		}
-		if len(readSessionEntries(sess.Metadata)) != 0 {
+		if len(sess.Metadata) != 0 {
 			t.Fatal("under-cap original stored")
 		}
 	}
@@ -90,7 +91,8 @@ func TestAdmissionPersistedRetrieval(t *testing.T) {
 		t.Fatal(err)
 	}
 	fresh := NewCompressorWithSessionStore(Config{}, sm)
-	for hash := range readSessionEntries(sess.Metadata) {
+	for _, value := range c.store.entries {
+		hash := value.Hash
 		params, _ := json.Marshal(RetrieveParams{Hash: hash})
 		result, err := NewRetrieveTool(fresh).Execute(context.WithValue(context.Background(), "session_id", sess.ID), params)
 		if err != nil || !result.Success || result.Output != original {
@@ -111,7 +113,7 @@ func TestAdmissionSeparatesScreenshotDataURL(t *testing.T) {
 	if !ok || inline["data_base64"] != payload || inline["media_type"] != "image/png" {
 		t.Fatal("screenshot lost")
 	}
-	if len(readSessionEntries(sess.Metadata)) != 0 {
+	if len(sess.Metadata) != 0 {
 		t.Fatal("image-only output should not trigger cap")
 	}
 }
@@ -120,7 +122,8 @@ func TestAdmissionMultipleImagesAndExactOriginal(t *testing.T) {
 	payload := strings.Repeat("YQ==", 10000)
 	original := `{"images":[{"data_url":"data:image/png;base64,` + payload + `"},{"media_type":"image/png","data_base64":"` + payload + `"}],"text":"` + strings.Repeat("x", 10000) + `"}`
 	sess := session.New("agent")
-	got := NewCompressor(Config{}).AdmitToolResult(sess, llm.ToolResult{Name: "chrome_extension", Content: original, Metadata: map[string]interface{}{"image_inline": map[string]interface{}{"media_type": "image/jpeg", "data_base64": "old"}}}, 256)
+	c := NewCompressor(Config{})
+	got := c.AdmitToolResult(sess, llm.ToolResult{Name: "chrome_extension", Content: original, Metadata: map[string]interface{}{"image_inline": map[string]interface{}{"media_type": "image/jpeg", "data_base64": "old"}}}, 256)
 	if strings.Contains(got.Content, payload) {
 		t.Fatal("base64 retained in text")
 	}
@@ -128,7 +131,10 @@ func TestAdmissionMultipleImagesAndExactOriginal(t *testing.T) {
 	if !ok || len(images) != 3 {
 		t.Fatal("images lost")
 	}
-	for _, entry := range readSessionEntries(sess.Metadata) {
+	if len(c.store.entries) != 1 {
+		t.Fatal("original not stored")
+	}
+	for _, entry := range c.store.entries {
 		if entry.Original != original {
 			t.Fatal("stored original is not exact")
 		}

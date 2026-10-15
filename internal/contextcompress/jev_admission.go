@@ -121,12 +121,9 @@ func (c *Compressor) gateRelevance(ctx context.Context, sess *session.Session, t
 		return tr, false
 	}
 	c.store.put(sess.ID, value)
-	if sess.Metadata == nil {
-		sess.Metadata = make(map[string]interface{})
+	if !c.persistEntries(sess.ID, []entry{value}) {
+		return tr, false
 	}
-	stored := readSessionEntries(sess.Metadata)
-	stored[value.Hash] = value
-	sess.Metadata[sessionCCRMetadataKey] = encodeSessionEntries(stored)
 	metadata := make(map[string]interface{}, len(tr.Metadata)+1)
 	for key, value := range tr.Metadata {
 		metadata[key] = value

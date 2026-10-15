@@ -40,7 +40,7 @@ func TestGetSessionLiveState(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if live.Status != row.Status || live.TaskProgress != row.TaskProgress || !live.UpdatedAt.Equal(now) || live.Metadata["approval_audit"] != "fresh" || live.Metadata["context_compression_store"] != "originals" {
+			if live.Status != row.Status || live.TaskProgress != row.TaskProgress || !live.UpdatedAt.Equal(now) || live.Metadata["approval_audit"] != "fresh" || live.Metadata["context_compression_store"] != nil {
 				t.Fatalf("incomplete live state: %#v", live)
 			}
 			if len(live.Messages) != len(tc.ids) {

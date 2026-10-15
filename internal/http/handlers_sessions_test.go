@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/A2gent/brute/internal/session"
+	"github.com/A2gent/brute/internal/storage"
 )
 
 func TestHandleListSessionsFiltersProjectAndMetadataKeys(t *testing.T) {
@@ -284,7 +285,11 @@ func TestHandleGetSessionDoesNotExposeOrEraseCompressionState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sess.Metadata = map[string]interface{}{"context_compression_store": map[string]interface{}{"content": strings.Repeat("x", 1<<20)}, "custom": "keep"}
+	sess.Metadata = map[string]interface{}{"custom": "keep"}
+	original := strings.Repeat("x", 1<<20)
+	if err := server.sessionManager.SaveCompressionEntries(sess.ID, []storage.CompressionEntry{{Hash: "content", Original: original}}); err != nil {
+		t.Fatal(err)
+	}
 	sess.AddUserMessage("Keep this transcript")
 	if err := server.sessionManager.Save(sess); err != nil {
 		t.Fatal(err)
@@ -308,11 +313,11 @@ func TestHandleGetSessionDoesNotExposeOrEraseCompressionState(t *testing.T) {
 		if response.SystemPromptSnapshot == nil {
 			t.Fatal("missing prompt snapshot")
 		}
-		stored, err := server.sessionManager.Get(sess.ID)
+		stored, err := server.sessionManager.GetCompressionEntry(sess.ID, "content")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := stored.Metadata["context_compression_store"]; !ok {
+		if stored.Original != original {
 			t.Fatal("snapshot save erased compression state")
 		}
 	}

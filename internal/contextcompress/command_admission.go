@@ -14,12 +14,9 @@ func (c *Compressor) admitCommandPreview(sess *session.Session, tr llm.ToolResul
 	}
 	value := entry{SessionID: sess.ID, ToolName: tr.Name, ToolCallID: tr.ToolCallID, Original: original, Compressed: preview}
 	value.Hash = c.store.put(sess.ID, value)
-	if sess.Metadata == nil {
-		sess.Metadata = make(map[string]interface{})
+	if !c.persistEntries(sess.ID, []entry{value}) {
+		return tr, false
 	}
-	stored := readSessionEntries(sess.Metadata)
-	stored[value.Hash] = value
-	sess.Metadata[sessionCCRMetadataKey] = encodeSessionEntries(stored)
 	tr.Content = formatCompressedMarker(value.Hash, tr.Name, len(original), preview)
 	return tr, true
 }

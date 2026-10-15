@@ -33,14 +33,18 @@ func (s *SQLiteStore) saveSessionMessages(sess *Session, ids []string, dirty map
 		}
 		defer tx.Rollback()
 
-		metadata, _ := json.Marshal(sess.Metadata)
-		displayMetadata := make(map[string]interface{}, len(sess.Metadata))
+		// Originals have independent persistence; even legacy in-memory copies must
+		// be filtered before marshalling, not just hidden in the display projection.
+		sessionMetadata := make(map[string]interface{}, len(sess.Metadata))
 		for key, value := range sess.Metadata {
 			if key != "context_compression_store" {
-				displayMetadata[key] = value
+				sessionMetadata[key] = value
 			}
 		}
-		displayJSON, _ := json.Marshal(displayMetadata)
+		metadata, err := json.Marshal(sessionMetadata)
+		if err != nil {
+			return fmt.Errorf("marshal session metadata: %w", err)
+		}
 
 		// Upsert session
 		_, err = tx.Exec(`
@@ -57,7 +61,7 @@ func (s *SQLiteStore) saveSessionMessages(sess *Session, ids []string, dirty map
 					display_metadata = excluded.display_metadata,
 					task_progress = excluded.task_progress,
 					updated_at = excluded.updated_at
-			`, sess.ID, sess.AgentID, sess.ParentID, sess.JobID, sess.ProjectID, sess.Title, sess.Summary, sess.Status, metadata, displayJSON, sess.TaskProgress, sess.CreatedAt, sess.UpdatedAt)
+			`, sess.ID, sess.AgentID, sess.ParentID, sess.JobID, sess.ProjectID, sess.Title, sess.Summary, sess.Status, metadata, metadata, sess.TaskProgress, sess.CreatedAt, sess.UpdatedAt)
 		if err != nil {
 			return fmt.Errorf("failed to save session: %w", err)
 		}

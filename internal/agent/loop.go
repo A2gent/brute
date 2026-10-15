@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/A2gent/brute/internal/contextcompress"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/llm/fallback"
@@ -308,21 +307,6 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		// The same lightweight snapshot detects tool-owned status/task_progress.
 		// IMPORTANT: inspect it BEFORE Save() can overwrite a parking status.
 		if freshSess != nil {
-			if freshSess.Status == session.StatusInputRequired || freshSess.Status == session.StatusWaitingExternal || hasExternalWaitResult(sessionResults) {
-				// Parking tools own the fresh transcript/status, but admission owns
-				// new originals. Persist their union before returning to the caller.
-				// Only parking needs the full tool-owned transcript for persistence:
-				// a partial live-state session must never be passed to Save().
-				parked, err := a.sessionManager.Get(sess.ID)
-				if err != nil {
-					return "", totalUsage, fmt.Errorf("reload parked transcript: %w", err)
-				}
-				contextcompress.MergeSessionEntries(parked, sess)
-				if err := a.sessionManager.Save(parked); err != nil {
-					return "", totalUsage, fmt.Errorf("persist admitted originals: %w", err)
-				}
-				freshSess = parked
-			}
 			// Sync task_progress from DB (may have been updated by session_task_progress tool)
 			sess.TaskProgress = freshSess.TaskProgress
 

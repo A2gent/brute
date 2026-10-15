@@ -142,7 +142,6 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 	}
 	if a.config.CompressToolResults && a.compressor != nil {
 		request, _ = a.compressor.CompressRequest(context.Background(), sess.ID, request)
-		a.compressor.SyncSessionEntries(sess)
 	}
 	// Validate read references against the actual outgoing context, not stored
 	// history: compaction, sanitization or compression may have removed bodies.

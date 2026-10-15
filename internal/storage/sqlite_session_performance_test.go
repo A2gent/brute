@@ -54,8 +54,8 @@ func TestSessionDisplayProjectionMigrationAndUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if full.Metadata["context_compression_store"] != "still private" {
-		t.Fatal("runtime state lost")
+	if full.Metadata["context_compression_store"] != nil {
+		t.Fatal("compression state must not be in metadata")
 	}
 	row.Metadata = nil
 	if err := store.SaveSession(row); err != nil {

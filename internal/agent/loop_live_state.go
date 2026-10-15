@@ -3,7 +3,6 @@ package agent
 import (
 	"strings"
 
-	"github.com/A2gent/brute/internal/contextcompress"
 	"github.com/A2gent/brute/internal/session"
 )
 
@@ -48,7 +47,6 @@ func mergeSessionLiveState(sess, fresh *session.Session) bool {
 		}
 	}
 	if fresh.Metadata != nil {
-		contextcompress.MergeSessionEntries(fresh, sess)
 		merged := make(map[string]interface{}, len(fresh.Metadata)+len(sess.Metadata))
 		for key, value := range fresh.Metadata {
 			merged[key] = value
@@ -61,7 +59,6 @@ func mergeSessionLiveState(sess, fresh *session.Session) bool {
 			}
 		}
 		sess.Metadata = merged
-		contextcompress.MergeSessionEntries(sess, fresh)
 	}
 	sess.TaskProgress = fresh.TaskProgress
 	if fresh.Status == session.StatusInputRequired || fresh.Status == session.StatusWaitingExternal {

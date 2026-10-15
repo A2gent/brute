@@ -10,14 +10,14 @@ import (
 	"sync"
 
 	"github.com/A2gent/brute/internal/llm"
-	"github.com/A2gent/brute/internal/session"
+	"github.com/A2gent/brute/internal/logging"
+	"github.com/A2gent/brute/internal/storage"
 )
 
 const (
-	RetrievalToolName     = "context_retrieve"
-	defaultMinChars       = 6000
-	maxPreviewLines       = 120
-	sessionCCRMetadataKey = "context_compression_store"
+	RetrievalToolName = "context_retrieve"
+	defaultMinChars   = 6000
+	maxPreviewLines   = 120
 )
 
 type Config struct {
@@ -25,10 +25,7 @@ type Config struct {
 	MinChars int
 }
 
-type SessionStore interface {
-	Get(id string) (*session.Session, error)
-	Save(sess *session.Session) error
-}
+type SessionStore = storage.CompressionStore
 
 type Compressor struct {
 	config       Config
@@ -49,14 +46,7 @@ type Item struct {
 	ShownChars    int
 }
 
-type entry struct {
-	SessionID  string
-	Hash       string
-	ToolName   string
-	ToolCallID string
-	Original   string
-	Compressed string
-}
+type entry = storage.CompressionEntry
 
 type Store struct {
 	mu      sync.RWMutex
@@ -146,8 +136,9 @@ func (c *Compressor) CompressRequest(_ context.Context, sessionID string, req *l
 		}
 	}
 
-	if len(persist) > 0 {
-		c.persistEntries(sessionID, persist)
+	if !c.persistEntries(sessionID, persist) {
+		// Do not replace originals with retrieval markers unless they are durable.
+		return cloneRequest(req), Result{}
 	}
 	if result.Applied {
 		out.SystemPrompt = appendRetrievalInstructions(out.SystemPrompt)
@@ -180,38 +171,19 @@ func (c *Compressor) retrievePersistedEntry(sessionID, hash string) (entry, bool
 	if sessionID == "" || hash == "" {
 		return entry{}, false
 	}
-	sess, err := c.sessionStore.Get(sessionID)
-	if err != nil || sess == nil {
-		return entry{}, false
-	}
-	stored := readSessionEntries(sess.Metadata)
-	value, ok := stored[hash]
-	return value, ok
+	value, err := c.sessionStore.GetCompressionEntry(sessionID, hash)
+	return value, err == nil
 }
 
-func (c *Compressor) persistEntries(sessionID string, values []entry) {
+func (c *Compressor) persistEntries(sessionID string, values []entry) bool {
 	if c == nil || c.sessionStore == nil || len(values) == 0 {
-		return
+		return true
 	}
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return
+	if err := c.sessionStore.SaveCompressionEntries(sessionID, values); err != nil {
+		logging.Warn("Failed to persist compression entries for session %s: %v", sessionID, err)
+		return false
 	}
-	sess, err := c.sessionStore.Get(sessionID)
-	if err != nil || sess == nil {
-		return
-	}
-	if sess.Metadata == nil {
-		sess.Metadata = make(map[string]interface{})
-	}
-	stored := readSessionEntries(sess.Metadata)
-	for _, value := range values {
-		stored[value.Hash] = value
-	}
-	// Store CCR entries in session metadata so retrieval remains session-scoped
-	// across agent instances and process restarts.
-	sess.Metadata[sessionCCRMetadataKey] = encodeSessionEntries(stored)
-	_ = c.sessionStore.Save(sess)
+	return true
 }
 
 func (s *Store) put(sessionID string, value entry) string {
@@ -261,62 +233,6 @@ func queryEntry(value entry, query string) string {
 		return fmt.Sprintf("No lines matched query %q in compressed %s output %s.", query, value.ToolName, value.Hash)
 	}
 	return strings.Join(matches, "\n")
-}
-
-func encodeSessionEntries(entries map[string]entry) map[string]interface{} {
-	out := make(map[string]interface{}, len(entries))
-	for hash, value := range entries {
-		out[hash] = map[string]interface{}{
-			"hash":         value.Hash,
-			"tool_name":    value.ToolName,
-			"tool_call_id": value.ToolCallID,
-			"original":     value.Original,
-			"compressed":   value.Compressed,
-		}
-	}
-	return out
-}
-
-func readSessionEntries(metadata map[string]interface{}) map[string]entry {
-	entries := make(map[string]entry)
-	if metadata == nil {
-		return entries
-	}
-	raw, ok := metadata[sessionCCRMetadataKey]
-	if !ok || raw == nil {
-		return entries
-	}
-	switch typed := raw.(type) {
-	case map[string]entry:
-		for hash, value := range typed {
-			entries[hash] = value
-		}
-		return entries
-	case map[string]interface{}:
-		for hash, itemRaw := range typed {
-			itemMap, ok := itemRaw.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			value := entry{
-				Hash:       stringValue(itemMap["hash"]),
-				ToolName:   stringValue(itemMap["tool_name"]),
-				ToolCallID: stringValue(itemMap["tool_call_id"]),
-				Original:   stringValue(itemMap["original"]),
-				Compressed: stringValue(itemMap["compressed"]),
-			}
-			if strings.TrimSpace(value.Hash) == "" {
-				value.Hash = strings.TrimSpace(hash)
-			}
-			entries[strings.TrimSpace(hash)] = value
-		}
-	}
-	return entries
-}
-
-func stringValue(raw interface{}) string {
-	value, _ := raw.(string)
-	return value
 }
 
 func storeKey(sessionID, hash string) string {

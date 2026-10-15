@@ -53,14 +53,9 @@ func (c *Compressor) AdmitToolResult(sess *session.Session, tr llm.ToolResult, m
 	tail := runeTail(tr.Content, remaining-remaining/2)
 	value.Compressed = notice + head + separator + tail
 	c.store.put(sess.ID, value)
-	// Use the same session metadata store as request-time compression. Mutating
-	// the active session avoids a separate stale-session Save overwriting a turn.
-	if sess.Metadata == nil {
-		sess.Metadata = make(map[string]interface{})
+	if !c.persistEntries(sess.ID, []entry{value}) {
+		return tr
 	}
-	stored := readSessionEntries(sess.Metadata)
-	stored[value.Hash] = value
-	sess.Metadata[sessionCCRMetadataKey] = encodeSessionEntries(stored)
 	tr.Content = value.Compressed
 	return tr
 }

@@ -53,8 +53,8 @@ func TestSessionDisplayReadsKeepCompressionStateInStorage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if full.Metadata["context_compression_store"] != strings.Repeat("x", 1<<20) {
-		t.Fatal("runtime compression state changed")
+	if full.Metadata["context_compression_store"] != nil {
+		t.Fatal("compression state must not be in metadata")
 	}
 }
 

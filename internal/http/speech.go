@@ -40,6 +40,7 @@ var recommendedPiperVoices = []string{
 }
 
 type speechCompletionRequest struct {
+	Code     string `json:"code,omitempty"`
 	Text     string `json:"text"`
 	Language string `json:"language,omitempty"`
 	Model    string `json:"model,omitempty"`
@@ -196,6 +197,9 @@ func (s *Server) handleCompletionSpeech(w http.ResponseWriter, r *http.Request) 
 	default:
 		s.errorResponse(w, http.StatusBadRequest, "language must be ru or en")
 		return
+	}
+	if reqBody.Code != "" {
+		text = s.summarizeSpokenCode(r.Context(), text, reqBody.Code, reqBody.Language)
 	}
 	reqBody.Text = text
 	result, synthErr := s.synthesizeSpeech(r.Context(), reqBody)

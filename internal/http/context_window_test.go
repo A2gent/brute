@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/A2gent/brute/internal/config"
+	"github.com/A2gent/brute/internal/session"
 )
 
 func TestResolveContextWindowForOpenRouterOwlAlpha(t *testing.T) {
@@ -117,5 +118,43 @@ func TestResolveContextWindowForFallbackUsesCustomClaudeDefault(t *testing.T) {
 	want := config.GetProviderDefinition(config.ProviderAnthropic).ContextWindow
 	if got := server.resolveContextWindowForProvider(config.ProviderFallback, ""); got != want {
 		t.Fatalf("resolveContextWindowForProvider(fallback custom Claude default) = %d, want %d", got, want)
+	}
+}
+
+func TestResolveSessionContextWindowUsesActiveFallbackNode(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DefaultConfig()
+	cfg.Providers[string(config.ProviderOpenAI)] = config.Provider{APIKey: "test-key", ContextWindow: 1000000}
+	cfg.Providers[string(config.ProviderOpenRouter)] = config.Provider{APIKey: "test-key", ContextWindow: 128000}
+	cfg.Providers[string(config.ProviderFallback)] = config.Provider{
+		FallbackChainNodes: []config.FallbackChainNode{
+			{Provider: string(config.ProviderOpenAI), Model: "gpt-5.5"},
+			{Provider: string(config.ProviderOpenRouter), Model: "xiaomi/mimo-v2.6-pro"},
+		},
+	}
+	server := &Server{config: cfg}
+
+	sess := session.New("build")
+	if got := server.resolveSessionContextWindow(config.ProviderFallback, "", sess); got != 1000000 {
+		t.Fatalf("first node window = %d, want 1000000 (not chain minimum)", got)
+	}
+	setSessionFallbackStartIndex(sess, config.ProviderFallback, 1)
+	if got := server.resolveSessionContextWindow(config.ProviderFallback, "", sess); got != 128000 {
+		t.Fatalf("advanced node window = %d, want 128000", got)
+	}
+}
+
+func TestSessionToResponseUsesActiveFallbackNodeWindow(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+	server.config.Providers[string(config.ProviderOpenAI)] = config.Provider{APIKey: "test-key", ContextWindow: 1000000}
+	sess := session.New("build")
+	sess.Metadata["provider"] = string(config.ProviderAutoRouter)
+	sess.Metadata["context_window"] = 128000
+	sess.Metadata[fallbackActiveProviderMetadataKey] = string(config.ProviderOpenAI)
+	sess.Metadata[fallbackActiveModelMetadataKey] = "gpt-5.5"
+
+	if got := server.sessionToResponse(sess).ModelContextWindow; got != 1000000 {
+		t.Fatalf("model context window = %d, want active node window 1000000", got)
 	}
 }

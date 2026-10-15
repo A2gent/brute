@@ -58,6 +58,12 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		// Re-resolve Anthropic limits for existing sessions too; historical metadata
 		// can contain the old provider-wide 200K default for aliases like "opus".
 		modelContextWindow = config.ResolveContextWindowForRef(provider, s.config.Providers[config.NormalizeProviderRef(provider)], model)
+	} else if fallbackActiveProvider != "" {
+		// Older fallback-chain sessions persisted the chain-wide minimum; show the
+		// window of the node that is actually answering.
+		if window := s.fallbackNodeContextWindow(config.FallbackChainNode{Provider: fallbackActiveProvider, Model: fallbackActiveModel}); window > 0 {
+			modelContextWindow = window
+		}
 	}
 	isOutbound, targetAgentID, targetAgentName := sessionA2AOutboundMeta(sess)
 	channel, channelDetail := sessionChannel(sess)

@@ -144,6 +144,33 @@ func (s *Server) resolveContextWindowForProvider(providerType config.ProviderTyp
 	return config.ResolveContextWindowForRef(ref, provider, model)
 }
 
+// resolveSessionContextWindow returns the window of the fallback node the
+// session will actually start on. WHY: the chain-wide minimum made e.g. GPT-6.1
+// Sol report 128K because a later OpenRouter node uses that default. Switching to
+// a later node always goes through a provider transition, which re-resolves the
+// window and pauses if the rebuilt context does not fit, so the minimum is not
+// needed for safety.
+func (s *Server) resolveSessionContextWindow(providerType config.ProviderType, model string, sess *session.Session) int {
+	if config.IsFallbackAggregateRef(string(providerType)) || providerType == config.ProviderFallback {
+		if chain, err := s.fallbackNodesForProvider(providerType); err == nil {
+			if idx := sessionFallbackStartIndex(sess, providerType); idx >= 0 && idx < len(chain) {
+				if window := s.fallbackNodeContextWindow(chain[idx]); window > 0 {
+					return window
+				}
+			}
+		}
+	}
+	return s.resolveContextWindowForProvider(providerType, model)
+}
+
+func (s *Server) fallbackNodeContextWindow(node config.FallbackChainNode) int {
+	nodeRef := config.NormalizeProviderRef(node.Provider)
+	if config.GetProviderDefinitionForRef(nodeRef) == nil {
+		return 0
+	}
+	return config.ResolveContextWindowForRef(nodeRef, s.config.Providers[nodeRef], node.Model)
+}
+
 func (s *Server) providerStatefulResponses(providerType config.ProviderType) bool {
 	provider := s.config.Providers[string(providerType)]
 	return s.providerStatefulResponsesForConfig(providerType, provider.StatefulResponses)

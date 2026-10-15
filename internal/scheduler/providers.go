@@ -68,21 +68,18 @@ func (s *Scheduler) resolveContextWindowForProvider(providerType config.Provider
 		if err != nil {
 			return 0
 		}
-		minContext := 0
+		// Job sessions start on the first node; later nodes are reached through a
+		// provider transition that re-resolves the window, so no chain minimum.
 		for _, node := range chain {
 			nodeRef := config.NormalizeProviderRef(node.Provider)
 			if config.GetProviderDefinitionForRef(nodeRef) == nil {
 				continue
 			}
-			window := config.ResolveContextWindowForRef(nodeRef, s.config.Providers[nodeRef], node.Model)
-			if window <= 0 {
-				continue
-			}
-			if minContext == 0 || window < minContext {
-				minContext = window
+			if window := config.ResolveContextWindowForRef(nodeRef, s.config.Providers[nodeRef], node.Model); window > 0 {
+				return window
 			}
 		}
-		return minContext
+		return 0
 	}
 	return config.ResolveContextWindowForRef(ref, provider, model)
 }

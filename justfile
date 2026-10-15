@@ -21,10 +21,15 @@ install-dev-deps:
 build:
     go build -o {{binary}} ./cmd/aagent
 
-# Run backend API server with hot reload. Builds on change, but restarts only
-# when no session is running and no queued session is about to start.
+# Run the TUI (with API server) with hot reload. Builds on change, but restarts
+# only when no session is running and no queued session is about to start.
+# Reloader/build output: tmp/devreload.log
 dev:
     go run ./cmd/devreload
+
+# Same hot reload for the headless API server only
+dev-server:
+    go run ./cmd/devreload -server
 
 # Previous air-based hot reload (restarts immediately, killing active sessions)
 dev-air:

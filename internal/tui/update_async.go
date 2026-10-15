@@ -22,6 +22,7 @@ func (m Model) updateTick() (Model, []tea.Cmd) {
 	if m.showLogsView {
 		m.refreshLogsView()
 	}
+	m.devReloadStatus = readDevReloadStatus()
 	return m, []tea.Cmd{tickCmd(), updateMemoryCmd()}
 }
 

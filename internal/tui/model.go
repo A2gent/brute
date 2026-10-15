@@ -109,6 +109,9 @@ type Model struct {
 	// Memory tracking
 	memoryMB float64
 
+	// Hot reloader status line, empty outside `just dev`
+	devReloadStatus string
+
 	// Session sync tracking
 	lastSyncedMessageCount     int
 	lastSyncedSessionUpdatedAt time.Time

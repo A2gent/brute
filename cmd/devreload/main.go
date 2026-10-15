@@ -1,7 +1,11 @@
 // Command devreload is the `just dev` hot reloader. Unlike air, which stops the
-// running server before rebuilding, it builds first and restarts only once the
+// running process before rebuilding, it builds first and restarts only once the
 // server reports no active session runs or about-to-start queued sessions, so
 // code edits never kill in-flight agent work.
+//
+// By default it runs the TUI (with its embedded API server). The TUI owns the
+// terminal, so reloader and build output go to tmp/devreload.log and a one-line
+// status goes to tmp/devreload.status, which the TUI shows in its bottom bar.
 package main
 
 import (
@@ -9,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -17,6 +22,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -24,19 +30,61 @@ import (
 const (
 	binPath     = "tmp/aagent"
 	nextBinPath = "tmp/aagent.next"
+	logPath     = "tmp/devreload.log"
+	statusPath  = "tmp/devreload.status"
+
+	statusIdle    = "DEV: reloads on code change when idle"
+	statusBuild   = "DEV: rebuilding..."
+	statusFailed  = "DEV: build failed, see " + logPath
+	statusPending = "DEV: new build ready, reload waits for sessions"
 )
 
 var skipDirs = map[string]bool{"tmp": true, "vendor": true, "web-app": true, "mind": true, ".git": true, ".gocache": true}
 
+// childOwnsTerminal mutes terminal output while the TUI draws on the screen.
+var childOwnsTerminal atomic.Bool
+
+type terminalWriter struct{}
+
+func (terminalWriter) Write(p []byte) (int, error) {
+	if childOwnsTerminal.Load() {
+		return len(p), nil
+	}
+	return os.Stderr.Write(p)
+}
+
 func main() {
-	port := flag.Int("port", 5445, "server port")
+	port := flag.Int("port", 5445, "API server port")
+	serverMode := flag.Bool("server", false, "run headless API server instead of the TUI")
 	poll := flag.Duration("poll", time.Second, "file change poll interval")
 	idlePoll := flag.Duration("idle-poll", 3*time.Second, "server idle check interval while a reload is pending")
 	flag.Parse()
+
+	if err := os.MkdirAll("tmp", 0o755); err != nil {
+		log.Fatal(err)
+	}
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer logFile.Close()
+	out := io.MultiWriter(logFile, terminalWriter{})
+	log.SetOutput(out)
 	log.SetPrefix("[devreload] ")
 
+	absStatus, _ := filepath.Abs(statusPath)
+	setStatus := func(s string) { _ = os.WriteFile(statusPath, []byte(s+"\n"), 0o644) }
+	defer os.Remove(statusPath)
+
 	readinessURL := fmt.Sprintf("http://127.0.0.1:%d/system/reload-readiness", *port)
-	serverArgs := []string{"server", "--port", fmt.Sprint(*port)}
+	childArgs := []string{"--port", fmt.Sprint(*port)}
+	if *serverMode {
+		childArgs = append([]string{"server"}, childArgs...)
+	}
+	start := func() (*exec.Cmd, chan struct{}) {
+		setStatus(statusIdle)
+		return startProcess(childArgs, absStatus, !*serverMode, out)
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -49,12 +97,18 @@ func main() {
 		}
 		os.Remove(nextBinPath)
 	}
+	// The TUI exiting on its own means the user quit: end `just dev` too
+	// instead of relaunching. A headless server keeps waiting for a fix.
+	userQuit := func() bool {
+		return !*serverMode && proc != nil && processExited(procDone)
+	}
 
+	log.Printf("logs: %s", logPath)
 	snapshot := sourceSnapshot(".")
-	if err := build(binPath); err != nil {
+	if err := build(binPath, out); err != nil {
 		log.Printf("initial build failed, waiting for changes: %v", err)
 	} else {
-		proc, procDone = startProcess(serverArgs)
+		proc, procDone = start()
 	}
 
 	ticker := time.NewTicker(*poll)
@@ -64,6 +118,12 @@ func main() {
 		case <-sigCh:
 			shutdown()
 			return
+		case <-procDone:
+			if userQuit() {
+				shutdown()
+				return
+			}
+			proc, procDone = nil, nil // headless server crashed: wait for the next change
 		case <-ticker.C:
 		}
 		current := sourceSnapshot(".")
@@ -72,16 +132,23 @@ func main() {
 		}
 		snapshot = waitStable(current, *poll)
 		log.Printf("source changed, building")
-		if err := build(nextBinPath); err != nil {
-			log.Printf("build failed, keeping current server: %v", err)
+		setStatus(statusBuild)
+		if err := build(nextBinPath, out); err != nil {
+			log.Printf("build failed, keeping current process: %v", err)
+			setStatus(statusFailed)
 			continue
+		}
+		if userQuit() {
+			shutdown()
+			return
 		}
 
 		// Defer the restart until the server is idle; a newer edit restarts the
 		// cycle so we never swap in a stale binary.
 		if proc != nil && !processExited(procDone) {
+			setStatus(statusPending)
 			changed, interrupted := waitIdle(readinessURL, *idlePoll, snapshot, sigCh)
-			if interrupted {
+			if interrupted || userQuit() {
 				shutdown()
 				return
 			}
@@ -94,7 +161,7 @@ func main() {
 			log.Printf("swap binary failed: %v", err)
 			continue
 		}
-		proc, procDone = startProcess(serverArgs)
+		proc, procDone = start()
 	}
 }
 
@@ -187,28 +254,36 @@ func sourceSnapshot(root string) uint64 {
 	return h.Sum64()
 }
 
-func build(out string) error {
-	cmd := exec.Command("go", "build", "-o", out, "./cmd/aagent")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+func build(binary string, out io.Writer) error {
+	cmd := exec.Command("go", "build", "-o", binary, "./cmd/aagent")
+	cmd.Stdout = out
+	cmd.Stderr = out
 	return cmd.Run()
 }
 
-func startProcess(args []string) (*exec.Cmd, chan struct{}) {
+func startProcess(args []string, statusFile string, tui bool, out io.Writer) (*exec.Cmd, chan struct{}) {
 	cmd := exec.Command("./"+binPath, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(), "AAGENT_DEV_RELOAD_STATUS="+statusFile)
 	cmd.Stdin = os.Stdin
+	if tui {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	} else {
+		cmd.Stdout = out
+		cmd.Stderr = out
+	}
 	done := make(chan struct{})
 	if err := cmd.Start(); err != nil {
 		log.Printf("start failed: %v", err)
 		close(done)
 		return nil, done
 	}
-	log.Printf("server started (pid %d)", cmd.Process.Pid)
+	childOwnsTerminal.Store(tui)
+	log.Printf("started pid %d: %s %s", cmd.Process.Pid, binPath, strings.Join(args, " "))
 	go func() {
 		err := cmd.Wait()
-		log.Printf("server exited: %v", err)
+		childOwnsTerminal.Store(false)
+		log.Printf("process exited: %v", err)
 		close(done)
 	}()
 	return cmd, done
@@ -223,15 +298,17 @@ func processExited(done chan struct{}) bool {
 	}
 }
 
+// stopProcess sends SIGTERM: Bubble Tea treats it as a clean quit (restoring the
+// terminal) and the headless server shuts down gracefully on it.
 func stopProcess(cmd *exec.Cmd, done chan struct{}) {
 	if cmd == nil || processExited(done) {
 		return
 	}
-	_ = cmd.Process.Signal(syscall.SIGINT)
+	_ = cmd.Process.Signal(syscall.SIGTERM)
 	select {
 	case <-done:
 	case <-time.After(15 * time.Second):
-		log.Printf("server did not stop in time, killing")
+		log.Printf("process did not stop in time, killing")
 		_ = cmd.Process.Kill()
 		<-done
 	}

@@ -119,6 +119,14 @@ func (m Model) View() string {
 	if m.serverPort > 0 {
 		portText = statsStyle.Render(fmt.Sprintf("API :%d", m.serverPort))
 	}
+	if m.devReloadStatus != "" {
+		devText := contextWarningStyle.Render(m.devReloadStatus)
+		if portText != "" {
+			portText += "  " + devText
+		} else {
+			portText = devText
+		}
+	}
 	helpText := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#666666")).
 		Render(helpStr)

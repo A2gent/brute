@@ -32,6 +32,9 @@ type TransitionCompaction struct {
 	BeforeEstimate int               `json:"before_estimate,omitempty"`
 	AfterEstimate  int               `json:"after_estimate,omitempty"`
 	TargetWindow   int               `json:"target_window,omitempty"`
+	// StartedAt lets clients show live elapsed time; DurationMs is set once summarization ends.
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	DurationMs int64      `json:"duration_ms,omitempty"`
 }
 
 // Timeline anchors the notice in the archived transcript, not in LLM messages.

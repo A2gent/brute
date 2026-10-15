@@ -119,6 +119,8 @@ func (a *Agent) transitionBoundary(ctx context.Context, sess *session.Session, o
 	if t.Phase != "ready" {
 		if t.ContextStrategy == "compact" {
 			t.Phase = "compacting"
+			startedAt := time.Now().UTC()
+			t.Compaction.StartedAt = &startedAt
 			if err := a.saveTransition(sess, t, onEvent); err != nil {
 				return err
 			}
@@ -126,6 +128,9 @@ func (a *Agent) transitionBoundary(ctx context.Context, sess *session.Session, o
 		candidate := cloneTransitionSession(sess)
 		if t.ContextStrategy == "compact" {
 			summary, usage, before, err := a.summarizeTransition(ctx, sess, target, t.Target.Model, window)
+			if t.Compaction.StartedAt != nil {
+				t.Compaction.DurationMs = time.Since(*t.Compaction.StartedAt).Milliseconds()
+			}
 			t.Compaction.Summarizer = &t.Target
 			t.Compaction.Usage = &usage
 			t.Compaction.BeforeEstimate = before

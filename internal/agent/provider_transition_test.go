@@ -70,6 +70,9 @@ func TestProviderTransitionModes(t *testing.T) {
 			if mode == "switch_auto" {
 				expected = 1
 			}
+			if mode == "compact_auto" && (tr.Compaction.StartedAt == nil || tr.Compaction.DurationMs < 0) {
+				t.Fatalf("compaction timing missing %+v", tr.Compaction)
+			}
 			if len(target.CapturedRequests) != expected {
 				t.Fatalf("calls %d", len(target.CapturedRequests))
 			}

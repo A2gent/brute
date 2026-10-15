@@ -112,6 +112,10 @@ func (s *SQLiteStore) saveSessionMessages(sess *Session, ids []string, dirty map
 				return fmt.Errorf("message identity changed during save")
 			}
 			messageMetadata, _ := json.Marshal(msg.Metadata)
+			// The driver stores time via t.String(), which appends the monotonic
+			// clock ("m=+0.07") only for fresh time.Now() values. Rewriting a reloaded
+			// message then yields a shorter string that sorts before an equal-instant
+			// neighbour, reordering history; Round(0) strips the monotonic reading.
 			_, err = tx.Exec(`
 				INSERT INTO messages (id, session_id, role, content, tool_calls, tool_results, metadata, timestamp)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -123,7 +127,7 @@ func (s *SQLiteStore) saveSessionMessages(sess *Session, ids []string, dirty map
 					tool_results = excluded.tool_results,
 					metadata = excluded.metadata,
 					timestamp = excluded.timestamp
-			`, msg.ID, sess.ID, msg.Role, msg.Content, msg.ToolCalls, msg.ToolResults, messageMetadata, msg.Timestamp)
+			`, msg.ID, sess.ID, msg.Role, msg.Content, msg.ToolCalls, msg.ToolResults, messageMetadata, msg.Timestamp.Round(0))
 			if err != nil {
 				return fmt.Errorf("failed to save message: %w", err)
 			}

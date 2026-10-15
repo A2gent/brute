@@ -52,7 +52,14 @@ type bitbucketPullRequest struct {
 			Name string `json:"name"`
 		} `json:"branch"`
 	} `json:"destination"`
-	Links bitbucketLinks `json:"links"`
+	Links     bitbucketLinks  `json:"links"`
+	Reviewers []bitbucketUser `json:"reviewers"`
+}
+
+type bitbucketUser struct {
+	UUID        string `json:"uuid"`
+	DisplayName string `json:"display_name"`
+	Nickname    string `json:"nickname"`
 }
 
 type bitbucketComment struct {
@@ -355,7 +362,15 @@ func absoluteBitbucketNextPath(baseURL, next string) string {
 }
 
 func normalizeBitbucketPullRequest(item bitbucketPullRequest) *PullRequest {
-	return &PullRequest{ID: strconv.FormatInt(item.ID, 10), Title: item.Title, State: item.State, SourceBranch: item.Source.Branch.Name, TargetBranch: item.Destination.Branch.Name, URL: item.Links.HTML.Href}
+	pr := &PullRequest{ID: strconv.FormatInt(item.ID, 10), Title: item.Title, State: item.State, SourceBranch: item.Source.Branch.Name, TargetBranch: item.Destination.Branch.Name, URL: item.Links.HTML.Href}
+	for _, reviewer := range item.Reviewers {
+		name := reviewer.DisplayName
+		if name == "" {
+			name = reviewer.Nickname
+		}
+		pr.Reviewers = append(pr.Reviewers, name)
+	}
+	return pr
 }
 
 func normalizeBitbucketComment(item bitbucketComment) Comment {

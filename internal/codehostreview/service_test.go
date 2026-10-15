@@ -22,6 +22,7 @@ func TestParseBitbucketRepository(t *testing.T) {
 	}{
 		{"git@bitbucket.org:acme/widgets.git", "acme", "widgets"},
 		{"ssh://git@bitbucket.org/acme/widgets.git", "acme", "widgets"},
+		{"ssh+git://user@bitbucket.org/spareto/spareto.git", "spareto", "spareto"},
 		{"https://bitbucket.org/acme/widgets.git", "acme", "widgets"},
 	} {
 		got, err := ParseRepositoryRemote(test.remote)

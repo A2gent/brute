@@ -21,6 +21,7 @@ func Register(manager *tools.Manager, store storage.Store, clipStore *speechcach
 	manager.Register(NewJiraQueryTool(store))
 	manager.Register(NewCircleCIQueryTool(store))
 	manager.Register(NewCodeReviewTool(store))
+	manager.Register(NewBitbucketCreatePullRequestTool(store, manager.WorkDir()))
 	manager.Register(NewAppSignalQueryTool(store))
 	manager.Register(NewSentryQueryTool(store))
 	manager.Register(NewCloudflareQueryTool(store))

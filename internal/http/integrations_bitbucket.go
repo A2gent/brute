@@ -48,5 +48,5 @@ func (s *Server) testBitbucketIntegration(ctx context.Context, integration *stor
 		}
 		return false, fmt.Sprintf("Bitbucket API test failed with status %d: %s", resp.StatusCode, message)
 	}
-	return true, "Bitbucket connection verified with /2.0/user."
+	return true, "Bitbucket connection verified with /2.0/user. Creating pull requests also requires write:pullrequest scope; this test does not verify write access."
 }

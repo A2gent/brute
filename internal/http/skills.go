@@ -24,7 +24,7 @@ var integrationToolsByProvider = map[string][]string{
 	"gmail":           {"gmail_query", "gmail_create_draft"},
 	"jira":            {"jira_query"},
 	"circleci":        {"circleci_query"},
-	"bitbucket":       {"code_review"},
+	"bitbucket":       {"code_review", "bitbucket_create_pull_request"},
 	"appsignal":       {"appsignal_query"},
 	"sentry":          {"sentry_query"},
 	"cloudflare":      {"cloudflare_query"},

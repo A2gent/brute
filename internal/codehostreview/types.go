@@ -11,12 +11,13 @@ type Repository struct {
 }
 
 type PullRequest struct {
-	ID           string `json:"id"`
-	Title        string `json:"title"`
-	State        string `json:"state"`
-	SourceBranch string `json:"source_branch"`
-	TargetBranch string `json:"target_branch"`
-	URL          string `json:"url,omitempty"`
+	ID           string   `json:"id"`
+	Title        string   `json:"title"`
+	State        string   `json:"state"`
+	SourceBranch string   `json:"source_branch"`
+	TargetBranch string   `json:"target_branch"`
+	URL          string   `json:"url,omitempty"`
+	Reviewers    []string `json:"reviewers,omitempty"`
 }
 
 type Comment struct {
@@ -58,4 +59,14 @@ type ReplyRequest struct {
 	Body            string
 	IntegrationID   string
 	IntegrationName string
+}
+
+type CreatePullRequestRequest struct {
+	Repository        Repository
+	SourceBranch      string
+	Title             string
+	Description       string
+	DestinationBranch string
+	IntegrationID     string
+	IntegrationName   string
 }

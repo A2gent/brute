@@ -84,3 +84,5 @@
 - Responses content should preserve provider whitespace just like Chat Completions; trimming transport output breaks callers that require complete generated text.
 - When a hook fails intermittently, reproduce the named test repeatedly on a clean `git archive HEAD` before changing task code. SQLite history currently sorts by `(timestamp,rowid)`; equal microsecond timestamps can reorder messages across serialization. Track that baseline defect separately and never bypass hooks.
 - Use `delegate_to_agent` for built-in reviewer IDs; the legacy subagent alias may not resolve them. Docker review also requires a local `a2gent-brute:latest` image; missing-image/pull-denied is an unavailable review, not approval.
+- The Bitbucket PR feature's independent review could not start: `a2gent-brute:latest` was missing and Docker pull was denied. Report review as unavailable, not approved; rely on explicit local review and tests.
+- Build httptest fixtures from the provider docs example response, not from memory: Bitbucket effective-default-reviewers wraps each account in `user`, and a flat-user fixture let a broken parser pass green.

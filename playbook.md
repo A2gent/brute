@@ -1,3 +1,4 @@
+- Bound contexts/retries in negative HTTP tests: Config defaults to three LLM retries, so a small blocking request-capture channel can deadlock a repeated-failure fixture. Reset reused JSON capture maps between requests; decoding does not clear absent keys. Flex fallback must run before generic same-tier retries. Discover current OpenAI model slugs before fetching docs; GPT-6 variants have different effort limits.
 - Exact string replacements fail if they contain even one whitespace character not present in the target. Re-read the fragment and copy it verbatim, or use a line-range edit.
 - Before delegating edits, check the agent workspace mount mode: read-only agents can review or propose patches but cannot implement them. Use a writable coding agent or apply the reviewed patch locally.
 - Scope file discovery to the component repository and verify files/recipes exist before reading them; this workspace root is not a Git repository.
@@ -82,3 +83,4 @@
 - A configured reviewer may be unavailable when its Docker image is missing. Record the failed review as unavailable, inspect changes locally, and do not treat infrastructure failure as approval.
 - Responses content should preserve provider whitespace just like Chat Completions; trimming transport output breaks callers that require complete generated text.
 - When a hook fails intermittently, reproduce the named test repeatedly on a clean `git archive HEAD` before changing task code. SQLite history currently sorts by `(timestamp,rowid)`; equal microsecond timestamps can reorder messages across serialization. Track that baseline defect separately and never bypass hooks.
+- Use `delegate_to_agent` for built-in reviewer IDs; the legacy subagent alias may not resolve them. Docker review also requires a local `a2gent-brute:latest` image; missing-image/pull-denied is an unavailable review, not approval.

@@ -262,9 +262,17 @@ func (s *Server) selectRoutingRuleViaLLM(ctx context.Context, userPrompt string,
 	}
 	rulesJSON, _ := json.Marshal(indexed)
 
+	effort := strings.TrimSpace(autoCfg.RouterReasoningEffort)
+	if effort == "" {
+		model := routerModel
+		if model == "" {
+			model = s.resolveModelForProvider(routerProviderType)
+		}
+		effort = auxiliaryReasoningEffort(routerProviderType, model)
+	}
 	req := &llm.ChatRequest{
 		SystemPrompt:    automaticRouterSystemPrompt,
-		ReasoningEffort: strings.TrimSpace(autoCfg.RouterReasoningEffort),
+		ReasoningEffort: effort,
 		Messages: []llm.Message{
 			{Role: "user", Content: fmt.Sprintf("Rules: %s\n\nUser prompt: %s", string(rulesJSON), userPrompt)},
 		},

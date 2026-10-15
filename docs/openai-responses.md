@@ -33,6 +33,38 @@ Function tools explicitly use `strict:false` to preserve optional parameters.
 no legacy Chat Completions fallback. Only set reasoning/verbosity options on
 models that support those options.
 
+## Auxiliary one-shot requests
+
+Session summaries, commit messages, PR descriptions, meeting summaries, and the
+HTTP automatic-router classifier override the `openai` provider's reasoning
+default with the lowest model-supported effort. Explicit router effort settings
+still take precedence. Other providers are unchanged.
+
+- Original GPT-5 / mini / nano: `minimal`.
+- GPT-5.1 and newer general-purpose models, GPT-6 Sol / Luna: `none`.
+- GPT-6 Astra / GPT-6.1 Sol and the original GPT-5 Codex variants: `low`.
+- GPT-5.1 Codex Mini: `medium`; GPT-5 Pro: `high`; later GPT-5 Pro: `medium`.
+- GPT-4.x and other non-reasoning models: no effort override.
+
+These values follow the current OpenAI [reasoning guide](https://developers.openai.com/api/docs/guides/reasoning#reasoning-effort),
+[GPT-5 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-5),
+[GPT-5.4 Mini model page](https://developers.openai.com/api/docs/models/gpt-5.4-mini),
+and the individual model pages. In particular, `none` is not valid for every
+GPT-6, Codex, or Pro model.
+
+Session and meeting summaries request `service_tier: flex` only with `openai`.
+The public Responses client retries an HTTP 429 from Flex once using `auto`, as
+recommended by the [Flex processing guide](https://developers.openai.com/api/docs/guides/flex-processing).
+An empty tier would inherit the provider default and could request Flex again.
+A failed fallback is not replayed by the generic retry wrapper. No fallback is
+applied to other HTTP errors or the ChatGPT Codex backend.
+
+Session summaries retain the 80-token cap when reasoning is disabled. Models
+that still require reasoning get 2048 tokens including reasoning; the final
+summary is still trimmed by `SummaryFromContent`. Empty `response.incomplete`
+results now return an error containing `incomplete_details.reason` for both JSON
+and SSE responses. Partial text and tool calls remain usable.
+
 ## Real API verification
 
 The opt-in integration test uses synthetic data only: three sequential

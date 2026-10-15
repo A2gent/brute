@@ -102,10 +102,13 @@ type responsesTool struct {
 }
 
 type responsesResponse struct {
-	ID     string                `json:"id"`
-	Status string                `json:"status"`
-	Output []responsesOutputItem `json:"output"`
-	Usage  struct {
+	ID                string                `json:"id"`
+	Status            string                `json:"status"`
+	Output            []responsesOutputItem `json:"output"`
+	IncompleteDetails *struct {
+		Reason string `json:"reason"`
+	} `json:"incomplete_details"`
+	Usage struct {
 		InputTokens        int `json:"input_tokens"`
 		OutputTokens       int `json:"output_tokens"`
 		InputTokensDetails struct {
@@ -312,6 +315,16 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 			return nil, fmt.Errorf("failed to read Codex error response: %w", readErr)
 		}
 		err := fmt.Errorf("OpenAI Codex error (%d): %s", resp.StatusCode, string(respBody))
+		if options.PublicAPI && options.ServiceTier == "flex" && resp.StatusCode == http.StatusTooManyRequests && ctx.Err() == nil {
+			// Retry before the generic retry wrapper can repeat the unavailable
+			// flex request. Empty tier would inherit a provider's flex default.
+			logging.Warn("OpenAI flex unavailable; retrying once with auto service tier")
+			_ = resp.Body.Close()
+			retryRequest := *request
+			retryRequest.ServiceTier = "auto"
+			result, retryErr := c.ChatStream(ctx, &retryRequest, onEvent)
+			return result, llm.UnsafeForRetry(retryErr)
+		}
 		logging.LogResponse(0, 0, 0, err)
 		return nil, err
 	}
@@ -333,7 +346,22 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
 		return nil, fmt.Errorf("failed to parse Codex response: %w", err)
 	}
-	return parseResponseObject(parsed)
+	result, err := parseResponseObject(parsed)
+	if err != nil {
+		return nil, err
+	}
+	return result, incompleteResponseError(parsed, result)
+}
+
+func incompleteResponseError(parsed responsesResponse, result *llm.ChatResponse) error {
+	if parsed.Status != "incomplete" || strings.TrimSpace(result.Content) != "" || len(result.ToolCalls) > 0 {
+		return nil
+	}
+	reason := "unknown"
+	if parsed.IncompleteDetails != nil && parsed.IncompleteDetails.Reason != "" {
+		reason = parsed.IncompleteDetails.Reason
+	}
+	return fmt.Errorf("OpenAI response incomplete with no content (reason: %s)", reason)
 }
 
 func parseStreamResponse(body []byte) (*llm.ChatResponse, error) {
@@ -464,7 +492,7 @@ func parseStreamReader(reader io.Reader, onEvent func(llm.StreamEvent) error) (*
 		if len(result.ToolCalls) == 0 && len(toolOrder) > 0 {
 			result.ToolCalls = toolCallsFromStates(toolOrder, tools)
 		}
-		return result, nil
+		return result, incompleteResponseError(*completed, result)
 	}
 
 	result := &llm.ChatResponse{

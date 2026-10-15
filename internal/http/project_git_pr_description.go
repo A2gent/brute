@@ -303,7 +303,8 @@ func (s *Server) generateGitPRDescriptionWithProvider(ctx context.Context, provi
 		return nil, err
 	}
 	return target.Client.Chat(ctx, &llm.ChatRequest{
-		Model: target.Model,
+		Model:           target.Model,
+		ReasoningEffort: auxiliaryReasoningEffort(target.ProviderType, target.Model),
 		Messages: []llm.Message{
 			{Role: "user", Content: prompt},
 		},

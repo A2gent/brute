@@ -48,7 +48,9 @@ func (s *Server) generateMeetingSummary(ctx context.Context, meeting meetingHist
 	}
 
 	response, err := target.Client.Chat(ctx, &llm.ChatRequest{
-		Model: target.Model,
+		Model:           target.Model,
+		ReasoningEffort: auxiliaryReasoningEffort(target.ProviderType, target.Model),
+		ServiceTier:     auxiliaryBackgroundServiceTier(target.ProviderType),
 		Messages: []llm.Message{
 			{Role: "user", Content: prompt},
 		},

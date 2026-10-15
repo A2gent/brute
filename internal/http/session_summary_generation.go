@@ -114,13 +114,22 @@ func (s *Server) generateSessionSummary(summaryCtx context.Context, sess *sessio
 		return ""
 	}
 
+	effort := auxiliaryReasoningEffort(target.ProviderType, target.Model)
+	maxTokens := 80
+	if effort != "" && effort != "none" {
+		// max_output_tokens includes reasoning. Even minimal effort can exhaust
+		// 80 tokens before any text; SummaryFromContent still limits the result.
+		maxTokens = 2048
+	}
 	resp, err := target.Client.Chat(summaryCtx, &llm.ChatRequest{
-		Model: target.Model,
+		Model:           target.Model,
+		ReasoningEffort: effort,
+		ServiceTier:     auxiliaryBackgroundServiceTier(target.ProviderType),
 		Messages: []llm.Message{
 			{Role: "user", Content: prompt},
 		},
 		Temperature: 0.2,
-		MaxTokens:   80,
+		MaxTokens:   maxTokens,
 	})
 	if err != nil {
 		logging.Warn("Failed to generate session summary: %v", err)

@@ -14,7 +14,8 @@ import (
 //   - pronunciations.json        hand-edited exceptions, highest priority
 //   - pronunciations-cache.json  machine-written readings (filled by putCachedPronunciation)
 //
-// Lookup order: user file > cache > built-in dictionaries. "+" marks the stressed vowel.
+// For Latin words, built-in readings take priority over the machine cache; the user file always wins.
+// The cache is intended for words absent from the built-in dictionaries. "+" marks the stressed vowel.
 const (
 	userPronunciationsFile  = "pronunciations.json"
 	cachedPronunciationFile = "pronunciations-cache.json"
@@ -35,11 +36,18 @@ var (
 
 // lookupPronunciation returns a user or cached reading for word.
 func lookupPronunciation(word string) (string, bool) {
-	key := strings.ToLower(word)
-	if r, ok := userPronunciations.get(key); ok {
+	if r, ok := lookupUserPronunciation(word); ok {
 		return r, true
 	}
-	return cachedPronunciations.get(key)
+	return lookupCachedPronunciation(word)
+}
+
+func lookupUserPronunciation(word string) (string, bool) {
+	return userPronunciations.get(strings.ToLower(word))
+}
+
+func lookupCachedPronunciation(word string) (string, bool) {
+	return cachedPronunciations.get(strings.ToLower(word))
 }
 
 // putCachedPronunciation stores a machine-generated reading; user entries still win.

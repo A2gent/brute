@@ -130,4 +130,3 @@ func (s *Server) handleListProjectRecentFiles(w http.ResponseWriter, r *http.Req
 		Files:      files,
 	})
 }
-

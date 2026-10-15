@@ -21,12 +21,19 @@ var (
 	ruOrdTens  = []string{"", "", "двадцатый", "тридцатый", "сороковой", "пятидесятый", "шестидесятый", "семидесятый", "восьмидесятый", "девяностый"}
 	ruOrdHund  = []string{"", "сотый", "двухсотый", "трёхсотый", "четырёхсотый", "пятисотый", "шестисотый", "семисотый", "восьмисотый", "девятисотый"}
 
-	reYear     = regexp.MustCompile(`\b(\d{4})(\s+)(год(?:а|у|ом|е)?)([^\p{L}]|$)`)
-	rePercent  = regexp.MustCompile(`(\d+)(?:[.,](\d+))?\s*%`)
-	reDecimal  = regexp.MustCompile(`\b(\d+)[.,](\d{1,3})\b`)
-	reNumber   = regexp.MustCompile(`\d+`)
-	reCyrillic = regexp.MustCompile(`[А-Яа-яЁё]+`)
-	reEmail    = regexp.MustCompile(`(?i)\be-mail`)
+	reYear         = regexp.MustCompile(`\b(\d{4})(\s+)(год(?:а|у|ом|е)?)([^\p{L}]|$)`)
+	rePercent      = regexp.MustCompile(`(\d+)(?:[.,](\d+))?\s*%`)
+	reDecimal      = regexp.MustCompile(`\b(\d+)[.,](\d{1,3})\b`)
+	reNumber       = regexp.MustCompile(`\d+`)
+	reCyrillic     = regexp.MustCompile(`[А-Яа-яЁё]+`)
+	reEmail        = regexp.MustCompile(`(?i)\be-mail`)
+	reCamelLower   = regexp.MustCompile(`([a-z0-9])([A-Z])`)
+	reCamelAcronym = regexp.MustCompile(`([A-Z]+)([A-Z][a-z])`)
+	reCodeOperator = regexp.MustCompile(`!==|===|>=|<=|!=|==|&&|\|\||=>|->|\+=|-=|\*=|/=|%=|[=><]`)
+	// Match slash-separated dates first so their first slash is not read as division.
+	reArithmetic     = regexp.MustCompile(`\b\d{1,2}/\d{1,2}/\d{4}\b|([[:alnum:]_.])\s*([+*/%])\s*([[:alnum:]_(])|([[:alnum:]_.])\s+-\s+([[:alnum:]_(])`)
+	reCodeMemberCall = regexp.MustCompile(`([A-Za-z][A-Za-z0-9]*)\.([A-Za-z][A-Za-z0-9]*)\(\)`)
+	reHorizontalWS   = regexp.MustCompile(`[ \\t]+`)
 	// rePath matches file paths (absolute, ~/, ./ or relative with a slash); letters are required so dates like 1/2/2024 are left alone.
 	rePath     = regexp.MustCompile(`(?:~|\.{1,2})?(?:/[A-Za-z0-9_.\-]+)+/?|\b[A-Za-z0-9_\-]+(?:\.[A-Za-z0-9_\-]+)*(?:/[A-Za-z0-9_.\-]+)+/?`)
 	reLetter   = regexp.MustCompile(`[A-Za-z]`)
@@ -97,6 +104,57 @@ func pathWords(path string) string {
 
 func normalizeRussianText(text string) string {
 	text = rePath.ReplaceAllStringFunc(text, pathWords)
+	text = reCodeMemberCall.ReplaceAllString(text, "$1 $2")
+	text = strings.ReplaceAll(text, "_", " ")
+	text = reArithmetic.ReplaceAllStringFunc(text, func(expression string) string {
+		m := reArithmetic.FindStringSubmatch(expression)
+		if m[1] != "" {
+			word := map[string]string{"+": "плюс", "*": "умножить на", "/": "разделить на", "%": "остаток от деления на"}[m[2]]
+			return m[1] + " " + word + " " + m[3]
+		}
+		if m[4] != "" {
+			return m[4] + " минус " + m[5]
+		}
+		return expression
+	})
+	text = reCodeOperator.ReplaceAllStringFunc(text, func(operator string) string {
+		switch operator {
+		case "!==":
+			return " строго не равно "
+		case "===":
+			return " строго равно "
+		case ">=":
+			return " больше или равно "
+		case "<=":
+			return " меньше или равно "
+		case "!=":
+			return " не равно "
+		case "==":
+			return " равно "
+		case "&&":
+			return " логическое и "
+		case "||":
+			return " логическое или "
+		case "+=":
+			return " плюс присвоить "
+		case "-=":
+			return " минус присвоить "
+		case "*=":
+			return " умножить и присвоить "
+		case "/=":
+			return " разделить и присвоить "
+		case "%=":
+			return " остаток и присвоить "
+		case "=>", "->":
+			return " стрелка "
+		case ">":
+			return " больше "
+		case "<":
+			return " меньше "
+		default:
+			return " равно "
+		}
+	})
 	text = reNumGroup.ReplaceAllStringFunc(text, func(s string) string {
 		return strings.NewReplacer(" ", "", " ", "", " ", "").Replace(s)
 	})
@@ -135,6 +193,7 @@ func normalizeRussianText(text string) string {
 	// reLatin splits on hyphens, so the dictionary key "e-mail" never matches; handle it first.
 	text = reEmail.ReplaceAllString(text, "+и мейл")
 	text = reLatin.ReplaceAllStringFunc(text, latinToCyrillic)
+	text = reHorizontalWS.ReplaceAllString(text, " ")
 	return reCyrillic.ReplaceAllStringFunc(text, func(w string) string {
 		if st, ok := lookupPronunciation(w); ok {
 			return st
@@ -295,13 +354,26 @@ var latinSingles = map[rune]string{
 func latinToCyrillic(word string) string {
 	word = strings.ReplaceAll(word, "’", "'")
 	lower := strings.ToLower(word)
-	if w, ok := lookupPronunciation(lower); ok {
+	if w, ok := lookupUserPronunciation(lower); ok {
 		return w
 	}
 	if w, ok := latinDict[lower]; ok {
 		return w
 	}
 	if w, ok := latinInflected(lower); ok {
+		return w
+	}
+	// Match the whole known word first (e.g. GitHub), then split unknown identifiers.
+	camel := reCamelAcronym.ReplaceAllString(word, "$1 $2")
+	camel = reCamelLower.ReplaceAllString(camel, "$1 $2")
+	if camel != word {
+		parts := strings.Fields(camel)
+		for i := range parts {
+			parts[i] = latinToCyrillic(parts[i])
+		}
+		return strings.Join(parts, " ")
+	}
+	if w, ok := lookupCachedPronunciation(lower); ok {
 		return w
 	}
 	if i := strings.IndexAny(lower, "0123456789"); i >= 0 {

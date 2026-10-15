@@ -3,6 +3,7 @@ package speechengine
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -45,7 +46,18 @@ func runExternalStream(ctx context.Context, binary string, onLine func(string), 
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return result, ctxErr
 		}
-		detail := strings.TrimSpace(stderr.String())
+		// Speech helpers report structured errors on stdout while model download
+		// progress goes to stderr. Prefer the actual error over that progress.
+		var payload struct {
+			Error string `json:"error"`
+		}
+		detail := ""
+		if json.Unmarshal(result.stdout, &payload) == nil {
+			detail = strings.TrimSpace(payload.Error)
+		}
+		if detail == "" {
+			detail = strings.TrimSpace(stderr.String())
+		}
 		if detail == "" {
 			detail = strings.TrimSpace(stdout.String())
 		}

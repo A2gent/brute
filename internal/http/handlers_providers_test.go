@@ -13,12 +13,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/speechcache"
 	"github.com/A2gent/brute/internal/storage"
 	"github.com/A2gent/brute/internal/tools"
+	"github.com/go-chi/chi/v5"
 )
 
 func TestListProvidersMarksCursorConfiguredWhenCLIAvailable(t *testing.T) {

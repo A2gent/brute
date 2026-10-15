@@ -37,7 +37,7 @@ func TestRoutingPolicySettingsRoundTrip(t *testing.T) {
 		t.Fatalf("config mode: %v", got)
 	}
 	cfg.ProviderTransitionMode = ""
-	if got := call("GET", "")["effective_provider_transition_mode"]; got != "compact_auto" {
+	if got := call("GET", "")["effective_provider_transition_mode"]; got != "confirm" {
 		t.Fatalf("default: %v", got)
 	}
 	for _, mode := range []string{"compact_auto", "switch_auto", "confirm", "linked_session"} {
@@ -59,7 +59,15 @@ func TestRoutingPolicySettingsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSavedRoutingConfirmationGatesManualSelection(t *testing.T) {
+func TestRoutingConfirmationGatesManualSelection(t *testing.T) {
+	for _, override := range []string{"", "confirm"} {
+		t.Run("override="+override, func(t *testing.T) {
+			testRoutingConfirmationGatesManualSelection(t, override)
+		})
+	}
+}
+
+func testRoutingConfirmationGatesManualSelection(t *testing.T, override string) {
 	var calls atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -69,10 +77,12 @@ func TestSavedRoutingConfirmationGatesManualSelection(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Providers["lmstudio"] = config.Provider{BaseURL: target.URL, Model: "target"}
 	s := newProviderTestServer(t, cfg)
-	save := httptest.NewRecorder()
-	s.router.ServeHTTP(save, httptest.NewRequest("PUT", "/settings", strings.NewReader(`{"merge":true,"settings":{"A2GENT_PROVIDER_TRANSITION_MODE":"confirm"}}`)))
-	if save.Code != 200 {
-		t.Fatalf("save: %d %s", save.Code, save.Body)
+	if override != "" {
+		save := httptest.NewRecorder()
+		s.router.ServeHTTP(save, httptest.NewRequest("PUT", "/settings", strings.NewReader(`{"merge":true,"settings":{"A2GENT_PROVIDER_TRANSITION_MODE":"`+override+`"}}`)))
+		if save.Code != 200 {
+			t.Fatalf("save: %d %s", save.Code, save.Body)
+		}
 	}
 	sess, err := s.sessionManager.Create("test")
 	if err != nil {

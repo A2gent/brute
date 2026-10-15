@@ -10,15 +10,15 @@ func TestPronunciationOverrides(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("AAGENT_DATA_PATH", dir)
 
-	if got := normalizeRussianText("kubernetes"); got == "куб+ернетис" {
-		t.Fatalf("precondition: override must not exist yet, got %q", got)
+	if got := normalizeRussianText("kubernetes"); got != "кубернет+ис" {
+		t.Fatalf("built-in pronunciation should be stable, got %q", got)
 	}
 
-	// Cache fills in unknown words and survives reload.
-	if err := putCachedPronunciation("Kubernetes", "куберн+етис"); err != nil {
+	// Cache fills in unknown words and survives reload, but not at the expense of built-ins.
+	if err := putCachedPronunciation("Zorblax", "зорбл+акс"); err != nil {
 		t.Fatal(err)
 	}
-	if got := normalizeRussianText("kubernetes"); got != "куберн+етис" {
+	if got := normalizeRussianText("zorblax"); got != "зорбл+акс" {
 		t.Errorf("cache: got %q", got)
 	}
 
@@ -35,7 +35,7 @@ func TestPronunciationOverrides(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "speech", userPronunciationsFile), []byte("{oops"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := normalizeRussianText("kubernetes"); got != "куберн+етис" {
+	if got := normalizeRussianText("kubernetes"); got != "кубернет+ис" {
 		t.Errorf("malformed user file: got %q", got)
 	}
 }

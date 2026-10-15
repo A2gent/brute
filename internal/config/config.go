@@ -30,6 +30,7 @@ type Provider struct {
 	APIKey                string              `json:"api_key"`
 	BaseURL               string              `json:"base_url"`
 	Model                 string              `json:"model"`
+	PromptCacheRetention  string              `json:"prompt_cache_retention,omitempty"`
 	PromptCacheKey        string              `json:"prompt_cache_key,omitempty"`
 	ReasoningEffort       string              `json:"reasoning_effort,omitempty"`
 	TextVerbosity         string              `json:"text_verbosity,omitempty"`

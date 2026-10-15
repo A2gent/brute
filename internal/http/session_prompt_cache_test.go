@@ -17,7 +17,7 @@ func TestSessionPromptCacheForAnthropicUsesFiveMinuteTTL(t *testing.T) {
 	sess.Metadata["last_llm_input_tokens"] = float64(4000)
 	sess.Metadata["last_llm_cached_input_tokens"] = float64(3000)
 
-	cache := sessionPromptCache(sess)
+	cache := sessionPromptCache(sess, nil)
 	if cache == nil {
 		t.Fatal("expected prompt cache metadata")
 	}
@@ -42,12 +42,39 @@ func TestSessionPromptCacheForOpenAIIsConservativeEstimate(t *testing.T) {
 	sess.Metadata["last_llm_provider"] = string(config.ProviderOpenAICodex)
 	sess.Metadata["last_llm_model"] = "gpt-5.5"
 
-	cache := sessionPromptCache(sess)
+	cache := sessionPromptCache(sess, nil)
 	if cache == nil {
 		t.Fatal("expected OpenAI prompt cache metadata")
 	}
 	if cache.TTLSeconds != 300 || !cache.Estimated {
 		t.Fatalf("OpenAI cache policy = %#v", cache)
+	}
+}
+
+func TestSessionPromptCacheForOpenAIAPIReflectsRetention(t *testing.T) {
+	lastRequestAt := time.Date(2026, time.July, 23, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		model, retention string
+		want             time.Duration
+	}{
+		{"gpt-5.4", "", 30 * time.Minute},
+		{"openai/gpt-5.4", "", 30 * time.Minute},
+		{"gpt-5.4", "in_memory", 5 * time.Minute},
+		{"gpt-5.4-mini", "", 5 * time.Minute},
+	} {
+		t.Run(tc.model+"/"+tc.retention, func(t *testing.T) {
+			sess := session.New("build")
+			sess.Metadata["last_llm_request_at"] = lastRequestAt.Format(time.RFC3339Nano)
+			sess.Metadata["last_llm_provider"] = string(config.ProviderOpenAI)
+			sess.Metadata["last_llm_model"] = tc.model
+			cfg := config.DefaultConfig()
+			cfg.Providers[string(config.ProviderOpenAI)] = config.Provider{PromptCacheRetention: tc.retention}
+
+			cache := sessionPromptCache(sess, cfg)
+			if cache == nil || cache.TTLSeconds != int(tc.want.Seconds()) || !cache.ExpiresAt.Equal(lastRequestAt.Add(tc.want)) || !cache.Estimated {
+				t.Fatalf("cache = %#v, want ttl %s", cache, tc.want)
+			}
+		})
 	}
 }
 
@@ -59,7 +86,7 @@ func TestSessionPromptCacheForCursorIsConservativeEstimate(t *testing.T) {
 	sess.Metadata["last_llm_model"] = "composer-2.5"
 	sess.Metadata["last_llm_cached_input_tokens"] = float64(770139)
 
-	cache := sessionPromptCache(sess)
+	cache := sessionPromptCache(sess, nil)
 	if cache == nil {
 		t.Fatal("expected Cursor prompt cache metadata")
 	}
@@ -93,7 +120,7 @@ func TestSessionPromptCacheOmitsUnsupportedProviderAndInvalidTimestamp(t *testin
 		t.Run(name, func(t *testing.T) {
 			sess := session.New("build")
 			sess.Metadata = metadata
-			if got := sessionPromptCache(sess); got != nil {
+			if got := sessionPromptCache(sess, nil); got != nil {
 				t.Fatalf("prompt cache = %#v, want nil", got)
 			}
 		})

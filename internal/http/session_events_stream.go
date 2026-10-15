@@ -108,6 +108,6 @@ func (s *Server) sessionSnapshotStreamEvent(sess *session.Session) ChatStreamEve
 		RoutedReason:           routedReason,
 		FallbackActiveProvider: fallbackActiveProvider,
 		FallbackActiveModel:    fallbackActiveModel,
-		PromptCache:            sessionPromptCache(sess),
+		PromptCache:            sessionPromptCache(sess, s.config),
 	}
 }

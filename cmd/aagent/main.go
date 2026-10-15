@@ -591,13 +591,14 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 			return lmstudio.NewClient(apiKey, model, baseURL), model, nil
 		case config.ProviderOpenAI:
 			return openaicodex.NewClientWithOptions(apiKey, model, baseURL, openaicodex.Options{
-				PublicAPI:         true,
-				PromptCacheKey:    provider.PromptCacheKey,
-				ReasoningEffort:   provider.ReasoningEffort,
-				TextVerbosity:     provider.TextVerbosity,
-				ServiceTier:       provider.ServiceTier,
-				MaxTokens:         provider.MaxTokens,
-				StatefulResponses: provider.StatefulResponses != nil && *provider.StatefulResponses,
+				PublicAPI:            true,
+				PromptCacheRetention: provider.PromptCacheRetention,
+				PromptCacheKey:       provider.PromptCacheKey,
+				ReasoningEffort:      provider.ReasoningEffort,
+				TextVerbosity:        provider.TextVerbosity,
+				ServiceTier:          provider.ServiceTier,
+				MaxTokens:            provider.MaxTokens,
+				StatefulResponses:    provider.StatefulResponses != nil && *provider.StatefulResponses,
 			}), model, nil
 		case config.ProviderOpenAICodex:
 			options := openaicodex.Options{

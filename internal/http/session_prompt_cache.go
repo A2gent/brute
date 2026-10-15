@@ -5,12 +5,16 @@ import (
 	"time"
 
 	"github.com/A2gent/brute/internal/config"
+	"github.com/A2gent/brute/internal/llm/openaicodex"
 	"github.com/A2gent/brute/internal/session"
 )
 
-const promptCacheConservativeTTL = 5 * time.Minute
+const (
+	promptCacheConservativeTTL = 5 * time.Minute
+	promptCacheExtendedTTL     = 30 * time.Minute
+)
 
-func sessionPromptCache(sess *session.Session) *PromptCachePayload {
+func sessionPromptCache(sess *session.Session, cfg *config.Config) *PromptCachePayload {
 	if sess == nil || sess.Metadata == nil {
 		return nil
 	}
@@ -23,6 +27,7 @@ func sessionPromptCache(sess *session.Session) *PromptCachePayload {
 		return nil
 	}
 
+	ttl := promptCacheConservativeTTL
 	estimated := false
 	switch {
 	case config.IsClaudeProviderRef(provider):
@@ -34,6 +39,15 @@ func sessionPromptCache(sess *session.Session) *PromptCachePayload {
 	case provider == string(config.ProviderOpenAI):
 		if !supportsOpenAIPromptCache(sessionMetadataString(sess.Metadata, "last_llm_model")) {
 			return nil
+		}
+		retention := ""
+		if cfg != nil {
+			retention = cfg.Providers[provider].PromptCacheRetention
+		}
+		if openaicodex.EffectivePromptCacheRetention(sessionMetadataString(sess.Metadata, "last_llm_model"), retention) == "24h" {
+			// Extended retention typically keeps entries ~30 minutes, up to 24h.
+			// Show the typical lower bound so the UI does not promise a 24h hit.
+			ttl = promptCacheExtendedTTL
 		}
 		estimated = true
 	case provider == string(config.ProviderCursor):
@@ -50,8 +64,8 @@ func sessionPromptCache(sess *session.Session) *PromptCachePayload {
 		Provider:          provider,
 		Model:             sessionMetadataString(sess.Metadata, "last_llm_model"),
 		LastRequestAt:     lastRequestAt,
-		ExpiresAt:         lastRequestAt.Add(promptCacheConservativeTTL),
-		TTLSeconds:        int(promptCacheConservativeTTL.Seconds()),
+		ExpiresAt:         lastRequestAt.Add(ttl),
+		TTLSeconds:        int(ttl.Seconds()),
 		CachedInputTokens: cachedTokens,
 		HitObserved:       cachedTokens > 0,
 		Estimated:         estimated,

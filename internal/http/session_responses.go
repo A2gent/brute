@@ -94,7 +94,7 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		RunDurationSeconds:     sessionRunDurationSeconds(sess.CreatedAt, sess.UpdatedAt, string(sess.Status)),
 		TaskProgress:           sess.TaskProgress,
 		ProviderFailures:       sessionProviderFailures(sess.Metadata),
-		PromptCache:            sessionPromptCache(sess),
+		PromptCache:            sessionPromptCache(sess, s.config),
 		CreatedAt:              sess.CreatedAt,
 		UpdatedAt:              sess.UpdatedAt,
 		ArchivedAt:             sessionArchivedAt(sess),

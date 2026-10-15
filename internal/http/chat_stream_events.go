@@ -38,7 +38,7 @@ func (s *Server) agentEventToStreamEvent(sess *session.Session, providerType con
 			// A tool_executing event fires right after an LLM turn refreshed the
 			// prompt-cache window, so stream the new expiry to reset the UI countdown
 			// live instead of waiting for the run to finish.
-			PromptCache: sessionPromptCache(sess),
+			PromptCache: sessionPromptCache(sess, s.config),
 		}, true
 	case agent.EventToolProgress:
 		if ev.ToolProgress == nil {
@@ -60,7 +60,7 @@ func (s *Server) agentEventToStreamEvent(sess *session.Session, providerType con
 			Type:        "tool_completed",
 			Step:        ev.Step,
 			Status:      string(sess.Status),
-			PromptCache: sessionPromptCache(sess),
+			PromptCache: sessionPromptCache(sess, s.config),
 		}
 		if len(sess.Messages) > 0 {
 			msg := s.messageToResponse(sess.Messages[len(sess.Messages)-1])

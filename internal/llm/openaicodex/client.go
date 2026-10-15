@@ -37,11 +37,12 @@ type Client struct {
 
 type Options struct {
 	// PublicAPI disables ChatGPT-only headers and payload restrictions.
-	PublicAPI       bool
-	PromptCacheKey  string
-	ReasoningEffort string
-	TextVerbosity   string
-	ServiceTier     string
+	PublicAPI            bool
+	PromptCacheRetention string
+	PromptCacheKey       string
+	ReasoningEffort      string
+	TextVerbosity        string
+	ServiceTier          string
 	// Token caps are supported only by the public Responses API.
 	MaxTokens             int
 	StatefulResponses     bool
@@ -50,19 +51,20 @@ type Options struct {
 }
 
 type responsesRequest struct {
-	Model              string               `json:"model"`
-	Instructions       string               `json:"instructions,omitempty"`
-	Input              []responsesInputItem `json:"input"`
-	Tools              []responsesTool      `json:"tools,omitempty"`
-	Store              bool                 `json:"store"`
-	Stream             bool                 `json:"stream"`
-	PreviousResponseID string               `json:"previous_response_id,omitempty"`
-	PromptCacheKey     string               `json:"prompt_cache_key,omitempty"`
-	Reasoning          *responsesReasoning  `json:"reasoning,omitempty"`
-	Text               *responsesText       `json:"text,omitempty"`
-	ServiceTier        string               `json:"service_tier,omitempty"`
-	MaxOutputTokens    int                  `json:"max_output_tokens,omitempty"`
-	Include            []string             `json:"include,omitempty"`
+	Model                string               `json:"model"`
+	Instructions         string               `json:"instructions,omitempty"`
+	Input                []responsesInputItem `json:"input"`
+	Tools                []responsesTool      `json:"tools,omitempty"`
+	Store                bool                 `json:"store"`
+	Stream               bool                 `json:"stream"`
+	PreviousResponseID   string               `json:"previous_response_id,omitempty"`
+	PromptCacheRetention string               `json:"prompt_cache_retention,omitempty"`
+	PromptCacheKey       string               `json:"prompt_cache_key,omitempty"`
+	Reasoning            *responsesReasoning  `json:"reasoning,omitempty"`
+	Text                 *responsesText       `json:"text,omitempty"`
+	ServiceTier          string               `json:"service_tier,omitempty"`
+	MaxOutputTokens      int                  `json:"max_output_tokens,omitempty"`
+	Include              []string             `json:"include,omitempty"`
 }
 
 type responsesReasoning struct {
@@ -272,6 +274,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	}
 
 	if options.PublicAPI {
+		payload.PromptCacheRetention = EffectivePromptCacheRetention(model, options.PromptCacheRetention)
 		payload.Instructions = strings.TrimSpace(request.SystemPrompt)
 		payload.MaxOutputTokens = options.MaxTokens
 		if !options.StatefulResponses {

@@ -30,7 +30,7 @@ func TestOpenAIResponsesKeepsUsageAndPromptCacheStatus(t *testing.T) {
 	sess.Metadata["last_llm_provider"] = "openai"
 	sess.Metadata["last_llm_model"] = "gpt-5.4-mini"
 	sess.Metadata["last_llm_cached_input_tokens"] = float64(1024)
-	cache := sessionPromptCache(sess)
+	cache := sessionPromptCache(sess, cfg)
 	if cache == nil || cache.Provider != "openai" || !cache.HitObserved || cache.CachedInputTokens != 1024 || !cache.Estimated {
 		t.Fatalf("API-key cache status = %+v", cache)
 	}

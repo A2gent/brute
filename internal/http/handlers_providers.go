@@ -122,26 +122,27 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 		}
 
 		resp = append(resp, ProviderConfigResponse{
-			Type:              string(def.Type),
-			DisplayName:       def.DisplayName,
-			DefaultURL:        def.DefaultURL,
-			RequiresKey:       def.RequiresKey,
-			DefaultModel:      def.DefaultModel,
-			ContextWindow:     s.resolveContextWindowForProvider(def.Type, model),
-			IsActive:          s.config.ActiveProvider == string(def.Type),
-			Configured:        configured,
-			HasAPIKey:         hasAPIKey,
-			BaseURL:           baseURL,
-			Model:             model,
-			PromptCacheKey:    strings.TrimSpace(existing.PromptCacheKey),
-			ReasoningEffort:   strings.TrimSpace(existing.ReasoningEffort),
-			TextVerbosity:     strings.TrimSpace(existing.TextVerbosity),
-			ServiceTier:       strings.TrimSpace(existing.ServiceTier),
-			MaxTokens:         existing.MaxTokens,
-			StatefulResponses: s.providerStatefulResponsesForConfig(def.Type, existing.StatefulResponses),
-			ProxyManaged:      proxyManaged,
-			ProxyBaseURL:      proxyBaseURL,
-			FallbackChain:     nil,
+			Type:                 string(def.Type),
+			DisplayName:          def.DisplayName,
+			DefaultURL:           def.DefaultURL,
+			RequiresKey:          def.RequiresKey,
+			DefaultModel:         def.DefaultModel,
+			ContextWindow:        s.resolveContextWindowForProvider(def.Type, model),
+			IsActive:             s.config.ActiveProvider == string(def.Type),
+			Configured:           configured,
+			HasAPIKey:            hasAPIKey,
+			BaseURL:              baseURL,
+			Model:                model,
+			PromptCacheKey:       strings.TrimSpace(existing.PromptCacheKey),
+			PromptCacheRetention: strings.TrimSpace(existing.PromptCacheRetention),
+			ReasoningEffort:      strings.TrimSpace(existing.ReasoningEffort),
+			TextVerbosity:        strings.TrimSpace(existing.TextVerbosity),
+			ServiceTier:          strings.TrimSpace(existing.ServiceTier),
+			MaxTokens:            existing.MaxTokens,
+			StatefulResponses:    s.providerStatefulResponsesForConfig(def.Type, existing.StatefulResponses),
+			ProxyManaged:         proxyManaged,
+			ProxyBaseURL:         proxyBaseURL,
+			FallbackChain:        nil,
 		})
 	}
 
@@ -304,6 +305,9 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Model != nil {
 			provider.Model = normalizeModelForProvider(providerType, *req.Model)
+		}
+		if req.PromptCacheRetention != nil {
+			provider.PromptCacheRetention = strings.TrimSpace(*req.PromptCacheRetention)
 		}
 		if req.PromptCacheKey != nil {
 			provider.PromptCacheKey = strings.TrimSpace(*req.PromptCacheKey)

@@ -28,6 +28,16 @@ Function tools explicitly use `strict:false` to preserve optional parameters.
 - Usage includes cached input tokens and reasoning output tokens, including
   incomplete streamed responses. Reasoning tokens are a subset of output tokens,
   not an additional billable count to add to them.
+- `prompt_cache_retention` (public API only, never sent to the ChatGPT Codex
+  backend) defaults to `24h` for models that OpenAI lists as supporting extended
+  retention without a cache-write charge: `gpt-5.5`, `gpt-5.5-pro`, `gpt-5.4`,
+  `gpt-5.2`, `gpt-5.1*` (base, codex, codex-max, codex-mini, chat-latest),
+  `gpt-5`, `gpt-5-codex` and `gpt-4.1`, including dated snapshots. Set it to
+  `in_memory` to opt out, for example for Zero Data Retention organizations
+  (`gpt-5.5`/`gpt-5.5-pro` accept only `24h`). Other models, including mini/nano
+  and GPT-5.6+ (which uses `prompt_cache_options.ttl`), omit the field. The
+  session prompt-cache status estimates 30 minutes for `24h`, the typical
+  lifetime OpenAI documents, rather than the 24-hour maximum.
 
 `gpt-4o` and `gpt-4.1` were verified against the public Responses API, so there is
 no legacy Chat Completions fallback. Only set reasoning/verbosity options on

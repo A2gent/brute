@@ -105,7 +105,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			OutputTokens:       outputTokens,
 			RunDurationSeconds: sessionRunDurationSeconds(sess.CreatedAt, sess.UpdatedAt, string(sess.Status)),
 			TaskProgress:       sess.TaskProgress,
-			PromptCache:        sessionPromptCache(sess),
+			PromptCache:        sessionPromptCache(sess, s.config),
 			CreatedAt:          sess.CreatedAt,
 			UpdatedAt:          sess.UpdatedAt,
 			ArchivedAt:         sessionArchivedAt(sess),

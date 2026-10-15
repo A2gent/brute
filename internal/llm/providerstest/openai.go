@@ -37,10 +37,10 @@ func CheckOpenAIResponses(t *testing.T, factory func(*config.Config) (llm.Client
 			defer upstream.Close()
 			cfg := config.DefaultConfig()
 			cfg.ActiveProvider = string(config.ProviderOpenAI)
-			cfg.DefaultModel = "gpt-5.4-mini"
+			cfg.DefaultModel = "gpt-5.4"
 			cfg.Providers[string(config.ProviderOpenAI)] = config.Provider{
 				APIKey: "test-key", BaseURL: upstream.URL + "/v1", Model: cfg.DefaultModel,
-				ReasoningEffort: "low", TextVerbosity: "low", ServiceTier: "auto", MaxTokens: 512, PromptCacheKey: "provider-cache", StatefulResponses: &stateful,
+				ReasoningEffort: "low", TextVerbosity: "low", ServiceTier: "auto", MaxTokens: 512, PromptCacheKey: "provider-cache", PromptCacheRetention: "in_memory", StatefulResponses: &stateful,
 			}
 			client, err := factory(cfg)
 			if err != nil {
@@ -50,7 +50,7 @@ func CheckOpenAIResponses(t *testing.T, factory func(*config.Config) (llm.Client
 			if err != nil {
 				t.Fatal(err)
 			}
-			for key, want := range map[string]interface{}{"model": cfg.DefaultModel, "instructions": "Test instructions", "prompt_cache_key": "provider-cache", "service_tier": "auto", "max_output_tokens": float64(512), "store": stateful, "stream": true} {
+			for key, want := range map[string]interface{}{"model": cfg.DefaultModel, "instructions": "Test instructions", "prompt_cache_key": "provider-cache", "prompt_cache_retention": "in_memory", "service_tier": "auto", "max_output_tokens": float64(512), "store": stateful, "stream": true} {
 				if payload[key] != want {
 					t.Errorf("%s = %v, want %v", key, payload[key], want)
 				}

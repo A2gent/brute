@@ -32,66 +32,98 @@ func (s *Server) refreshSessionSummaryAsync(sess *session.Session) {
 	}
 	snapshot.RefreshSummary()
 	fallbackSummary := strings.TrimSpace(snapshot.Summary)
-	if fallbackSummary != "" && fallbackSummary != sess.Summary {
-		sess.SetSummary(fallbackSummary)
-		s.persistSessionSummary(sess.ID, fallbackSummary)
-	}
-
 	prompt := s.renderSessionSummaryPrompt(&snapshot)
+	token, history := s.beginSessionSummary(sess.ID)
 	if strings.TrimSpace(prompt) == "" {
+		s.preserveSessionSummary(sess, token, fallbackSummary)
+		s.finishSessionSummary(sess.ID, token, "", false)
 		return
 	}
-
-	token := s.beginSessionSummary(sess.ID)
+	// Keep a trusted LLM summary while checking it; a skip must not leave the
+	// deterministic fallback in its place. Never mutate the live session async.
+	currentSummary := fallbackSummary
+	if history.summary != "" {
+		currentSummary = history.summary
+	}
+	s.preserveSessionSummary(sess, token, currentSummary)
+	interval := s.sessionSummaryRefreshInterval()
 	s.sessionSummaryWG.Add(1)
 	go func() {
 		defer s.sessionSummaryWG.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), sessionSummaryTimeout)
 		defer cancel()
-		summary := s.generateSessionSummary(ctx, &snapshot, prompt)
-		// A resumed session may have started a newer summary pass; only the
-		// latest one may write, so out-of-order completions cannot go stale.
-		if !s.finishSessionSummary(snapshot.ID, token) || summary == "" || summary == fallbackSummary {
+		if history.summary != "" && history.runs < interval && s.canReuseSessionSummary(ctx, history.summary, &snapshot) {
+			s.finishSessionSummary(snapshot.ID, token, "", true)
 			return
 		}
-		s.persistSessionSummary(snapshot.ID, summary)
+		// Give regeneration its own budget even if the fail-open gate timed out.
+		summaryCtx, summaryCancel := context.WithTimeout(context.Background(), sessionSummaryTimeout)
+		defer summaryCancel()
+		summary := s.generateSessionSummary(summaryCtx, &snapshot, prompt)
+		s.finishSessionSummary(snapshot.ID, token, summary, false)
 	}()
 }
 
-func (s *Server) beginSessionSummary(sessionID string) uint64 {
+func (s *Server) beginSessionSummary(sessionID string) (uint64, sessionSummaryHistory) {
 	s.sessionSummaryMu.Lock()
 	defer s.sessionSummaryMu.Unlock()
 	if s.sessionSummaryLatest == nil {
 		s.sessionSummaryLatest = make(map[string]uint64)
 	}
+	if s.sessionSummaryHistory == nil {
+		s.sessionSummaryHistory = make(map[string]sessionSummaryHistory)
+	}
+	history := s.sessionSummaryHistory[sessionID]
+	history.runs++
+	s.sessionSummaryHistory[sessionID] = history
 	s.sessionSummarySeq++
 	s.sessionSummaryLatest[sessionID] = s.sessionSummarySeq
-	return s.sessionSummarySeq
+	return s.sessionSummarySeq, history
 }
 
-// finishSessionSummary reports whether token is still the latest pass for the
-// session and releases the entry. Tokens are globally unique, so a stale pass
-// can never match a token issued after the entry was released.
-func (s *Server) finishSessionSummary(sessionID string, token uint64) bool {
+func (s *Server) preserveSessionSummary(sess *session.Session, token uint64, summary string) {
+	s.sessionSummaryMu.Lock()
+	defer s.sessionSummaryMu.Unlock()
+	if s.sessionSummaryLatest[sess.ID] != token || summary == "" || summary == sess.Summary {
+		return
+	}
+	sess.SetSummary(summary)
+	s.persistSessionSummary(sess.ID, summary)
+}
+
+// finishSessionSummary releases only the latest pass and commits its result
+// under the same lock, so a newer run cannot race with a stale summary write.
+func (s *Server) finishSessionSummary(sessionID string, token uint64, summary string, skipped bool) bool {
 	s.sessionSummaryMu.Lock()
 	defer s.sessionSummaryMu.Unlock()
 	if s.sessionSummaryLatest[sessionID] != token {
 		return false
 	}
 	delete(s.sessionSummaryLatest, sessionID)
+	if skipped {
+		s.sessionSummarySkipCount++
+		logging.Info("Session summary LLM regeneration skipped: session=%s skip_count=%d", sessionID, s.sessionSummarySkipCount)
+	} else if summary != "" && s.persistSessionSummary(sessionID, summary) {
+		s.sessionSummaryHistory[sessionID] = sessionSummaryHistory{summary: summary}
+	}
+	if s.sessionSummaryHistory[sessionID].summary == "" {
+		delete(s.sessionSummaryHistory, sessionID)
+	}
 	return true
 }
 
 // persistSessionSummary writes only the summary column; the session manager
 // announces the change to catalog subscribers.
-func (s *Server) persistSessionSummary(sessionID, summary string) {
+func (s *Server) persistSessionSummary(sessionID, summary string) bool {
 	if err := s.sessionManager.SetSessionSummary(sessionID, summary); err != nil {
 		logging.Warn("Failed to save session summary: %v", err)
+		return false
 	}
+	return true
 }
 
 // generateSessionSummary runs the LLM summary pass. Returns "" on failure so the
-// already persisted fallback summary stays in place.
+// previously persisted LLM summary or deterministic fallback stays in place.
 func (s *Server) generateSessionSummary(summaryCtx context.Context, sess *session.Session, prompt string) string {
 	settings, settingsErr := s.store.GetSettings()
 	if settingsErr != nil {

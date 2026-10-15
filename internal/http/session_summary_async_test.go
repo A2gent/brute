@@ -23,16 +23,24 @@ const summaryPromptMarker = "SUMMARY_PROMPT_MARKER"
 
 func TestSessionSummaryOnlyLatestPassMayWrite(t *testing.T) {
 	s := &Server{}
-	older := s.beginSessionSummary("sess")
-	newer := s.beginSessionSummary("sess")
-	if s.finishSessionSummary("sess", older) {
+	older, _ := s.beginSessionSummary("sess")
+	newer, _ := s.beginSessionSummary("sess")
+	sess := &session.Session{ID: "sess", Summary: "Current summary"}
+	s.preserveSessionSummary(sess, older, "Stale eager summary")
+	if sess.Summary != "Current summary" {
+		t.Fatal("stale eager summary must not be persisted or mutate the session")
+	}
+	if s.finishSessionSummary("sess", older, "stale summary", false) {
 		t.Fatal("stale summary pass must not be allowed to write")
 	}
-	if !s.finishSessionSummary("sess", newer) {
+	if s.finishSessionSummary("sess", older, "", true) || s.sessionSummarySkipCount != 0 {
+		t.Fatal("stale skip must not count as a saved LLM call")
+	}
+	if !s.finishSessionSummary("sess", newer, "", false) {
 		t.Fatal("latest summary pass must be allowed to write")
 	}
-	next := s.beginSessionSummary("sess")
-	if s.finishSessionSummary("sess", older) || !s.finishSessionSummary("sess", next) {
+	next, _ := s.beginSessionSummary("sess")
+	if s.finishSessionSummary("sess", older, "", false) || !s.finishSessionSummary("sess", next, "", false) {
 		t.Fatal("released token must not match a newer pass")
 	}
 }

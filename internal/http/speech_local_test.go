@@ -18,7 +18,7 @@ import (
 )
 
 func TestLocalCompletionSelectionNeverFallsBackToCloud(t *testing.T) {
-	for _, engine := range []string{"kokoro", "qwen3_tts", "piper_tts", "macos_say_tts"} {
+	for _, engine := range []string{"kokoro", "qwen3_tts", "silero_tts", "piper_tts", "macos_say_tts"} {
 		t.Run(engine, func(t *testing.T) {
 			t.Setenv("AAGENT_TTS_ENGINE", engine)
 			want := engine
@@ -45,7 +45,7 @@ func TestLocalCompletionSelectionNeverFallsBackToCloud(t *testing.T) {
 }
 
 func TestLocalCompletionRoutesRequestedModel(t *testing.T) {
-	for _, model := range []string{"kokoro", "qwen3_tts"} {
+	for _, model := range []string{"kokoro", "qwen3_tts", "silero_tts"} {
 		t.Run(model, func(t *testing.T) {
 			clips := speechcache.New(0)
 			manager := tools.NewManager(".")

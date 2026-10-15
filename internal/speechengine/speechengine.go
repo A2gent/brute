@@ -54,6 +54,8 @@ func SynthesizeWithLanguage(ctx context.Context, engine string, text string, lan
 		return synthesizeMLX(ctx, cfg, EngineKokoro, text, language)
 	case EngineQwen3TTS:
 		return synthesizeMLX(ctx, cfg, EngineQwen3TTS, text, language)
+	case EngineSileroTTS:
+		return synthesizeSilero(ctx, cfg, text, language)
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnknownEngine, engine)
 	}

@@ -58,6 +58,7 @@ func SpeechEngineTools(workDir string, store storage.Store, clipStore *speechcac
 		NewPiperTTSTool(workDir, clipStore),
 		NewKokoroTTSTool(clipStore),
 		NewQwen3TTSTool(clipStore),
+		NewSileroTTSTool(clipStore),
 	}
 	out := make(map[string]tools.Tool, len(engines))
 	for _, tool := range engines {

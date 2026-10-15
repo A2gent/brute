@@ -11,8 +11,10 @@ const scheduleToCronPromptTemplateSettingKey = "AAGENT_SCHEDULE_TO_CRON_PROMPT_T
 const scheduleToCronSystemPromptSettingKey = "AAGENT_SCHEDULE_TO_CRON_SYSTEM_PROMPT"
 const sessionSummaryPromptTemplateSettingKey = "AAGENT_SESSION_SUMMARY_PROMPT_TEMPLATE"
 const meetingSummaryPromptTemplateSettingKey = "AAGENT_MEETING_SUMMARY_PROMPT_TEMPLATE"
+const pronunciationSystemPromptSettingKey = "AAGENT_PRONUNCIATION_SYSTEM_PROMPT"
 
 type serverPromptTemplates struct {
+	PronunciationSystemPrompt      string
 	GitCommitPromptTemplate        string
 	GitPRDescriptionPromptTemplate string
 	ScheduleToCronPromptTemplate   string
@@ -23,6 +25,7 @@ type serverPromptTemplates struct {
 
 func defaultServerPromptTemplates() serverPromptTemplates {
 	return serverPromptTemplates{
+		PronunciationSystemPrompt:      defaultPronunciationSystemPrompt,
 		GitCommitPromptTemplate:        defaultGitCommitPromptTemplate,
 		GitPRDescriptionPromptTemplate: defaultGitPRDescriptionPromptTemplate,
 		ScheduleToCronPromptTemplate:   defaultScheduleToCronPromptTemplate,
@@ -35,6 +38,7 @@ func defaultServerPromptTemplates() serverPromptTemplates {
 func serverPromptTemplatesFromSettings(settings map[string]string) serverPromptTemplates {
 	defaults := defaultServerPromptTemplates()
 	return serverPromptTemplates{
+		PronunciationSystemPrompt:      promptTemplateValue(settings, pronunciationSystemPromptSettingKey, defaults.PronunciationSystemPrompt),
 		GitCommitPromptTemplate:        promptTemplateValue(settings, gitCommitPromptTemplateSettingKey, defaults.GitCommitPromptTemplate),
 		GitPRDescriptionPromptTemplate: promptTemplateValue(settings, gitPRDescriptionPromptTemplateSettingKey, defaults.GitPRDescriptionPromptTemplate),
 		ScheduleToCronPromptTemplate:   promptTemplateValue(settings, scheduleToCronPromptTemplateSettingKey, defaults.ScheduleToCronPromptTemplate),
@@ -68,6 +72,7 @@ func (s *Server) loadPromptTemplates() serverPromptTemplates {
 func defaultPromptTemplateSettings() map[string]string {
 	defaults := defaultServerPromptTemplates()
 	return map[string]string{
+		pronunciationSystemPromptSettingKey:      defaults.PronunciationSystemPrompt,
 		gitCommitPromptTemplateSettingKey:        defaults.GitCommitPromptTemplate,
 		gitPRDescriptionPromptTemplateSettingKey: defaults.GitPRDescriptionPromptTemplate,
 		scheduleToCronPromptTemplateSettingKey:   defaults.ScheduleToCronPromptTemplate,

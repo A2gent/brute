@@ -200,10 +200,10 @@ func (i *Installer) installMLXRuntime(ctx context.Context) error {
 	}
 
 	i.appendLog(fmt.Sprintf("installing %s and %s into %s", mlxAudioPackagePin, misakiPackagePin, venvDir))
-	if _, _, err := runCommand(ctx, i.platform, python, []string{
+	if _, _, err := runCommand(ctx, i.platform, python, append([]string{
 		"-m", "pip", "install", "--require-virtualenv",
 		mlxAudioPackagePin, misakiPackagePin,
-	}, i.appendLog, pipInstallEnv()); err != nil {
+	}, sileroPackagePins...), i.appendLog, pipInstallEnv()); err != nil {
 		return fmt.Errorf("pip install failed: %w", err)
 	}
 	return nil

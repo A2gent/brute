@@ -127,6 +127,12 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 			request.SessionID = epoch
 		}
 	}
+	// Admission can compress results even when request-time compression is off.
+	// Include its guidance from turn one so the first excerpt cannot invalidate
+	// the instructions prefix (the retrieval tool is already registered in New).
+	if a.compressor != nil {
+		contextcompress.EnableRetrieval(request)
+	}
 	for _, msg := range messages {
 		for _, tr := range msg.ToolResults {
 			if strings.HasPrefix(tr.Content, "[brute-compressed ") {

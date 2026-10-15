@@ -323,6 +323,7 @@ func inspectEngines(p *platformEnv, mlxProbe mlxProbeResult, deps []DependencySt
 		mlxEngineStatus(p, EngineMoonshine, "Moonshine", "stt", cfg.moonshineModel, ComponentMLX, mlxProbe.ready),
 		mlxEngineStatus(p, EngineKokoro, "Kokoro v1.0", "tts", cfg.kokoroModel, ComponentMLX, mlxProbe.ready),
 		mlxEngineStatus(p, EngineQwen3TTS, "Qwen3 TTS", "tts", cfg.qwen3TTSModel, ComponentMLX, mlxProbe.ready),
+		sileroEngineStatus(cfg.sileroTTSModel),
 		{
 			ID:           EngineWhisperKit,
 			Label:        "WhisperKit (Argmax)",
@@ -356,6 +357,25 @@ func mlxEngineStatus(p *platformEnv, id, label, kind, model, runtimeID string, r
 		Supported:    isDarwinARM64(p),
 		RuntimeReady: ready,
 		Detail:       mlxEngineDetail(ready),
+	}
+}
+
+// sileroEngineStatus reports Silero TTS, which needs only a Python interpreter
+// (torch deps are installed by the user), so it is independent of the MLX runtime.
+func sileroEngineStatus(model string) EngineStatus {
+	ready := Available(EngineSileroTTS)
+	detail := "Python runtime not found"
+	if ready {
+		detail = "Python found; requires torch, torchaudio, omegaconf, numpy (model downloaded on first use)"
+	}
+	return EngineStatus{
+		ID:           EngineSileroTTS,
+		Label:        "Silero TTS (Russian)",
+		Kind:         "tts",
+		Model:        model,
+		Supported:    true,
+		RuntimeReady: ready,
+		Detail:       detail,
 	}
 }
 

@@ -32,6 +32,7 @@ type speechModelsResponse struct {
 var recommendedSpeechModels = []speechModel{
 	{ID: "kokoro", Label: "Kokoro v1.0", Engine: "kokoro_tts", Quality: "high", Languages: []string{"en", "es", "fr", "hi", "it", "ja", "pt", "zh"}},
 	{ID: "qwen3_tts", Label: "Qwen3 TTS", Engine: "qwen3_tts", Quality: "high", Languages: []string{"en", "ru", "zh", "ja", "ko", "de", "fr", "es", "it", "pt"}},
+	{ID: "silero_tts", Label: "Silero TTS (Russian)", Engine: "silero_tts", Quality: "high", Languages: []string{"ru"}},
 	{ID: "auto", Label: "Auto (local only)", Languages: []string{"en", "ru"}, Quality: "auto", Available: true},
 	{ID: "edge_tts:en-US-EmmaMultilingualNeural", Label: "Edge Emma multilingual", Engine: "edge_tts", Voice: "en-US-EmmaMultilingualNeural", Languages: []string{"en", "ru"}, Quality: "high"},
 	{ID: "edge_tts:en-US-AndrewMultilingualNeural", Label: "Edge Andrew multilingual", Engine: "edge_tts", Voice: "en-US-AndrewMultilingualNeural", Languages: []string{"en", "ru"}, Quality: "high"},
@@ -55,7 +56,7 @@ func parseSpeechModel(id string) (string, string, error) {
 	switch trimmed {
 	case "kokoro", "kokoro_tts":
 		return "kokoro_tts", "", nil
-	case "qwen3_tts", "piper_tts", "macos_say_tts":
+	case "qwen3_tts", "silero_tts", "piper_tts", "macos_say_tts":
 		return trimmed, "", nil
 	}
 	engine, voice, ok := strings.Cut(trimmed, ":")
@@ -65,7 +66,7 @@ func parseSpeechModel(id string) (string, string, error) {
 		return "", "", fmt.Errorf("model must be auto or engine:voice")
 	}
 	switch engine {
-	case "edge_tts", "piper_tts", "macos_say_tts", "elevenlabs_tts", "openrouter":
+	case "edge_tts", "piper_tts", "macos_say_tts", "elevenlabs_tts", "openrouter", "silero_tts":
 		return engine, voice, nil
 	default:
 		return "", "", fmt.Errorf("unsupported speech engine %q", engine)
@@ -126,6 +127,7 @@ func (s *Server) handleListSpeechModels(w http.ResponseWriter, r *http.Request) 
 		"":               true,
 		"kokoro_tts":     registered("kokoro_tts") && speechengine.Available("kokoro"),
 		"qwen3_tts":      registered("qwen3_tts") && speechengine.Available("qwen3_tts"),
+		"silero_tts":     registered("silero_tts") && speechengine.Available("silero_tts"),
 		"edge_tts":       edgeOK,
 		"piper_tts":      piperOK,
 		"macos_say_tts":  macosOK,
@@ -135,7 +137,7 @@ func (s *Server) handleListSpeechModels(w http.ResponseWriter, r *http.Request) 
 	seen := map[string]struct{}{}
 	out := make([]speechModel, 0, len(recommendedSpeechModels)+8)
 	for _, model := range recommendedSpeechModels {
-		if !available[model.Engine] && model.Engine != "kokoro_tts" && model.Engine != "qwen3_tts" {
+		if !available[model.Engine] && model.Engine != "kokoro_tts" && model.Engine != "qwen3_tts" && model.Engine != "silero_tts" {
 			continue
 		}
 		model.Available = available[model.Engine]

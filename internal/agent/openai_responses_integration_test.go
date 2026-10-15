@@ -8,18 +8,20 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/lmstudio"
 	"github.com/A2gent/brute/internal/llm/openaicodex"
+	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/storage"
 	"github.com/A2gent/brute/internal/tools"
 )
 
-type benchmarkLookup struct{ calls int }
+type benchmarkLookup struct{ calls atomic.Int32 }
 
 func (*benchmarkLookup) Name() string { return "lookup_record" }
 func (*benchmarkLookup) Description() string {
@@ -40,7 +42,7 @@ func (b *benchmarkLookup) Execute(_ context.Context, raw json.RawMessage) (*tool
 	if !ok {
 		return nil, fmt.Errorf("unknown synthetic key %q", args.Key)
 	}
-	b.calls++
+	b.calls.Add(1)
 	return &tools.Result{Success: true, Output: value}, nil
 }
 
@@ -58,6 +60,24 @@ func (b *benchmarkClient) Chat(ctx context.Context, req *llm.ChatRequest) (*llm.
 	if err != nil {
 		return nil, err
 	}
+	lines := logging.RecentLines(0)
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := lines[i]
+		if at := strings.Index(line, "LLM_CACHE_REQUEST "); at >= 0 {
+			var debug struct {
+				Session   string   `json:"session"`
+				FirstDiff int      `json:"first_different_item"`
+				Change    string   `json:"prefix_change"`
+				Items     []string `json:"item_hashes"`
+			}
+			_ = json.Unmarshal([]byte(line[at+len("LLM_CACHE_REQUEST "):]), &debug)
+			if debug.Session != req.SessionID {
+				continue
+			}
+			b.t.Logf("cache first_diff=%d change=%s items=%d", debug.FirstDiff, debug.Change, len(debug.Items))
+			break
+		}
+	}
 	b.reasoningItems += len(resp.ReasoningItems)
 	b.t.Logf("step=%d latency_ms=%d input=%d cached=%d output=%d reasoning=%d encrypted_items=%d", b.steps, time.Since(started).Milliseconds(), resp.Usage.InputTokens, resp.Usage.CachedInputTokens, resp.Usage.OutputTokens, resp.Usage.ReasoningTokens, len(resp.ReasoningItems))
 	return resp, nil
@@ -69,6 +89,7 @@ func TestOpenAIResponsesLiveMultiToolBenchmark(t *testing.T) {
 	if os.Getenv("AAGENT_OPENAI_LIVE") != "1" || key == "" {
 		t.Skip("set AAGENT_OPENAI_LIVE=1 and OPENAI_API_KEY to run paid benchmark")
 	}
+	initCacheBenchmarkLog(t)
 	model := os.Getenv("AAGENT_OPENAI_LIVE_MODEL")
 	if model == "" {
 		model = "gpt-5.4-mini"
@@ -114,9 +135,9 @@ func TestOpenAIResponsesLiveMultiToolBenchmark(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Logf("TOTAL mode=%s model=%s latency_ms=%d tool_calls=%d steps=%d input=%d cached=%d output=%d reasoning=%d encrypted_items=%d answer=%q", mode, model, time.Since(started).Milliseconds(), lookup.calls, observed.steps, usage.InputTokens, usage.CachedInputTokens, usage.OutputTokens, usage.ReasoningTokens, observed.reasoningItems, content)
-			if lookup.calls != 3 || strings.TrimSpace(content) != "89" {
-				t.Fatalf("incomplete workflow: calls=%d answer=%q", lookup.calls, content)
+			t.Logf("TOTAL mode=%s model=%s latency_ms=%d tool_calls=%d steps=%d input=%d cached=%d output=%d reasoning=%d encrypted_items=%d answer=%q", mode, model, time.Since(started).Milliseconds(), lookup.calls.Load(), observed.steps, usage.InputTokens, usage.CachedInputTokens, usage.OutputTokens, usage.ReasoningTokens, observed.reasoningItems, content)
+			if lookup.calls.Load() != 3 || strings.TrimSpace(content) != "89" {
+				t.Fatalf("incomplete workflow: calls=%d answer=%q", lookup.calls.Load(), content)
 			}
 			if mode == "responses_stateless" && observed.reasoningItems == 0 {
 				t.Fatal("API did not return encrypted reasoning")

@@ -12,6 +12,8 @@ func Available(engine string) bool {
 	switch engine {
 	case EngineParakeet, EngineMoonshine, EngineKokoro, EngineQwen3TTS:
 		return mlxRuntimeAvailable()
+	case EngineSileroTTS:
+		return strings.TrimSpace(resolvePythonPath()) != ""
 	case EngineWhisperKit:
 		if runtime.GOOS != "darwin" {
 			return false

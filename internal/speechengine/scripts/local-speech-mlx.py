@@ -122,6 +122,49 @@ def cmd_tts(args: argparse.Namespace) -> None:
     write(str(output_path), audio, sample_rate)
 
 
+
+def cmd_silero_tts(args: argparse.Namespace) -> None:
+    text = (args.text or "").strip()
+    if not text:
+        _fail("text is required")
+    try:
+        import torch
+    except ImportError as exc:
+        _fail(f"PyTorch is missing ({exc}); install the Silero TTS runtime")
+
+    try:
+        # v3+ models return (model, example_text); synthesis is the model's apply_tts method.
+        model, _ = torch.hub.load(
+            repo_or_dir="snakers4/silero-models",
+            model="silero_tts",
+            language=args.language,
+            speaker=args.model,
+            trust_repo=True,
+        )
+        audio = model.apply_tts(
+            text=text,
+            speaker=args.voice,
+            sample_rate=args.sample_rate,
+            put_accent=args.put_accent,
+            put_yo=args.put_yo,
+        )
+    except Exception as exc:
+        _fail(f"Silero TTS failed: {exc}")
+
+    import numpy as np
+    import wave
+
+    samples = audio.detach().cpu().numpy().reshape(-1)
+    pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(output_path), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(args.sample_rate)
+        output.writeframes(pcm.tobytes())
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="A²gent local speech mlx helper")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -147,6 +190,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional natural-language style control for Qwen3 CustomVoice 1.7B",
     )
     tts.set_defaults(func=cmd_tts)
+
+    silero = sub.add_parser("silero-tts", help="Text-to-speech via Silero Torch Hub")
+    silero.add_argument("--text", required=True)
+    silero.add_argument("--output", required=True)
+    silero.add_argument("--model", default="v5_5_ru")
+    silero.add_argument("--voice", default="xenia")
+    silero.add_argument("--language", default="ru")
+    silero.add_argument("--sample-rate", type=int, default=48000, choices=[8000, 16000, 24000, 48000])
+    silero.add_argument("--put-accent", action=argparse.BooleanOptionalAction, default=True)
+    silero.add_argument("--put-yo", action=argparse.BooleanOptionalAction, default=True)
+    silero.set_defaults(func=cmd_silero_tts)
 
     return parser
 

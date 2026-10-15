@@ -119,6 +119,147 @@ stored variant was not consistently faster. Do not claim a guaranteed cost
 reduction from these numbers. Representative repeated coding workloads and
 actual model prices are needed for a cost conclusion.
 
+## Prompt-cache audit (2026-10-15 UTC)
+
+### Opt-in wire diagnostics
+
+Set `AAGENT_LLM_CACHE_DEBUG=1` on the Brute server or a live test. Debug-level
+`LLM_CACHE_REQUEST` records contain SHA-256 hashes of the **serialized wire JSON**
+for tools, instructions and every input item, the model/session, a process-local
+request number, the previous request number, and `first_different_item`.
+`LLM_CACHE_USAGE` joins that request number to input/cached tokens and error status.
+No prompt text, images, arguments or encrypted reasoning content is retained by
+these diagnostics. Normal application logging has its own content policy.
+
+- Item indices are zero-based. `-1` means identical items (or no prior request);
+  `prefix_change:cold` distinguishes the latter. On an append-only request the
+  first difference is the previous item count, **not** an old-item rewrite.
+- `prefix_change` reports the earliest changed section: tools, instructions,
+  input, or none. All item hashes are recorded even if tools/instructions differ.
+- `continuation:true` identifies `previous_response_id` requests. Their delta-only
+  inputs normally differ at item zero; the server-held prefix is not visible to
+  this client-side comparison. Do not diagnose that as history corruption.
+- State is mutex-protected and bounded to 128 recently used sessions across
+  client instances. It resets on restart/eviction; empty session IDs are not
+  compared. Disabled diagnostics do not hash or copy request content.
+- Matching client hashes are evidence of byte stability, not a guarantee of a
+  server cache hit. Routing, retention, image processing and cache granularity
+  are not exposed by these hashes.
+
+```sh
+# Paid API opt-in, synthetic data only. Logs include per-turn usage/divergence
+# and the persistent temporary debug-log path for inspecting all hashes.
+AAGENT_OPENAI_LIVE=1 AAGENT_LLM_CACHE_DEBUG=1 \
+  go test -count=1 -tags=integration ./internal/agent \
+  -run '^TestOpenAIResponsesLive(MultiToolBenchmark|CodingCache)$' -v
+```
+
+### Why the original benchmark is about 66%, not 100%
+
+The original lookup workload has **four requests**, including a cold first
+request. Before any prefix fix, the stateless rerun had identical tools and
+instructions on every turn, with append-only input items:
+
+| Turn | Input | Cached | Cached/input | First different item | Explanation |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 1 | 4,504 | 0 | 0.0% | -1 | Cold |
+| 2 | 4,575 | 4,096 | 89.5% | 1 | Append |
+| 3 | 4,618 | 4,096 | 88.7% | 4 | Append |
+| 4 | 4,688 | 4,096 | 87.4% | 6 | Append |
+
+Total: **12,288 / 18,385 = 66.8%**. Excluding the cold turn: **88.5%**.
+Even caching every input token on turns 2-4 would only give 75.5% overall.
+The remaining warm-turn uncached suffix is not explained by client prefix
+changes in this run; token/block granularity and server cache behavior still
+apply. In particular, identical bytes do not imply that the entire previous
+request was cached. No tool ordering or history rewrite fix is justified by
+this benchmark.
+
+### Confirmed defect: lazy retrieval instructions
+
+`internal/agent/agent.go` already registers `context_retrieve` at construction,
+including when request-time compression is disabled. Its definition did **not**
+appear lazily in the measured sessions. However,
+`internal/agent/request_builder.go` and
+`internal/contextcompress/compressor.go` added retrieval **instructions** only
+after the first compressed tool result. That changed the system prefix.
+Admission compression is always active, independently of `CompressToolResults`.
+
+The fix enables retrieval guidance from the first request whenever the agent
+has its compressor. Existing excerpt detection is retained. Compression,
+truncation thresholds, tool selection, image normalization and reasoning replay
+are unchanged. The guidance costs 35 input tokens in the initial measured
+request, but avoids the confirmed later prefix reset.
+
+The longer stateless fixture runs seven sequential tools over eight requests:
+read synthetic code, emit a large failing test log, edit, retest, capture a
+synthetic 64x64 PNG, reread and retest. It uses the real agent loop, admission
+compression (512-token cap), session persistence, encrypted reasoning and
+screenshot normalization. Fixture tools do not edit or execute host files.
+
+| Turn | Preceding result | Before input/cached | Before ratio | After input/cached | After ratio |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1 | None | 4,778 / 0 | 0.0% | 4,813 / 0 | 0.0% |
+| 2 | Read | 4,865 / 4,608 | 94.7% | 4,903 / 4,608 | 94.0% |
+| 3 | Compressed test log | 5,398 / 0 | 0.0% | 5,393 / 4,608 | 85.4% |
+| 4 | Edit | 5,449 / 5,120 | 94.0% | 5,434 / 5,120 | 94.2% |
+| 5 | Passing test | 5,497 / 5,120 | 93.1% | 5,473 / 5,120 | 93.6% |
+| 6 | Screenshot | 5,483 / 0 | 0.0% | 5,485 / 0 | 0.0% |
+| 7 | Reread | 5,577 / 5,120 | 91.8% | 5,566 / 5,120 | 92.0% |
+| 8 | Passing test | 5,616 / 5,120 | 91.2% | 5,605 / 5,120 | 91.3% |
+
+Before: tools stayed identical, but instructions changed at turn 3. The first
+input differences at turns 2-8 were `1,4,7,10,13,17,20`, all appends.
+After: tools **and instructions** stayed identical; differences were
+`1,4,6,8,10,13,16`, again all appends. Different reasoning output lengths/item
+counts are new tail content, not changes to replayed encrypted items.
+
+| Workload | Phase | Input | Cached | Total ratio | Ratio excluding cold turn | Latency |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Lookup, stateless | Before | 18,385 | 12,288 | 66.8% | 88.5% | 4.337 s |
+| Lookup, stateless | After | 18,529 | 12,288 | 66.3% | 87.8% | 4.770 s |
+| Lookup, stored | Before | 18,397 | 12,288 | 66.8% | 88.4% | 4.670 s |
+| Lookup, stored | After | 18,521 | 12,288 | 66.3% | 87.9% | 5.091 s |
+| Coding, stateless | Before | 42,663 | 25,088 | 58.8% | 66.2% | 11.464 s |
+| Coding, stateless | After | 42,672 | 29,696 | 69.6% | 78.4% | 8.021 s |
+
+All rows use `gpt-5.4-mini`, low reasoning/verbosity, session-ID cache keys, and
+one valid run per phase/workload. The first after-run lookup sessions repeated
+calls (four stateless, five stored) despite returning `89`; their exact-three-call
+assertions failed. They were retained as failed measurements and excluded from
+this comparable table. A repeat without prompt changes passed both variants.
+These are diagnostic observations, not a statistically controlled speed/cost
+claim. Model output and cache routing vary.
+
+### Other suspects and limits
+
+- `internal/tools/manager.go` already sorts definitions by name. Go's
+  `encoding/json` sorts string map keys, including nested `InputSchema` maps.
+  Repeated wire-level regression requests recreate these schemas and verify
+  identical bytes. No additional sorting was added.
+- `enable_tools` deliberately expands session tool groups. MCP/integration/tool
+  registrations can also change the available definitions. These are actual
+  capability changes, not nondeterministic map order; they can reset a prefix.
+  The measured fixtures keep capabilities fixed. They do not prove that an
+  arbitrary live integration's schema/description is stable.
+- HTTP system prompts use the persisted session snapshot in
+  `internal/http/system_prompt.go`; the timestamp fix remains intact. The
+  observed dynamic instruction was retrieval guidance, not task progress,
+  memory or a new timestamp. Existing HTTP prompt-stability tests are retained.
+- In both measured stateless sessions, all previously sent input item hashes
+  remained identical, including encrypted reasoning, compressed results and
+  screenshots. `internal/agent/cache_prefix_test.go` also checks actual wire
+  tools/instructions and input prefixes across repeated builds, new results,
+  admission-only/request-time compression and SQLite reloads. It checks opaque
+  `encrypted_content` verbatim. Reasoning still precedes function calls.
+- Compaction/provider transitions intentionally replace context; the fixtures
+  do not reach those boundaries. No compaction/history policy was changed.
+- The first screenshot was followed by **zero cached tokens in both runs**, but
+  tools, instructions and every prior item were byte-identical. This local
+  instrumentation cannot establish why OpenAI did not reuse that prefix. Image
+  rewriting/routing changes would be speculative, so screenshot handling was
+  left unchanged. Follow up with a controlled text/image cache experiment.
+
 ## Remaining proxy limitation
 
 Child/container calls using `A2GENT_PARENT_PROXY_URL` still use the existing

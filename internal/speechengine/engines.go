@@ -8,6 +8,7 @@ const (
 	EngineWhisperKit = "whisperkit"
 	EngineKokoro     = "kokoro"
 	EngineQwen3TTS   = "qwen3_tts"
+	EngineSileroTTS  = "silero_tts"
 )
 
 func normalizeEngineID(raw string) string {
@@ -25,7 +26,7 @@ func isTranscribeEngine(engine string) bool {
 
 func isSynthesizeEngine(engine string) bool {
 	switch normalizeEngineID(engine) {
-	case EngineKokoro, EngineQwen3TTS:
+	case EngineKokoro, EngineQwen3TTS, EngineSileroTTS:
 		return true
 	default:
 		return false

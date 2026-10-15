@@ -15,6 +15,7 @@ const (
 	promptLLMCaseScheduleToCron   = "schedule_to_cron"
 	promptLLMCaseSessionSummary   = "session_summary"
 	promptLLMCaseMeetingSummary   = "meeting_summary"
+	promptLLMCasePronunciation    = "pronunciation"
 )
 
 type promptLLMSetting struct {

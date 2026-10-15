@@ -137,6 +137,7 @@ func NewServer(
 		removeTaskSource:       os.Remove,
 	}
 	s.recoverProviderTransitions()
+	s.installPronunciationResolver()
 	s.initApprovalBroker()
 	s.dockerRuntime = newDockerRuntimeManager(s)
 

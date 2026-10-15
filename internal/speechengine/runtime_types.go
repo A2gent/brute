@@ -23,6 +23,9 @@ const (
 	pythonProbeTimeout  = 5
 )
 
+// sileroPackagePins are the extra deps Silero TTS needs (loaded via torch.hub) in the managed venv.
+var sileroPackagePins = []string{"torch", "torchaudio", "omegaconf", "numpy"}
+
 var (
 	ErrInstallBusy          = errors.New("speech runtime install already in progress")
 	ErrUnsupportedComponent = errors.New("unsupported speech runtime component")

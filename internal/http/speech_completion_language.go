@@ -40,7 +40,7 @@ func completionSpeechPayload(request speechCompletionRequest, toolName string) (
 			payload["voice"] = voice
 		}
 	}
-	if (toolName == "piper_tts" || toolName == "kokoro_tts" || toolName == "qwen3_tts") && language != "" {
+	if (toolName == "piper_tts" || toolName == "kokoro_tts" || toolName == "qwen3_tts" || toolName == "silero_tts") && language != "" {
 		payload["language"] = language
 	}
 	return json.Marshal(payload)

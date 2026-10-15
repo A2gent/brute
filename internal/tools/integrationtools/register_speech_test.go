@@ -37,7 +37,7 @@ func TestEngineSpeechToolsNotRegisteredWithManager(t *testing.T) {
 	Register(manager, store, clips, nil)
 
 	engines := SpeechEngineTools(".", store, clips)
-	for _, name := range []string{"edge_tts", "elevenlabs_tts", "macos_say_tts", "piper_tts", "kokoro_tts", "qwen3_tts"} {
+	for _, name := range []string{"edge_tts", "elevenlabs_tts", "macos_say_tts", "piper_tts", "kokoro_tts", "qwen3_tts", "silero_tts"} {
 		if _, ok := manager.Get(name); ok {
 			t.Errorf("%q must not be a model-facing tool", name)
 		}

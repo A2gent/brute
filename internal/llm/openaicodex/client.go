@@ -217,7 +217,7 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	return c.ChatStream(ctx, request, nil)
 }
 
-func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEvent func(llm.StreamEvent) error) (*llm.ChatResponse, error) {
+func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEvent func(llm.StreamEvent) error) (response *llm.ChatResponse, responseErr error) {
 	if request == nil {
 		request = &llm.ChatRequest{}
 	}
@@ -287,6 +287,9 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal Codex request: %w", err)
 	}
+
+	observation := responsesCacheDebug.begin(request.SessionID, body)
+	defer func() { observation.finish(response, responseErr) }()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/responses", bytes.NewReader(body))
 	if err != nil {

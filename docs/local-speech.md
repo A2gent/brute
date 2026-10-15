@@ -149,3 +149,9 @@ Common sentinel errors from the package:
 - `ErrEmptyTranscript` / `ErrEmptyText` - no usable output
 
 Cancellation propagates via the passed `context.Context`.
+
+## Silero TTS (Russian MVP)
+
+The `silero_tts` engine uses the official `snakers4/silero-models` Torch Hub entry point for Russian synthesis. It currently supports the Russian `v4_ru`, `v5_ru`, and `v5_5_ru` checkpoints, speakers `aidar`, `baya`, `kseniya`, `xenia`, and `random`, 8/16/24/48 kHz output, plus the `put_accent` and `put_yo` controls. The default is `v5_5_ru` / `xenia` / 48 kHz. First use downloads the selected checkpoint through Torch Hub.
+
+This first working implementation requires an available Python interpreter with PyTorch and the Silero Hub dependencies (`torch`, `torchaudio`, `omegaconf`, and `numpy`). It generates a complete WAV before returning it; streamed chunk playback and a Python-free runtime are not implemented yet. In Caesar, select **Silero TTS (Russian)** under **Speech** to make it the default engine and configure its options.

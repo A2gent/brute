@@ -36,6 +36,10 @@ func NewQwen3TTSTool(clipStore *speechcache.Store) *mlxTTSTool {
 	return newMLXTTSTool(clipStore, speechengine.EngineQwen3TTS, "qwen3_tts")
 }
 
+func NewSileroTTSTool(clipStore *speechcache.Store) *mlxTTSTool {
+	return newMLXTTSTool(clipStore, speechengine.EngineSileroTTS, "silero_tts")
+}
+
 func (t *mlxTTSTool) Name() string {
 	return t.toolName
 }
@@ -46,6 +50,8 @@ func (t *mlxTTSTool) Description() string {
 		return "Generate speech audio using the local Kokoro TTS engine (mlx-audio)."
 	case speechengine.EngineQwen3TTS:
 		return "Generate speech audio using the local Qwen3-TTS engine (mlx-audio)."
+	case speechengine.EngineSileroTTS:
+		return "Generate Russian speech audio using the Silero TTS model."
 	default:
 		return "Generate speech audio using a local mlx-audio TTS engine."
 	}
@@ -121,8 +127,8 @@ func (t *mlxTTSTool) Execute(ctx context.Context, params json.RawMessage) (*tool
 	}
 
 	return &tools.Result{
-		Success: true,
-		Output:  fmt.Sprintf("Generated %s speech audio.\nClip ID: %s", t.engine, clipID),
+		Success:  true,
+		Output:   fmt.Sprintf("Generated %s speech audio.\nClip ID: %s", t.engine, clipID),
 		Metadata: metadata,
 	}, nil
 }

@@ -85,8 +85,9 @@ func (s *Server) handleLLMProxyChatCompletionsStream(
 				{
 					Index: 0,
 					Delta: proxyChatMessageDelta{
-						Role:    "assistant",
-						Content: resp.Content,
+						Role:           "assistant",
+						Content:        resp.Content,
+						ReasoningItems: resp.ReasoningItems,
 					},
 				},
 			},
@@ -116,7 +117,9 @@ func (s *Server) handleLLMProxyChatCompletionsStream(
 			reason := "tool_calls"
 			finishReason = reason
 		}
+		proxyUsage := proxyUsageFromLLM(resp.Usage)
 		_ = writeChunk(proxyChatStreamChunk{
+			Usage:   &proxyUsage,
 			ID:      requestID,
 			Object:  "chat.completion.chunk",
 			Created: createdAt,
@@ -254,7 +257,13 @@ func (s *Server) handleLLMProxyChatCompletionsStream(
 		usage = llm.TokenUsage{}
 	}
 
+	var reasoningItems []json.RawMessage
+	if finalResp != nil {
+		reasoningItems = finalResp.ReasoningItems
+	}
+	proxyUsage := proxyUsageFromLLM(usage)
 	_ = writeChunk(proxyChatStreamChunk{
+		Usage:   &proxyUsage,
 		ID:      requestID,
 		Object:  "chat.completion.chunk",
 		Created: createdAt,
@@ -262,7 +271,7 @@ func (s *Server) handleLLMProxyChatCompletionsStream(
 		Choices: []proxyChatStreamDelta{
 			{
 				Index:        0,
-				Delta:        proxyChatMessageDelta{},
+				Delta:        proxyChatMessageDelta{ReasoningItems: reasoningItems},
 				FinishReason: &finishReason,
 			},
 		},

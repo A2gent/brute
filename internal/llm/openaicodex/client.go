@@ -142,6 +142,7 @@ type responsesOutputItem struct {
 }
 
 type streamToolState struct {
+	index int
 	id    string
 	name  string
 	input strings.Builder
@@ -274,10 +275,9 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	if options.PublicAPI {
 		payload.Instructions = strings.TrimSpace(request.SystemPrompt)
 		payload.MaxOutputTokens = options.MaxTokens
-		if !options.StatefulResponses {
-			// Encrypted items preserve reasoning without storing responses at OpenAI.
-			payload.Include = []string{"reasoning.encrypted_content"}
-		}
+		// Proxied children replay full history even when the parent opts into storage.
+		// Always include encrypted state so either continuation strategy can work.
+		payload.Include = []string{"reasoning.encrypted_content"}
 	}
 
 	body, err := json.Marshal(payload)
@@ -380,7 +380,7 @@ func parseStreamReader(reader io.Reader, onEvent func(llm.StreamEvent) error) (*
 		if state != nil {
 			return state
 		}
-		state = &streamToolState{id: id}
+		state = &streamToolState{id: id, index: len(toolOrder)}
 		tools[id] = state
 		toolOrder = append(toolOrder, id)
 		return state
@@ -430,16 +430,18 @@ func parseStreamReader(reader io.Reader, onEvent func(llm.StreamEvent) error) (*
 			state.input.WriteString(ev.Delta)
 			if onEvent != nil && ev.Delta != "" {
 				if err := onEvent(llm.StreamEvent{
-					Type:           llm.StreamEventToolCallDelta,
-					ToolCallIndex:  ev.OutputIx,
-					ToolCallID:     id,
+					Type: llm.StreamEventToolCallDelta,
+					// Responses output indices also count reasoning items. The proxy
+					// needs tool-only indices to merge deltas with the final tool calls.
+					ToolCallIndex:  state.index,
+					ToolCallID:     state.id,
 					ToolCallName:   state.name,
 					ToolInputDelta: ev.Delta,
 				}); err != nil {
 					return nil, err
 				}
 			}
-		case "response.output_item.done":
+		case "response.output_item.added", "response.output_item.done":
 			if len(ev.Item) == 0 {
 				continue
 			}
@@ -447,16 +449,23 @@ func parseStreamReader(reader io.Reader, onEvent func(llm.StreamEvent) error) (*
 			if err := json.Unmarshal(ev.Item, &item); err != nil {
 				continue
 			}
-			streamedItems = append(streamedItems, item)
+			if ev.Type == "response.output_item.done" {
+				streamedItems = append(streamedItems, item)
+			}
 			if item.Type == "function_call" {
-				id := strings.TrimSpace(item.CallID)
+				// Deltas identify the output item, while tool results use call_id.
+				// Keep one state per item and expose its canonical call ID.
+				id := strings.TrimSpace(item.ID)
 				if id == "" {
-					id = strings.TrimSpace(item.ID)
+					id = strings.TrimSpace(item.CallID)
 				}
 				if id == "" {
 					id = fmt.Sprintf("tool_%d", ev.OutputIx)
 				}
 				state := ensureToolState(id)
+				if callID := strings.TrimSpace(item.CallID); callID != "" {
+					state.id = callID
+				}
 				if strings.TrimSpace(item.Name) != "" {
 					state.name = strings.TrimSpace(item.Name)
 				}

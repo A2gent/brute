@@ -1,6 +1,10 @@
 package lmstudio
 
-import "github.com/A2gent/brute/internal/llm"
+import (
+	"encoding/json"
+
+	"github.com/A2gent/brute/internal/llm"
+)
 
 type openAIResponse struct {
 	Provenance *llm.Provenance `json:"provenance,omitempty"`
@@ -41,9 +45,10 @@ type openAIStreamResponse struct {
 	Choices    []struct {
 		Index int `json:"index"`
 		Delta struct {
-			Content   string `json:"content"`
-			Refusal   string `json:"refusal,omitempty"`
-			ToolCalls []struct {
+			ReasoningItems []json.RawMessage `json:"reasoning_items,omitempty"`
+			Content        string            `json:"content"`
+			Refusal        string            `json:"refusal,omitempty"`
+			ToolCalls      []struct {
 				Index    int    `json:"index"`
 				ID       string `json:"id"`
 				Type     string `json:"type"`

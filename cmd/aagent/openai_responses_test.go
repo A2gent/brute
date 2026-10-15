@@ -9,3 +9,7 @@ import (
 func TestOpenAIResponsesProvider(t *testing.T) {
 	providerstest.CheckOpenAIResponses(t, initLLMClient)
 }
+
+func TestOpenAIParentProxyProvider(t *testing.T) {
+	providerstest.CheckOpenAIParentProxy(t, initLLMClient)
+}

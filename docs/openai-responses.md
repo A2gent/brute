@@ -111,8 +111,42 @@ actual model prices are needed for a cost conclusion.
 
 ## Remaining proxy limitation
 
-Child/container calls using `A2GENT_PARENT_PROXY_URL` still use the existing
-Chat Completions-compatible parent proxy. It does not carry encrypted reasoning
-items or Responses continuation state. Direct-provider optimization does not
-remove that limitation. Follow-up task T-146 covers the proxy contract and its
-multi-tool regression test.
+T-146 extends the existing Chat Completions-compatible parent proxy instead of
+adding a second Responses route. HTTP and scheduler children explicitly use
+`lmstudio.NewParentProxyClient`; CLI OpenAI sessions also select it when
+`A2GENT_PARENT_PROXY_URL` is set. This reuses the parent's Responses client,
+provider routing, authentication and SSE adaptation without duplicating the
+Responses protocol. Containers receive only the proxy token, never the parent's
+provider credentials. Other providers keep their existing transports and token
+limits; ordinary LM Studio/OpenRouter clients do not send private extensions.
+
+The private JSON contract carries:
+
+- Opaque `reasoning_items` arrays on assistant messages and response messages.
+  Streaming returns the complete array in the terminal assistant delta, not as
+  visible text or partial reasoning fragments. Children save/replay it through
+  the same agent/session metadata used by direct sessions.
+- `reasoning_effort`, `text_verbosity`, `service_tier`, `prompt_cache_key` and
+  `session_id`. Nonempty request options override parent defaults. The child
+  session ID takes precedence over any configured cache key, isolating its cache
+  routing from the parent and other children.
+- Standard `usage.prompt_tokens_details.cached_tokens` and
+  `usage.completion_tokens_details.reasoning_tokens`, including the final SSE
+  chunk and the non-streaming-client fallback. These are details of input/output
+  usage, not additional tokens to add to the totals.
+
+Responses stream tool indices exclude reasoning items so argument deltas merge
+with final calls without duplication.
+
+OpenAI child requests no longer inherit LM Studio's implicit 4096-token cap.
+Explicit limits are preserved; the proxy accepts both `max_tokens` and
+`max_completion_tokens` and maps them to Responses `max_output_tokens`.
+
+The proxy intentionally uses full-history encrypted replay, not
+`previous_response_id` continuation. Public Responses requests always ask for
+encrypted reasoning, including when the parent explicitly enables response
+storage, so this replay also works with that configuration. Storage remains an
+explicit parent opt-in; the proxy does not enable it. Unit tests cover two tool
+roundtrips with fake Responses SSE, JSON and SSE child clients, stored/stateless
+parents, request options, cache isolation, credentials and detailed usage.
+Real-API latency/cost improvements through the proxy have not been measured.

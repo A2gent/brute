@@ -401,7 +401,7 @@ func (s *Scheduler) createParentProxyLLMClient(providerType config.ProviderType,
 	if proxyAPIKey == "" {
 		proxyAPIKey = "a2gent-proxy"
 	}
-	return lmstudio.NewClient(proxyAPIKey, modelName, proxyBaseURL)
+	return lmstudio.NewParentProxyClient(proxyAPIKey, modelName, proxyBaseURL)
 }
 
 func legacyProvidersToFallbackNodes(raw []string, resolveModel func(config.ProviderType) string) []config.FallbackChainNode {

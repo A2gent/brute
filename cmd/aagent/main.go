@@ -568,6 +568,11 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 			model = strings.TrimSpace(cfg.DefaultModel)
 		}
 
+		if providerType == config.ProviderOpenAI {
+			if client, ok := parentProxyOpenAIClient(model); ok {
+				return client, model, nil
+			}
+		}
 		if providerDef.RequiresKey && apiKey == "" {
 			envKeys := resolveEnvKeys(providerType)
 			if len(envKeys) == 0 {

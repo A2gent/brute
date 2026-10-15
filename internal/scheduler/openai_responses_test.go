@@ -13,3 +13,9 @@ func TestOpenAIResponsesProvider(t *testing.T) {
 		return (&Scheduler{config: cfg}).createBaseLLMClient(config.ProviderOpenAI, "", "")
 	})
 }
+
+func TestOpenAIParentProxyProvider(t *testing.T) {
+	providerstest.CheckOpenAIParentProxy(t, func(cfg *config.Config) (llm.Client, error) {
+		return (&Scheduler{config: cfg}).createBaseLLMClient(config.ProviderOpenAI, "", "")
+	})
+}

@@ -26,24 +26,31 @@ type proxyModelInfo struct {
 }
 
 type proxyChatRequest struct {
-	Model       string           `json:"model"`
-	Provider    string           `json:"provider,omitempty"`
-	Messages    []proxyMessage   `json:"messages"`
-	Temperature *float64         `json:"temperature,omitempty"`
-	MaxTokens   *int             `json:"max_tokens,omitempty"`
-	Stream      bool             `json:"stream,omitempty"`
-	Tools       []proxyTool      `json:"tools,omitempty"`
-	ToolChoice  json.RawMessage  `json:"tool_choice,omitempty"`
-	Metadata    json.RawMessage  `json:"metadata,omitempty"`
-	ExtraBody   *json.RawMessage `json:"extra_body,omitempty"`
+	Model               string           `json:"model"`
+	SessionID           string           `json:"session_id,omitempty"`
+	PromptCacheKey      string           `json:"prompt_cache_key,omitempty"`
+	ReasoningEffort     string           `json:"reasoning_effort,omitempty"`
+	TextVerbosity       string           `json:"text_verbosity,omitempty"`
+	ServiceTier         string           `json:"service_tier,omitempty"`
+	MaxCompletionTokens *int             `json:"max_completion_tokens,omitempty"`
+	Provider            string           `json:"provider,omitempty"`
+	Messages            []proxyMessage   `json:"messages"`
+	Temperature         *float64         `json:"temperature,omitempty"`
+	MaxTokens           *int             `json:"max_tokens,omitempty"`
+	Stream              bool             `json:"stream,omitempty"`
+	Tools               []proxyTool      `json:"tools,omitempty"`
+	ToolChoice          json.RawMessage  `json:"tool_choice,omitempty"`
+	Metadata            json.RawMessage  `json:"metadata,omitempty"`
+	ExtraBody           *json.RawMessage `json:"extra_body,omitempty"`
 }
 
 type proxyMessage struct {
-	Role       string          `json:"role"`
-	Content    any             `json:"content,omitempty"`
-	Name       string          `json:"name,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
-	ToolCalls  []proxyToolCall `json:"tool_calls,omitempty"`
+	Role           string            `json:"role"`
+	ReasoningItems []json.RawMessage `json:"reasoning_items,omitempty"`
+	Content        any               `json:"content,omitempty"`
+	Name           string            `json:"name,omitempty"`
+	ToolCallID     string            `json:"tool_call_id,omitempty"`
+	ToolCalls      []proxyToolCall   `json:"tool_calls,omitempty"`
 }
 
 type proxyGoogleExtra struct {
@@ -146,9 +153,29 @@ type proxyChoice struct {
 }
 
 type proxyUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens            int                          `json:"prompt_tokens"`
+	CompletionTokens        int                          `json:"completion_tokens"`
+	TotalTokens             int                          `json:"total_tokens"`
+	PromptTokensDetails     proxyPromptTokensDetails     `json:"prompt_tokens_details"`
+	CompletionTokensDetails proxyCompletionTokensDetails `json:"completion_tokens_details"`
+}
+
+type proxyPromptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+}
+
+type proxyCompletionTokensDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens"`
+}
+
+func proxyUsageFromLLM(usage llm.TokenUsage) proxyUsage {
+	return proxyUsage{
+		PromptTokens:            usage.InputTokens,
+		CompletionTokens:        usage.OutputTokens,
+		TotalTokens:             usage.InputTokens + usage.OutputTokens,
+		PromptTokensDetails:     proxyPromptTokensDetails{CachedTokens: usage.CachedInputTokens},
+		CompletionTokensDetails: proxyCompletionTokensDetails{ReasoningTokens: usage.ReasoningTokens},
+	}
 }
 
 type proxyRoutingDetail struct {
@@ -156,6 +183,7 @@ type proxyRoutingDetail struct {
 }
 
 type proxyChatStreamChunk struct {
+	Usage      *proxyUsage            `json:"usage,omitempty"`
 	Provenance *llm.Provenance        `json:"provenance,omitempty"`
 	ID         string                 `json:"id"`
 	Object     string                 `json:"object"`
@@ -172,9 +200,10 @@ type proxyChatStreamDelta struct {
 }
 
 type proxyChatMessageDelta struct {
-	Role      string          `json:"role,omitempty"`
-	Content   string          `json:"content,omitempty"`
-	ToolCalls []proxyToolCall `json:"tool_calls,omitempty"`
+	ReasoningItems []json.RawMessage `json:"reasoning_items,omitempty"`
+	Role           string            `json:"role,omitempty"`
+	Content        string            `json:"content,omitempty"`
+	ToolCalls      []proxyToolCall   `json:"tool_calls,omitempty"`
 }
 
 func (s *Server) llmProxyEnabled() bool {
@@ -416,8 +445,9 @@ func proxyChatResponseFromLLM(resp *llm.ChatResponse, providerType config.Provid
 	}
 
 	message := proxyMessage{
-		Role:    "assistant",
-		Content: resp.Content,
+		ReasoningItems: resp.ReasoningItems,
+		Role:           "assistant",
+		Content:        resp.Content,
 	}
 	if len(resp.ToolCalls) > 0 {
 		toolCalls := make([]proxyToolCall, 0, len(resp.ToolCalls))
@@ -451,11 +481,7 @@ func proxyChatResponseFromLLM(resp *llm.ChatResponse, providerType config.Provid
 				FinishReason: finishReason,
 			},
 		},
-		Usage: proxyUsage{
-			PromptTokens:     resp.Usage.InputTokens,
-			CompletionTokens: resp.Usage.OutputTokens,
-			TotalTokens:      resp.Usage.InputTokens + resp.Usage.OutputTokens,
-		},
+		Usage: proxyUsageFromLLM(resp.Usage),
 		XA2gent: &proxyRoutingDetail{
 			Provider: string(providerType),
 		},
@@ -481,9 +507,10 @@ func buildProxyLLMRequest(req *proxyChatRequest, resolvedModel string) (*llm.Cha
 			}
 		case "assistant":
 			converted := llm.Message{
-				Role:    "assistant",
-				Content: text,
-				Images:  images,
+				ReasoningItems: msg.ReasoningItems,
+				Role:           "assistant",
+				Content:        text,
+				Images:         images,
 			}
 			if len(msg.ToolCalls) > 0 {
 				converted.ToolCalls = make([]llm.ToolCall, 0, len(msg.ToolCalls))
@@ -546,13 +573,27 @@ func buildProxyLLMRequest(req *proxyChatRequest, resolvedModel string) (*llm.Cha
 		maxTokens = *req.MaxTokens
 	}
 
+	if req.MaxCompletionTokens != nil && *req.MaxCompletionTokens > 0 {
+		maxTokens = *req.MaxCompletionTokens
+	}
+	cacheKey := strings.TrimSpace(req.PromptCacheKey)
+	if sessionID := strings.TrimSpace(req.SessionID); sessionID != "" {
+		// Child sessions must not inherit the parent's configured cache routing key.
+		cacheKey = sessionID
+	}
+
 	return &llm.ChatRequest{
-		Model:        strings.TrimSpace(resolvedModel),
-		Messages:     messages,
-		Tools:        tools,
-		Temperature:  temperature,
-		MaxTokens:    maxTokens,
-		SystemPrompt: strings.Join(systemParts, "\n\n"),
+		SessionID:       strings.TrimSpace(req.SessionID),
+		PromptCacheKey:  cacheKey,
+		ReasoningEffort: strings.TrimSpace(req.ReasoningEffort),
+		TextVerbosity:   strings.TrimSpace(req.TextVerbosity),
+		ServiceTier:     strings.TrimSpace(req.ServiceTier),
+		Model:           strings.TrimSpace(resolvedModel),
+		Messages:        messages,
+		Tools:           tools,
+		Temperature:     temperature,
+		MaxTokens:       maxTokens,
+		SystemPrompt:    strings.Join(systemParts, "\n\n"),
 	}, nil
 }
 

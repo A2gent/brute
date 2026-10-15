@@ -35,3 +35,9 @@ func TestOpenAIResponsesKeepsUsageAndPromptCacheStatus(t *testing.T) {
 		t.Fatalf("API-key cache status = %+v", cache)
 	}
 }
+
+func TestOpenAIParentProxyProvider(t *testing.T) {
+	providerstest.CheckOpenAIParentProxy(t, func(cfg *config.Config) (llm.Client, error) {
+		return (&Server{config: cfg}).createBaseLLMClient(config.ProviderOpenAI, "")
+	})
+}

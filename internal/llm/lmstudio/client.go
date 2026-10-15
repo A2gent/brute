@@ -23,11 +23,12 @@ const (
 
 // Client implements the LLM client for LM Studio (OpenAI-compatible API)
 type Client struct {
-	apiKey     string
-	baseURL    string
-	model      string
-	httpClient *http.Client
-	isGemini   bool // Flag to enable Gemini-specific handling
+	apiKey      string
+	baseURL     string
+	model       string
+	httpClient  *http.Client
+	parentProxy bool
+	isGemini    bool // Flag to enable Gemini-specific handling
 }
 
 // providerName returns the display name for the provider (used in error messages)
@@ -91,7 +92,11 @@ type openAIRequest struct {
 	StreamOptions       *struct {
 		IncludeUsage bool `json:"include_usage"`
 	} `json:"stream_options,omitempty"`
-	PromptCacheKey string `json:"prompt_cache_key,omitempty"`
+	PromptCacheKey  string `json:"prompt_cache_key,omitempty"`
+	SessionID       string `json:"session_id,omitempty"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	TextVerbosity   string `json:"text_verbosity,omitempty"`
+	ServiceTier     string `json:"service_tier,omitempty"`
 }
 
 // modelRequiresMaxCompletionTokens reports whether an OpenAI model rejects the
@@ -125,11 +130,12 @@ func applyTokenLimit(req *openAIRequest, model string, maxTokens int, temperatur
 }
 
 type openAIMessage struct {
-	Role       string           `json:"role"`
-	Content    any              `json:"content,omitempty"`
-	Refusal    string           `json:"refusal,omitempty"`
-	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string           `json:"tool_call_id,omitempty"`
+	ReasoningItems []json.RawMessage `json:"reasoning_items,omitempty"`
+	Role           string            `json:"role"`
+	Content        any               `json:"content,omitempty"`
+	Refusal        string            `json:"refusal,omitempty"`
+	ToolCalls      []openAIToolCall  `json:"tool_calls,omitempty"`
+	ToolCallID     string            `json:"tool_call_id,omitempty"`
 }
 
 type openAIExtraContent struct {
@@ -254,13 +260,8 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 		Messages: messages,
 		Tools:    tools,
 	}
-	if c.providerName() == "OpenAI" {
-		reqBody.PromptCacheKey = strings.TrimSpace(request.PromptCacheKey)
-		if reqBody.PromptCacheKey == "" {
-			reqBody.PromptCacheKey = strings.TrimSpace(request.SessionID)
-		}
-	}
 	applyTokenLimit(&reqBody, model, maxTokens, request.Temperature)
+	c.applyRequestOptions(&reqBody, request)
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
@@ -327,11 +328,12 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	}
 
 	response := &llm.ChatResponse{
-		Provenance: oaiResp.Provenance,
-		Model:      oaiResp.Model,
-		Content:    responseText,
-		Images:     responseImages,
-		StopReason: choice.FinishReason,
+		ReasoningItems: choice.Message.ReasoningItems,
+		Provenance:     oaiResp.Provenance,
+		Model:          oaiResp.Model,
+		Content:        responseText,
+		Images:         responseImages,
+		StopReason:     choice.FinishReason,
 		Usage: llm.TokenUsage{
 			InputTokens:       oaiResp.Usage.PromptTokens,
 			OutputTokens:      oaiResp.Usage.CompletionTokens,
@@ -413,13 +415,8 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 			IncludeUsage bool `json:"include_usage"`
 		}{IncludeUsage: true},
 	}
-	if c.providerName() == "OpenAI" {
-		reqBody.PromptCacheKey = strings.TrimSpace(request.PromptCacheKey)
-		if reqBody.PromptCacheKey == "" {
-			reqBody.PromptCacheKey = strings.TrimSpace(request.SessionID)
-		}
-	}
 	applyTokenLimit(&reqBody, model, maxTokens, request.Temperature)
+	c.applyRequestOptions(&reqBody, request)
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
@@ -496,6 +493,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		}
 
 		for _, choice := range chunk.Choices {
+			result.ReasoningItems = append(result.ReasoningItems, choice.Delta.ReasoningItems...)
 			if choice.Error != nil && choice.Error.Message != "" {
 				return nil, fmt.Errorf("%s model stream error: %s", c.providerName(), choice.Error.Message)
 			}
@@ -656,9 +654,10 @@ func (c *Client) convertMessage(msg llm.Message) []openAIMessage {
 			toolCalls = append(toolCalls, toolCall)
 		}
 		return []openAIMessage{{
-			Role:      "assistant",
-			Content:   msg.Content,
-			ToolCalls: toolCalls,
+			Role:           "assistant",
+			Content:        msg.Content,
+			ToolCalls:      toolCalls,
+			ReasoningItems: c.proxyReasoningItems(msg),
 		}}
 	}
 
@@ -670,8 +669,9 @@ func (c *Client) convertMessage(msg llm.Message) []openAIMessage {
 		}}
 	}
 	return []openAIMessage{{
-		Role:    msg.Role,
-		Content: msg.Content,
+		Role:           msg.Role,
+		Content:        msg.Content,
+		ReasoningItems: c.proxyReasoningItems(msg),
 	}}
 }
 

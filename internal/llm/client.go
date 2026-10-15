@@ -31,6 +31,9 @@ type ChatRequest struct {
 	ReasoningEffort       string
 	TextVerbosity         string
 	ServiceTier           string
+	// JSONSchema requests schema-constrained output from OpenAI-compatible providers
+	// (response_format json_schema). Providers without structured output ignore it.
+	JSONSchema map[string]any
 }
 
 // Message represents a chat message

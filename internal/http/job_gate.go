@@ -37,9 +37,9 @@ func (s *Server) evaluateJobGate(ctx context.Context, job *storage.RecurringJob)
 		return jobGateDecision{Run: true, Reason: "gate error: " + err.Error()}
 	}
 
-	apiKey, model, baseURL := s.resolveClassifyCredentials()
-	if apiKey == "" {
-		return runOnError(fmt.Errorf("no Jev API key configured"))
+	client, _ := s.systemOneClient()
+	if client == nil {
+		return runOnError(fmt.Errorf("no System One classifier configured"))
 	}
 	params := json.RawMessage(strings.TrimSpace(job.GateParams))
 	if len(params) == 0 {
@@ -73,7 +73,7 @@ func (s *Server) evaluateJobGate(ctx context.Context, job *storage.RecurringJob)
 	}
 	gateCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	resp, err := jev.NewClient(apiKey, model, baseURL).SystemOne(gateCtx, jev.SystemOneRequest{
+	resp, err := client.SystemOne(gateCtx, jev.SystemOneRequest{
 		State:     items,
 		Questions: map[string]jev.Question{"actionable": {Type: "noul", Instructions: question}},
 	})

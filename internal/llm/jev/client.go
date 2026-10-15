@@ -33,6 +33,8 @@ type Client struct {
 	baseURL    string
 	model      string
 	httpClient *http.Client
+	// chat, when set, replaces the TypeSafe API with an emulating chat model (see NewLLMClient).
+	chat llm.Client
 }
 
 func NewClient(apiKey, model, baseURL string) *Client {
@@ -181,6 +183,9 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 }
 
 func (c *Client) ListModels(ctx context.Context) ([]string, error) {
+	if c.chat != nil {
+		return nil, fmt.Errorf("model listing is not supported for the chat-model System One backend")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/models", nil)
 	if err != nil {
 		return nil, err
@@ -310,6 +315,9 @@ func (c *Client) connectivityCheck(ctx context.Context, model, state string) (*l
 
 // SystemOne calls the classifier directly without the chat router adapter.
 func (c *Client) SystemOne(ctx context.Context, payload SystemOneRequest) (response *SystemOneResponse, resultErr error) {
+	if c.chat != nil {
+		return c.systemOneViaLLM(ctx, payload)
+	}
 	started := time.Now()
 	defer func() { recordRequest(ctx, payload, response, resultErr, started) }()
 	if strings.TrimSpace(c.apiKey) == "" {

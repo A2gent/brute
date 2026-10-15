@@ -91,7 +91,8 @@ type openAIRequest struct {
 	StreamOptions       *struct {
 		IncludeUsage bool `json:"include_usage"`
 	} `json:"stream_options,omitempty"`
-	PromptCacheKey string `json:"prompt_cache_key,omitempty"`
+	PromptCacheKey string         `json:"prompt_cache_key,omitempty"`
+	ResponseFormat map[string]any `json:"response_format,omitempty"`
 }
 
 // modelRequiresMaxCompletionTokens reports whether an OpenAI model rejects the
@@ -130,6 +131,8 @@ type openAIMessage struct {
 	Refusal    string           `json:"refusal,omitempty"`
 	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string           `json:"tool_call_id,omitempty"`
+	// ReasoningContent is response-only; omitempty keeps it out of requests.
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 
 type openAIExtraContent struct {
@@ -261,6 +264,9 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 		}
 	}
 	applyTokenLimit(&reqBody, model, maxTokens, request.Temperature)
+	if request.JSONSchema != nil {
+		reqBody.ResponseFormat = map[string]any{"type": "json_schema", "json_schema": map[string]any{"name": "response", "strict": true, "schema": request.JSONSchema}}
+	}
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
@@ -319,6 +325,10 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	responseText, responseImages := parseOpenAIContent(choice.Message.Content)
 	if responseText == "" && choice.Message.Refusal != "" {
 		responseText = choice.Message.Refusal
+	}
+	// LM Studio routes schema-constrained output of reasoning models into reasoning_content.
+	if responseText == "" && request.JSONSchema != nil {
+		responseText = strings.TrimSpace(choice.Message.ReasoningContent)
 	}
 
 	// If response is completely empty but finish reason indicates length or error

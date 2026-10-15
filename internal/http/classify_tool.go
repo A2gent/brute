@@ -4,7 +4,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/A2gent/brute/internal/llm/jev"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/tools"
 )
@@ -16,12 +15,12 @@ func (s *Server) registerClassifyTool(manager *tools.Manager) {
 	if s == nil || manager == nil {
 		return
 	}
-	apiKey, model, baseURL := s.resolveClassifyCredentials()
-	if apiKey == "" {
+	client, _ := s.systemOneClient()
+	if client == nil {
 		manager.Unregister("classify")
 		return
 	}
-	manager.Register(tools.NewClassifyTool(manager.WorkDir(), jev.NewClient(apiKey, model, baseURL)))
+	manager.Register(tools.NewClassifyTool(manager.WorkDir(), client))
 }
 
 // Provider configuration wins over the environment, then enabled integrations.

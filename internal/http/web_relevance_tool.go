@@ -19,10 +19,8 @@ func (s *Server) registerWebRelevanceTools(manager *tools.Manager) {
 	options := integrationtools.WebRelevanceOptions{Enabled: policy.Enabled, Threshold: policy.Threshold, TopN: policy.TopN, MinConfidence: policy.MinConfidence, MaxPageBytes: policy.MaxPageBytes}
 	var client *jev.Client
 	if policy.Enabled {
-		key, model, baseURL := s.resolveClassifyCredentials()
-		if key != "" {
-			client = jev.NewClient(key, model, baseURL)
-		}
+		var key string
+		client, key = s.systemOneClient()
 		secrets, ok := s.jevEgressSecrets(key)
 		if !ok {
 			client = nil
@@ -87,8 +85,8 @@ func (s *Server) relevanceGate() *contextcompress.RelevanceGate {
 	if s == nil || s.config == nil || !s.jevAutomationEnabled(jevAdmissionSettingKey, s.config.Tools.JevAdmission.Enabled) {
 		return nil
 	}
-	key, model, baseURL := s.resolveClassifyCredentials()
-	if key == "" {
+	client, key := s.systemOneClient()
+	if client == nil {
 		return nil
 	}
 	secrets, ok := s.jevEgressSecrets(key)
@@ -96,7 +94,7 @@ func (s *Server) relevanceGate() *contextcompress.RelevanceGate {
 		return nil
 	}
 	policy := s.config.Tools.JevAdmission
-	return &contextcompress.RelevanceGate{Client: jev.NewClient(key, model, baseURL), MinTokens: policy.MinTokens, Threshold: policy.Threshold, MinConfidence: policy.MinConfidence, Secrets: secrets}
+	return &contextcompress.RelevanceGate{Client: client, MinTokens: policy.MinTokens, Threshold: policy.Threshold, MinConfidence: policy.MinConfidence, Secrets: secrets}
 }
 
 // toolSelector mirrors relevanceGate: nil (all tools) unless tools.jev_toolsets
@@ -105,15 +103,15 @@ func (s *Server) toolSelector() *agent.ToolSelector {
 	if s == nil || s.config == nil || !s.jevAutomationEnabled(jevToolsetsSettingKey, s.config.Tools.JevToolsets.Enabled) {
 		return nil
 	}
-	key, model, baseURL := s.resolveClassifyCredentials()
-	if key == "" {
+	client, key := s.systemOneClient()
+	if client == nil {
 		return nil
 	}
 	secrets, ok := s.jevEgressSecrets(key)
 	if !ok {
 		return nil
 	}
-	return &agent.ToolSelector{Client: jev.NewClient(key, model, baseURL), Secrets: secrets, Threshold: s.config.Tools.JevToolsets.Threshold}
+	return &agent.ToolSelector{Client: client, Secrets: secrets, Threshold: s.config.Tools.JevToolsets.Threshold}
 }
 
 func webCredentialName(name string) bool {

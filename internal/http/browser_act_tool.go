@@ -1,7 +1,6 @@
 package http
 
 import (
-	"github.com/A2gent/brute/internal/llm/jev"
 	"github.com/A2gent/brute/internal/tools"
 	"github.com/A2gent/brute/internal/tools/integrationtools"
 )
@@ -17,8 +16,8 @@ func (s *Server) registerBrowserActTool(manager *tools.Manager) {
 		manager.Unregister("browser_act")
 		return
 	}
-	apiKey, model, baseURL := s.resolveClassifyCredentials()
-	if apiKey == "" {
+	client, _ := s.systemOneClient()
+	if client == nil {
 		// Unlike relevance_gate there is no lossless fallback: no classifier means no loop, so the
 		// tool is simply absent and browser_chrome stays the way to drive the browser.
 		manager.Unregister("browser_act")
@@ -34,5 +33,5 @@ func (s *Server) registerBrowserActTool(manager *tools.Manager) {
 		manager.Unregister("browser_act")
 		return
 	}
-	manager.Register(integrationtools.NewBrowserActTool(chrome, jev.NewClient(apiKey, model, baseURL)))
+	manager.Register(integrationtools.NewBrowserActTool(chrome, client))
 }

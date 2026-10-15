@@ -17,10 +17,10 @@ type updateBrowserActSettingsRequest struct {
 }
 
 func (s *Server) browserActSettings() browserActSettingsResponse {
-	apiKey, _, _ := s.resolveClassifyCredentials()
+	client, _ := s.systemOneClient()
 	return browserActSettingsResponse{
 		Enabled:       s.config != nil && s.config.Tools.BrowserActEnabled,
-		JevConfigured: apiKey != "",
+		JevConfigured: client != nil,
 	}
 }
 

@@ -23,3 +23,13 @@ func (m *Manager) AcquireRun(ctx context.Context, id string) (context.Context, f
 	}
 	return context.WithValue(ctx, runLeaseKey{}, runLease{m, id}), func() { leases.Delete(id) }, nil
 }
+
+// ActiveRunCount reports sessions currently holding a run lease (any run path).
+func (m *Manager) ActiveRunCount() int {
+	count := 0
+	m.runLeases.Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+	return count
+}

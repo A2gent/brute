@@ -101,6 +101,7 @@ func (s *Server) registerSystemRoutes(r chi.Router) {
 		r.Post("/rebuild", s.handleRebuildBrute)
 		r.Post("/rebuild-with-docker-image", s.handleRebuildBruteAndDockerImage)
 		r.Post("/sub-agent-containers/restart", s.handleRestartRunningSubAgentContainers)
+		r.Get("/reload-readiness", s.handleReloadReadiness)
 	})
 }
 

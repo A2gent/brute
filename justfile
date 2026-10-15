@@ -21,8 +21,13 @@ install-dev-deps:
 build:
     go build -o {{binary}} ./cmd/aagent
 
-# Run backend API server with hot reload (build must succeed before restart)
+# Run backend API server with hot reload. Builds on change, but restarts only
+# when no session is running and no queued session is about to start.
 dev:
+    go run ./cmd/devreload
+
+# Previous air-based hot reload (restarts immediately, killing active sessions)
+dev-air:
     go install github.com/air-verse/air@latest
     air -c .air.toml
 

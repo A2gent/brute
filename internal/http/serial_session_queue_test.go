@@ -46,6 +46,9 @@ func runQueuedProjectSessions(t *testing.T, settings map[string]string, taskCoun
 	activeRequests := 0
 	maxActiveRequests := 0
 	totalRequests := 0
+	// Creating a session over HTTP is slower than a fake provider reply, so responses are held
+	// until every session is queued; otherwise runs never overlap and the peak is always 1.
+	release := make(chan struct{})
 
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got, want := r.URL.Path, "/v1/responses"; got != want {
@@ -68,7 +71,8 @@ func runQueuedProjectSessions(t *testing.T, settings map[string]string, taskCoun
 			mu.Unlock()
 		}()
 
-		time.Sleep(120 * time.Millisecond)
+		<-release
+		time.Sleep(50 * time.Millisecond)
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"done %d\"}]}],\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}}\n\n", callNumber)
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
@@ -138,6 +142,8 @@ func runQueuedProjectSessions(t *testing.T, settings map[string]string, taskCoun
 	for i := 0; i < taskCount; i++ {
 		ids = append(ids, createQueued(fmt.Sprintf("queued task %d", i)))
 	}
+	time.Sleep(100 * time.Millisecond) // let workers pick up the last queued session
+	close(release)
 
 	allCompleted := func() bool {
 		for _, id := range ids {

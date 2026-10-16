@@ -117,7 +117,9 @@ func (s *Server) runSerialSessionQueueWorker(ctx context.Context, scope string) 
 		}
 		if next == nil {
 			s.clearSerialSessionQueueWorker(scope)
-			if retry, retryErr := s.nextSerialQueuedSession(scope); retryErr == nil && retry != nil {
+			// A session may have been queued between the lookup and the clear; peek without
+			// claiming, otherwise the claim would leak and no worker could pick it up.
+			if s.hasUnclaimedSerialQueuedSession(scope) {
 				s.triggerSerialSessionQueue(scope)
 			}
 			return
@@ -149,6 +151,45 @@ func (s *Server) releaseSerialQueueClaim(sessionID string) {
 }
 
 func (s *Server) nextSerialQueuedSession(scope string) (*session.Session, error) {
+	candidates, err := s.serialQueueCandidates(scope)
+	if err != nil || len(candidates) == 0 {
+		return nil, err
+	}
+	// Parallel workers share a scope: claim atomically so two never pick the same session
+	// in the window before it is marked running.
+	s.serialQueueMu.Lock()
+	defer s.serialQueueMu.Unlock()
+	if s.serialQueueClaimed == nil {
+		s.serialQueueClaimed = make(map[string]struct{})
+	}
+	for _, c := range candidates {
+		if _, taken := s.serialQueueClaimed[c.ID]; taken {
+			continue
+		}
+		s.serialQueueClaimed[c.ID] = struct{}{}
+		return c, nil
+	}
+	return nil, nil
+}
+
+// hasUnclaimedSerialQueuedSession reports pending work without claiming it.
+func (s *Server) hasUnclaimedSerialQueuedSession(scope string) bool {
+	candidates, err := s.serialQueueCandidates(scope)
+	if err != nil {
+		return false
+	}
+	s.serialQueueMu.Lock()
+	defer s.serialQueueMu.Unlock()
+	for _, c := range candidates {
+		if _, taken := s.serialQueueClaimed[c.ID]; !taken {
+			return true
+		}
+	}
+	return false
+}
+
+// serialQueueCandidates lists runnable queued sessions of a scope, oldest first.
+func (s *Server) serialQueueCandidates(scope string) ([]*session.Session, error) {
 	sessions, err := s.sessionManager.List()
 	if err != nil {
 		return nil, err
@@ -169,27 +210,10 @@ func (s *Server) nextSerialQueuedSession(scope string) (*session.Session, error)
 		}
 		candidates = append(candidates, sess)
 	}
-	if len(candidates) == 0 {
-		return nil, nil
-	}
 	sort.SliceStable(candidates, func(i, j int) bool {
 		return candidates[i].CreatedAt.Before(candidates[j].CreatedAt)
 	})
-	// Parallel workers share a scope: claim atomically so two never pick the same session
-	// in the window before it is marked running.
-	s.serialQueueMu.Lock()
-	defer s.serialQueueMu.Unlock()
-	if s.serialQueueClaimed == nil {
-		s.serialQueueClaimed = make(map[string]struct{})
-	}
-	for _, c := range candidates {
-		if _, taken := s.serialQueueClaimed[c.ID]; taken {
-			continue
-		}
-		s.serialQueueClaimed[c.ID] = struct{}{}
-		return c, nil
-	}
-	return nil, nil
+	return candidates, nil
 }
 
 func serialQueueScopeForSession(sess *session.Session) string {

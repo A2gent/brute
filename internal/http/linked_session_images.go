@@ -2,6 +2,8 @@ package http
 
 import (
 	"crypto/sha256"
+	"fmt"
+	"github.com/A2gent/brute/internal/imagefiles"
 
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/session"
@@ -11,12 +13,19 @@ import (
 // visual context. Scan the whole parent so the initial reference survives long runs.
 func linkedContinuationImages(parent *session.Session, uploads []session.ImageAttachment) []session.ImageAttachment {
 	var images []session.ImageAttachment
-	seen := make(map[[32]byte]bool)
+	seen := make(map[string]bool)
 	add := func(image session.ImageAttachment) {
-		if image.DataBase64 == "" && image.URL == "" {
+		if image.DataBase64 == "" && image.URL == "" && image.Path == "" {
 			return
 		}
-		key := sha256.Sum256([]byte(image.MediaType + "\x00" + image.DataBase64 + "\x00" + image.URL))
+		key := image.SHA256
+		if key == "" {
+			if raw, err := imagefiles.DecodeBase64(image.DataBase64); image.DataBase64 != "" && err == nil {
+				key = fmt.Sprintf("%x", sha256.Sum256(raw))
+			} else {
+				key = fmt.Sprintf("%x", sha256.Sum256([]byte(image.MediaType+"\x00"+image.DataBase64+"\x00"+image.URL)))
+			}
+		}
 		if seen[key] {
 			return
 		}

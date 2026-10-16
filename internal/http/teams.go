@@ -126,6 +126,11 @@ func (s *Server) handleWriteTeam(w http.ResponseWriter, r *http.Request, pathID 
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to save team: "+err.Error())
 		return
 	}
+	ids := []string{record.ProjectID}
+	if existing != nil {
+		ids = append(ids, existing.ProjectID)
+	}
+	s.publishProjectResourcesChanged("teams", ids...)
 	response, _ := teamResponseFromRecord(record)
 	status := http.StatusOK
 	if existing == nil {
@@ -190,6 +195,7 @@ func (s *Server) handleDeleteTeam(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete team: "+err.Error())
 		return
 	}
+	s.publishProjectResourcesChanged("teams", record.ProjectID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

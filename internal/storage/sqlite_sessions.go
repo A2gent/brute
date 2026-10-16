@@ -132,7 +132,14 @@ func (s *SQLiteStore) saveSessionMessages(sess *Session, ids []string, dirty map
 			if msg.ID != id {
 				return fmt.Errorf("message identity changed during save")
 			}
-			messageMetadata, _ := json.Marshal(msg.Metadata)
+			storedMetadata, _, err := externalizeMessageImages(s.dataPath, sess.ID, msg.Metadata)
+			if err != nil {
+				return err
+			}
+			messageMetadata, err := json.Marshal(storedMetadata)
+			if err != nil {
+				return err
+			}
 			// The driver stores time via t.String(), which appends the monotonic
 			// clock ("m=+0.07") only for fresh time.Now() values. Rewriting a reloaded
 			// message then yields a shorter string that sorts before an equal-instant

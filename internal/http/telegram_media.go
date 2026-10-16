@@ -345,6 +345,11 @@ func (s *Server) sendTelegramPhoto(
 	threadID int64,
 	img session.ImageAttachment,
 ) error {
+	var err error
+	img, err = img.Inline()
+	if err != nil {
+		return err
+	}
 	if strings.TrimSpace(img.DataBase64) != "" {
 		return s.sendTelegramPhotoBytes(ctx, botToken, chatID, threadID, strings.TrimSpace(img.Name), strings.TrimSpace(img.DataBase64))
 	}

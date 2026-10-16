@@ -97,7 +97,7 @@ func (s *Server) recordSkippedJobExecution(job *storage.RecurringJob, reason str
 		ID: uuid.New().String(), JobID: job.ID, Status: "skipped",
 		Output: reason, StartedAt: now, FinishedAt: &now,
 	}
-	if err := s.store.SaveJobExecution(exec); err != nil {
+	if err := s.saveJobExecution(exec); err != nil {
 		return nil, fmt.Errorf("failed to record skipped execution: %w", err)
 	}
 	return exec, nil

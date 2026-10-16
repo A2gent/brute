@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/storage"
 	"github.com/go-chi/chi/v5"
@@ -25,6 +26,15 @@ func buildTaskFromSession(sess *session.Session) storage.TaskCreate {
 			parts = append(parts, text)
 		}
 		for _, img := range msg.Images {
+			if len(images) >= maxSessionTaskImages {
+				break
+			}
+			resolved, err := img.Inline()
+			if err != nil {
+				logging.Warn("Cannot load task image %s: %v", img.Path, err)
+				continue
+			}
+			img = resolved
 			if img.DataBase64 == "" || len(images) >= maxSessionTaskImages {
 				continue
 			}

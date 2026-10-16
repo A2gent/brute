@@ -79,6 +79,7 @@ type Server struct {
 	dockerRuntime            *dockerRuntimeManager
 	contextCompressor        *contextcompress.Compressor
 	claudeHealthCache        *claudeHealthCache
+	usageHistory             *providerUsageHistory
 	approvalBroker           *approval.Broker
 	approvalAuditMu          sync.Mutex
 	approvalResolvePayloadMu sync.Mutex
@@ -137,6 +138,9 @@ func NewServer(
 		mcpBridge:              newMCPBridgeState(),
 		writeTaskSource:        os.WriteFile,
 		removeTaskSource:       os.Remove,
+	}
+	if cfg != nil {
+		s.usageHistory = newProviderUsageHistory(cfg.DataPath)
 	}
 	if sessionManager != nil {
 		sessionManager.SetChangeListener(s.handleSessionChange)
@@ -213,6 +217,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.resumeSerialSessionQueues()
 	go s.refreshCodexContextWindows(ctx)
 	go s.refreshAnthropicContextWindows(ctx)
+	go s.runProviderUsageSampler(ctx)
 
 	server := &http.Server{
 		Addr:    addr,

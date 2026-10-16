@@ -204,3 +204,6 @@ func setNullableString(target **string, value sql.NullString) {
 
 // Ensure SQLiteStore implements Store
 var _ Store = (*SQLiteStore)(nil)
+
+// ImageRoot is the portable base for session attachment references.
+func (s *SQLiteStore) ImageRoot() string { return s.dataPath }

@@ -27,6 +27,7 @@ type SessionCatalogEvent struct {
 	ID           string                      `json:"id,omitempty"`
 	Seq          uint64                      `json:"seq,omitempty"`
 	At           string                      `json:"at,omitempty"`
+	Resource     string                      `json:"resource,omitempty"`
 	SessionID    string                      `json:"session_id,omitempty"`
 	ProjectID    string                      `json:"project_id,omitempty"`
 	Status       string                      `json:"status,omitempty"`
@@ -45,7 +46,8 @@ type SessionCatalogEvent struct {
 var sessionCatalogMetadataKeys = map[string]struct{}{
 	"source": {}, "created_by": {}, "plan_spec": {}, "inline_review": {},
 	"queue_mode": {}, "queue_paused": {}, "needs_feedback": {}, "team_id": {},
-	"team_run_id": {}, "team_role": {}, "team_message_count": {}, "team_talking_line": {},
+	"run_mode_override": {},
+	"team_run_id":       {}, "team_role": {}, "team_message_count": {}, "team_talking_line": {},
 	"launch_target": {}, "link_type": {}, "sub_agent_id": {}, "session_action_source_key": {},
 	"session_action_card_key": {}, "session_action_prompt_hash": {}, "title": {}, "severity": {},
 	"files": {}, "continuation_reason": {}, "from_provider": {}, "from_model": {},
@@ -227,7 +229,8 @@ func newSessionCatalogSubscription(projectID string) *sessionCatalogSubscription
 }
 
 func (s *sessionCatalogSubscription) wants(event SessionCatalogEvent) bool {
-	return s.projectID == "" || event.ProjectID == s.projectID
+	return s.projectID == "" || event.ProjectID == s.projectID ||
+		(event.Type == "project_resources_changed" && event.ProjectID == "")
 }
 
 func (s *sessionCatalogSubscription) enqueue(event SessionCatalogEvent) {

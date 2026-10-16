@@ -51,6 +51,9 @@ func (s *Server) handleProviderUsage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	usage := s.providerUsageStatus(r.Context(), config.ProviderType(providerRef))
+	if !s.parentProxyAvailable() {
+		s.usageHistory.record(usage, time.Now())
+	}
 	s.jsonResponse(w, http.StatusOK, usage)
 }
 
@@ -243,15 +246,15 @@ func claudeRateLimitsCacheMaxAge() (time.Duration, error) {
 func claudeRateLimitUsageBars(payload claudeRateLimitCache) []ProviderUsageBar {
 	bars := make([]ProviderUsageBar, 0, 2)
 	if payload.RateLimits.FiveHour != nil {
-		bars = append(bars, claudeRateLimitUsageBar("Claude 5h", payload.RateLimits.FiveHour))
+		bars = append(bars, claudeRateLimitUsageBar("Claude 5h", payload.RateLimits.FiveHour, 5*time.Hour))
 	}
 	if payload.RateLimits.SevenDay != nil {
-		bars = append(bars, claudeRateLimitUsageBar("Claude weekly", payload.RateLimits.SevenDay))
+		bars = append(bars, claudeRateLimitUsageBar("Claude weekly", payload.RateLimits.SevenDay, 7*24*time.Hour))
 	}
 	return bars
 }
 
-func claudeRateLimitUsageBar(label string, window *claudeRateLimitWindow) ProviderUsageBar {
+func claudeRateLimitUsageBar(label string, window *claudeRateLimitWindow, windowLength time.Duration) ProviderUsageBar {
 	used := int(math.Round(clampPercent(window.UsedPercentage)))
 	left := 100 - used
 	if left < 0 {
@@ -261,13 +264,18 @@ func claudeRateLimitUsageBar(label string, window *claudeRateLimitWindow) Provid
 	if left <= 0 {
 		status = "limit_reached"
 	}
-	return ProviderUsageBar{
-		Label:       label,
-		UsedPercent: used,
-		LeftPercent: left,
-		ResetText:   claudeRateLimitResetText(window),
-		Status:      status,
+	bar := ProviderUsageBar{
+		Label:         label,
+		UsedPercent:   used,
+		LeftPercent:   left,
+		ResetText:     claudeRateLimitResetText(window),
+		Status:        status,
+		WindowSeconds: int64(windowLength / time.Second),
 	}
+	if window.ResetsAt > 0 {
+		bar.ResetsAt = time.Unix(window.ResetsAt, 0).UTC().Format(time.RFC3339)
+	}
+	return bar
 }
 
 func claudeRateLimitResetText(window *claudeRateLimitWindow) string {

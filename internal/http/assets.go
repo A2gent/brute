@@ -1,6 +1,7 @@
 package http
 
 import (
+	"github.com/A2gent/brute/internal/imagefiles"
 	"mime"
 	"net/http"
 	"os"
@@ -20,6 +21,37 @@ func (s *Server) handleGetImageAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if imagefiles.ValidPath(rawPath) {
+		if s.sessionManager == nil {
+			s.errorResponse(w, http.StatusNotFound, "image storage unavailable")
+			return
+		}
+		if _, err := s.sessionManager.GetSummary(strings.Split(rawPath, "/")[1]); err != nil {
+			s.errorResponse(w, http.StatusNotFound, "image session not found")
+			return
+		}
+		root, err := os.OpenRoot(s.sessionManager.ImageRoot())
+		if err != nil {
+			s.errorResponse(w, http.StatusNotFound, "image storage unavailable")
+			return
+		}
+		defer root.Close()
+		f, err := root.Open(rawPath)
+		if err != nil {
+			s.errorResponse(w, http.StatusNotFound, "image file not found")
+			return
+		}
+		defer f.Close()
+		info, err := f.Stat()
+		if err != nil || !info.Mode().IsRegular() {
+			s.errorResponse(w, http.StatusNotFound, "image file not found")
+			return
+		}
+		w.Header().Set("Cache-Control", "private, no-cache")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		http.ServeContent(w, r, info.Name(), info.ModTime(), f)
+		return
+	}
 	absPath, err := filepath.Abs(rawPath)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "invalid image path")

@@ -1,7 +1,13 @@
 package http
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"image/png"
 	stdhttp "net/http"
 	"net/http/httptest"
 	"reflect"
@@ -19,12 +25,28 @@ func TestCreateLinkedContinuationPreservesImages(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			original := session.ImageAttachment{Name: "reference.png", MediaType: "image/png", DataBase64: "cmVmZXJlbmNl"}
+			attachment := func(name, typ string, seed uint8) session.ImageAttachment {
+				t.Helper()
+				var buf bytes.Buffer
+				img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+				img.Set(0, 0, color.RGBA{R: seed, A: 255})
+				var err error
+				if typ == "image/jpeg" {
+					err = jpeg.Encode(&buf, img, nil)
+				} else {
+					err = png.Encode(&buf, img)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				return session.ImageAttachment{Name: name, MediaType: typ, DataBase64: base64.StdEncoding.EncodeToString(buf.Bytes())}
+			}
+			original := attachment("reference.png", "image/png", 1)
 			later := session.ImageAttachment{Name: "later.png", MediaType: "image/png", URL: "https://example.com/later.png"}
-			screenshot := session.ImageAttachment{MediaType: "image/jpeg", DataBase64: "c2NyZWVuc2hvdA=="}
-			inline := session.ImageAttachment{MediaType: "image/png", DataBase64: "aW5saW5l"}
-			raw := session.ImageAttachment{MediaType: "image/png", DataBase64: "cmF3"}
-			fresh := session.ImageAttachment{Name: "new.png", MediaType: "image/png", DataBase64: "bmV3"}
+			screenshot := attachment("", "image/jpeg", 2)
+			inline := attachment("", "image/png", 3)
+			raw := attachment("", "image/png", 4)
+			fresh := attachment("new.png", "image/png", 5)
 			parent.AddUserMessageWithImages("Use this reference", []session.ImageAttachment{original})
 			for i := 0; i < 15; i++ {
 				parent.AddAssistantMessage("working", nil)
@@ -38,7 +60,7 @@ func TestCreateLinkedContinuationPreservesImages(t *testing.T) {
 				{Name: "take_camera_photo", Metadata: map[string]interface{}{
 					"image_inline": map[string]interface{}{"media_type": inline.MediaType, "data_base64": inline.DataBase64},
 				}},
-				{Name: "chrome_extension", Content: `{"data_url":"data:image/png;base64,cmF3"}`},
+				{Name: "chrome_extension", Content: `{"data_url":"data:image/png;base64,` + raw.DataBase64 + `"}`},
 			})
 			parent.SetStatus(session.StatusFailed)
 			if err := server.sessionManager.Save(parent); err != nil {
@@ -72,7 +94,21 @@ func TestCreateLinkedContinuationPreservesImages(t *testing.T) {
 			if linkType != "review" {
 				want = append(want, original, later, screenshot, inline, raw)
 			}
-			if len(child.Messages) != 1 || !reflect.DeepEqual(child.Messages[0].Images, want) {
+			hydrate := func(images []session.ImageAttachment) []session.ImageAttachment {
+				t.Helper()
+				var out []session.ImageAttachment
+				for _, img := range images {
+					loaded, err := img.Inline()
+					if err != nil {
+						t.Fatal(err)
+					}
+					loaded.Path, loaded.SHA256, loaded.Root = "", "", ""
+					loaded.Width, loaded.Height = 0, 0
+					out = append(out, loaded)
+				}
+				return out
+			}
+			if len(child.Messages) != 1 || !reflect.DeepEqual(hydrate(child.Messages[0].Images), want) {
 				t.Fatalf("child images = %#v, want %#v", child.Messages, want)
 			}
 			if linkType != "review" {
@@ -80,7 +116,7 @@ func TestCreateLinkedContinuationPreservesImages(t *testing.T) {
 					t.Fatal("raw screenshot base64 leaked into compact text")
 				}
 				grandchild := create(child.ID, "continuation", nil)
-				if !reflect.DeepEqual(grandchild.Messages[0].Images, want) {
+				if !reflect.DeepEqual(hydrate(grandchild.Messages[0].Images), want) {
 					t.Fatalf("second model switch lost images: %#v", grandchild.Messages[0].Images)
 				}
 			}

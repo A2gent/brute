@@ -26,6 +26,7 @@ type Scheduler struct {
 	toolManager                   *tools.Manager
 	toolManagerForSessionResolver func(*session.Session) *tools.Manager
 	jobExecutor                   func(context.Context, *storage.RecurringJob)
+	jobChangeListener             func(*storage.RecurringJob)
 	config                        *config.Config
 
 	ticker      *time.Ticker
@@ -67,6 +68,13 @@ func (s *Scheduler) SetJobExecutor(executor func(context.Context, *storage.Recur
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.jobExecutor = executor
+}
+
+// SetJobChangeListener observes scheduler-owned writes after they are persisted.
+func (s *Scheduler) SetJobChangeListener(listener func(*storage.RecurringJob)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.jobChangeListener = listener
 }
 
 func (s *Scheduler) toolManagerForSession(sess *session.Session) *tools.Manager {
@@ -323,6 +331,14 @@ func (s *Scheduler) rescheduleJobAfterAttempt(job *storage.RecurringJob, attempt
 	if err != nil {
 		logging.Error("Failed to update job %s after execution attempt: %v", job.ID, err)
 		return
+	}
+	if updated {
+		s.mu.Lock()
+		listener := s.jobChangeListener
+		s.mu.Unlock()
+		if listener != nil {
+			listener(job)
+		}
 	}
 	if !updated {
 		logging.Info("Skipped reschedule for deleted job %s (%s)", job.Name, job.ID)

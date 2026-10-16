@@ -244,7 +244,7 @@ func (t *recurringJobsTool) handleCreate(ctx context.Context, p recurringJobsPar
 		job.NextRunAt = &nextRun
 	}
 
-	if err := t.server.store.SaveJob(job); err != nil {
+	if err := t.server.saveJob(job); err != nil {
 		return &tools.Result{Success: false, Error: "failed to save job: " + err.Error()}, nil
 	}
 
@@ -261,7 +261,7 @@ func (t *recurringJobsTool) handleDelete(p recurringJobsParams) (*tools.Result, 
 		return &tools.Result{Success: false, Error: "job_id is required for action=delete"}, nil
 	}
 
-	if err := t.server.store.DeleteJob(jobID); err != nil {
+	if err := t.server.deleteJob(jobID); err != nil {
 		return &tools.Result{Success: false, Error: "failed to delete job: " + err.Error()}, nil
 	}
 

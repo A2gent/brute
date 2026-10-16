@@ -193,11 +193,17 @@ func codexWindowUsageBar(label string, window *codexUsageWindow, status string) 
 		left = 0
 	}
 	bar := ProviderUsageBar{
-		Label:       label,
-		UsedPercent: used,
-		LeftPercent: left,
-		ResetText:   codexUsageWindowResetText(window),
-		Status:      status,
+		Label:         label,
+		UsedPercent:   used,
+		LeftPercent:   left,
+		ResetText:     codexUsageWindowResetText(window),
+		Status:        status,
+		WindowSeconds: window.LimitWindowSeconds,
+	}
+	if window.ResetAt > 0 {
+		bar.ResetsAt = time.Unix(window.ResetAt, 0).UTC().Format(time.RFC3339)
+	} else if window.ResetAfterSeconds > 0 {
+		bar.ResetsAt = time.Now().Add(time.Duration(window.ResetAfterSeconds) * time.Second).UTC().Format(time.RFC3339)
 	}
 	return bar
 }

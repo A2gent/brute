@@ -399,6 +399,7 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 		portReleases = append(portReleases, releaseHostPort)
 	}
 
+	s.publishProjectResourcesChanged("agents", strings.TrimSpace(req.ProjectID))
 	agent, err := findLocalBruteContainer(ctx, name)
 	if err != nil {
 		return &localDockerAgentCreateResult{
@@ -503,6 +504,7 @@ func (s *Server) handleStartLocalDockerAgent(w http.ResponseWriter, r *http.Requ
 		s.errorResponse(w, http.StatusBadRequest, "Failed to start container: "+err.Error())
 		return
 	}
+	s.publishProjectResourcesChanged("agents", "")
 	agent, err := findLocalBruteContainer(r.Context(), containerID)
 	if err != nil {
 		s.jsonResponse(w, http.StatusOK, map[string]interface{}{
@@ -527,6 +529,7 @@ func (s *Server) handleStopLocalDockerAgent(w http.ResponseWriter, r *http.Reque
 		s.errorResponse(w, http.StatusBadRequest, "Failed to stop container: "+err.Error())
 		return
 	}
+	s.publishProjectResourcesChanged("agents", "")
 	agent, err := findLocalBruteContainer(r.Context(), containerID)
 	if err != nil {
 		s.jsonResponse(w, http.StatusOK, map[string]interface{}{
@@ -563,6 +566,7 @@ func (s *Server) handleRemoveLocalDockerAgent(w http.ResponseWriter, r *http.Req
 		s.errorResponse(w, http.StatusBadRequest, "Failed to remove container: "+err.Error())
 		return
 	}
+	s.publishProjectResourcesChanged("agents", "")
 	s.jsonResponse(w, http.StatusOK, map[string]string{"status": "removed", "container": containerID})
 }
 

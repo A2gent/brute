@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"path/filepath"
 	"time"
 
 	"github.com/A2gent/brute/internal/contextcompress"
@@ -45,6 +46,7 @@ func (a *Agent) prepareScreenshotRetention(ctx context.Context, sess *session.Se
 		step    int
 		image   llm.Image
 		user    bool
+		path    string
 	}
 	originals := make(map[string]*session.Message, len(sess.Messages))
 	steps := make(map[string]int, len(sess.Messages))
@@ -62,13 +64,17 @@ func (a *Agent) prepareScreenshotRetention(ctx context.Context, sess *session.Se
 	for mi, msg := range messages {
 		before := len(screenshots)
 		if msg.Role == "user" {
-			for i, img := range sessionImagesToLLM(msg.Images) {
-				screenshots = append(screenshots, candidate{mi, screenshotKey("attachment", i), steps[msg.ID], img, true})
+			for i, img := range msg.Images {
+				path := ""
+				if img.Path != "" {
+					path = filepath.Join(img.Root, img.Path)
+				}
+				screenshots = append(screenshots, candidate{mi, screenshotKey("attachment", i), steps[msg.ID], llm.Image{Name: img.Name, MediaType: img.MediaType, DataBase64: img.DataBase64, URL: img.URL}, true, path})
 			}
 		}
 		for _, tr := range msg.ToolResults {
 			for i, img := range toolScreenshotImages(tr.Metadata) {
-				screenshots = append(screenshots, candidate{mi, screenshotKey(tr.ToolCallID, i), steps[msg.ID], img, false})
+				screenshots = append(screenshots, candidate{mi, screenshotKey(tr.ToolCallID, i), steps[msg.ID], img, false, ""})
 			}
 		}
 		if len(screenshots) > before {
@@ -152,7 +158,11 @@ func (a *Agent) prepareScreenshotRetention(ctx context.Context, sess *session.Se
 		decision := "keep"
 		if !keep[i] {
 			fallback := fmt.Sprintf("[screenshot from step %d omitted; re-capture if needed]", image.step)
-			decision = a.imageOmission(sess, image.image, fallback)
+			if image.path != "" {
+				decision = "[image omitted from context; original saved at " + image.path + "; use image tools to view it again]"
+			} else {
+				decision = a.imageOmission(sess, image.image, fallback)
+			}
 		}
 		decisions[image.key] = decision
 		sess.MarkMessageChanged(msg.ID)

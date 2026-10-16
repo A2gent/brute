@@ -542,6 +542,7 @@ func (s *Server) importDockerAgentDefinition(ctx context.Context, def *agentdef.
 		status = http.StatusOK
 	}
 	logging.Info("Imported docker agent definition: id=%s name=%s created=%v", record.ID, record.Name, created)
+	s.publishProjectResourcesChanged("agents", "")
 	return &importAgentYAMLResult{
 		Runtime:           agentdef.RuntimeDocker,
 		Created:           created,
@@ -642,6 +643,7 @@ func (s *Server) handleStartUnifiedAgent(w http.ResponseWriter, r *http.Request)
 		s.errorResponse(w, http.StatusBadRequest, "Failed to start agent: "+err.Error())
 		return
 	}
+	s.publishProjectResourcesChanged("agents", startProjectID)
 	s.jsonResponse(w, http.StatusOK, agent)
 }
 
@@ -697,6 +699,7 @@ func (s *Server) handleDeleteAgentDefinition(w http.ResponseWriter, r *http.Requ
 			s.errorResponse(w, http.StatusInternalServerError, "Failed to delete agent definition: "+err.Error())
 			return
 		}
+		s.publishProjectResourcesChanged("agents", "")
 		s.jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"deleted":            true,
 			"removed_containers": removedContainers,
@@ -713,6 +716,7 @@ func (s *Server) handleDeleteAgentDefinition(w http.ResponseWriter, r *http.Requ
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete agent definition: "+err.Error())
 		return
 	}
+	s.publishProjectResourcesChanged("agents", "")
 	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"deleted":            true,
 		"removed_containers": removedContainers,

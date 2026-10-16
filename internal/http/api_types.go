@@ -157,6 +157,10 @@ type MessageResponse struct {
 }
 
 type MessageImagePayload struct {
+	Path       string `json:"path,omitempty"`
+	SHA256     string `json:"sha256,omitempty"`
+	Width      int    `json:"width,omitempty"`
+	Height     int    `json:"height,omitempty"`
 	Name       string `json:"name,omitempty"`
 	MediaType  string `json:"media_type,omitempty"`
 	DataBase64 string `json:"data_base64,omitempty"`
@@ -573,6 +577,11 @@ type ProviderUsageBar struct {
 	LeftPercent int    `json:"left_percent"`
 	ResetText   string `json:"reset_text,omitempty"`
 	Status      string `json:"status,omitempty"`
+	// ResetsAt (RFC3339) and WindowSeconds describe the budget window so clients
+	// can derive the window start and project usage pace. Empty for open-ended
+	// budgets such as prepaid credits.
+	ResetsAt      string `json:"resets_at,omitempty"`
+	WindowSeconds int64  `json:"window_seconds,omitempty"`
 }
 
 type UpdateProviderRequest struct {

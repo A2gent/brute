@@ -64,14 +64,25 @@ func (s *Server) registerBrowserSessionTool(sessionID string, manager *tools.Man
 		return
 	}
 	s.browserSessionToolsMu.Lock()
+	defer s.browserSessionToolsMu.Unlock()
 	if s.browserSessionTools == nil {
 		s.browserSessionTools = make(map[string]map[*integrationtools.BrowserChromeTool]struct{})
 	}
 	if s.browserSessionTools[sessionID] == nil {
 		s.browserSessionTools[sessionID] = make(map[*integrationtools.BrowserChromeTool]struct{})
 	}
+	// WHY: project sessions get a fresh manager per run and per MCP bridge call.
+	// The Chrome page a session navigated lives in the tool instance, so a fresh
+	// instance opens about:blank and loses the page between calls. Reuse the
+	// session's existing instance for the same workdir.
+	// The shared server manager is never rewired to a session-scoped instance.
+	for existing := range s.browserSessionTools[sessionID] {
+		if manager != s.toolManager && existing != chrome && existing.WorkDir() == chrome.WorkDir() {
+			manager.Register(existing)
+			return
+		}
+	}
 	s.browserSessionTools[sessionID][chrome] = struct{}{}
-	s.browserSessionToolsMu.Unlock()
 }
 
 func (s *Server) resolveSessionWorkDir(sess *session.Session) string {

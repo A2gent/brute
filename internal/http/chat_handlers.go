@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/A2gent/brute/internal/a2atunnel"
+	"github.com/A2gent/brute/internal/imagefiles"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/go-chi/chi/v5"
 	"net/http"
+	"path/filepath"
 	"strings"
 )
 
@@ -107,10 +109,19 @@ func normalizeIncomingImages(images []MessageImagePayload) ([]session.ImageAttac
 	bridgeImages := make([]a2atunnel.A2AImage, 0, len(images))
 	for idx, raw := range images {
 		img := session.ImageAttachment{
+			Path: strings.TrimSpace(raw.Path), SHA256: strings.TrimSpace(raw.SHA256),
 			Name:       strings.TrimSpace(raw.Name),
 			MediaType:  strings.TrimSpace(raw.MediaType),
 			DataBase64: strings.TrimSpace(raw.DataBase64),
 			URL:        strings.TrimSpace(raw.URL),
+		}
+		if img.Path != "" {
+			if !imagefiles.ValidPath(img.Path) || img.SHA256 != strings.TrimSuffix(filepath.Base(img.Path), filepath.Ext(img.Path)) {
+				return nil, fmt.Errorf("image %d has an invalid file reference", idx+1)
+			}
+			// Bytes are verified and copied to the destination session by Save.
+			out = append(out, img)
+			continue
 		}
 		if img.DataBase64 == "" && img.URL == "" {
 			return nil, fmt.Errorf("image %d has neither data_base64 nor url", idx+1)
@@ -155,6 +166,9 @@ func sameMessageImages(a, b []session.ImageAttachment) bool {
 		return false
 	}
 	for i := range a {
+		if a[i].Path != b[i].Path || a[i].SHA256 != b[i].SHA256 {
+			return false
+		}
 		if strings.TrimSpace(a[i].Name) != strings.TrimSpace(b[i].Name) {
 			return false
 		}

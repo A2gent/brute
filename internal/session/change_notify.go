@@ -80,6 +80,9 @@ func (m *Manager) notify(change Change) {
 func (m *Manager) createAndNotify(sess *Session) error {
 	unlock := m.lockSession(sess.ID)
 	defer unlock()
+	if err := m.saveImages(sess); err != nil {
+		return err
+	}
 	if err := m.store.SaveSession(sess.ToStorage()); err != nil {
 		return err
 	}
@@ -88,9 +91,9 @@ func (m *Manager) createAndNotify(sess *Session) error {
 }
 
 // deletedSubtree resolves rows a cascading delete will remove. It is only
-// queried when a listener exists; stores without the query report the root.
+// queried for notifications or attachment cleanup; stores without the query report the root.
 func (m *Manager) deletedSubtree(id string) []Change {
-	if m.changeListener() == nil {
+	if m.changeListener() == nil && m.ImageRoot() == "" {
 		return nil
 	}
 	if lister, ok := m.store.(sessionTreeLister); ok {

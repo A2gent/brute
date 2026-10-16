@@ -69,6 +69,7 @@ func (s *Server) handleCreateProjectDatabase(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	s.publishProjectResourcesChanged("databases", db.ProjectID)
 	s.jsonResponse(w, http.StatusCreated, ProjectDatabaseResponse{
 		ID:          db.ID,
 		ProjectID:   db.ProjectID,
@@ -119,6 +120,7 @@ func (s *Server) handleUpdateProjectDatabase(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	s.publishProjectResourcesChanged("databases", db.ProjectID)
 	s.jsonResponse(w, http.StatusOK, ProjectDatabaseResponse{
 		ID:          db.ID,
 		ProjectID:   db.ProjectID,
@@ -134,10 +136,16 @@ func (s *Server) handleUpdateProjectDatabase(w http.ResponseWriter, r *http.Requ
 
 func (s *Server) handleDeleteProjectDatabase(w http.ResponseWriter, r *http.Request) {
 	dbID := chi.URLParam(r, "dbID")
+	db, _ := s.store.GetProjectDatabase(dbID)
 	if err := s.store.DeleteProjectDatabase(dbID); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete project database: "+err.Error())
 		return
 	}
+	projectID := chi.URLParam(r, "projectID")
+	if db != nil {
+		projectID = db.ProjectID
+	}
+	s.publishProjectResourcesChanged("databases", projectID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

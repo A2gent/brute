@@ -51,11 +51,15 @@ func (a *Agent) buildRequest(ctx context.Context, sess *session.Session) *llm.Ch
 			continue
 		}
 		msg := llm.Message{Role: m.Role, Content: m.Content}
-		for i, image := range sessionImagesToLLM(m.Images) {
+		for i, attachment := range m.Images {
 			if decision := screenshotDecision(m, "attachment", i); decision != "" && decision != "keep" {
 				msg.Content += "\n" + decision
 			} else {
-				msg.Images = append(msg.Images, image)
+				loaded := sessionImagesToLLM([]session.ImageAttachment{attachment})
+				if len(loaded) == 0 && attachment.Path != "" {
+					msg.Content += "\n[image attachment unavailable: " + attachment.Path + "]"
+				}
+				msg.Images = append(msg.Images, loaded...)
 			}
 		}
 
@@ -202,6 +206,12 @@ func sessionImagesToLLM(images []session.ImageAttachment) []llm.Image {
 	}
 	out := make([]llm.Image, 0, len(images))
 	for _, img := range images {
+		resolved, err := img.Inline()
+		if err != nil {
+			logging.Warn("Cannot load image attachment %s: %v", img.Path, err)
+			continue
+		}
+		img = resolved
 		out = append(out, llm.Image{
 			Name:       img.Name,
 			MediaType:  img.MediaType,

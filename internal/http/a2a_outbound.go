@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/A2gent/brute/internal/a2atunnel"
+	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -278,6 +279,12 @@ func sessionImagesToA2A(images []session.ImageAttachment) []a2atunnel.A2AImage {
 	}
 	out := make([]a2atunnel.A2AImage, 0, len(images))
 	for _, img := range images {
+		resolved, err := img.Inline()
+		if err != nil {
+			logging.Warn("Cannot load outbound image %s: %v", img.Path, err)
+			continue
+		}
+		img = resolved
 		out = append(out, a2atunnel.A2AImage{
 			Name:       strings.TrimSpace(img.Name),
 			MediaType:  strings.TrimSpace(img.MediaType),

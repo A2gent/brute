@@ -142,7 +142,7 @@ func (s *Server) prepareJobExecution(job *storage.RecurringJob) (*preparedJobExe
 		StartedAt: now,
 	}
 
-	if err := s.store.SaveJobExecution(exec); err != nil {
+	if err := s.saveJobExecution(exec); err != nil {
 		return nil, fmt.Errorf("failed to create execution record: %w", err)
 	}
 
@@ -152,7 +152,7 @@ func (s *Server) prepareJobExecution(job *storage.RecurringJob) (*preparedJobExe
 		exec.Error = "Failed to create session: " + err.Error()
 		finishedAt := time.Now()
 		exec.FinishedAt = &finishedAt
-		s.store.SaveJobExecution(exec)
+		s.saveJobExecution(exec)
 		return &preparedJobExecution{exec: exec, startedAt: now}, nil
 	}
 	if assignErr := s.assignSessionToJobProject(sess, job); assignErr != nil {
@@ -166,7 +166,7 @@ func (s *Server) prepareJobExecution(job *storage.RecurringJob) (*preparedJobExe
 	_ = s.ensureSessionSystemPromptSnapshot(sess)
 
 	exec.SessionID = sess.ID
-	if err := s.store.SaveJobExecution(exec); err != nil {
+	if err := s.saveJobExecution(exec); err != nil {
 		logging.Error("Failed to link execution record to session: %v", err)
 	}
 
@@ -247,7 +247,7 @@ func (s *Server) finishJobExecution(ctx context.Context, job *storage.RecurringJ
 		}
 	}
 
-	if err := s.store.SaveJobExecution(exec); err != nil {
+	if err := s.saveJobExecution(exec); err != nil {
 		logging.Error("Failed to update execution record: %v", err)
 	}
 
@@ -263,6 +263,9 @@ func (s *Server) finishJobExecution(ctx context.Context, job *storage.RecurringJ
 	if err != nil {
 		logging.Error("Failed to update job after execution: %v", err)
 		return
+	}
+	if updated {
+		s.publishProjectResourcesChanged("jobs", resourceProjectID(job.ProjectID))
 	}
 	if !updated {
 		logging.Info("Skipped post-run update for deleted job %s (%s)", job.Name, job.ID)
@@ -288,7 +291,7 @@ func (s *Server) failJobExecution(exec *storage.JobExecution, sess *session.Sess
 		}
 	}
 
-	if err := s.store.SaveJobExecution(exec); err != nil {
+	if err := s.saveJobExecution(exec); err != nil {
 		logging.Error("Failed to update execution record: %v", err)
 	}
 }

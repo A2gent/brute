@@ -19,7 +19,7 @@ func (m *Manager) GetLiveState(id, afterMessageID string) (*Session, error) {
 		if err != nil {
 			return nil, err
 		}
-		return FromStorage(row), nil
+		return m.fromStorage(row), nil
 	}
 	row, err := m.Get(id)
 	if err != nil {

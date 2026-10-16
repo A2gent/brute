@@ -128,7 +128,7 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		job.NextRunAt = &nextRun
 	}
 
-	if err := s.store.SaveJob(job); err != nil {
+	if err := s.saveJob(job); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to save job: "+err.Error())
 		return
 	}
@@ -233,7 +233,7 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 
 	job.UpdatedAt = time.Now()
 
-	if err := s.store.SaveJob(job); err != nil {
+	if err := s.saveJob(job); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to update job: "+err.Error())
 		return
 	}
@@ -245,7 +245,7 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteJob(w http.ResponseWriter, r *http.Request) {
 	jobID := chi.URLParam(r, "jobID")
 
-	if err := s.store.DeleteJob(jobID); err != nil {
+	if err := s.deleteJob(jobID); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete job: "+err.Error())
 		return
 	}

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/A2gent/brute/internal/imagefiles"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/storage"
 	"github.com/google/uuid"
@@ -56,12 +57,7 @@ type Message struct {
 }
 
 // ImageAttachment represents an image attached to a user/assistant message.
-type ImageAttachment struct {
-	Name       string `json:"name,omitempty"`
-	MediaType  string `json:"media_type,omitempty"`
-	DataBase64 string `json:"data_base64,omitempty"`
-	URL        string `json:"url,omitempty"`
-}
+type ImageAttachment = imagefiles.Attachment
 
 // ToolCall represents a tool invocation request
 type ToolCall struct {
@@ -333,28 +329,7 @@ func metadataWithImages(metadata map[string]interface{}, images []ImageAttachmen
 		return metadata
 	}
 	next := cloneMetadata(metadata)
-	imageItems := make([]map[string]string, 0, len(images))
-	for _, img := range images {
-		item := map[string]string{}
-		if img.Name != "" {
-			item["name"] = img.Name
-		}
-		if img.MediaType != "" {
-			item["media_type"] = img.MediaType
-		}
-		if img.DataBase64 != "" {
-			item["data_base64"] = img.DataBase64
-		}
-		if img.URL != "" {
-			item["url"] = img.URL
-		}
-		if len(item) > 0 {
-			imageItems = append(imageItems, item)
-		}
-	}
-	if len(imageItems) > 0 {
-		next[messageImagesMetadataKey] = imageItems
-	}
+	next[messageImagesMetadataKey] = images
 	return next
 }
 

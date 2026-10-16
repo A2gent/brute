@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -28,9 +29,27 @@ type PendingMessageStore interface {
 }
 
 func (s *SQLiteStore) AddPendingMessage(msg *PendingMessage) error {
+	images := msg.Images
+	if images != "" {
+		var raw interface{}
+		if err := json.Unmarshal([]byte(images), &raw); err != nil {
+			return err
+		}
+		metadata, changed, err := externalizeMessageImages(s.dataPath, msg.SessionID, map[string]interface{}{"images": raw})
+		if err != nil {
+			return err
+		}
+		if changed {
+			encoded, err := json.Marshal(metadata["images"])
+			if err != nil {
+				return err
+			}
+			images = string(encoded)
+		}
+	}
 	_, err := s.db.Exec(
 		`INSERT INTO session_pending_messages (id, session_id, content, images, created_at) VALUES (?, ?, ?, ?, ?)`,
-		msg.ID, msg.SessionID, msg.Content, msg.Images, msg.CreatedAt,
+		msg.ID, msg.SessionID, msg.Content, images, msg.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to queue message: %w", err)

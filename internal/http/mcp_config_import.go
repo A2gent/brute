@@ -219,7 +219,7 @@ func (s *Server) importMCPServers(req MCPServersImportRequest) (*MCPServersImpor
 		}
 		next.UpdatedAt = now
 
-		if err := s.store.SaveMCPServer(next); err != nil {
+		if err := s.saveMCPServer(next); err != nil {
 			return nil, fmt.Errorf("failed to save MCP server %q: %w", next.Name, err)
 		}
 		servers = append(servers, next)

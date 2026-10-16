@@ -171,6 +171,7 @@ func sessionImagesToPayload(images []session.ImageAttachment) []MessageImagePayl
 	out := make([]MessageImagePayload, 0, len(images))
 	for _, img := range images {
 		out = append(out, MessageImagePayload{
+			Path: img.Path, SHA256: img.SHA256, Width: img.Width, Height: img.Height,
 			Name:       img.Name,
 			MediaType:  img.MediaType,
 			DataBase64: img.DataBase64,

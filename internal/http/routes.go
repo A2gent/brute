@@ -331,6 +331,7 @@ func (s *Server) registerSessionRoutes(r chi.Router) {
 		r.Get("/{sessionID}/queue", s.handleListPendingMessages)
 		r.Post("/{sessionID}/queue", s.handleQueuePendingMessage)
 		r.Delete("/{sessionID}/queue/{messageID}", s.handleDeletePendingMessage)
+		r.Post("/{sessionID}/run-mode", s.handleOverrideSessionRunMode)
 		r.Post("/{sessionID}/queue/{messageID}/steer", s.handleSteerPendingMessage)
 		r.Get("/{sessionID}/question", s.handleGetPendingQuestion)
 		r.Post("/{sessionID}/answer", s.handleAnswerQuestion)

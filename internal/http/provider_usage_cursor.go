@@ -122,16 +122,22 @@ func (s *Server) fetchParentProviderUsage(ctx context.Context, providerType conf
 
 func cursorUsageBars(usage cursorcli.PeriodUsage) []ProviderUsageBar {
 	resetText := cursorBillingCycleResetText(usage.BillingCycleEnd)
-	return []ProviderUsageBar{
-		withCursorResetText(cursorUsageBar("Cursor total", usage.PlanUsage.TotalPercentUsed), resetText),
-		withCursorResetText(cursorUsageBar("Cursor Auto", usage.PlanUsage.AutoPercentUsed), resetText),
-		withCursorResetText(cursorUsageBar("Cursor API", usage.PlanUsage.APIPercentUsed), resetText),
+	bars := []ProviderUsageBar{
+		cursorUsageBar("Cursor total", usage.PlanUsage.TotalPercentUsed),
+		cursorUsageBar("Cursor Auto", usage.PlanUsage.AutoPercentUsed),
+		cursorUsageBar("Cursor API", usage.PlanUsage.APIPercentUsed),
 	}
-}
-
-func withCursorResetText(bar ProviderUsageBar, resetText string) ProviderUsageBar {
-	bar.ResetText = resetText
-	return bar
+	for i := range bars {
+		bars[i].ResetText = resetText
+		// Cursor returns billing cycle timestamps in milliseconds.
+		if usage.BillingCycleEnd > 0 {
+			bars[i].ResetsAt = time.UnixMilli(usage.BillingCycleEnd).UTC().Format(time.RFC3339)
+			if usage.BillingCycleStart > 0 && usage.BillingCycleEnd > usage.BillingCycleStart {
+				bars[i].WindowSeconds = (usage.BillingCycleEnd - usage.BillingCycleStart) / 1000
+			}
+		}
+	}
+	return bars
 }
 
 func cursorUsageBar(label string, usedPercent float64) ProviderUsageBar {

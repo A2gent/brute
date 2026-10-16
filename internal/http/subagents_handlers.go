@@ -109,6 +109,7 @@ func (s *Server) handleCreateSubAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.publishProjectResourcesChanged("agents", resourceProjectID(sa.ProjectID))
 	s.jsonResponse(w, http.StatusCreated, s.subAgentToResponse(sa))
 }
 
@@ -147,6 +148,7 @@ func (s *Server) handleUpdateSubAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sa.Name = strings.TrimSpace(req.Name)
+	previousProjectID := resourceProjectID(sa.ProjectID)
 	sa.ProjectID = projectID
 	sa.Provider = strings.TrimSpace(req.Provider)
 	sa.Model = strings.TrimSpace(req.Model)
@@ -166,6 +168,7 @@ func (s *Server) handleUpdateSubAgent(w http.ResponseWriter, r *http.Request) {
 		logging.Info("Removed stale Docker containers after updating agent %s: %s", sa.ID, strings.Join(removedContainers, ", "))
 	}
 
+	s.publishProjectResourcesChanged("agents", previousProjectID, resourceProjectID(sa.ProjectID))
 	s.jsonResponse(w, http.StatusOK, s.subAgentToResponse(sa))
 }
 
@@ -176,6 +179,7 @@ func (s *Server) handleDeleteSubAgent(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete sub-agent: "+err.Error())
 		return
 	}
+	s.publishProjectResourcesChanged("agents", "")
 	s.jsonResponse(w, http.StatusOK, map[string]interface{}{"deleted": true, "removed_containers": removedContainers})
 }
 

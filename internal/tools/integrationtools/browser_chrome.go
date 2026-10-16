@@ -90,6 +90,14 @@ func newBrowserChromeTool(workDir string, settingsReader browserChromeSettingsRe
 	}
 }
 
+// WorkDir returns the directory screenshots are written to.
+func (t *BrowserChromeTool) WorkDir() string {
+	if t == nil {
+		return ""
+	}
+	return t.workDir
+}
+
 func (t *BrowserChromeTool) headlessEnabled() bool {
 	if t.settingsReader != nil {
 		if settings, err := t.settingsReader.GetSettings(); err == nil {

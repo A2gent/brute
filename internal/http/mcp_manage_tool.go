@@ -205,7 +205,7 @@ func (t *mcpManageTool) handleAdd(p mcpManageParams) (*tools.Result, error) {
 	}
 	next.UpdatedAt = now
 
-	if err := t.server.store.SaveMCPServer(next); err != nil {
+	if err := t.server.saveMCPServer(next); err != nil {
 		return &tools.Result{Success: false, Error: "failed to save MCP server: " + err.Error()}, nil
 	}
 
@@ -272,7 +272,7 @@ func (t *mcpManageTool) handleRemove(p mcpManageParams) (*tools.Result, error) {
 			continue
 		}
 		if mcpServerProjectID(existing) == projectID && strings.EqualFold(strings.TrimSpace(existing.Name), name) {
-			if err := t.server.store.DeleteMCPServer(existing.ID); err != nil {
+			if err := t.server.deleteMCPServer(existing.ID); err != nil {
 				return &tools.Result{Success: false, Error: "failed to delete MCP server: " + err.Error()}, nil
 			}
 			removed = true

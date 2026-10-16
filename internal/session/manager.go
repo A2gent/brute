@@ -138,7 +138,7 @@ func (m *Manager) Get(id string) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	return FromStorage(ss), nil
+	return m.fromStorage(ss), nil
 }
 
 // GetSummary retrieves lightweight session fields without loading the message transcript.
@@ -147,7 +147,7 @@ func (m *Manager) GetSummary(id string) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	return FromStorage(ss), nil
+	return m.fromStorage(ss), nil
 }
 
 // Save saves a session and appends new messages to the JSONL log (if configured).
@@ -164,6 +164,9 @@ func (m *Manager) SaveWithSystemPromptSnapshotFrom(sess *Session, sourceID strin
 func (m *Manager) save(sess *Session, snapshotSourceID string) error {
 	unlock := m.lockSession(sess.ID)
 	defer unlock()
+	if err := m.saveImages(sess); err != nil {
+		return err
+	}
 	var err error
 	if store, ok := m.store.(interface {
 		SaveSessionIncremental(*storage.Session, []string, map[string]bool, func(int) storage.Message) error
@@ -205,7 +208,7 @@ func (m *Manager) List() ([]*Session, error) {
 
 	sessions := make([]*Session, len(stored))
 	for i, ss := range stored {
-		sessions[i] = FromStorage(ss)
+		sessions[i] = m.fromStorage(ss)
 	}
 	return sessions, nil
 }
@@ -228,10 +231,21 @@ func (m *Manager) Delete(id string) error {
 	unlock := m.lockSession(id)
 	defer unlock()
 	removed := m.deletedSubtree(id)
+
 	if err := m.store.DeleteSession(id); err != nil {
 		return err
 	}
 	for _, change := range removed {
+		if root := m.ImageRoot(); root != "" && safeJSONLSessionID(change.ID) {
+			dir, err := os.OpenRoot(root)
+			if err == nil {
+				err = dir.RemoveAll(filepath.Join("sessions", change.ID, "images"))
+				_ = dir.Close()
+			}
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "session image cleanup warning: %v\n", err)
+			}
+		}
 		m.notify(change)
 	}
 	return nil
@@ -477,7 +491,7 @@ func (m *Manager) GetForDisplay(id string, includeMessages bool) (*Session, erro
 		if err != nil {
 			return nil, err
 		}
-		return FromStorage(stored), nil
+		return m.fromStorage(stored), nil
 	}
 	return m.Get(id)
 }
@@ -492,7 +506,7 @@ func (m *Manager) ListForDisplay(projectID string) ([]*Session, error) {
 		}
 		sessions := make([]*Session, len(stored))
 		for i, row := range stored {
-			sessions[i] = FromStorage(row)
+			sessions[i] = m.fromStorage(row)
 		}
 		return sessions, nil
 	}
@@ -510,7 +524,7 @@ func (m *Manager) ListRelatedForDisplay(projectID, sessionID string) ([]*Session
 		}
 		sessions := make([]*Session, len(stored))
 		for i, row := range stored {
-			sessions[i] = FromStorage(row)
+			sessions[i] = m.fromStorage(row)
 		}
 		return sessions, nil
 	}
@@ -539,7 +553,7 @@ func (m *Manager) GetPageForDisplay(id string, limit int, before string) (*Sessi
 		if err != nil {
 			return nil, false, err
 		}
-		return FromStorage(row), more, nil
+		return m.fromStorage(row), more, nil
 	}
 	row, err := m.GetForDisplay(id, true)
 	return row, false, err
@@ -562,13 +576,16 @@ func (m *Manager) pendingStore() (storage.PendingMessageStore, error) {
 	return ps, nil
 }
 
-func pendingFromStorage(raw *storage.PendingMessage) *PendingMessage {
+func (m *Manager) pendingFromStorage(raw *storage.PendingMessage) *PendingMessage {
 	if raw == nil {
 		return nil
 	}
 	out := &PendingMessage{ID: raw.ID, SessionID: raw.SessionID, Content: raw.Content, CreatedAt: raw.CreatedAt}
 	if raw.Images != "" {
 		_ = json.Unmarshal([]byte(raw.Images), &out.Images)
+		for i := range out.Images {
+			out.Images[i].Root = m.ImageRoot()
+		}
 	}
 	return out
 }
@@ -583,6 +600,12 @@ func (m *Manager) QueuePendingMessage(sessionID, content string, images []ImageA
 	if _, err := m.Get(sessionID); err != nil {
 		return nil, fmt.Errorf("session not found: %w", err)
 	}
+	// Reuse the transcript boundary so queued attachments never enter SQLite inline.
+	queued := &Session{ID: sessionID, Messages: []Message{{Images: append([]ImageAttachment(nil), images...)}}}
+	if err := m.saveImages(queued); err != nil {
+		return nil, err
+	}
+	images = queued.Messages[0].Images
 	imagesJSON := ""
 	if len(images) > 0 {
 		raw, err := json.Marshal(images)
@@ -601,7 +624,7 @@ func (m *Manager) QueuePendingMessage(sessionID, content string, images []ImageA
 	if err := ps.AddPendingMessage(msg); err != nil {
 		return nil, err
 	}
-	return pendingFromStorage(msg), nil
+	return m.pendingFromStorage(msg), nil
 }
 
 func (m *Manager) ListPendingMessages(sessionID string) ([]*PendingMessage, error) {
@@ -615,7 +638,7 @@ func (m *Manager) ListPendingMessages(sessionID string) ([]*PendingMessage, erro
 	}
 	out := make([]*PendingMessage, 0, len(raws))
 	for _, raw := range raws {
-		out = append(out, pendingFromStorage(raw))
+		out = append(out, m.pendingFromStorage(raw))
 	}
 	return out, nil
 }
@@ -627,7 +650,7 @@ func (m *Manager) TakePendingMessage(sessionID, id string) (*PendingMessage, err
 		return nil, err
 	}
 	raw, err := ps.TakePendingMessage(sessionID, id)
-	return pendingFromStorage(raw), err
+	return m.pendingFromStorage(raw), err
 }
 
 // TakeNextPendingMessage removes and returns the oldest queued message (nil when empty).
@@ -637,5 +660,5 @@ func (m *Manager) TakeNextPendingMessage(sessionID string) (*PendingMessage, err
 		return nil, err
 	}
 	raw, err := ps.TakeNextPendingMessage(sessionID)
-	return pendingFromStorage(raw), err
+	return m.pendingFromStorage(raw), err
 }

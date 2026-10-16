@@ -148,7 +148,7 @@ func (s *Server) handleCreateMCPServer(w http.ResponseWriter, r *http.Request) {
 	server.CreatedAt = now
 	server.UpdatedAt = now
 
-	if err := s.store.SaveMCPServer(server); err != nil {
+	if err := s.saveMCPServer(server); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to save MCP server: "+err.Error())
 		return
 	}
@@ -220,7 +220,7 @@ func (s *Server) handleUpdateMCPServer(w http.ResponseWriter, r *http.Request) {
 	next.LastToolCount = existing.LastToolCount
 	next.UpdatedAt = time.Now()
 
-	if err := s.store.SaveMCPServer(next); err != nil {
+	if err := s.saveMCPServer(next); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to update MCP server: "+err.Error())
 		return
 	}
@@ -230,7 +230,7 @@ func (s *Server) handleUpdateMCPServer(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteMCPServer(w http.ResponseWriter, r *http.Request) {
 	serverID := chi.URLParam(r, "serverID")
-	if err := s.store.DeleteMCPServer(serverID); err != nil {
+	if err := s.deleteMCPServer(serverID); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete MCP server: "+err.Error())
 		return
 	}
@@ -260,7 +260,7 @@ func (s *Server) handleTestMCPServer(w http.ResponseWriter, r *http.Request) {
 	server.LastEstimatedTokens = &result.EstimatedTokens
 	server.LastToolCount = &result.ToolCount
 	server.UpdatedAt = now
-	if saveErr := s.store.SaveMCPServer(server); saveErr != nil {
+	if saveErr := s.saveMCPServer(server); saveErr != nil {
 		// Keep test response even if persistence fails.
 		result.Logs = append(result.Logs, fmt.Sprintf("warning: failed to persist last test metadata: %v", saveErr))
 	}

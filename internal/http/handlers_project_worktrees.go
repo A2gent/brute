@@ -56,7 +56,7 @@ func (s *Server) handleCreateProjectWorktree(w http.ResponseWriter, r *http.Requ
 	}
 	settings := normalizeProjectSettings(project.Settings)
 	if settings[projectWorktreesEnabledSettingKey] != "true" {
-		s.errorResponse(w, http.StatusBadRequest, "Worktrees are disabled for this project; enable them and save the project settings first")
+		s.errorResponse(w, http.StatusBadRequest, "Worktrees are disabled for this project; enable them in the Git view first")
 		return
 	}
 

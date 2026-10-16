@@ -106,6 +106,8 @@ func (s *Server) publishSessionEvent(sessionID string, event ChatStreamEvent) {
 		return
 	}
 
+	s.publishSessionCatalogNotifications(sessionID, event)
+
 	s.sessionEventsMu.Lock()
 	defer s.sessionEventsMu.Unlock()
 	s.bufferLiveTurnEvent(sessionID, event)

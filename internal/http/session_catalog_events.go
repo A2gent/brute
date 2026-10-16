@@ -23,15 +23,16 @@ const (
 // its store without re-fetching /sessions. ID ("<epoch>-<seq>") mirrors the SSE
 // id line and is the Last-Event-ID a client sends back on reconnect.
 type SessionCatalogEvent struct {
-	Type      string           `json:"type"`
-	ID        string           `json:"id,omitempty"`
-	Seq       uint64           `json:"seq,omitempty"`
-	At        string           `json:"at,omitempty"`
-	SessionID string           `json:"session_id,omitempty"`
-	ProjectID string           `json:"project_id,omitempty"`
-	Status    string           `json:"status,omitempty"`
-	Title     string           `json:"title,omitempty"`
-	Session   *SessionListItem `json:"session,omitempty"`
+	Type         string                      `json:"type"`
+	ID           string                      `json:"id,omitempty"`
+	Seq          uint64                      `json:"seq,omitempty"`
+	At           string                      `json:"at,omitempty"`
+	SessionID    string                      `json:"session_id,omitempty"`
+	ProjectID    string                      `json:"project_id,omitempty"`
+	Status       string                      `json:"status,omitempty"`
+	Title        string                      `json:"title,omitempty"`
+	Session      *SessionListItem            `json:"session,omitempty"`
+	Notification *SessionCatalogNotification `json:"notification,omitempty"`
 	// Full on resync means the cursor is from another server run, so
 	// updated_since cannot be trusted and the client must reload everything.
 	Full bool `json:"full,omitempty"`
@@ -106,7 +107,7 @@ func (h *sessionCatalogHub) publish(event SessionCatalogEvent) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	now := time.Now().UTC()
-	if event.SessionID != "" {
+	if event.SessionID != "" && event.Type != "webapp_notification" {
 		if event.Type == "session_deleted" {
 			delete(h.lastPayload, event.SessionID)
 		} else if event.Session != nil {
@@ -297,8 +298,8 @@ func (s *Server) publishSessionCatalogEvent(event SessionCatalogEvent) {
 	s.catalogHub().publish(event)
 }
 
-// handleSessionChange is the session manager's post-commit hook and the only
-// producer of catalog events.
+// handleSessionChange is the session manager's post-commit hook and the producer
+// of catalog row events. Tool results separately publish lightweight notifications.
 func (s *Server) handleSessionChange(change session.Change) {
 	if s == nil || change.ID == "" {
 		return

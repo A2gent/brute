@@ -107,3 +107,15 @@ func TestChromeExtensionWSRejectsWebsiteOrigins(t *testing.T) {
 		t.Fatalf("expected 403, got %+v", resp)
 	}
 }
+
+func TestChromeExtensionWSAcceptsCaesarDebugModeOrigin(t *testing.T) {
+	_, httpServer := newChromeExtensionWSTestServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := dialChromeExtensionWS(t, ctx, httpServer, "tauri://localhost")
+	if err != nil {
+		t.Fatalf("expected Caesar desktop origin to connect: %v", err)
+	}
+	conn.CloseNow()
+}

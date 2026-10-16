@@ -131,11 +131,23 @@ func (b *chromeExtensionBridge) takeQueuedWS(conn *chromeExtensionWSConn) []chro
 	return out
 }
 
+// caesarDebugModeOrigins are Caesar's own origins (Tauri desktop, Vite dev, hosted).
+// Caesar debug mode runs the adapter-chrome scripts inside its page so agents can
+// control and annotate Caesar itself, which needs this socket.
+var caesarDebugModeOrigins = map[string]bool{
+	"tauri://localhost":       true,
+	"http://tauri.localhost":  true,
+	"https://tauri.localhost": true,
+	"http://127.0.0.1:1420":   true,
+	"http://localhost:1420":   true,
+	"https://my.a2gent.net":   true,
+}
+
 // chromeExtensionWSOriginAllowed blocks arbitrary websites: WebSockets bypass CORS,
-// so only the extension (or non-browser clients without Origin) may connect.
+// so only the extension, Caesar debug mode, or non-browser clients without Origin may connect.
 func chromeExtensionWSOriginAllowed(r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
-	if origin == "" {
+	if origin == "" || caesarDebugModeOrigins[strings.ToLower(origin)] {
 		return true
 	}
 	u, err := url.Parse(origin)

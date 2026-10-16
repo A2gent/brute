@@ -33,11 +33,12 @@ func jevEffortFloor(provider config.ProviderType, model string) string {
 
 func jevScoreEffort(answer jev.Answer, floor string) string {
 	if floor == "" || answer.Score == nil || math.IsNaN(*answer.Score) || math.IsInf(*answer.Score, 0) ||
-		*answer.Score < 0 || *answer.Score > 3 || math.Trunc(*answer.Score) != *answer.Score ||
+		*answer.Score < 0 || *answer.Score > 3 ||
 		math.IsNaN(answer.Confidence) || answer.Confidence < jevEffortConfidence || answer.Confidence > 1 {
 		return ""
 	}
-	return clampJevEffort([]string{"low", "low", "medium", "high"}[int(*answer.Score)], floor)
+	// System One scores are probability-weighted means, not integer levels.
+	return clampJevEffort([]string{"low", "low", "medium", "high"}[int(math.Round(*answer.Score))], floor)
 }
 
 // clampJevEffort raises low/medium choices to models whose minimum is higher.
@@ -91,7 +92,7 @@ func (s *Server) applyJevEffort(ctx context.Context, target *executionTarget, pr
 			answer := response.Answers["effort"]
 			if selected := jevScoreEffort(answer, floor); selected != "" {
 				effort = selected
-				reason = fmt.Sprintf("Jev effort: %s (level=%.0f; jev confidence=%.2f)", effort, *answer.Score, answer.Confidence)
+				reason = fmt.Sprintf("Jev effort: %s (level=%.0f; jev confidence=%.2f)", effort, math.Round(*answer.Score), answer.Confidence)
 			} else {
 				reason = "Jev effort: configured default (missing, invalid or low-confidence score)"
 			}

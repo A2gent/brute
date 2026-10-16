@@ -17,7 +17,7 @@ import (
 	"github.com/A2gent/brute/internal/storage"
 )
 
-func TestJevScoreEffort(t *testing.T) {
+func TestJevEffortScore(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		score      float64
@@ -35,7 +35,16 @@ func TestJevScoreEffort(t *testing.T) {
 		{"uncertain", 0, .84, "low", ""},
 		{"negative", -1, .99, "low", ""},
 		{"out of range", 4, .99, "low", ""},
-		{"fractional", 1.5, .99, "low", ""},
+		{"fractional small edit", 1.09, .87, "low", "low"},
+		{"fractional design", 2.9, .9, "low", "high"},
+		{"fractional uncertain", 1.5, .4, "low", ""},
+		{"round down", 1.49, .99, "low", "low"},
+		{"round half up to medium", 1.5, .99, "low", "medium"},
+		{"round half up to high", 2.5, .99, "low", "high"},
+		{"fractional medium minimum", 1.09, .87, "medium", "medium"},
+		{"fractional high minimum", 1.5, .99, "high", "high"},
+		{"just below range", -.01, .99, "low", ""},
+		{"just above range", 3.01, .99, "low", ""},
 		{"nan score", math.NaN(), .99, "low", ""},
 		{"infinite score", math.Inf(1), .99, "low", ""},
 		{"nan confidence", 0, math.NaN(), "low", ""},
@@ -108,6 +117,32 @@ func resolveJevEffortTestTarget(t *testing.T, server *Server, sess *session.Sess
 		t.Fatal(err)
 	}
 	return target
+}
+
+func TestJevEffortFractionalScores(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		body   string
+		want   string
+		reason string
+	}{
+		{"small edit", `{"answers":{"effort":{"score":1.09,"confidence":0.87}}}`, "low", "level=1"},
+		{"design", `{"answers":{"effort":{"score":2.9,"confidence":0.9}}}`, "high", "level=3"},
+		{"half level", `{"answers":{"effort":{"score":2.5,"confidence":0.9}}}`, "high", "level=3"},
+		{"uncertain", `{"answers":{"effort":{"score":1.5,"confidence":0.4}}}`, "high", "configured default"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, calls, _ := newJevEffortTestServer(t, 200, tc.body)
+			sess := session.New("build")
+			target := resolveJevEffortTestTarget(t, server, sess, "Refactor the scheduler")
+			if target.ReasoningEffort != tc.want || !strings.Contains(target.RoutingReason, tc.reason) || calls.Load() != 1 {
+				t.Fatalf("target = %+v, calls = %d; want effort %q, reason containing %q", target, calls.Load(), tc.want, tc.reason)
+			}
+			if sess.Metadata[jevEffortMetadataKey] != tc.want {
+				t.Fatalf("persisted effort = %v, want %q", sess.Metadata[jevEffortMetadataKey], tc.want)
+			}
+		})
+	}
 }
 
 func TestJevEffortStickyAndUserOverride(t *testing.T) {

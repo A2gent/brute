@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"image/png"
 	"math/rand"
+	"strings"
 	"testing"
 )
 
@@ -92,5 +93,22 @@ func TestFitImage(t *testing.T) {
 	assertWithinLimits(t, got.MediaType, raw)
 	if got.Name != "wide" {
 		t.Fatalf("name lost: %+v", got.Name)
+	}
+}
+
+func TestFitImageDataURLAndMislabel(t *testing.T) {
+	encoded := base64.StdEncoding.EncodeToString(encodePNG(t, 9000, 1200, false))
+	got, err := FitImage(Image{URL: "data:image/png;base64," + encoded})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix, payload, _ := strings.Cut(got.URL, ";base64,")
+	raw, _ := base64.StdEncoding.DecodeString(payload)
+	assertWithinLimits(t, strings.TrimPrefix(prefix, "data:"), raw)
+
+	small := base64.StdEncoding.EncodeToString(encodePNG(t, 64, 64, false))
+	got, err = FitImage(Image{MediaType: "image/jpeg", DataBase64: small})
+	if err != nil || got.MediaType != "image/png" || got.DataBase64 != small {
+		t.Fatalf("mislabeled image not corrected: %v %s", err, got.MediaType)
 	}
 }

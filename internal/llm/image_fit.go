@@ -28,17 +28,28 @@ const (
 // typical JPEG EXIF blocks, so in-limit images are not fully decoded per request.
 const configPrefixBytes = 256 * 1024
 
-// FitImage returns an inline image that satisfies provider limits. URL-only or
-// already fitting images are returned unchanged.
+// maxDecodePixels bounds memory of the full decode (~400 MB RGBA) so a tiny
+// compressed file with huge dimensions cannot exhaust memory.
+const maxDecodePixels = 100_000_000
+
+// FitImage returns an inline image that satisfies provider limits. Remote URLs
+// and already fitting images are returned unchanged.
 func FitImage(img Image) (Image, error) {
-	if img.DataBase64 == "" {
-		return img, nil
-	}
 	data := strings.TrimSpace(img.DataBase64)
+	fromURL := false
+	if data == "" {
+		// Inline data URLs carry the payload too and adapters may prefer URL.
+		prefix, payload, ok := strings.Cut(img.URL, ";base64,")
+		if !ok || !strings.HasPrefix(prefix, "data:image/") {
+			return img, nil
+		}
+		data, fromURL = payload, true
+		img.MediaType = strings.TrimPrefix(prefix, "data:")
+	}
 	if base64.StdEncoding.DecodedLen(len(data)) <= ProviderImageMaxBytes {
 		prefix := data[:min(len(data), base64.StdEncoding.EncodedLen(configPrefixBytes))]
 		if head, err := base64.StdEncoding.DecodeString(prefix); err == nil {
-			if cfg, _, err := image.DecodeConfig(bytes.NewReader(head)); err == nil && max(cfg.Width, cfg.Height) <= ProviderImageMaxSide {
+			if cfg, format, err := image.DecodeConfig(bytes.NewReader(head)); err == nil && max(cfg.Width, cfg.Height) <= ProviderImageMaxSide && img.MediaType == "image/"+format {
 				return img, nil
 			}
 		}
@@ -52,7 +63,15 @@ func FitImage(img Image) (Image, error) {
 		return img, err
 	}
 	img.MediaType = mediaType
-	img.DataBase64 = base64.StdEncoding.EncodeToString(fitted)
+	encoded := base64.StdEncoding.EncodeToString(fitted)
+	if fromURL {
+		img.URL = "data:" + mediaType + ";base64," + encoded
+	} else {
+		img.DataBase64 = encoded
+		if strings.HasPrefix(img.URL, "data:") {
+			img.URL = ""
+		}
+	}
 	return img, nil
 }
 
@@ -65,7 +84,11 @@ func FitImageBytes(mediaType string, raw []byte) (string, []byte, error) {
 		return mediaType, raw, fmt.Errorf("decode image: %w", err)
 	}
 	if len(raw) <= ProviderImageMaxBytes && max(cfg.Width, cfg.Height) <= ProviderImageMaxSide {
-		return mediaType, raw, nil
+		// Trust the decoded format over the caller's label.
+		return "image/" + format, raw, nil
+	}
+	if cfg.Width*cfg.Height > maxDecodePixels {
+		return mediaType, raw, fmt.Errorf("image too large to decode: %dx%d", cfg.Width, cfg.Height)
 	}
 	src, _, err := image.Decode(bytes.NewReader(raw))
 	if err != nil {
@@ -78,25 +101,31 @@ func FitImageBytes(mediaType string, raw []byte) (string, []byte, error) {
 	if longest := max(w, h); longest > ProviderImageMaxSide {
 		w, h = max(1, w*ProviderImageMaxSide/longest), max(1, h*ProviderImageMaxSide/longest)
 	}
-	// White background flattens transparency for the JPEG fallback.
-	canvas := image.NewRGBA(image.Rect(0, 0, w, h))
-	stddraw.Draw(canvas, canvas.Bounds(), image.NewUniform(color.White), image.Point{}, stddraw.Src)
-	draw.ApproxBiLinear.Scale(canvas, canvas.Bounds(), src, src.Bounds(), draw.Over, nil)
+	// Halve dimensions until the encoding fits; noisy photos can exceed the
+	// byte limit even at low JPEG quality.
+	for ; ; w, h = max(1, w/2), max(1, h/2) {
+		// White background flattens transparency for the JPEG fallback.
+		canvas := image.NewRGBA(image.Rect(0, 0, w, h))
+		stddraw.Draw(canvas, canvas.Bounds(), image.NewUniform(color.White), image.Point{}, stddraw.Src)
+		draw.ApproxBiLinear.Scale(canvas, canvas.Bounds(), src, src.Bounds(), draw.Over, nil)
 
-	var out bytes.Buffer
-	if format == "png" {
-		if err := png.Encode(&out, canvas); err == nil && out.Len() <= ProviderImageMaxBytes {
-			return "image/png", out.Bytes(), nil
+		var out bytes.Buffer
+		if format == "png" {
+			if err := png.Encode(&out, canvas); err == nil && out.Len() <= ProviderImageMaxBytes {
+				return "image/png", out.Bytes(), nil
+			}
+		}
+		for _, quality := range []int{85, 70, 50} {
+			out.Reset()
+			if err := jpeg.Encode(&out, canvas, &jpeg.Options{Quality: quality}); err != nil {
+				return mediaType, raw, fmt.Errorf("encode jpeg: %w", err)
+			}
+			if out.Len() <= ProviderImageMaxBytes {
+				return "image/jpeg", out.Bytes(), nil
+			}
+		}
+		if w == 1 && h == 1 {
+			return mediaType, raw, fmt.Errorf("cannot fit image under %d bytes", ProviderImageMaxBytes)
 		}
 	}
-	for _, quality := range []int{85, 70, 50} {
-		out.Reset()
-		if err := jpeg.Encode(&out, canvas, &jpeg.Options{Quality: quality}); err != nil {
-			return mediaType, raw, fmt.Errorf("encode jpeg: %w", err)
-		}
-		if out.Len() <= ProviderImageMaxBytes {
-			break
-		}
-	}
-	return "image/jpeg", out.Bytes(), nil
 }

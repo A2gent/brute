@@ -203,7 +203,9 @@ func codexWindowUsageBar(label string, window *codexUsageWindow, status string) 
 	if window.ResetAt > 0 {
 		bar.ResetsAt = time.Unix(window.ResetAt, 0).UTC().Format(time.RFC3339)
 	} else if window.ResetAfterSeconds > 0 {
-		bar.ResetsAt = time.Now().Add(time.Duration(window.ResetAfterSeconds) * time.Second).UTC().Format(time.RFC3339)
+		// Rounded so repeated polls yield a stable value and history dedup works.
+		resetAt := time.Now().Add(time.Duration(window.ResetAfterSeconds) * time.Second).Round(time.Minute)
+		bar.ResetsAt = resetAt.UTC().Format(time.RFC3339)
 	}
 	return bar
 }

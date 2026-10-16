@@ -20,6 +20,9 @@ type Session struct {
 	TaskProgress string // Temporary task planning and progress tracking
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+
+	// Copy the frozen prefix in the session-save transaction, without loading it.
+	SystemPromptSnapshotSourceID string
 }
 
 // Message represents a stored message

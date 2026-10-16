@@ -61,6 +61,7 @@ timed section. On darwin/arm64 (Apple M5 Pro):
 | Go allocations | 122,361,861 B/op | 2,874 B/op |
 
 These isolate compression persistence, not full production transcript costs.
-`system_prompt_snapshot` remains in metadata (and the display projection); moving
-it requires explicit lazy reads for prompt composition and HTTP snapshot details,
-while preserving frozen prompt prefixes. This follow-up is tracked as T-176.
+T-176 also moved `system_prompt_snapshot` out of both metadata columns into its
+own table, with explicit lazy reads and frozen prefix preservation. See
+[system prompt snapshot storage](system-prompt-snapshot-storage.md) for migration,
+API compatibility, and SaveSession/WAL benchmarks.

@@ -194,7 +194,15 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		_ = writeEvent(*event)
 	}
 
-	agentConfig := s.agentConfigFromTarget(sess, target, s.buildSystemPromptForSession(sess), s.config.MaxSteps, s.config.Temperature)
+	systemPrompt, err := s.buildSystemPromptForSession(sess)
+	if err != nil {
+		sess.SetStatus(session.StatusFailed)
+		_ = s.sessionManager.Save(sess)
+		s.triggerSerialSessionQueueIfAdvanceable(sess)
+		_ = writeEvent(ChatStreamEvent{Type: "error", Error: err.Error(), Status: string(sess.Status)})
+		return
+	}
+	agentConfig := s.agentConfigFromTarget(sess, target, systemPrompt, s.config.MaxSteps, s.config.Temperature)
 	ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 
 	content, usage, err := ag.RunWithEvents(runCtx, sess, req.Message, func(ev agent.Event) {

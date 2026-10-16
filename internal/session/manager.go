@@ -151,6 +151,16 @@ func (m *Manager) GetSummary(id string) (*Session, error) {
 
 // Save saves a session and appends new messages to the JSONL log (if configured).
 func (m *Manager) Save(sess *Session) error {
+	return m.save(sess, "")
+}
+
+// SaveWithSystemPromptSnapshotFrom atomically creates a continuation and copies
+// its source's frozen provider prefix before notifying observers of the new session.
+func (m *Manager) SaveWithSystemPromptSnapshotFrom(sess *Session, sourceID string) error {
+	return m.save(sess, sourceID)
+}
+
+func (m *Manager) save(sess *Session, snapshotSourceID string) error {
 	unlock := m.lockSession(sess.ID)
 	defer unlock()
 	var err error
@@ -161,9 +171,13 @@ func (m *Manager) Save(sess *Session) error {
 		for i, message := range sess.Messages {
 			ids[i] = message.ID
 		}
-		err = store.SaveSessionIncremental(sess.storageState(), ids, sess.dirtyMessageIDs, func(i int) storage.Message { return messageToStorage(sess.Messages[i]) })
+		row := sess.storageState()
+		row.SystemPromptSnapshotSourceID = snapshotSourceID
+		err = store.SaveSessionIncremental(row, ids, sess.dirtyMessageIDs, func(i int) storage.Message { return messageToStorage(sess.Messages[i]) })
 	} else {
-		err = m.store.SaveSession(sess.ToStorage())
+		row := sess.ToStorage()
+		row.SystemPromptSnapshotSourceID = snapshotSourceID
+		err = m.store.SaveSession(row)
 	}
 	if err != nil {
 		return err

@@ -33,11 +33,11 @@ func (s *SQLiteStore) saveSessionMessages(sess *Session, ids []string, dirty map
 		}
 		defer tx.Rollback()
 
-		// Originals have independent persistence; even legacy in-memory copies must
-		// be filtered before marshalling, not just hidden in the display projection.
+		// Large immutable state has independent persistence; even in-memory display
+		// copies must be filtered before marshalling, not just hidden in projections.
 		sessionMetadata := make(map[string]interface{}, len(sess.Metadata))
 		for key, value := range sess.Metadata {
-			if key != "context_compression_store" {
+			if key != "context_compression_store" && key != SystemPromptSnapshotMetadataKey {
 				sessionMetadata[key] = value
 			}
 		}
@@ -64,6 +64,16 @@ func (s *SQLiteStore) saveSessionMessages(sess *Session, ids []string, dirty map
 			`, sess.ID, sess.AgentID, sess.ParentID, sess.JobID, sess.ProjectID, sess.Title, sess.Summary, sess.Status, metadata, metadata, sess.TaskProgress, sess.CreatedAt, sess.UpdatedAt)
 		if err != nil {
 			return fmt.Errorf("failed to save session: %w", err)
+		}
+
+		if sess.SystemPromptSnapshotSourceID != "" {
+			// Copy any materialized prefix before the continuation becomes visible.
+			// Sources that never composed a snapshot have no frozen prefix to copy.
+			if _, err := tx.Exec(`INSERT INTO session_system_prompt_snapshots (session_id, payload)
+				SELECT ?, payload FROM session_system_prompt_snapshots WHERE session_id = ?
+				ON CONFLICT(session_id) DO NOTHING`, sess.ID, sess.SystemPromptSnapshotSourceID); err != nil {
+				return fmt.Errorf("copy system prompt snapshot: %w", err)
+			}
 		}
 
 		existingMessageIDs := make(map[string]struct{})

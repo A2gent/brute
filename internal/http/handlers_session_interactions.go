@@ -191,7 +191,14 @@ func (s *Server) resumeSessionAfterQuestionAnswer(sessionID string, userAnswer s
 			s.publishSessionEvent(sess.ID, *event)
 		}
 
-		agentConfig := s.agentConfigFromTarget(sess, target, s.buildSystemPromptForSession(sess), s.config.MaxSteps, s.config.Temperature)
+		systemPrompt, err := s.buildSystemPromptForSession(sess)
+		if err != nil {
+			sess.SetStatus(session.StatusFailed)
+			_ = s.sessionManager.Save(sess)
+			s.publishSessionEvent(sess.ID, ChatStreamEvent{Type: "error", Error: err.Error(), Status: string(sess.Status)})
+			return
+		}
+		agentConfig := s.agentConfigFromTarget(sess, target, systemPrompt, s.config.MaxSteps, s.config.Temperature)
 		ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 		_, _, err = ag.RunWithEvents(runCtx, sess, userAnswer, func(ev agent.Event) {
 			if ev.Type == agent.EventProviderTrace && ev.Provider != nil {

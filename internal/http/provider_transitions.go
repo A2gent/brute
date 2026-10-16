@@ -264,7 +264,15 @@ func (s *Server) startTransitionRun(ctx context.Context, release func(), sess *s
 				s.publishTransition(sess, t)
 				return
 			}
-			cfg := agent.Config{Name: sess.AgentID, Provider: t.Source.Provider, Model: t.Source.Model, ContextWindow: window, SystemPrompt: s.buildSystemPromptForSession(sess), MaxSteps: s.config.MaxSteps, Temperature: s.config.Temperature}
+			systemPrompt, err := s.buildSystemPromptForSession(sess)
+			if err != nil {
+				t.Phase, t.Error = "paused", err.Error()
+				session.PutProviderTransition(sess, t)
+				_ = s.sessionManager.Save(sess)
+				s.publishTransition(sess, t)
+				return
+			}
+			cfg := agent.Config{Name: sess.AgentID, Provider: t.Source.Provider, Model: t.Source.Model, ContextWindow: window, SystemPrompt: systemPrompt, MaxSteps: s.config.MaxSteps, Temperature: s.config.Temperature}
 			ag := s.newAgentFromConfig(cfg, client, s.toolManagerForSession(sess))
 			_, _, err = ag.RunWithEvents(ctx, sess, "", func(ev agent.Event) {
 				if event, ok := s.agentEventToStreamEvent(sess, config.ProviderType(t.Target.Provider), ev); ok {

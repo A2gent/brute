@@ -413,6 +413,9 @@ func (s *SQLiteStore) migrate() error {
 	if err := s.migrateSessionCompressionEntries(); err != nil {
 		return fmt.Errorf("failed to migrate compression entries: %w", err)
 	}
+	if err := s.migrateSessionSystemPromptSnapshots(); err != nil {
+		return fmt.Errorf("failed to migrate system prompt snapshots: %w", err)
+	}
 	if err := s.migrateBrokenTaskRefs(); err != nil {
 		return fmt.Errorf("failed to migrate broken task refs: %w", err)
 	}

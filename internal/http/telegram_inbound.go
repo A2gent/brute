@@ -323,7 +323,13 @@ func (s *Server) handleTelegramInboundMessage(
 		s.publishSessionEvent(sess.ID, *event)
 	}
 
-	agentConfig := s.agentConfigFromTarget(sess, target, s.buildSystemPromptForSession(sess), s.config.MaxSteps, s.config.Temperature)
+	systemPrompt, err := s.buildSystemPromptForSession(sess)
+	if err != nil {
+		sess.SetStatus(session.StatusFailed)
+		_ = s.sessionManager.Save(sess)
+		return nil, err
+	}
+	agentConfig := s.agentConfigFromTarget(sess, target, systemPrompt, s.config.MaxSteps, s.config.Temperature)
 	ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 
 	response, _, err := ag.Run(ctx, sess, llmUserMessage)

@@ -77,7 +77,11 @@ func (s *Server) runSessionWithoutStreaming(ctx context.Context, sess *session.S
 		publishEvent(*event)
 	}
 
-	agentConfig := s.agentConfigFromTarget(sess, target, s.buildSystemPromptForSession(sess), s.config.MaxSteps, s.config.Temperature)
+	systemPrompt, err := s.buildSystemPromptForSession(sess)
+	if err != nil {
+		return result, err
+	}
+	agentConfig := s.agentConfigFromTarget(sess, target, systemPrompt, s.config.MaxSteps, s.config.Temperature)
 
 	ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 	content, usage, err := ag.RunWithEvents(ctx, sess, userMessage, func(ev agent.Event) {

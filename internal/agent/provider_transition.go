@@ -256,16 +256,14 @@ func (a *Agent) linkTransition(source, candidate *session.Session, t *session.Pr
 		linked.ProjectID = source.ProjectID
 		linked.Title = source.Title
 		linked.Metadata = map[string]interface{}{"provider": t.Target.Provider, "model": t.Target.Model, "link_type": "continuation", "continuation_source_id": source.ID, "provider_transition_id": t.ID}
-		for _, key := range []string{"work_dir", "system_prompt_snapshot"} {
-			if value, ok := source.Metadata[key]; ok {
-				linked.Metadata[key] = value
-			}
+		if value, ok := source.Metadata["work_dir"]; ok {
+			linked.Metadata["work_dir"] = value
 		}
 		linked.Messages = a.getActiveConversationMessages(candidate)
 		for i := range linked.Messages {
 			linked.Messages[i].ID = uuid.NewString()
 		}
-		if err := a.sessionManager.Save(linked); err != nil {
+		if err := a.sessionManager.SaveWithSystemPromptSnapshotFrom(linked, source.ID); err != nil {
 			return a.pauseTransition(source, t, err, onEvent)
 		}
 	}

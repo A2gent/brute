@@ -2,19 +2,22 @@
 package http
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/A2gent/brute/internal/agent"
-	"github.com/A2gent/brute/internal/logging"
-	"github.com/A2gent/brute/internal/session"
-	"github.com/A2gent/brute/internal/storage"
 	"os"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/A2gent/brute/internal/agent"
+	"github.com/A2gent/brute/internal/logging"
+	"github.com/A2gent/brute/internal/session"
+	"github.com/A2gent/brute/internal/storage"
 )
 
-const sessionSystemPromptSnapshotMetadataKey = "system_prompt_snapshot"
+const sessionSystemPromptSnapshotMetadataKey = storage.SystemPromptSnapshotMetadataKey
 
 type systemPromptSnapshot struct {
 	BasePrompt        string                      `json:"base_prompt"`
@@ -34,27 +37,51 @@ type systemPromptBlockSnapshot struct {
 	EstimatedTokens int    `json:"estimated_tokens"`
 }
 
-func (s *Server) buildSystemPromptForSession(sess *session.Session) string {
-	snapshot := s.ensureSessionSystemPromptSnapshot(sess)
-	if snapshot == nil {
-		return ""
+func (s *Server) buildSystemPromptForSession(sess *session.Session) (string, error) {
+	snapshot, err := s.ensureSystemPromptSnapshot(sess)
+	if err != nil {
+		return "", err
 	}
-	return strings.TrimSpace(snapshot.CombinedPrompt)
+	if snapshot == nil {
+		return "", nil
+	}
+	return strings.TrimSpace(snapshot.CombinedPrompt), nil
 }
 
 func (s *Server) ensureSessionSystemPromptSnapshot(sess *session.Session) *systemPromptSnapshot {
-	return s.ensureSystemPromptSnapshot(sess, false)
+	snapshot, err := s.ensureSystemPromptSnapshot(sess)
+	if err != nil {
+		logging.Warn("Failed to prepare system prompt snapshot: %v", err)
+	}
+	return snapshot
 }
 
-// Display reads omit internal state. Merge a regenerated snapshot into a full
-// session before saving so a read cannot erase compression data.
-func (s *Server) ensureDisplaySystemPromptSnapshot(sess *session.Session) *systemPromptSnapshot {
-	return s.ensureSystemPromptSnapshot(sess, true)
+// Detail responses retain the legacy metadata and top-level snapshot payloads,
+// but persisting a snapshot must never rewrite a partial/display session.
+func (s *Server) ensureDisplaySystemPromptSnapshot(sess *session.Session) (*systemPromptSnapshot, error) {
+	return s.ensureSystemPromptSnapshot(sess)
 }
 
-func (s *Server) ensureSystemPromptSnapshot(sess *session.Session, displayOnly bool) *systemPromptSnapshot {
+func (s *Server) ensureSystemPromptSnapshot(sess *session.Session) (*systemPromptSnapshot, error) {
 	if sess == nil {
-		return nil
+		return nil, nil
+	}
+
+	if sessionSystemPromptSnapshot(sess) == nil {
+		if snapshots, ok := s.store.(storage.SystemPromptSnapshotStore); ok {
+			raw, err := snapshots.GetSystemPromptSnapshot(sess.ID)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				// A failed read is not evidence that a frozen prefix is missing.
+				return nil, fmt.Errorf("load system prompt snapshot for session %s: %w", sess.ID, err)
+			}
+			if err == nil {
+				var snapshot systemPromptSnapshot
+				if err := json.Unmarshal(raw, &snapshot); err != nil {
+					return nil, fmt.Errorf("decode system prompt snapshot for session %s: %w", sess.ID, err)
+				}
+				attachSessionSystemPromptSnapshot(sess, &snapshot)
+			}
+		}
 	}
 
 	var resolvedSubAgent *storage.SubAgent
@@ -84,12 +111,12 @@ func (s *Server) ensureSystemPromptSnapshot(sess *session.Session, displayOnly b
 		if resolvedSubAgent != nil {
 			subAgentIdentity := fmt.Sprintf(`You are a sub-agent named "%s".`, strings.TrimSpace(resolvedSubAgent.Name))
 			if strings.Contains(snapshot.BasePrompt, subAgentIdentity) || strings.Contains(snapshot.CombinedPrompt, subAgentIdentity) {
-				return snapshot
+				return snapshot, nil
 			}
 		} else {
 			cachedPromptStillCurrent := !snapshotHasOutdatedConfiguredAgentsBlock(snapshot)
 			if cachedPromptStillCurrent {
-				return snapshot
+				return snapshot, nil
 			}
 		}
 	}
@@ -101,23 +128,19 @@ func (s *Server) ensureSystemPromptSnapshot(sess *session.Session, displayOnly b
 		snapshot = s.composeSystemPromptSnapshotWithSettings(sess, settings)
 	}
 	if snapshot == nil {
-		return nil
+		return nil, nil
+	}
+	if snapshots, ok := s.store.(storage.SystemPromptSnapshotStore); ok {
+		raw, err := json.Marshal(snapshot)
+		if err == nil {
+			err = snapshots.SaveSystemPromptSnapshot(sess.ID, raw)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("persist system prompt snapshot for session %s: %w", sess.ID, err)
+		}
 	}
 	attachSessionSystemPromptSnapshot(sess, snapshot)
-	persisted := sess
-	if displayOnly {
-		complete, err := s.sessionManager.Get(sess.ID)
-		if err != nil {
-			logging.Warn("Failed to load session %s for system prompt snapshot persistence: %v", sess.ID, err)
-			return snapshot
-		}
-		attachSessionSystemPromptSnapshot(complete, snapshot)
-		persisted = complete
-	}
-	if err := s.sessionManager.Save(persisted); err != nil {
-		logging.Warn("Failed to persist system prompt snapshot for session %s: %v", sess.ID, err)
-	}
-	return snapshot
+	return snapshot, nil
 }
 
 func sessionSystemPromptSnapshot(sess *session.Session) *systemPromptSnapshot {

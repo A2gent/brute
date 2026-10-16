@@ -218,30 +218,33 @@ func (s *Server) makeA2AAgentFactory() a2atunnel.AgentRunnerBuilder {
 			s.publishSessionEvent(sess.ID, *event)
 		}
 
-		cfg := s.agentConfigFromTarget(sess, target, s.buildSystemPromptForA2ASession(sess), s.config.MaxSteps, s.config.Temperature)
+		systemPrompt, err := s.buildSystemPromptForA2ASession(sess)
+		if err != nil {
+			return nil, err
+		}
+		cfg := s.agentConfigFromTarget(sess, target, systemPrompt, s.config.MaxSteps, s.config.Temperature)
 		cfg.Name = "brute-a2a"
 		return s.newAgentFromConfig(cfg, target.Client, toolManager), nil
 	}
 }
 
-func (s *Server) buildSystemPromptForA2ASession(sess *session.Session) string {
+func (s *Server) buildSystemPromptForA2ASession(sess *session.Session) (string, error) {
 	if sess != nil && sess.Metadata != nil {
 		if subAgentID, ok := sess.Metadata["sub_agent_id"].(string); ok && strings.TrimSpace(subAgentID) != "" {
 			if sa, err := s.store.GetSubAgent(strings.TrimSpace(subAgentID)); err == nil && sa != nil {
-				snapshot := s.composeSubAgentSystemPromptSnapshot(sa, sess)
+				snapshot, err := s.ensureSystemPromptSnapshot(sess)
+				if err != nil {
+					return "", err
+				}
 				if snapshot != nil {
-					attachSessionSystemPromptSnapshot(sess, snapshot)
-					if err := s.sessionManager.Save(sess); err != nil {
-						logging.Warn("Failed to persist inbound A2A sub-agent system prompt snapshot: %v", err)
-					}
 					if strings.TrimSpace(snapshot.CombinedPrompt) != "" {
-						return strings.TrimSpace(snapshot.CombinedPrompt)
+						return strings.TrimSpace(snapshot.CombinedPrompt), nil
 					}
 				}
 			}
 		}
 	}
-	return s.buildSystemPromptForA2A()
+	return s.buildSystemPromptForA2A(), nil
 }
 
 // buildSystemPromptForA2A builds a system prompt for inbound A2A sessions.
@@ -573,7 +576,14 @@ func (s *Server) resumeSessionAfterExternalToolResult(sessionID string) {
 			s.publishSessionEvent(sess.ID, *event)
 		}
 
-		agentConfig := s.agentConfigFromTarget(sess, target, s.buildSystemPromptForSession(sess), s.config.MaxSteps, s.config.Temperature)
+		systemPrompt, err := s.buildSystemPromptForSession(sess)
+		if err != nil {
+			sess.SetStatus(session.StatusFailed)
+			_ = s.sessionManager.Save(sess)
+			s.publishSessionEvent(sess.ID, ChatStreamEvent{Type: "error", Error: err.Error(), Status: string(sess.Status)})
+			return
+		}
+		agentConfig := s.agentConfigFromTarget(sess, target, systemPrompt, s.config.MaxSteps, s.config.Temperature)
 		ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 		_, _, err = ag.RunWithEvents(runCtx, sess, "", func(ev agent.Event) {
 			if ev.Type == agent.EventProviderTrace && ev.Provider != nil {

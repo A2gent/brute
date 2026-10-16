@@ -594,7 +594,10 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if includeMessages {
-		_ = s.ensureDisplaySystemPromptSnapshot(sess)
+		if _, err := s.ensureDisplaySystemPromptSnapshot(sess); err != nil {
+			s.errorResponse(w, http.StatusInternalServerError, "Failed to load system prompt snapshot: "+err.Error())
+			return
+		}
 	}
 
 	resp := s.sessionToResponse(sess)

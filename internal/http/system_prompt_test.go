@@ -25,7 +25,10 @@ func TestBuildSystemPromptForSessionStableAcrossTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	sess.CreatedAt = sess.CreatedAt.In(time.FixedZone("local", 3*60*60))
-	first := server.buildSystemPromptForSession(sess)
+	first, err := server.buildSystemPromptForSession(sess)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(first, "- Session created at: "+sess.CreatedAt.UTC().Format(time.RFC3339)) {
 		t.Errorf("expected immutable session creation time in UTC")
 	}
@@ -39,11 +42,10 @@ func TestBuildSystemPromptForSessionStableAcrossTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second := server.buildSystemPromptForSession(reloaded); first != second {
+	if second, err := server.buildSystemPromptForSession(reloaded); err != nil || first != second {
 		t.Fatal("persisted snapshot changed across turns")
 	}
-	delete(reloaded.Metadata, sessionSystemPromptSnapshotMetadataKey)
-	if rebuilt := server.buildSystemPromptForSession(reloaded); first != rebuilt {
+	if rebuilt := server.composeSystemPromptSnapshot(reloaded).CombinedPrompt; first != rebuilt {
 		t.Fatalf("recomposed prompt changed across time for the same session\nfirst: %s\nrebuilt: %s", first, rebuilt)
 	}
 }
@@ -88,7 +90,7 @@ func TestBuildSystemPromptPreservesLegacySnapshot(t *testing.T) {
 	}
 	legacy := "Environment context:\n- Current time: 2026-10-14T18:33:24+03:00 (Local)"
 	attachSessionSystemPromptSnapshot(sess, &systemPromptSnapshot{BasePrompt: "Legacy", CombinedPrompt: legacy})
-	if got := server.buildSystemPromptForSession(sess); got != legacy {
+	if got, err := server.buildSystemPromptForSession(sess); err != nil || got != legacy {
 		t.Fatal("legacy snapshot migration would invalidate an existing cached prefix")
 	}
 }

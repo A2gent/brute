@@ -14,7 +14,10 @@ type reloadReadinessResponse struct {
 // stuck queue cannot block reloads forever.
 func (s *Server) handleReloadReadiness(w http.ResponseWriter, r *http.Request) {
 	s.serialQueueMu.Lock()
-	workers := len(s.serialQueueWorkers)
+	workers := 0
+	for _, n := range s.serialQueueWorkers {
+		workers += n
+	}
 	s.serialQueueMu.Unlock()
 	runs := s.sessionManager.ActiveRunCount()
 

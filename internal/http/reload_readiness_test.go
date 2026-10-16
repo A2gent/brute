@@ -46,7 +46,7 @@ func TestReloadReadinessReflectsRunsAndQueueWorkers(t *testing.T) {
 
 	// A live queue worker means queued sessions are about to start.
 	server.serialQueueMu.Lock()
-	server.serialQueueWorkers = map[string]struct{}{serialQueueGlobalScope: {}}
+	server.serialQueueWorkers = map[string]int{serialQueueGlobalScope: 1}
 	server.serialQueueMu.Unlock()
 	if got := read(); got.Idle || got.ActiveQueueWorkers != 1 {
 		t.Fatalf("queue worker should block reload: %+v", got)

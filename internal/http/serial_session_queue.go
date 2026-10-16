@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/A2gent/brute/internal/logging"
@@ -10,6 +11,36 @@ import (
 )
 
 const serialQueueGlobalScope = "__global__"
+
+// Project setting that raises how many queued sessions may run at once within a project.
+const (
+	projectMaxParallelSessionsKey = "max_parallel_sessions"
+	maxParallelSessionsLimit      = 10
+)
+
+// serialQueueLimitForScope returns the number of concurrent queue workers allowed for a scope.
+// Defaults to 1 (strictly serial) for the global scope and for projects without the setting.
+func (s *Server) serialQueueLimitForScope(scope string) int {
+	if scope == serialQueueGlobalScope || s.store == nil {
+		return 1
+	}
+	project, err := s.store.GetProject(scope)
+	if err != nil || project == nil {
+		return 1
+	}
+	return parseMaxParallelSessions(project.Settings[projectMaxParallelSessionsKey])
+}
+
+func parseMaxParallelSessions(raw string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || n < 1 {
+		return 1
+	}
+	if n > maxParallelSessionsLimit {
+		return maxParallelSessionsLimit
+	}
+	return n
+}
 
 func (s *Server) triggerSerialSessionQueueForSession(sess *session.Session) {
 	if !sessionIsSerialQueuedAutoRun(sess) {
@@ -29,24 +60,28 @@ func (s *Server) triggerSerialSessionQueueIfAdvanceable(sess *session.Session) {
 	s.triggerSerialSessionQueueForSession(sess)
 }
 
+// triggerSerialSessionQueue tops up the scope's workers to its parallel limit.
+// Extra workers exit immediately when there is nothing left to claim.
 func (s *Server) triggerSerialSessionQueue(scope string) {
 	scope = strings.TrimSpace(scope)
 	if scope == "" {
 		scope = serialQueueGlobalScope
 	}
+	limit := s.serialQueueLimitForScope(scope)
 
 	s.serialQueueMu.Lock()
 	if s.serialQueueWorkers == nil {
-		s.serialQueueWorkers = make(map[string]struct{})
+		s.serialQueueWorkers = make(map[string]int)
 	}
-	if _, running := s.serialQueueWorkers[scope]; running {
-		s.serialQueueMu.Unlock()
-		return
+	spawn := limit - s.serialQueueWorkers[scope]
+	if spawn > 0 {
+		s.serialQueueWorkers[scope] += spawn
 	}
-	s.serialQueueWorkers[scope] = struct{}{}
 	s.serialQueueMu.Unlock()
 
-	go s.runSerialSessionQueueWorker(s.sessionRunParentContext(), scope)
+	for i := 0; i < spawn; i++ {
+		go s.runSerialSessionQueueWorker(s.sessionRunParentContext(), scope)
+	}
 }
 
 func (s *Server) resumeSerialSessionQueues() {
@@ -88,7 +123,9 @@ func (s *Server) runSerialSessionQueueWorker(ctx context.Context, scope string) 
 			return
 		}
 
-		if shouldContinue := s.runSerialQueuedSession(ctx, next.ID); !shouldContinue {
+		shouldContinue := s.runSerialQueuedSession(ctx, next.ID)
+		s.releaseSerialQueueClaim(next.ID)
+		if !shouldContinue {
 			s.clearSerialSessionQueueWorker(scope)
 			return
 		}
@@ -98,7 +135,17 @@ func (s *Server) runSerialSessionQueueWorker(ctx context.Context, scope string) 
 func (s *Server) clearSerialSessionQueueWorker(scope string) {
 	s.serialQueueMu.Lock()
 	defer s.serialQueueMu.Unlock()
-	delete(s.serialQueueWorkers, scope)
+	if s.serialQueueWorkers[scope] <= 1 {
+		delete(s.serialQueueWorkers, scope)
+		return
+	}
+	s.serialQueueWorkers[scope]--
+}
+
+func (s *Server) releaseSerialQueueClaim(sessionID string) {
+	s.serialQueueMu.Lock()
+	defer s.serialQueueMu.Unlock()
+	delete(s.serialQueueClaimed, sessionID)
 }
 
 func (s *Server) nextSerialQueuedSession(scope string) (*session.Session, error) {
@@ -128,7 +175,21 @@ func (s *Server) nextSerialQueuedSession(scope string) (*session.Session, error)
 	sort.SliceStable(candidates, func(i, j int) bool {
 		return candidates[i].CreatedAt.Before(candidates[j].CreatedAt)
 	})
-	return candidates[0], nil
+	// Parallel workers share a scope: claim atomically so two never pick the same session
+	// in the window before it is marked running.
+	s.serialQueueMu.Lock()
+	defer s.serialQueueMu.Unlock()
+	if s.serialQueueClaimed == nil {
+		s.serialQueueClaimed = make(map[string]struct{})
+	}
+	for _, c := range candidates {
+		if _, taken := s.serialQueueClaimed[c.ID]; taken {
+			continue
+		}
+		s.serialQueueClaimed[c.ID] = struct{}{}
+		return c, nil
+	}
+	return nil, nil
 }
 
 func serialQueueScopeForSession(sess *session.Session) string {

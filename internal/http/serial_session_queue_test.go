@@ -18,6 +18,30 @@ import (
 )
 
 func TestSerialQueuedProjectSessionsRunOneAtATime(t *testing.T) {
+	if got := runQueuedProjectSessions(t, nil, 2); got != 1 {
+		t.Fatalf("max concurrent provider requests = %d, want 1", got)
+	}
+}
+
+func TestSerialQueuedProjectSessionsRunInParallelWhenProjectAllows(t *testing.T) {
+	got := runQueuedProjectSessions(t, map[string]string{projectMaxParallelSessionsKey: "2"}, 4)
+	if got != 2 {
+		t.Fatalf("max concurrent provider requests = %d, want 2", got)
+	}
+}
+
+func TestParseMaxParallelSessions(t *testing.T) {
+	for raw, want := range map[string]int{"": 1, "abc": 1, "0": 1, "-3": 1, "3": 3, " 4 ": 4, "99": maxParallelSessionsLimit} {
+		if got := parseMaxParallelSessions(raw); got != want {
+			t.Errorf("parseMaxParallelSessions(%q) = %d, want %d", raw, got, want)
+		}
+	}
+}
+
+// runQueuedProjectSessions queues taskCount serial sessions in a project with the given settings,
+// waits for them to complete and returns the peak number of concurrent provider requests.
+func runQueuedProjectSessions(t *testing.T, settings map[string]string, taskCount int) int {
+	t.Helper()
 	var mu sync.Mutex
 	activeRequests := 0
 	maxActiveRequests := 0
@@ -60,6 +84,7 @@ func TestSerialQueuedProjectSessionsRunOneAtATime(t *testing.T) {
 	project := &storage.Project{
 		ID:        "project-serial-queue",
 		Name:      "Serial Queue",
+		Settings:  settings,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -109,39 +134,34 @@ func TestSerialQueuedProjectSessionsRunOneAtATime(t *testing.T) {
 		return created.ID
 	}
 
-	firstID := createQueued("first queued task")
-	secondID := createQueued("second queued task")
+	ids := make([]string, 0, taskCount)
+	for i := 0; i < taskCount; i++ {
+		ids = append(ids, createQueued(fmt.Sprintf("queued task %d", i)))
+	}
 
-	deadline := time.Now().Add(4 * time.Second)
-	for time.Now().Before(deadline) {
-		first, firstErr := sessionManager.Get(firstID)
-		second, secondErr := sessionManager.Get(secondID)
-		if firstErr == nil && secondErr == nil && first.Status == session.StatusCompleted && second.Status == session.StatusCompleted {
-			break
+	allCompleted := func() bool {
+		for _, id := range ids {
+			sess, err := sessionManager.Get(id)
+			if err != nil || sess.Status != session.StatusCompleted {
+				return false
+			}
 		}
+		return true
+	}
+	deadline := time.Now().Add(6 * time.Second)
+	for time.Now().Before(deadline) && !allCompleted() {
 		time.Sleep(25 * time.Millisecond)
 	}
-
-	first, err := sessionManager.Get(firstID)
-	if err != nil {
-		t.Fatalf("load first session: %v", err)
-	}
-	second, err := sessionManager.Get(secondID)
-	if err != nil {
-		t.Fatalf("load second session: %v", err)
-	}
-	if first.Status != session.StatusCompleted || second.Status != session.StatusCompleted {
-		t.Fatalf("queued sessions did not complete: first=%s second=%s", first.Status, second.Status)
+	if !allCompleted() {
+		t.Fatalf("queued sessions did not complete")
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
-	if totalRequests != 2 {
-		t.Fatalf("provider requests = %d, want 2", totalRequests)
+	if totalRequests != taskCount {
+		t.Fatalf("provider requests = %d, want %d", totalRequests, taskCount)
 	}
-	if maxActiveRequests != 1 {
-		t.Fatalf("max concurrent provider requests = %d, want 1", maxActiveRequests)
-	}
+	return maxActiveRequests
 }
 
 func TestStartSessionManuallyOverridesSerialQueueAutoStart(t *testing.T) {

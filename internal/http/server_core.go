@@ -62,8 +62,9 @@ type Server struct {
 	sessionCatalogMu         sync.Mutex
 	sessionCatalog           *sessionCatalogHub
 	serialQueueMu            sync.Mutex
-	serialQueueWorkers       map[string]struct{}
-	sessionSummaryWG         sync.WaitGroup // tracks async session summary goroutines (tests wait on it)
+	serialQueueWorkers       map[string]int      // scope -> live worker count; guarded by serialQueueMu
+	serialQueueClaimed       map[string]struct{} // session IDs picked by a worker but not yet finished; guarded by serialQueueMu
+	sessionSummaryWG         sync.WaitGroup      // tracks async session summary goroutines (tests wait on it)
 	sessionSummaryMu         sync.Mutex
 	sessionSummarySeq        uint64                           // guarded by sessionSummaryMu
 	sessionSummaryLatest     map[string]uint64                // session ID -> latest summary token; guarded by sessionSummaryMu
@@ -130,7 +131,7 @@ func NewServer(
 		activeRuns:             make(map[string]map[string]context.CancelFunc),
 		sessionEventSubs:       make(map[string]map[chan ChatStreamEvent]*sessionEventSubscription),
 		sessionCatalog:         newSessionCatalogHub(),
-		serialQueueWorkers:     make(map[string]struct{}),
+		serialQueueWorkers:     make(map[string]int),
 		chromeExtensionBridge:  newChromeExtensionBridge(),
 		contextCompressor:      contextcompress.NewCompressorWithSessionStore(contextcompress.Config{Enabled: true}, sessionManager),
 		claudeHealthCache:      newClaudeHealthCache(),

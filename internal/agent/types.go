@@ -31,6 +31,7 @@ type Config struct {
 	RelevanceGate *contextcompress.RelevanceGate
 	// ToolSelector is nil unless Jev tool-group selection is enabled and credentialed.
 	ToolSelector            *ToolSelector
+	StallDetector           *StallDetector
 	CompressToolResults     bool
 	PersistRuntimeReasoning bool
 }

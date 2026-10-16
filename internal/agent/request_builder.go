@@ -37,8 +37,15 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 		}
 	}
 	messages := make([]llm.Message, 0, len(activeMessages))
+	systemPrompt := a.config.SystemPrompt
 
 	for _, m := range activeMessages {
+		// Anthropic/Gemini reject system-role conversation messages. Keep the
+		// nudge in history for persistence, but send it as system instructions.
+		if m.Role == "system" && m.Metadata["stall_nudge"] == true {
+			systemPrompt += "\n\n" + m.Content
+			continue
+		}
 		msg := llm.Message{Role: m.Role, Content: m.Content}
 		for i, image := range sessionImagesToLLM(m.Images) {
 			if decision := screenshotDecision(m, "attachment", i); decision != "" && decision != "keep" {
@@ -130,7 +137,7 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 		Messages:              messages,
 		Tools:                 a.toolDefinitions(sess),
 		Temperature:           a.config.Temperature,
-		SystemPrompt:          a.config.SystemPrompt,
+		SystemPrompt:          systemPrompt,
 		SessionID:             sess.ID,
 		PreviousResponseID:    previousResponseID,
 		ProviderSessionCursor: providerSessionCursor,

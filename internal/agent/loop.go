@@ -25,6 +25,7 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 	totalUsage := llm.TokenUsage{}
 	emptyFinalResponseRetries := 0
 	transientUserPrompt := ""
+	stall := &stallTracker{}
 	var writeRequested atomic.Bool
 	if sess.IsAutoReadOnly() {
 		ctx = readOnlyExecutionContext(ctx, &writeRequested)
@@ -287,6 +288,7 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		if progressPersistence != nil {
 			progressPersistence.finish() // Final flush and join before modifying the live session.
 		}
+		stall.observe(a.config.StallDetector, sessionToolCalls, toolResults)
 		for i, tr := range toolResults {
 			toolResults[i] = a.compressor.AdmitToolResultWithGate(ctx, sess, tr, a.config.ToolResultMaxTokens, a.config.RelevanceGate)
 		}
@@ -359,6 +361,8 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			}
 		}
 
+		question := a.checkStall(ctx, sess, stall, step)
+
 		// Save session after each step
 		if err := a.sessionManager.Save(sess); err != nil {
 			// Silently continue on save errors
@@ -366,8 +370,14 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		}
 
 		if onEvent != nil {
+			if question != "" {
+				onEvent(Event{Type: EventAssistantDelta, Step: step, Delta: question})
+			}
 			onEvent(Event{Type: EventToolCompleted, Step: step})
 			onEvent(Event{Type: EventStepCompleted, Step: step})
+		}
+		if question != "" {
+			return question, totalUsage, nil
 		}
 	}
 }

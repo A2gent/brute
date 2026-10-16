@@ -48,6 +48,7 @@ func (s *Server) newAgentFromConfig(cfg agent.Config, client llm.Client, manager
 	}
 	cfg.ScreenshotGate = s.screenshotGate()
 	cfg.ToolSelector = s.toolSelector()
+	cfg.StallDetector = s.stallDetector()
 	return agent.NewWithCompressor(cfg, client, manager, s.sessionManager, s.contextCompressor)
 }
 

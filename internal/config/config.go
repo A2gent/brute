@@ -311,6 +311,14 @@ type JevEffortConfig struct {
 	Enabled bool `json:"enabled"`
 }
 
+// JevStallConfig opts in to periodic and repetition-triggered progress checks.
+// Zero interval/window use agent defaults (8 steps, 12 tool calls).
+type JevStallConfig struct {
+	Enabled  bool `json:"enabled"`
+	Interval int  `json:"interval,omitempty"`
+	Window   int  `json:"window,omitempty"`
+}
+
 // ToolsConfig configures tool permissions.
 type ToolsConfig struct {
 	// ScreenshotKeepLatest defaults to 2 when non-positive. User images are exempt.
@@ -319,6 +327,7 @@ type ToolsConfig struct {
 	WebRelevance          WebRelevanceConfig   `json:"web_relevance,omitempty"`
 	JevAdmission          JevAdmissionConfig   `json:"jev_admission,omitempty"`
 	JevToolsets           JevToolsetsConfig    `json:"jev_toolsets,omitempty"`
+	JevStall              JevStallConfig       `json:"jev_stall,omitempty"`
 	JevEffort             JevEffortConfig      `json:"jev_effort,omitempty"`
 	RelevanceGateDisabled bool                 `json:"relevance_gate_disabled,omitempty"`
 	// BrowserActEnabled opts in to the Jev-driven browser loop. Off by default: it is a prototype and

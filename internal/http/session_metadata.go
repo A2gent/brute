@@ -484,8 +484,8 @@ func appendSessionProviderFailure(sess *session.Session, trace *agent.ProviderTr
 		FallbackModel: strings.TrimSpace(trace.FallbackModel),
 	}
 	existing = append(existing, entry)
-	if len(existing) > 100 {
-		existing = existing[len(existing)-100:]
+	if len(existing) > storage.MaxProviderFailures {
+		existing = existing[len(existing)-storage.MaxProviderFailures:]
 	}
 	serialized := make([]map[string]interface{}, 0, len(existing))
 	for _, item := range existing {
@@ -503,7 +503,12 @@ func appendSessionProviderFailure(sess *session.Session, trace *agent.ProviderTr
 			"fallback_model": item.FallbackModel,
 		})
 	}
-	sess.Metadata[providerFailuresMetadataKey] = serialized
+	// Normalize to the same []interface{} shape as database reads, so the next
+	// failure in this run retains earlier entries instead of silently losing them.
+	bounded, err := storage.BoundProviderFailures(serialized)
+	if err == nil {
+		sess.Metadata[providerFailuresMetadataKey] = bounded
+	}
 }
 
 func sessionFallbackStartIndex(sess *session.Session, providerRef config.ProviderType) int {

@@ -98,3 +98,6 @@
 - Read workspace instructions before Git discovery: the workspace root is not a repository. Verify filenames with `file_search` instead of guessing singular/plural names before reads. Complete function-signature edits atomically before concurrent validation reads them.
 - `image_inline` can contain only a path and a provider size limit. Normalize only real base64/URL payloads; otherwise preserve the provider metadata and test that path-only images are not replaced by empty attachments.
 - `content_search.path` must be a directory (its index root), not a filename. For a single file use `grep` with the containing directory and an include pattern, or read a bounded range.
+
+- Catalog row events may deduplicate metadata-only updates when updated_at is unchanged. Advance the version timestamp and test the catalog subscription, not just the manager callback. Read workspace instructions before Git probes and discover filenames before reads.
+- Keep source snapshots under a dot/underscore-prefixed directory (or use non-Go extensions); otherwise `go test/build/vet ./...` discovers incomplete backup packages. When retiring a nullable projection, update SQL-level tests to assert NULL rather than duplicated payloads. An empty delegated reviewer response is unavailable review, not approval; perform local review.

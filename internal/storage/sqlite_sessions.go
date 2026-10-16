@@ -38,6 +38,13 @@ func (s *SQLiteStore) saveSessionMessages(sess *Session, ids []string, dirty map
 		sessionMetadata := make(map[string]interface{}, len(sess.Metadata))
 		for key, value := range sess.Metadata {
 			if key != "context_compression_store" && key != SystemPromptSnapshotMetadataKey {
+				if key == "provider_failures" {
+					var err error
+					value, err = BoundProviderFailures(value)
+					if err != nil {
+						return fmt.Errorf("bound provider failures: %w", err)
+					}
+				}
 				sessionMetadata[key] = value
 			}
 		}
@@ -48,8 +55,8 @@ func (s *SQLiteStore) saveSessionMessages(sess *Session, ids []string, dirty map
 
 		// Upsert session
 		_, err = tx.Exec(`
-				INSERT INTO sessions (id, agent_id, parent_id, job_id, project_id, title, summary, status, metadata, display_metadata, task_progress, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				INSERT INTO sessions (id, agent_id, parent_id, job_id, project_id, title, summary, status, metadata, task_progress, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT(id) DO UPDATE SET
 					parent_id = excluded.parent_id,
 					job_id = excluded.job_id,
@@ -58,10 +65,10 @@ func (s *SQLiteStore) saveSessionMessages(sess *Session, ids []string, dirty map
 					summary = excluded.summary,
 					status = excluded.status,
 					metadata = excluded.metadata,
-					display_metadata = excluded.display_metadata,
+					display_metadata = NULL,
 					task_progress = excluded.task_progress,
 					updated_at = excluded.updated_at
-			`, sess.ID, sess.AgentID, sess.ParentID, sess.JobID, sess.ProjectID, sess.Title, sess.Summary, sess.Status, metadata, metadata, sess.TaskProgress, sess.CreatedAt, sess.UpdatedAt)
+			`, sess.ID, sess.AgentID, sess.ParentID, sess.JobID, sess.ProjectID, sess.Title, sess.Summary, sess.Status, metadata, sess.TaskProgress, sess.CreatedAt, sess.UpdatedAt)
 		if err != nil {
 			return fmt.Errorf("failed to save session: %w", err)
 		}
@@ -215,8 +222,8 @@ func (s *SQLiteStore) GetSessionPageForDisplay(id string, limit int, before stri
 	return row, hasMore, nil
 }
 
-// The fallback also supports legacy importers that insert rows without a projection.
-const displaySessionMetadataSQL = "COALESCE(display_metadata, CASE WHEN json_valid(metadata) THEN json_remove(metadata, '$.context_compression_store') ELSE metadata END)"
+// Metadata is authoritative; filter legacy imports without reading stale projections.
+const displaySessionMetadataSQL = "CASE WHEN json_valid(metadata) THEN json_remove(metadata, '$.context_compression_store', '$.system_prompt_snapshot') ELSE metadata END"
 
 func (s *SQLiteStore) getSession(id, metadataSQL string, includeMessages bool, limit int, before string) (*Session, error) {
 	var sess Session

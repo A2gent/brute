@@ -26,14 +26,13 @@ func TestSaveSessionExcludesCompressionMetadata(t *testing.T) {
 	if err := store.SaveSession(row); err != nil {
 		t.Fatal(err)
 	}
-	var metadata, display string
+	var metadata string
+	var display sql.NullString
 	if err := store.db.QueryRow(`SELECT metadata, display_metadata FROM sessions WHERE id = ?`, row.ID).Scan(&metadata, &display); err != nil {
 		t.Fatal(err)
 	}
-	for _, raw := range []string{metadata, display} {
-		if strings.Contains(raw, "context_compression_store") || !strings.Contains(raw, `"provider":"test"`) {
-			t.Fatalf("bad metadata: %s", raw)
-		}
+	if display.Valid || strings.Contains(metadata, "context_compression_store") || !strings.Contains(metadata, `"provider":"test"`) {
+		t.Fatalf("bad metadata: %s; display = %v", metadata, display)
 	}
 	if row.Metadata["context_compression_store"] == nil {
 		t.Fatal("save mutated caller metadata")

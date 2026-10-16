@@ -95,5 +95,8 @@ func (s *SQLiteStore) migrateSessionCompressionEntries() error {
 		WHERE CASE WHEN json_valid(metadata) THEN json_type(metadata, '$.context_compression_store') IS NOT NULL ELSE 0 END`); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.checkpointMigrationWAL()
 }

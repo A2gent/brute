@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/storage"
 )
 
@@ -26,7 +27,8 @@ type ArchivedSessionsStore interface {
 // project_session_history it is intentionally cross-project: the review job runs
 // globally and routes findings (tasks, playbook lessons) back to each project.
 type ArchivedSessionsTool struct {
-	store ArchivedSessionsStore
+	store   ArchivedSessionsStore
+	manager *session.Manager
 }
 
 type archivedSessionsParams struct {
@@ -38,8 +40,12 @@ type archivedSessionsParams struct {
 	MaxMessages     int      `json:"max_messages,omitempty"`
 }
 
-func NewArchivedSessionsTool(store ArchivedSessionsStore) *ArchivedSessionsTool {
-	return &ArchivedSessionsTool{store: store}
+func NewArchivedSessionsTool(store ArchivedSessionsStore, managers ...*session.Manager) *ArchivedSessionsTool {
+	tool := &ArchivedSessionsTool{store: store}
+	if len(managers) > 0 {
+		tool.manager = managers[0]
+	}
+	return tool
 }
 
 func (t *ArchivedSessionsTool) Name() string {
@@ -227,7 +233,9 @@ func (t *ArchivedSessionsTool) markAnalyzed(p archivedSessionsParams) (*Result, 
 		}
 		sess.Metadata = storage.SetSessionMetadataTime(sess.Metadata, storage.SessionArchiveAnalyzedAtKey, &now)
 		// Only metadata changed; avoid rewriting the entire archived transcript.
-		if incremental, ok := t.store.(interface {
+		if t.manager != nil {
+			err = t.manager.MarkArchiveAnalyzed(id, now)
+		} else if incremental, ok := t.store.(interface {
 			SaveSessionIncremental(*storage.Session, []string, map[string]bool, func(int) storage.Message) error
 		}); ok {
 			ids := make([]string, len(sess.Messages))

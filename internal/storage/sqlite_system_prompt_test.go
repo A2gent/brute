@@ -91,11 +91,17 @@ func TestSystemPromptSnapshotPersistenceAndLazyReads(t *testing.T) {
 
 func assertSnapshotMetadataRemoved(t *testing.T, store *SQLiteStore, id string) {
 	t.Helper()
-	var metadata, display string
+	var metadata string
+	var display sql.NullString
 	if err := store.db.QueryRow(`SELECT metadata, display_metadata FROM sessions WHERE id = ?`, id).Scan(&metadata, &display); err != nil {
 		t.Fatal(err)
 	}
-	for _, raw := range []string{metadata, display} {
+	// Ordinary saves leave the legacy projection NULL; direct migration tests may
+	// still carry a legacy value, which must be stripped too.
+	for _, raw := range []string{metadata, display.String} {
+		if raw == "" && !display.Valid {
+			continue
+		}
 		if strings.Contains(raw, SystemPromptSnapshotMetadataKey) || !strings.Contains(raw, `"provider":"test"`) {
 			t.Fatalf("incorrect metadata projection: %s", raw)
 		}

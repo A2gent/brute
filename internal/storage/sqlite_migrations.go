@@ -416,6 +416,9 @@ func (s *SQLiteStore) migrate() error {
 	if err := s.migrateSessionSystemPromptSnapshots(); err != nil {
 		return fmt.Errorf("failed to migrate system prompt snapshots: %w", err)
 	}
+	if err := s.migrateCompactSessionMetadata(); err != nil {
+		return fmt.Errorf("failed to compact session metadata: %w", err)
+	}
 	if err := s.migrateBrokenTaskRefs(); err != nil {
 		return fmt.Errorf("failed to migrate broken task refs: %w", err)
 	}
@@ -693,5 +696,8 @@ func (s *SQLiteStore) migrateSessionDisplayMetadata() error {
 	if _, err := tx.Exec(`UPDATE sessions SET display_metadata = CASE WHEN json_valid(metadata) THEN json_remove(metadata, '$.context_compression_store') ELSE metadata END`); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.checkpointMigrationWAL()
 }

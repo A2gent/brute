@@ -80,5 +80,8 @@ func (s *SQLiteStore) migrateSessionSystemPromptSnapshots() error {
 		WHERE id IN (SELECT session_id FROM session_system_prompt_snapshots)`); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.checkpointMigrationWAL()
 }

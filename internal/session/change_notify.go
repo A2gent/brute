@@ -45,13 +45,29 @@ func (m *Manager) changeListener() func(Change) {
 	return m.onChange
 }
 
-// lockSession serializes commit+notify per session so listeners observe
-// changes in commit order even when several goroutines save the same session.
+type sessionWriteLock struct {
+	mu   sync.Mutex
+	refs int // Holders and waiters, guarded by Manager.writeMu.
+}
+
+// lockSession serializes commit+notify. Retire idle locks (including after Delete)
+// only when no waiter retains them, otherwise a new mutex could bypass the queue.
 func (m *Manager) lockSession(id string) func() {
-	value, _ := m.writeLocks.LoadOrStore(id, &sync.Mutex{})
-	mu := value.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock
+	m.writeMu.Lock()
+	value, _ := m.writeLocks.LoadOrStore(id, &sessionWriteLock{})
+	lock := value.(*sessionWriteLock)
+	lock.refs++
+	m.writeMu.Unlock()
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		m.writeMu.Lock()
+		lock.refs--
+		if lock.refs == 0 {
+			m.writeLocks.Delete(id)
+		}
+		m.writeMu.Unlock()
+	}
 }
 
 func (m *Manager) notify(change Change) {

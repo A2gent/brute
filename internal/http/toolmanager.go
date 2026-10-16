@@ -237,7 +237,7 @@ func (s *Server) registerServerBackedTools(manager *tools.Manager) {
 	manager.RegisterQuestionTool(s.sessionManager)
 	manager.RegisterSessionTaskProgressTool(s.sessionManager)
 	manager.Register(tools.NewProjectSessionHistoryTool(s.store))
-	manager.Register(tools.NewArchivedSessionsTool(s.store))
+	manager.Register(tools.NewArchivedSessionsTool(s.store, s.sessionManager))
 	manager.RegisterSQLQueryTool(s.store)
 	if s.config != nil {
 		openAIImageOutputDir := filepath.Join(strings.TrimSpace(s.config.DataPath), "generated", "openai")

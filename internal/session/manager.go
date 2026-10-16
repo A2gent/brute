@@ -19,6 +19,7 @@ type Manager struct {
 	store       storage.Store
 	jsonlWriter *JSONLWriter
 	writeLocks  sync.Map
+	writeMu     sync.Mutex
 	changeMu    sync.RWMutex
 	onChange    func(Change)
 }
@@ -224,6 +225,8 @@ func (m *Manager) SearchDialogueSessionIDs(query, projectID string) (map[string]
 
 // Delete deletes a session
 func (m *Manager) Delete(id string) error {
+	unlock := m.lockSession(id)
+	defer unlock()
 	removed := m.deletedSubtree(id)
 	if err := m.store.DeleteSession(id); err != nil {
 		return err

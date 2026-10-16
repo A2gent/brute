@@ -61,7 +61,13 @@ func (m *Manager) SaveMessageMetadataKey(sessionID, messageID, key string, value
 	if store, ok := m.store.(interface {
 		UpdateMessageMetadataKey(string, string, string, interface{}, time.Time) error
 	}); ok {
-		return store.UpdateMessageMetadataKey(sessionID, messageID, key, value, updatedAt)
+		unlock := m.lockSession(sessionID)
+		defer unlock()
+		if err := store.UpdateMessageMetadataKey(sessionID, messageID, key, value, updatedAt); err != nil {
+			return err
+		}
+		m.notify(Change{Kind: ChangeUpdated, ID: sessionID})
+		return nil
 	}
 	sess, err := m.Get(sessionID)
 	if err != nil {

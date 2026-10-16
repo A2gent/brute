@@ -121,6 +121,7 @@ func sqliteDSN(dbPath string) string {
 	values.Add("_pragma", "busy_timeout=30000")
 	values.Add("_pragma", "foreign_keys=ON")
 	values.Add("_pragma", "synchronous=NORMAL")
+	values.Add("_pragma", "journal_size_limit(67108864)")
 
 	u := url.URL{Scheme: "file", Path: filepath.ToSlash(dbPath)}
 	u.RawQuery = values.Encode()

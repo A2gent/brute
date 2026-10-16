@@ -91,6 +91,10 @@ func TestAutoReadOnlyRequestsSerialEscalation(t *testing.T) {
 	if !strings.Contains(fresh.Messages[len(fresh.Messages)-1].Content, "serial queue") {
 		t.Fatal("missing escalation explanation")
 	}
+	request := ag.buildRequest(context.Background(), fresh)
+	if last := request.Messages[len(request.Messages)-1]; last.Role != "tool" || len(last.ToolResults) != 1 {
+		t.Fatalf("UI notice leaked into model transcript: %+v", last)
+	}
 }
 
 func TestAutoReadOnlyNativeProvidersQueue(t *testing.T) {
@@ -144,5 +148,70 @@ func TestAutoReadOnlyQueuesBeforeNativeTransitionCompaction(t *testing.T) {
 	}
 	if sess.Status != session.StatusQueued || !sess.WriteRequested() {
 		t.Fatal("native transition was not queued")
+	}
+}
+
+// Inject from inside request_write so the live DB changes after the loop saves
+// its tool-call message but before it saves the escalation.
+type noteDuringWriteRequestTool struct {
+	requestWriteTool
+	manager *session.Manager
+	status  session.Status
+}
+
+func (t noteDuringWriteRequestTool) Execute(ctx context.Context, input json.RawMessage) (*tools.Result, error) {
+	fresh, err := t.manager.Get(ctx.Value("session_id").(string))
+	if err != nil {
+		return nil, err
+	}
+	fresh.AddUserMessageWithImagesAndMetadata("Keep the public API unchanged", nil, map[string]interface{}{"injected_during_run": true})
+	fresh.TaskProgress = "- [x] Read the API"
+	fresh.SetStatus(t.status)
+	if err := t.manager.Save(fresh); err != nil {
+		return nil, err
+	}
+	return t.requestWriteTool.Execute(ctx, input)
+}
+
+func TestAutoReadOnlyEscalationPreservesLiveState(t *testing.T) {
+	for _, status := range []session.Status{session.StatusRunning, session.StatusInputRequired, session.StatusWaitingExternal} {
+		t.Run(string(status), func(t *testing.T) {
+			store, err := storage.NewSQLiteStore(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			sm := session.NewManager(store)
+			sess, err := sm.Create("test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			sess.Metadata[session.RunModeReadOnlyKey] = true
+			sess.AddUserMessage("Analyze this")
+			mock := &MockLLM{Response: &llm.ChatResponse{ToolCalls: []llm.ToolCall{{ID: "escalate", Name: requestWriteToolName, Input: `{}`}}}}
+			manager := tools.NewManager(t.TempDir())
+			ag := New(Config{MaxSteps: 3}, mock, manager, sm)
+			manager.Register(noteDuringWriteRequestTool{manager: sm, status: status})
+			if _, _, err := ag.Run(context.Background(), sess, "Analyze this"); err != nil {
+				t.Fatal(err)
+			}
+			fresh, err := sm.Get(sess.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantStatus := status
+			if status == session.StatusRunning {
+				wantStatus = session.StatusQueued
+			}
+			if fresh.Status != wantStatus || fresh.TaskProgress != "- [x] Read the API" {
+				t.Fatalf("live state overwritten: status=%s progress=%q", fresh.Status, fresh.TaskProgress)
+			}
+			for _, msg := range fresh.Messages {
+				if msg.Role == "user" && msg.Content == "Keep the public API unchanged" && msg.Metadata["injected_during_run"] == true {
+					return
+				}
+			}
+			t.Fatal("user note injected during request_write was lost")
+		})
 	}
 }

@@ -57,7 +57,7 @@ func (a *Agent) queueReadOnlyEscalation(sess *session.Session) error {
 	sess.Metadata["queue_auto_start"] = true
 	sess.Metadata[session.RunModeWriteRequestedKey] = true
 	sess.SetStatus(session.StatusQueued)
-	sess.AddAssistantMessage("Write access requested. The session is now in the project serial queue and will resume when write access is available.", nil)
+	sess.AddAssistantMessageWithMetadata("Write access requested. The session is now in the project serial queue and will resume when write access is available.", nil, map[string]interface{}{"run_mode_notice": true})
 	return a.sessionManager.Save(sess)
 }
 

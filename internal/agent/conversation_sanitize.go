@@ -31,6 +31,10 @@ func sanitizeConversationForLLM(messages []session.Message) []session.Message {
 	out := make([]session.Message, 0, len(messages))
 
 	for _, msg := range messages {
+		// Queue notices are UI-only, not assistant prefills or compaction input.
+		if msg.Metadata["run_mode_notice"] == true {
+			continue
+		}
 		switch msg.Role {
 		case "assistant":
 			if len(msg.ToolCalls) > 0 {

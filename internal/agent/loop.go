@@ -25,6 +25,12 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 	totalUsage := llm.TokenUsage{}
 	emptyFinalResponseRetries := 0
 	transientUserPrompt := ""
+	if !sess.IsAutoReadOnly() && sess.WriteRequested() {
+		transientUserPrompt = "Write access granted. Continue the task."
+		// Keep a false override until Save so live-state merging cannot restore
+		// the pending request marker from the queue owner's saved snapshot.
+		sess.Metadata[session.RunModeWriteRequestedKey] = false
+	}
 	stall := &stallTracker{}
 	var writeRequested atomic.Bool
 	if sess.IsAutoReadOnly() {
@@ -312,16 +318,6 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			sess.UpdatedAt = time.Now()
 		}
 
-		if writeRequested.Load() {
-			if err := a.queueReadOnlyEscalation(sess); err != nil {
-				return "", totalUsage, err
-			}
-			if onEvent != nil {
-				onEvent(Event{Type: EventToolCompleted, Step: step})
-			}
-			return "", totalUsage, nil
-		}
-
 		// Merge in any user notes that were injected while tools were running
 		// before saving this step, otherwise the agent's in-memory transcript
 		// could overwrite them.
@@ -359,6 +355,16 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 				}
 				return "", totalUsage, nil
 			}
+		}
+
+		if writeRequested.Load() {
+			if err := a.queueReadOnlyEscalation(sess); err != nil {
+				return "", totalUsage, err
+			}
+			if onEvent != nil {
+				onEvent(Event{Type: EventToolCompleted, Step: step})
+			}
+			return "", totalUsage, nil
 		}
 
 		question := a.checkStall(ctx, sess, stall, step)

@@ -170,7 +170,7 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 	// Only the project queue owner may lift the read-only execution guard.
 	if sess.WriteRequested() {
 		delete(sess.Metadata, session.RunModeReadOnlyKey)
-		delete(sess.Metadata, session.RunModeWriteRequestedKey)
+		// The agent consumes the request marker to send a transient grant prompt.
 	}
 	sess.SetStatus(session.StatusRunning)
 	if err := s.sessionManager.Save(sess); err != nil {

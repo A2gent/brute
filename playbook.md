@@ -108,3 +108,5 @@
 
 - Catalog row events may deduplicate metadata-only updates when updated_at is unchanged. Advance the version timestamp and test the catalog subscription, not just the manager callback. Read workspace instructions before Git probes and discover filenames before reads.
 - Keep source snapshots under a dot/underscore-prefixed directory (or use non-Go extensions); otherwise `go test/build/vet ./...` discovers incomplete backup packages. When retiring a nullable projection, update SQL-level tests to assert NULL rather than duplicated payloads. An empty delegated reviewer response is unavailable review, not approval; perform local review.
+- Read workspace conventions before Git discovery: `/Users/artjomkurapov/git/a2gent` is a multi-repository container; run Brute Git commands from `brute/`.
+- Start even targeted Go regression runs in the background when compile time is unknown; a one-second foreground timeout kills compilation instead of yielding a test result. Record the PID, log, and exit-code file.

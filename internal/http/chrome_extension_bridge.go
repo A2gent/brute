@@ -375,6 +375,7 @@ Actions:
 - list_pages: list extension-connected pages and their page_id values
 - open_tab: open an HTTP(S) URL in a new active tab (requires url)
 - navigate: navigate the target page to an HTTP(S) URL (requires url)
+- close_tab: close the target browser tab
 - eval: execute JavaScript in the page MAIN world (requires script)
 - get_text: get visible page text
 - read_content: get page HTML
@@ -390,7 +391,7 @@ Actions:
 - get_diagnostics: fetch page, DOM, console, and network diagnostics on demand
 - screenshot: capture the visible tab through the extension
 
-Use list_pages first unless the page_id is already known. Commands require an extension-connected source page, including open_tab. open_tab and navigate use the extension tabs API, not page eval, so CSP and popup blockers do not apply. Their result confirms the tab operation, not page load. After either action, use list_pages to discover the destination page_id before reading its content.`
+Use list_pages first unless the page_id is already known. Commands require an extension-connected source page, including open_tab. open_tab, navigate and close_tab use the extension tabs API, not page eval, so CSP and popup blockers do not apply. Their results confirm the tab operation, not page load. After open_tab or navigate, use list_pages to discover the destination page_id before reading its content. close_tab removes the tab associated with the selected page_id.`
 }
 
 func (t *chromeExtensionTool) Schema() map[string]interface{} {
@@ -399,7 +400,7 @@ func (t *chromeExtensionTool) Schema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"action": map[string]interface{}{
 				"type":        "string",
-				"enum":        []string{"list_pages", "open_tab", "navigate", "eval", "get_text", "read_content", "get_interactive_elements", "click", "click_at", "move_mouse", "type", "press_key", "scroll", "get_console_logs", "get_network_logs", "get_diagnostics", "screenshot"},
+				"enum":        []string{"list_pages", "open_tab", "navigate", "close_tab", "eval", "get_text", "read_content", "get_interactive_elements", "click", "click_at", "move_mouse", "type", "press_key", "scroll", "get_console_logs", "get_network_logs", "get_diagnostics", "screenshot"},
 				"description": "Operation to perform.",
 			},
 			"page_id":      map[string]interface{}{"type": "string", "description": "Target page from list_pages. Defaults to the most recently visible extension page."},
@@ -435,7 +436,7 @@ func (t *chromeExtensionTool) Execute(ctx context.Context, params json.RawMessag
 		})
 	}
 	if !chromeExtensionAllowedAction(action) {
-		return &tools.Result{Success: false, Error: "invalid action; expected one of: list_pages, open_tab, navigate, eval, get_text, read_content, get_interactive_elements, click, click_at, move_mouse, type, press_key, scroll, get_console_logs, get_network_logs, get_diagnostics, screenshot"}, nil
+		return &tools.Result{Success: false, Error: "invalid action; expected one of: list_pages, open_tab, navigate, close_tab, eval, get_text, read_content, get_interactive_elements, click, click_at, move_mouse, type, press_key, scroll, get_console_logs, get_network_logs, get_diagnostics, screenshot"}, nil
 	}
 
 	if action == "open_tab" || action == "navigate" {
@@ -501,7 +502,7 @@ func (t *chromeExtensionTool) Execute(ctx context.Context, params json.RawMessag
 
 func chromeExtensionAllowedAction(action string) bool {
 	switch action {
-	case "open_tab", "navigate", "eval", "get_text", "read_content", "get_interactive_elements", "click", "click_at", "move_mouse", "type", "press_key", "scroll", "get_console_logs", "get_network_logs", "get_diagnostics", "screenshot":
+	case "open_tab", "navigate", "close_tab", "eval", "get_text", "read_content", "get_interactive_elements", "click", "click_at", "move_mouse", "type", "press_key", "scroll", "get_console_logs", "get_network_logs", "get_diagnostics", "screenshot":
 		return true
 	default:
 		return false

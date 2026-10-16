@@ -30,17 +30,17 @@ func TestSessionSummaryOnlyLatestPassMayWrite(t *testing.T) {
 	if sess.Summary != "Current summary" {
 		t.Fatal("stale eager summary must not be persisted or mutate the session")
 	}
-	if s.finishSessionSummary("sess", older, "stale summary", false) {
+	if s.finishSessionSummary("sess", older, "stale summary", "template", false) {
 		t.Fatal("stale summary pass must not be allowed to write")
 	}
-	if s.finishSessionSummary("sess", older, "", true) || s.sessionSummarySkipCount != 0 {
+	if s.finishSessionSummary("sess", older, "", "template", true) || s.sessionSummarySkipCount != 0 {
 		t.Fatal("stale skip must not count as a saved LLM call")
 	}
-	if !s.finishSessionSummary("sess", newer, "", false) {
+	if !s.finishSessionSummary("sess", newer, "", "template", false) {
 		t.Fatal("latest summary pass must be allowed to write")
 	}
 	next, _ := s.beginSessionSummary("sess")
-	if s.finishSessionSummary("sess", older, "", false) || !s.finishSessionSummary("sess", next, "", false) {
+	if s.finishSessionSummary("sess", older, "", "template", false) || !s.finishSessionSummary("sess", next, "", "template", false) {
 		t.Fatal("released token must not match a newer pass")
 	}
 }

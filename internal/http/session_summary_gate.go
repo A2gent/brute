@@ -10,6 +10,7 @@ import (
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/jev"
 	"github.com/A2gent/brute/internal/session"
+	"github.com/A2gent/brute/internal/storage"
 )
 
 const (
@@ -22,8 +23,9 @@ const (
 // Only successful LLM summaries are eligible for reuse. History is process-local:
 // after a restart, regenerate rather than mistaking a persisted fallback for one.
 type sessionSummaryHistory struct {
-	summary string
-	runs    int
+	summary  string
+	template string
+	runs     int
 }
 
 type sessionSummaryClassifier interface {
@@ -79,4 +81,32 @@ func sessionSummaryStillAccurate(ctx context.Context, client sessionSummaryClass
 	}
 	probability := response.Answers["accurate"].Noul
 	return probability != nil && !math.IsNaN(*probability) && *probability >= 0.8 && *probability <= 1
+}
+
+// Settings saves and prompt snapshots share a lock so even disable/re-enable
+// without a session run invalidates reuse and any in-flight summary completion.
+func (s *Server) saveSettingsWithSessionSummaryPrompt(settings, customEnv map[string]string) error {
+	s.sessionSummaryMu.Lock()
+	defer s.sessionSummaryMu.Unlock()
+	previous, err := s.store.GetSettings()
+	if err != nil {
+		return err
+	}
+	if customStore, ok := s.store.(storage.CustomEnvStore); ok {
+		err = customStore.SaveSettingsAndCustomEnv(settings, customEnv)
+	} else {
+		err = s.store.SaveSettings(settings)
+	}
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(previous[sessionSummaryPromptTemplateSettingKey]) != strings.TrimSpace(settings[sessionSummaryPromptTemplateSettingKey]) {
+		clear(s.sessionSummaryLatest)
+		for id, history := range s.sessionSummaryHistory {
+			// Keep the last successful text as fallback, but not its eligibility for reuse.
+			history.template = ""
+			s.sessionSummaryHistory[id] = history
+		}
+	}
+	return nil
 }

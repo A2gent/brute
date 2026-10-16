@@ -90,16 +90,9 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		nextCustomEnv = oldCustomEnv
 	}
 
-	if customStore, ok := s.store.(storage.CustomEnvStore); ok {
-		if err := customStore.SaveSettingsAndCustomEnv(req.Settings, nextCustomEnv); err != nil {
-			s.errorResponse(w, http.StatusInternalServerError, "Failed to save settings: "+err.Error())
-			return
-		}
-	} else {
-		if err := s.store.SaveSettings(req.Settings); err != nil {
-			s.errorResponse(w, http.StatusInternalServerError, "Failed to save settings: "+err.Error())
-			return
-		}
+	if err := s.saveSettingsWithSessionSummaryPrompt(req.Settings, nextCustomEnv); err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to save settings: "+err.Error())
+		return
 	}
 
 	syncCustomEnvToEnv(oldCustomEnv, nextCustomEnv)

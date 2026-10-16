@@ -301,3 +301,192 @@ func TestSessionSummaryRestartRegeneratesConservatively(t *testing.T) {
 		t.Fatalf("restart: llm=%d jev=%d", llmCalls.Load(), jevCalls.Load())
 	}
 }
+
+func TestSessionSummaryPromptProvenance(t *testing.T) {
+	const originalTemplate = "Summarize {{latest_assistant_message}}"
+	for _, tc := range []struct {
+		name     string
+		template string
+		disabled bool
+	}{
+		{name: "changed instructions", template: "Summarize in French: {{latest_assistant_message}}"},
+		// The rendered prompt is unchanged, but provenance belongs to the template.
+		{name: "changed template with identical rendering", template: "Summarize Initial answer"},
+		{name: "re-enabled", template: originalTemplate, disabled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, sess, jevCalls, llmCalls := newSessionSummaryGateTestServer(t, 200, `{"answers":{"accurate":{"noul":1}}}`)
+			sess = refreshSummaryAndReload(t, s, sess)
+			if tc.disabled {
+				if err := s.store.SaveSettings(map[string]string{}); err != nil {
+					t.Fatal(err)
+				}
+				sess = refreshSummaryAndReload(t, s, sess)
+				if sess.Summary != "Initial answer" || len(s.sessionSummaryHistory) != 0 || len(s.sessionSummaryLatest) != 0 {
+					t.Fatalf("disabled prompt retained provenance: summary=%q history=%+v", sess.Summary, s.sessionSummaryHistory)
+				}
+			}
+			if err := s.store.SaveSettings(map[string]string{sessionSummaryPromptTemplateSettingKey: tc.template}); err != nil {
+				t.Fatal(err)
+			}
+			sess = refreshSummaryAndReload(t, s, sess)
+			if llmCalls.Load() != 2 || jevCalls.Load() != 0 || s.sessionSummarySkipCount != 0 {
+				t.Fatalf("new prompt must regenerate without Jev: llm=%d jev=%d skips=%d", llmCalls.Load(), jevCalls.Load(), s.sessionSummarySkipCount)
+			}
+			history := s.sessionSummaryHistory[sess.ID]
+			if history.template != tc.template || history.summary != sess.Summary || history.runs != 0 {
+				t.Fatalf("successful summary lost provenance: %+v", history)
+			}
+			// New transcript content must not invalidate the unchanged template.
+			sess.AddAssistantMessage("A newer result", nil)
+			sess = refreshSummaryAndReload(t, s, sess)
+			if llmCalls.Load() != 2 || jevCalls.Load() != 1 || s.sessionSummarySkipCount != 1 {
+				t.Fatalf("unchanged template should allow reuse: llm=%d jev=%d skips=%d", llmCalls.Load(), jevCalls.Load(), s.sessionSummarySkipCount)
+			}
+		})
+	}
+}
+
+func TestSessionSummaryFailedRegenerationKeepsPromptProvenance(t *testing.T) {
+	s, sess, jevCalls, llmCalls := newSessionSummaryGateTestServer(t, 200, `{"answers":{"accurate":{"noul":1}}}`)
+	sess = refreshSummaryAndReload(t, s, sess)
+	original := s.sessionSummaryHistory[sess.ID]
+	const newTemplate = "Summarize in French: {{latest_assistant_message}}"
+	if err := s.store.SaveSettings(map[string]string{sessionSummaryPromptTemplateSettingKey: newTemplate}); err != nil {
+		t.Fatal(err)
+	}
+	failedCalls := &atomic.Int32{}
+	failed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		failedCalls.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer failed.Close()
+	provider := s.config.Providers[string(config.ProviderOpenAI)]
+	broken := provider
+	broken.BaseURL = failed.URL + "/v1"
+	s.config.Providers[string(config.ProviderOpenAI)] = broken
+	sess = refreshSummaryAndReload(t, s, sess)
+	history := s.sessionSummaryHistory[sess.ID]
+	if failedCalls.Load() == 0 || jevCalls.Load() != 0 || history.template != original.template || history.summary != original.summary || sess.Summary != original.summary || history.runs != 1 {
+		t.Fatalf("failed generation must preserve old summary and provenance: calls=%d jev=%d summary=%q history=%+v", failedCalls.Load(), jevCalls.Load(), sess.Summary, history)
+	}
+	s.config.Providers[string(config.ProviderOpenAI)] = provider
+	sess = refreshSummaryAndReload(t, s, sess)
+	if llmCalls.Load() != 2 || jevCalls.Load() != 0 || s.sessionSummaryHistory[sess.ID].template != newTemplate {
+		t.Fatalf("failed generation must retry without Jev: llm=%d jev=%d history=%+v", llmCalls.Load(), jevCalls.Load(), s.sessionSummaryHistory[sess.ID])
+	}
+}
+
+func TestSessionSummaryStalePassCannotRestorePromptProvenance(t *testing.T) {
+	s, sess, jevCalls, llmCalls := newSessionSummaryGateTestServer(t, 200, `{"answers":{"accurate":{"noul":1}}}`)
+	sess = refreshSummaryAndReload(t, s, sess)
+	original := s.sessionSummaryHistory[sess.ID]
+	older, _ := s.beginSessionSummary(sess.ID)
+	if err := s.store.SaveSettings(map[string]string{}); err != nil {
+		t.Fatal(err)
+	}
+	sess = refreshSummaryAndReload(t, s, sess)
+	if s.finishSessionSummary(sess.ID, older, "Stale summary", original.template, false) {
+		t.Fatal("stale generation must not restore disabled provenance")
+	}
+	if len(s.sessionSummaryHistory) != 0 || sess.Summary != "Initial answer" {
+		t.Fatalf("stale generation restored disabled provenance: summary=%q history=%+v", sess.Summary, s.sessionSummaryHistory)
+	}
+	if err := s.store.SaveSettings(map[string]string{sessionSummaryPromptTemplateSettingKey: original.template}); err != nil {
+		t.Fatal(err)
+	}
+	sess = refreshSummaryAndReload(t, s, sess)
+	older, _ = s.beginSessionSummary(sess.ID)
+	newer, _ := s.beginSessionSummary(sess.ID)
+	const newTemplate = "Summarize in French: {{latest_assistant_message}}"
+	if !s.finishSessionSummary(sess.ID, newer, "New summary", newTemplate, false) {
+		t.Fatal("latest generation must commit summary and provenance")
+	}
+	if s.finishSessionSummary(sess.ID, older, "Stale summary", original.template, false) || s.finishSessionSummary(sess.ID, older, "", original.template, true) {
+		t.Fatal("stale generation or skip must not overwrite new provenance")
+	}
+	fresh, err := s.sessionManager.Get(sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history := s.sessionSummaryHistory[sess.ID]
+	if fresh.Summary != "New summary" || history.summary != fresh.Summary || history.template != newTemplate || history.runs != 0 || s.sessionSummarySkipCount != 0 || llmCalls.Load() != 2 || jevCalls.Load() != 0 {
+		t.Fatalf("stale pass changed latest summary or provenance: summary=%q history=%+v", fresh.Summary, history)
+	}
+}
+
+func TestSessionSummarySavedPromptInvalidationWithoutRun(t *testing.T) {
+	const originalTemplate = "Summarize {{latest_assistant_message}}"
+	for _, tc := range []struct {
+		name     string
+		settings []map[string]string
+		wantLLM  int32
+		wantJev  int32
+	}{
+		{name: "disable and re-enable", settings: []map[string]string{{sessionSummaryPromptTemplateSettingKey: ""}, {sessionSummaryPromptTemplateSettingKey: originalTemplate}}, wantLLM: 2},
+		{name: "edit and restore", settings: []map[string]string{{sessionSummaryPromptTemplateSettingKey: "Summarize in French"}, {sessionSummaryPromptTemplateSettingKey: originalTemplate}}, wantLLM: 2},
+		{name: "unchanged prompt", settings: []map[string]string{{sessionSummaryPromptTemplateSettingKey: originalTemplate}}, wantLLM: 1, wantJev: 1},
+		{name: "unrelated setting", settings: []map[string]string{{agentNameSettingKey: "Summary test"}}, wantLLM: 1, wantJev: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, sess, jevCalls, llmCalls := newSessionSummaryGateTestServer(t, 200, `{"answers":{"accurate":{"noul":1}}}`)
+			sess = refreshSummaryAndReload(t, s, sess)
+			original := s.sessionSummaryHistory[sess.ID]
+			older, _ := s.beginSessionSummary(sess.ID)
+			for _, settings := range tc.settings {
+				body, err := json.Marshal(map[string]interface{}{"merge": true, "settings": settings})
+				if err != nil {
+					t.Fatal(err)
+				}
+				rec := httptest.NewRecorder()
+				s.handleUpdateSettings(rec, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(string(body))))
+				if rec.Code != http.StatusOK {
+					t.Fatalf("save prompt: status=%d body=%s", rec.Code, rec.Body.String())
+				}
+			}
+			if tc.wantLLM == 2 {
+				if s.finishSessionSummary(sess.ID, older, "Stale summary", original.template, false) || s.finishSessionSummary(sess.ID, older, "", original.template, true) {
+					t.Fatal("settings change must invalidate pending generation and skip tokens")
+				}
+				history := s.sessionSummaryHistory[sess.ID]
+				if history.summary != original.summary || history.template != "" {
+					t.Fatalf("save must invalidate reuse but preserve fallback text: %+v", history)
+				}
+			}
+			refreshSummaryAndReload(t, s, sess)
+			if llmCalls.Load() != tc.wantLLM || jevCalls.Load() != tc.wantJev {
+				t.Fatalf("saved prompt: llm=%d jev=%d, want %d/%d", llmCalls.Load(), jevCalls.Load(), tc.wantLLM, tc.wantJev)
+			}
+		})
+	}
+}
+
+type failingSessionSummarySettingsStore struct {
+	storage.Store
+}
+
+func (s failingSessionSummarySettingsStore) SaveSettings(map[string]string) error {
+	return errors.New("settings save failed")
+}
+
+func TestSessionSummaryFailedSettingsSaveKeepsProvenance(t *testing.T) {
+	s, sess, jevCalls, llmCalls := newSessionSummaryGateTestServer(t, 200, `{"answers":{"accurate":{"noul":1}}}`)
+	sess = refreshSummaryAndReload(t, s, sess)
+	token, original := s.beginSessionSummary(sess.ID)
+	store := s.store
+	s.store = failingSessionSummarySettingsStore{Store: store}
+	body := `{"merge":true,"settings":{"AAGENT_SESSION_SUMMARY_PROMPT_TEMPLATE":""}}`
+	rec := httptest.NewRecorder()
+	s.handleUpdateSettings(rec, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(body)))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("failed save: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if s.sessionSummaryHistory[sess.ID] != original || s.sessionSummaryLatest[sess.ID] != token {
+		t.Fatal("failed save must not invalidate successful provenance or a pending pass")
+	}
+	s.store = store
+	refreshSummaryAndReload(t, s, sess)
+	if llmCalls.Load() != 1 || jevCalls.Load() != 1 {
+		t.Fatalf("failed save must still allow reuse: llm=%d jev=%d", llmCalls.Load(), jevCalls.Load())
+	}
+}

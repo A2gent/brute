@@ -32,11 +32,14 @@ func (s *Server) refreshSessionSummaryAsync(sess *session.Session) {
 	}
 	snapshot.RefreshSummary()
 	fallbackSummary := strings.TrimSpace(snapshot.Summary)
-	prompt := s.renderSessionSummaryPrompt(&snapshot)
-	token, history := s.beginSessionSummary(sess.ID)
+	// Snapshot the prompt and start its pass atomically with save-time invalidation.
+	s.sessionSummaryMu.Lock()
+	prompt, template := s.renderSessionSummaryPrompt(&snapshot)
+	token, history := s.beginSessionSummaryLocked(sess.ID)
+	s.sessionSummaryMu.Unlock()
 	if strings.TrimSpace(prompt) == "" {
 		s.preserveSessionSummary(sess, token, fallbackSummary)
-		s.finishSessionSummary(sess.ID, token, "", false)
+		s.finishSessionSummary(sess.ID, token, "", "", false)
 		return
 	}
 	// Keep a trusted LLM summary while checking it; a skip must not leave the
@@ -52,21 +55,26 @@ func (s *Server) refreshSessionSummaryAsync(sess *session.Session) {
 		defer s.sessionSummaryWG.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), sessionSummaryTimeout)
 		defer cancel()
-		if history.summary != "" && history.runs < interval && s.canReuseSessionSummary(ctx, history.summary, &snapshot) {
-			s.finishSessionSummary(snapshot.ID, token, "", true)
+		// Semantic accuracy cannot establish compliance with a different prompt template.
+		if history.summary != "" && history.template == template && history.runs < interval && s.canReuseSessionSummary(ctx, history.summary, &snapshot) {
+			s.finishSessionSummary(snapshot.ID, token, "", template, true)
 			return
 		}
 		// Give regeneration its own budget even if the fail-open gate timed out.
 		summaryCtx, summaryCancel := context.WithTimeout(context.Background(), sessionSummaryTimeout)
 		defer summaryCancel()
 		summary := s.generateSessionSummary(summaryCtx, &snapshot, prompt)
-		s.finishSessionSummary(snapshot.ID, token, summary, false)
+		s.finishSessionSummary(snapshot.ID, token, summary, template, false)
 	}()
 }
 
 func (s *Server) beginSessionSummary(sessionID string) (uint64, sessionSummaryHistory) {
 	s.sessionSummaryMu.Lock()
 	defer s.sessionSummaryMu.Unlock()
+	return s.beginSessionSummaryLocked(sessionID)
+}
+
+func (s *Server) beginSessionSummaryLocked(sessionID string) (uint64, sessionSummaryHistory) {
 	if s.sessionSummaryLatest == nil {
 		s.sessionSummaryLatest = make(map[string]uint64)
 	}
@@ -93,18 +101,21 @@ func (s *Server) preserveSessionSummary(sess *session.Session, token uint64, sum
 
 // finishSessionSummary releases only the latest pass and commits its result
 // under the same lock, so a newer run cannot race with a stale summary write.
-func (s *Server) finishSessionSummary(sessionID string, token uint64, summary string, skipped bool) bool {
+func (s *Server) finishSessionSummary(sessionID string, token uint64, summary, template string, skipped bool) bool {
 	s.sessionSummaryMu.Lock()
 	defer s.sessionSummaryMu.Unlock()
 	if s.sessionSummaryLatest[sessionID] != token {
 		return false
 	}
 	delete(s.sessionSummaryLatest, sessionID)
-	if skipped {
+	if template == "" {
+		// Disabling the prompt invalidates provenance even if it is later re-enabled unchanged.
+		delete(s.sessionSummaryHistory, sessionID)
+	} else if skipped {
 		s.sessionSummarySkipCount++
 		logging.Info("Session summary LLM regeneration skipped: session=%s skip_count=%d", sessionID, s.sessionSummarySkipCount)
 	} else if summary != "" && s.persistSessionSummary(sessionID, summary) {
-		s.sessionSummaryHistory[sessionID] = sessionSummaryHistory{summary: summary}
+		s.sessionSummaryHistory[sessionID] = sessionSummaryHistory{summary: summary, template: template}
 	}
 	if s.sessionSummaryHistory[sessionID].summary == "" {
 		delete(s.sessionSummaryHistory, sessionID)
@@ -163,21 +174,23 @@ func (s *Server) generateSessionSummary(summaryCtx context.Context, sess *sessio
 	return session.SummaryFromContent(resp.Content)
 }
 
-func (s *Server) renderSessionSummaryPrompt(sess *session.Session) string {
+// Return the template from the same settings snapshot as the rendered prompt,
+// so a concurrent settings update cannot misattribute a successful generation.
+func (s *Server) renderSessionSummaryPrompt(sess *session.Session) (prompt, template string) {
 	if s == nil || s.store == nil || sess == nil {
-		return ""
+		return "", ""
 	}
 	settings, err := s.store.GetSettings()
 	if err != nil {
 		logging.Warn("Failed to load settings for session summary prompt: %v", err)
-		return ""
+		return "", ""
 	}
 	// Only use the extra LLM summarization pass when the user explicitly saved a
 	// summary prompt. Default templates are still exposed to Settings UI, but this
 	// avoids surprising extra provider calls on existing installs and tests.
-	template := strings.TrimSpace(settings[sessionSummaryPromptTemplateSettingKey])
+	template = strings.TrimSpace(settings[sessionSummaryPromptTemplateSettingKey])
 	if template == "" {
-		return ""
+		return "", ""
 	}
 	return renderPromptTemplate(template, map[string]string{
 		"status":                   string(sess.Status),
@@ -185,7 +198,7 @@ func (s *Server) renderSessionSummaryPrompt(sess *session.Session) string {
 		"initial_user_message":     firstSessionMessageContent(sess.Messages, "user"),
 		"latest_assistant_message": latestSessionMessageContent(sess.Messages, "assistant"),
 		"transcript":               compactSessionTranscript(sess.Messages, 10, 4000),
-	})
+	}), template
 }
 
 func firstSessionMessageContent(messages []session.Message, role string) string {

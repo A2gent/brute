@@ -48,6 +48,10 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
 		return
 	}
+	if sessionPromptEditing(sess) {
+		s.errorResponse(w, 409, "Session prompt is being edited")
+		return
+	}
 	if t := session.CurrentProviderTransition(sess); t != nil && !t.Terminal() {
 		s.errorResponse(w, 409, "Resolve the pending provider transition first")
 		return

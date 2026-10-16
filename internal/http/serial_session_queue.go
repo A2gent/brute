@@ -111,7 +111,7 @@ func (s *Server) nextSerialQueuedSession(scope string) (*session.Session, error)
 		if sess == nil || sess.Status != session.StatusQueued {
 			continue
 		}
-		if sessionIsQueuePaused(sess) {
+		if sessionIsQueuePaused(sess) || sessionPromptEditing(sess) {
 			continue
 		}
 		if !sessionIsSerialQueuedAutoRun(sess) {
@@ -152,7 +152,7 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 		logging.Warn("Serial session queue could not load session %s: %v", sessionID, err)
 		return true
 	}
-	if sess.Status != session.StatusQueued || !sessionIsSerialQueuedAutoRun(sess) || sessionIsQueuePaused(sess) {
+	if sess.Status != session.StatusQueued || !sessionIsSerialQueuedAutoRun(sess) || sessionIsQueuePaused(sess) || sessionPromptEditing(sess) {
 		return true
 	}
 

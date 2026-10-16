@@ -27,6 +27,7 @@ func (s *Server) pendingMessagesResponse(sessionID string) []PendingMessageRespo
 		item := PendingMessageResponse{ID: msg.ID, Content: msg.Content, CreatedAt: msg.CreatedAt.Format(time.RFC3339)}
 		for _, img := range msg.Images {
 			item.Images = append(item.Images, MessageImagePayload{
+				Path: img.Path, SHA256: img.SHA256, Width: img.Width, Height: img.Height,
 				Name: img.Name, MediaType: img.MediaType, DataBase64: img.DataBase64, URL: img.URL,
 			})
 		}
@@ -182,6 +183,10 @@ func (s *Server) startPendingRunLocked(sessionID string, msg *session.PendingMes
 
 	sess, err := s.sessionManager.Get(sessionID)
 	if err != nil {
+		s.pendingDrainMu.Unlock()
+		return false
+	}
+	if sessionPromptEditing(sess) {
 		s.pendingDrainMu.Unlock()
 		return false
 	}

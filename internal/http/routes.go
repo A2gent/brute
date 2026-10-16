@@ -337,6 +337,7 @@ func (s *Server) registerSessionRoutes(r chi.Router) {
 		r.Get("/{sessionID}/approval", s.handleGetSessionApproval)
 		r.Post("/{sessionID}/approval/{requestID}", s.handleSubmitSessionApproval)
 		r.Post("/{sessionID}/start", s.handleStartSession)
+		r.Post("/{sessionID}/prompt-edit", s.handleSessionPromptEdit)
 		r.Get("/{sessionID}/task-progress", s.handleGetTaskProgress)
 	})
 }

@@ -434,10 +434,21 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionID")
+	_, release, err := s.sessionManager.AcquireRun(r.Context(), sessionID)
+	if err != nil {
+		s.errorResponse(w, 409, "Session is busy")
+		return
+	}
+	defer release()
 
 	sess, err := s.sessionManager.Get(sessionID)
 	if err != nil {
 		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
+		return
+	}
+
+	if sessionPromptEditing(sess) {
+		s.errorResponse(w, 409, "Session prompt is being edited")
 		return
 	}
 

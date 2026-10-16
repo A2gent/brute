@@ -70,6 +70,12 @@ func TestRoutingConfirmationGatesManualSelection(t *testing.T) {
 func testRoutingConfirmationGatesManualSelection(t *testing.T, override string) {
 	var calls atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Read-only model discovery is allowed before confirmation; invoking the
+		// target model must still wait for approval.
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/models" {
+			w.Write([]byte(`{"models":[]}`))
+			return
+		}
 		calls.Add(1)
 		w.WriteHeader(500)
 	}))

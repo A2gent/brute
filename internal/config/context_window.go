@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/A2gent/brute/internal/llm/anthropic"
+	"github.com/A2gent/brute/internal/llm/lmstudio"
 )
 
 // ResolveContextWindow returns the effective context window for a provider/model pair.
@@ -27,6 +28,11 @@ func resolveContextWindow(def *ProviderDefinition, providerType ProviderType, pr
 	baseType := providerType
 	if def != nil {
 		baseType = def.Type
+	}
+	if baseType == ProviderLMStudio {
+		if window := lmstudio.ContextWindow(provider.BaseURL, provider.APIKey, model); window > 0 {
+			return window
+		}
 	}
 	if window := modelContextWindow(baseType, model); window > 0 {
 		return window

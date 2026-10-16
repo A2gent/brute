@@ -54,9 +54,9 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 	reasoningTokens := int(metadataNumber(sess.Metadata, "total_reasoning_tokens"))
 	currentContextTokens := int(metadataNumber(sess.Metadata, "current_context_tokens"))
 	modelContextWindow := int(metadataNumber(sess.Metadata, "context_window"))
-	if config.IsClaudeProviderRef(provider) {
-		// Re-resolve Anthropic limits for existing sessions too; historical metadata
-		// can contain the old provider-wide 200K default for aliases like "opus".
+	if config.IsClaudeProviderRef(provider) || provider == string(config.ProviderLMStudio) {
+		// Re-resolve limits for existing sessions too; historical metadata can
+		// contain provider-wide defaults instead of the model's actual limit.
 		modelContextWindow = config.ResolveContextWindowForRef(provider, s.config.Providers[config.NormalizeProviderRef(provider)], model)
 	} else if fallbackActiveProvider != "" {
 		// Older fallback-chain sessions persisted the chain-wide minimum; show the
@@ -64,6 +64,8 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		if window := s.fallbackNodeContextWindow(config.FallbackChainNode{Provider: fallbackActiveProvider, Model: fallbackActiveModel}); window > 0 {
 			modelContextWindow = window
 		}
+	} else if routedProvider == string(config.ProviderLMStudio) {
+		modelContextWindow = config.ResolveContextWindowForRef(routedProvider, s.config.Providers[routedProvider], routedModel)
 	}
 	isOutbound, targetAgentID, targetAgentName := sessionA2AOutboundMeta(sess)
 	channel, channelDetail := sessionChannel(sess)

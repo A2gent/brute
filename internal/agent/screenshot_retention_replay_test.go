@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"os"
 	"strings"
@@ -55,7 +56,7 @@ func TestScreenshotRetentionArchiveReplay(t *testing.T) {
 				}
 			}
 			lastAfter = 0
-			for _, data := range requestImageData(ag.buildRequest(sess)) {
+			for _, data := range requestImageData(ag.buildRequest(context.Background(), sess)) {
 				lastAfter += int64(len(data))
 			}
 			before, after = before+lastBefore, after+lastAfter

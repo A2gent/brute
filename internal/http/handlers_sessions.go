@@ -696,6 +696,7 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete session: "+err.Error())
 		return
 	}
+	s.forgetSessionSummaries(sessionIDsToDelete)
 
 	logging.LogSession("deleted", sessionID, "via HTTP")
 	w.WriteHeader(http.StatusNoContent)

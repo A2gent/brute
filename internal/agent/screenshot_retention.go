@@ -38,7 +38,7 @@ func screenshotDecision(message session.Message, toolCallID string, index int) s
 
 // User attachments share the image-message window but never go to the optional
 // classifier. Original payloads stay in session history for replay and recovery.
-func (a *Agent) prepareScreenshotRetention(sess *session.Session, messages []session.Message) {
+func (a *Agent) prepareScreenshotRetention(ctx context.Context, sess *session.Session, messages []session.Message) {
 	type candidate struct {
 		message int
 		key     string
@@ -125,9 +125,13 @@ func (a *Agent) prepareScreenshotRetention(sess *session.Session, messages []ses
 			if confidence <= 0 || confidence > 1 || math.IsNaN(confidence) {
 				confidence = 0.8
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			scores, err := jev.ScoreScreenshotRelevance(ctx, gate.Client, task, images, confidence)
+			gateCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			scores, err := jev.ScoreScreenshotRelevance(gateCtx, gate.Client, task, images, confidence)
 			cancel()
+			// A cancelled run must not persist fail-open "keep" decisions.
+			if ctx.Err() != nil {
+				return
+			}
 			if err == nil {
 				for i, score := range scores {
 					keep[indexes[i]] = score >= threshold

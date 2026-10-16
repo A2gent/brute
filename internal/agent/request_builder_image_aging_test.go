@@ -33,7 +33,7 @@ func TestBuildRequestImageAgingAndRecovery(t *testing.T) {
 	old := session.ImageAttachment{Name: "../../extension.png", MediaType: "image/png", DataBase64: data}
 	sess.AddUserMessageWithImages("inspect", []session.ImageAttachment{old})
 	ag := New(Config{}, nil, tools.NewManager(t.TempDir()), manager)
-	if got := requestImageData(ag.buildRequest(sess)); !reflect.DeepEqual(got, []string{data}) {
+	if got := requestImageData(ag.buildRequest(context.Background(), sess)); !reflect.DeepEqual(got, []string{data}) {
 		t.Fatalf("newest image not kept: %v", got)
 	}
 	if _, err := os.Stat(filepath.Join(folder, sess.ID, "images")); !os.IsNotExist(err) {
@@ -41,13 +41,13 @@ func TestBuildRequestImageAgingAndRecovery(t *testing.T) {
 	}
 	sess.AddAssistantMessage("first answer", nil)
 	sess.AddUserMessage("continue")
-	if got := len(requestImageData(ag.buildRequest(sess))); got != 1 {
+	if got := len(requestImageData(ag.buildRequest(context.Background(), sess))); got != 1 {
 		t.Fatalf("image aged before threshold: %d", got)
 	}
 	sess.AddAssistantMessage("second answer", nil)
 	latest := session.ImageAttachment{Name: "latest.png", MediaType: "image/png", DataBase64: data}
 	sess.AddUserMessageWithImages("new screenshot", []session.ImageAttachment{latest})
-	req := ag.buildRequest(sess)
+	req := ag.buildRequest(context.Background(), sess)
 	if got := len(requestImageData(req)); got != 1 {
 		t.Fatalf("inline images after threshold = %d, want only latest", got)
 	}
@@ -84,7 +84,7 @@ func TestBuildRequestImageAgingAndRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := ag.buildRequest(reloaded).Messages[0].Content; got != req.Messages[0].Content {
+	if got := ag.buildRequest(context.Background(), reloaded).Messages[0].Content; got != req.Messages[0].Content {
 		t.Fatalf("placeholder changed after reload: %q", got)
 	}
 }
@@ -96,17 +96,17 @@ func TestBuildRequestImageAgeCountsAnswersNotToolSteps(t *testing.T) {
 		sess.AddAssistantMessage("working", []session.ToolCall{{ID: "step", Name: "read", Input: json.RawMessage(`{}`)}})
 	}
 	ag := screenshotAgent(t, Config{ScreenshotGate: &ScreenshotGate{}})
-	if got := len(requestImageData(ag.buildRequest(sess))); got != 1 {
+	if got := len(requestImageData(ag.buildRequest(context.Background(), sess))); got != 1 {
 		t.Fatalf("tool steps expired image: %d", got)
 	}
 	sess.AddAssistantMessage("", nil) // A failed/empty response is not a completed answer.
 	sess.AddAssistantMessage("answer one", nil)
 	sess.AddAssistantMessage("  ", nil)
-	if got := len(requestImageData(ag.buildRequest(sess))); got != 1 {
+	if got := len(requestImageData(ag.buildRequest(context.Background(), sess))); got != 1 {
 		t.Fatalf("empty responses expired image before two answers: %d", got)
 	}
 	sess.AddAssistantMessage("answer two", nil)
-	req := ag.buildRequest(sess)
+	req := ag.buildRequest(context.Background(), sess)
 	if got := len(requestImageData(req)); got != 0 {
 		t.Fatalf("user image bypassed aging with Jev enabled: %d", got)
 	}
@@ -119,7 +119,7 @@ func TestBuildRequestToolImageAgesAfterAnswers(t *testing.T) {
 	sess.AddAssistantMessage("first answer", nil)
 	sess.AddAssistantMessage("second answer", nil)
 	addScreenshotStep(sess, "latest")
-	req := screenshotAgent(t, Config{}).buildRequest(sess)
+	req := screenshotAgent(t, Config{}).buildRequest(context.Background(), sess)
 	if got := requestImageData(req); !reflect.DeepEqual(got, []string{"latest"}) {
 		t.Fatalf("tool-image aging = %v", got)
 	}

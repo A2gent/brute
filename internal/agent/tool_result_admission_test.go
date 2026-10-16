@@ -129,7 +129,7 @@ func TestAdmissionAndRequestCompressionKeepBothOriginals(t *testing.T) {
 	if err := sm.Save(sess); err != nil {
 		t.Fatal(err)
 	}
-	request := ag.buildRequest(sess)
+	request := ag.buildRequest(context.Background(), sess)
 	if err := sm.Save(sess); err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestAdmissionScreenshotUsesSharedImageChannel(t *testing.T) {
 	sess.AddAssistantMessage("", []session.ToolCall{{ID: "shot", Name: "chrome_extension", Input: []byte("{}")}})
 	tr := ag.compressor.AdmitToolResult(sess, llm.ToolResult{Name: "chrome_extension", ToolCallID: "shot", Content: `{"data_url":"data:image/png;base64,YQ=="}`}, 8000)
 	sess.AddToolResult([]session.ToolResult{{Name: tr.Name, ToolCallID: tr.ToolCallID, Content: tr.Content, Metadata: tr.Metadata}})
-	request := ag.buildRequest(sess)
+	request := ag.buildRequest(context.Background(), sess)
 	if len(request.Messages) != 3 || request.Messages[2].Role != "user" || len(request.Messages[2].Images) != 1 || request.Messages[2].Images[0].DataBase64 != "YQ==" {
 		t.Fatal("missing shared screenshot image")
 	}

@@ -83,6 +83,17 @@ func sessionSummaryStillAccurate(ctx context.Context, client sessionSummaryClass
 	return probability != nil && !math.IsNaN(*probability) && *probability >= 0.8 && *probability <= 1
 }
 
+// forgetSessionSummaries drops process-local summary state of deleted sessions,
+// so the maps do not grow for the lifetime of the server.
+func (s *Server) forgetSessionSummaries(sessionIDs []string) {
+	s.sessionSummaryMu.Lock()
+	defer s.sessionSummaryMu.Unlock()
+	for _, id := range sessionIDs {
+		delete(s.sessionSummaryHistory, id)
+		delete(s.sessionSummaryLatest, id)
+	}
+}
+
 // Settings saves and prompt snapshots share a lock so even disable/re-enable
 // without a session run invalidates reuse and any in-flight summary completion.
 func (s *Server) saveSettingsWithSessionSummaryPrompt(settings, customEnv map[string]string) error {

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/jev"
@@ -54,7 +56,7 @@ func TestScreenshotRetentionLatestNImageMessages(t *testing.T) {
 			addScreenshotStep(sess, "three")
 			sess.AddUserMessageWithImages("compare", []session.ImageAttachment{{DataBase64: "user-latest-1"}, {DataBase64: "user-latest-2"}})
 			addScreenshotStep(sess, "four")
-			req := screenshotAgent(t, Config{ScreenshotKeepLatest: n}).buildRequest(sess)
+			req := screenshotAgent(t, Config{ScreenshotKeepLatest: n}).buildRequest(context.Background(), sess)
 			latest := n
 			if latest == 0 {
 				latest = 2
@@ -112,7 +114,7 @@ func TestScreenshotRetentionStickyStubSurvivesSaveAndReload(t *testing.T) {
 	addScreenshotStep(sess, "two")
 	addScreenshotStep(sess, "three")
 	ag := screenshotAgent(t, Config{})
-	first := ag.buildRequest(sess)
+	first := ag.buildRequest(context.Background(), sess)
 	prefix, _ := json.Marshal(first.Messages[:4])
 	if !bytes.Contains(prefix, []byte("[screenshot from step 1 omitted; re-capture if needed]")) {
 		t.Fatalf("no stable step stub in %s", prefix)
@@ -127,7 +129,7 @@ func TestScreenshotRetentionStickyStubSurvivesSaveAndReload(t *testing.T) {
 	// A new task and an opted-in but unavailable classifier must not re-decide.
 	sess.AddUserMessage("now inspect something else")
 	ag = screenshotAgent(t, Config{ScreenshotGate: &ScreenshotGate{}})
-	second, _ := json.Marshal(ag.buildRequest(sess).Messages[:4])
+	second, _ := json.Marshal(ag.buildRequest(context.Background(), sess).Messages[:4])
 	if !bytes.Equal(prefix, second) {
 		t.Fatalf("sticky prefix changed:\n%s\n%s", prefix, second)
 	}
@@ -193,7 +195,7 @@ func TestScreenshotRetentionJevBatchedAndSticky(t *testing.T) {
 				threshold = 0.9
 			}
 			ag := screenshotAgent(t, Config{ScreenshotGate: &ScreenshotGate{Client: jev.NewClient("test", "", server.URL), Threshold: threshold}})
-			first := ag.buildRequest(sess)
+			first := ag.buildRequest(context.Background(), sess)
 			want := count
 			if mode == "scores" || mode == "threshold_boundary" {
 				want = 3 // One relevant old image plus the latest two.
@@ -216,7 +218,7 @@ func TestScreenshotRetentionJevBatchedAndSticky(t *testing.T) {
 				t.Fatal(err)
 			}
 			sess.AddUserMessage("different task")
-			second := ag.buildRequest(sess)
+			second := ag.buildRequest(context.Background(), sess)
 			if calls != wantCalls || !reflect.DeepEqual(first.Messages, second.Messages[:len(first.Messages)]) {
 				t.Fatalf("re-decided old images: calls=%d", calls)
 			}
@@ -224,11 +226,49 @@ func TestScreenshotRetentionJevBatchedAndSticky(t *testing.T) {
 	}
 }
 
+func TestScreenshotRetentionGateHonorsRunCancellation(t *testing.T) {
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 8, 8))); err != nil {
+		t.Fatal(err)
+	}
+	data := base64.StdEncoding.EncodeToString(buf.Bytes())
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer server.Close()
+	defer close(release)
+	sess := session.New("vision")
+	sess.AddUserMessage("inspect checkout")
+	for i := 0; i < 4; i++ {
+		addScreenshotStep(sess, data)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	ag := screenshotAgent(t, Config{ScreenshotGate: &ScreenshotGate{Client: jev.NewClient("test", "", server.URL)}})
+	started := time.Now()
+	req := ag.buildRequest(ctx, sess)
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("gate ignored run cancellation: %s", elapsed)
+	}
+	if len(requestImageData(req)) != 4 {
+		t.Fatal("cancelled gate did not fail open")
+	}
+	for _, msg := range sess.Messages {
+		if msg.Metadata[screenshotRetentionMetadata] != nil {
+			t.Fatal("cancelled gate persisted retention decisions")
+		}
+	}
+}
+
 func TestScreenshotRetentionMissingJevKeepsImages(t *testing.T) {
 	sess := session.New("vision")
 	sess.AddUserMessage("inspect")
 	addScreenshotStep(sess, "one", "two", "three", "four")
-	req := screenshotAgent(t, Config{ScreenshotGate: &ScreenshotGate{}}).buildRequest(sess)
+	req := screenshotAgent(t, Config{ScreenshotGate: &ScreenshotGate{}}).buildRequest(context.Background(), sess)
 	if len(requestImageData(req)) != 4 {
 		t.Fatal("missing Jev credentials did not fail open")
 	}
@@ -242,7 +282,7 @@ func TestScreenshotRetentionPreservesPathOnlyInlineImage(t *testing.T) {
 		"image_inline": map[string]interface{}{"media_type": "image/jpeg", "path": "/camera/photo.jpg", "max_bytes": float64(2 * 1024 * 1024)},
 		"image_file":   map[string]interface{}{"path": "/camera/photo.jpg"},
 	}}})
-	req := screenshotAgent(t, Config{}).buildRequest(sess)
+	req := screenshotAgent(t, Config{}).buildRequest(context.Background(), sess)
 	if len(requestImageData(req)) != 0 {
 		t.Fatal("path-only image was normalized to an empty inline image")
 	}

@@ -32,7 +32,7 @@ func TestBuildRequestReadCacheCompaction(t *testing.T) {
 		return result.Output
 	}
 	first := read("first")
-	ag.buildRequest(sess)
+	ag.buildRequest(context.Background(), sess)
 	stub := read("repeat")
 	if !strings.Contains(stub, "unchanged since earlier read") {
 		t.Fatalf("not cached: %s", stub)
@@ -41,11 +41,11 @@ func TestBuildRequestReadCacheCompaction(t *testing.T) {
 	// storage, but no longer included in the active model conversation.
 	summary := session.Message{Role: "assistant", Content: "summary", Metadata: map[string]interface{}{messageMetadataCompaction: true}}
 	sess.Messages = append(sess.Messages[:2], append([]session.Message{summary}, sess.Messages[2:]...)...)
-	request := ag.buildRequest(sess)
+	request := ag.buildRequest(context.Background(), sess)
 	if got := request.Messages[len(request.Messages)-1].ToolResults[0].Content; got != first {
 		t.Fatalf("dangling stub not restored: %s", got)
 	}
-	request = ag.buildRequest(sess)
+	request = ag.buildRequest(context.Background(), sess)
 	if got := request.Messages[len(request.Messages)-1].ToolResults[0].Content; got != first {
 		t.Fatalf("repair not persisted: %s", got)
 	}
@@ -71,9 +71,9 @@ func TestBuildRequestReadCacheCompressedOriginal(t *testing.T) {
 	}
 	sess.AddAssistantMessage("", []session.ToolCall{{ID: "first", Name: "read", Input: params}})
 	sess.AddToolResult([]session.ToolResult{{ToolCallID: "first", Name: "read", Content: first.Output}})
-	ag.buildRequest(sess)
+	ag.buildRequest(context.Background(), sess)
 	sess.Messages[1].ToolResults[0].Content = "[brute-compressed kind=tool_result] alpha"
-	ag.buildRequest(sess)
+	ag.buildRequest(context.Background(), sess)
 	repeat, err := manager.Execute(ctx, "read", params)
 	if err != nil || repeat.Output != first.Output {
 		t.Fatalf("compressed original was cached: %+v %v", repeat, err)

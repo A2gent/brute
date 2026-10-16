@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -33,7 +34,7 @@ func TestReasoningItemsSurviveSessionReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	sess.AddUserMessage("continue")
-	req := ag.buildRequest(sess)
+	req := ag.buildRequest(context.Background(), sess)
 	found := false
 	for _, msg := range req.Messages {
 		if len(msg.ReasoningItems) > 0 {
@@ -63,7 +64,7 @@ func TestReasoningItemsAreBoundToProviderContextEpoch(t *testing.T) {
 	preserveReasoningItems(newMetadata, &llm.ChatResponse{ReasoningItems: []json.RawMessage{raw}}, sess)
 	sess.AddAssistantMessageWithImagesAndMetadata("old", nil, nil, oldMetadata)
 	sess.AddAssistantMessageWithImagesAndMetadata("new", nil, nil, newMetadata)
-	req := ag.buildRequest(sess)
+	req := ag.buildRequest(context.Background(), sess)
 	count := 0
 	for _, msg := range req.Messages {
 		if len(msg.ReasoningItems) > 0 {

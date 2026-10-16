@@ -155,7 +155,7 @@ func (a *Agent) transitionBoundary(ctx context.Context, sess *session.Session, o
 		preview.config.Model = t.Target.Model
 		preview.config.UsePreviousResponse = false
 		preview.config.UseProviderSession = false
-		request := preview.buildRequest(candidate)
+		request := preview.buildRequest(ctx, candidate)
 		t.Compaction.AfterEstimate = transitionRequestEstimate(request)
 		if window > 0 && t.Compaction.AfterEstimate+1024 > window {
 			return a.pauseTransition(sess, t, errors.New("rebuilt context exceeds target window; history preserved"), onEvent)

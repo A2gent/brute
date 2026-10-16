@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -16,7 +17,7 @@ func TestLinkedContinuationImagesReachLLMRequest(t *testing.T) {
 		{MediaType: "image/jpeg", URL: "https://example.com/screenshot.jpg"},
 	}, map[string]interface{}{"linked_context": true, "context_mode": "compact"})
 	ag := New(Config{}, nil, tools.NewManager(t.TempDir()), nil)
-	request := ag.buildRequest(sess)
+	request := ag.buildRequest(context.Background(), sess)
 	if len(request.Messages) != 1 || len(request.Messages[0].Images) != 2 {
 		t.Fatalf("linked images missing from LLM request: %#v", request.Messages)
 	}

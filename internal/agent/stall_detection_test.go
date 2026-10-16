@@ -79,7 +79,13 @@ func stallLoop(t *testing.T, detector *StallDetector, count int, repeat bool) (*
 }
 
 func stallNudges(request *llm.ChatRequest) int {
-	return strings.Count(request.SystemPrompt, "You are repeating")
+	count := 0
+	for _, message := range request.Messages {
+		if message.Role == "user" {
+			count += strings.Count(message.Content, "You are repeating")
+		}
+	}
+	return count
 }
 
 func TestStallLoopRepeatingGrepInjectsNudge(t *testing.T) {
@@ -91,8 +97,12 @@ func TestStallLoopRepeatingGrepInjectsNudge(t *testing.T) {
 	for i, request := range mock.CapturedRequests {
 		for _, message := range request.Messages {
 			if message.Role == "system" {
-				t.Fatal("system nudge must use SystemPrompt, not a provider-incompatible message role")
+				t.Fatal("nudge must not use a provider-incompatible system message role")
 			}
+		}
+		// A nudge must not change the cached system prefix of later requests.
+		if request.SystemPrompt != mock.CapturedRequests[0].SystemPrompt || strings.Contains(request.SystemPrompt, "You are repeating") {
+			t.Fatalf("request %d system prompt changed: %q", i, request.SystemPrompt)
 		}
 		if got := stallNudges(request); (i < 3 && got != 0) || (i >= 3 && got == 0) {
 			t.Fatalf("request %d nudge count=%d", i, got)

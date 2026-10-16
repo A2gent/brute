@@ -195,6 +195,9 @@ func TestArchiveSessionKeepsRunningDeepDescendantVisible(t *testing.T) {
 func TestDeleteSessionKeepsRunningDeepDescendant(t *testing.T) {
 	server, sm := newSessionArchiveTestServer(t)
 	parent, child, grandchild := buildParentChainWithRunningGrandchild(t, sm)
+	for _, id := range []string{parent.ID, child.ID, grandchild.ID} {
+		server.beginSessionSummary(id)
+	}
 
 	rec := callSessionArchiveHandler(t, server.handleDeleteSession, parent.ID)
 	if rec.Code != http.StatusNoContent {
@@ -212,5 +215,17 @@ func TestDeleteSessionKeepsRunningDeepDescendant(t *testing.T) {
 	}
 	if _, err := sm.Get(child.ID); err == nil {
 		t.Fatalf("idle child should be deleted")
+	}
+	// Process-local summary state must not outlive deleted sessions.
+	for _, id := range []string{parent.ID, child.ID} {
+		if _, ok := server.sessionSummaryHistory[id]; ok {
+			t.Fatalf("summary history kept for deleted session %s", id)
+		}
+		if _, ok := server.sessionSummaryLatest[id]; ok {
+			t.Fatalf("summary token kept for deleted session %s", id)
+		}
+	}
+	if _, ok := server.sessionSummaryHistory[grandchild.ID]; !ok {
+		t.Fatalf("surviving grandchild lost its summary history")
 	}
 }

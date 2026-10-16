@@ -70,7 +70,7 @@ func newSelectionAgent(t *testing.T, client *jev.Client) *Agent {
 
 func toolNames(a *Agent, sess *session.Session) map[string]bool {
 	out := map[string]bool{}
-	for _, def := range a.buildRequest(sess).Tools {
+	for _, def := range a.buildRequest(context.Background(), sess).Tools {
 		out[def.Name] = true
 	}
 	return out

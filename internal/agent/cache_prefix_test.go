@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -54,7 +55,7 @@ func TestBuildRequestPreservesResponsesCachePrefix(t *testing.T) {
 			var previous *prefixWire
 			check := func() {
 				t.Helper()
-				if _, err := client.Chat(t.Context(), ag.buildRequest(sess)); err != nil {
+				if _, err := client.Chat(t.Context(), ag.buildRequest(context.Background(), sess)); err != nil {
 					t.Fatal(err)
 				}
 				if previous != nil {

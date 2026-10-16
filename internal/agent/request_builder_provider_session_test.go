@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"testing"
 
 	"github.com/A2gent/brute/internal/session"
@@ -19,7 +20,7 @@ func TestBuildRequestSetsProviderSessionCursorWhenEnabled(t *testing.T) {
 	sess.AddUserMessage("follow up")
 
 	ag := New(Config{UseProviderSession: true}, nil, tools.NewManager(t.TempDir()), nil)
-	request := ag.buildRequest(sess)
+	request := ag.buildRequest(context.Background(), sess)
 
 	if request.ProviderSessionCursor != "cursor-1" {
 		t.Fatalf("ProviderSessionCursor = %q, want cursor-1", request.ProviderSessionCursor)
@@ -49,7 +50,7 @@ func TestBuildRequestOmitsProviderSessionCursorWhenIdentityMismatches(t *testing
 	sess.AddUserMessage("follow up")
 
 	ag := New(Config{UseProviderSession: true, ProviderSessionIdentity: "identity-b"}, nil, tools.NewManager(t.TempDir()), nil)
-	request := ag.buildRequest(sess)
+	request := ag.buildRequest(context.Background(), sess)
 
 	if request.ProviderSessionCursor != "" {
 		t.Fatalf("ProviderSessionCursor = %q, want empty on identity mismatch", request.ProviderSessionCursor)
@@ -73,7 +74,7 @@ func TestBuildRequestUsesProviderSessionCursorWhenIdentityMatches(t *testing.T) 
 	sess.AddUserMessage("follow up")
 
 	ag := New(Config{UseProviderSession: true, ProviderSessionIdentity: "identity-a"}, nil, tools.NewManager(t.TempDir()), nil)
-	request := ag.buildRequest(sess)
+	request := ag.buildRequest(context.Background(), sess)
 
 	if request.ProviderSessionCursor != "identity-a|cursor-1" {
 		t.Fatalf("ProviderSessionCursor = %q, want identity-bound cursor", request.ProviderSessionCursor)
@@ -91,7 +92,7 @@ func TestBuildRequestOmitsProviderSessionCursorWhenDisabled(t *testing.T) {
 	sess.AddUserMessage("hello")
 
 	ag := New(Config{UseProviderSession: false}, nil, tools.NewManager(t.TempDir()), nil)
-	request := ag.buildRequest(sess)
+	request := ag.buildRequest(context.Background(), sess)
 
 	if request.ProviderSessionCursor != "" {
 		t.Fatalf("ProviderSessionCursor = %q, want empty when disabled", request.ProviderSessionCursor)
@@ -106,7 +107,7 @@ func TestBuildRequestSetsReasoningEffort(t *testing.T) {
 	sess.AddUserMessage("hello")
 
 	ag := New(Config{ReasoningEffort: " high "}, nil, tools.NewManager(t.TempDir()), nil)
-	request := ag.buildRequest(sess)
+	request := ag.buildRequest(context.Background(), sess)
 
 	if request.ReasoningEffort != "high" {
 		t.Fatalf("ReasoningEffort = %q, want high", request.ReasoningEffort)

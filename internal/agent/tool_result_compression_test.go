@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -29,7 +30,7 @@ func TestBuildRequestPassesThroughToolResultsWhenCompressionDisabled(t *testing.
 		nil,
 		contextcompress.NewCompressor(contextcompress.Config{Enabled: true}),
 	)
-	request := ag.buildRequest(sess)
+	request := ag.buildRequest(context.Background(), sess)
 	if len(request.Messages) != 2 {
 		t.Fatalf("expected two messages, got %d", len(request.Messages))
 	}
@@ -59,7 +60,7 @@ func TestBuildRequestCompressesToolResultsWhenEnabled(t *testing.T) {
 	manager.Register(contextcompress.NewRetrieveTool(compressor))
 	ag := NewWithCompressor(Config{CompressToolResults: true}, nil, manager, nil, compressor)
 
-	request := ag.buildRequest(sess)
+	request := ag.buildRequest(context.Background(), sess)
 	if len(request.Messages) != 2 {
 		t.Fatalf("expected two messages, got %d", len(request.Messages))
 	}
@@ -100,7 +101,7 @@ func TestBuildRequestCompressionPreservesToolResultStructureAndOrder(t *testing.
 
 	compressor := contextcompress.NewCompressor(contextcompress.Config{Enabled: true})
 	ag := NewWithCompressor(Config{CompressToolResults: true}, nil, tools.NewManager(t.TempDir()), nil, compressor)
-	request := ag.buildRequest(sess)
+	request := ag.buildRequest(context.Background(), sess)
 	if len(request.Messages) != 2 {
 		t.Fatalf("expected two messages, got %d", len(request.Messages))
 	}
@@ -155,7 +156,7 @@ func TestBuildRequestProviderStructureRemainsValidForToolResults(t *testing.T) {
 		nil,
 		contextcompress.NewCompressor(contextcompress.Config{Enabled: true}),
 	)
-	request := ag.buildRequest(sess)
+	request := ag.buildRequest(context.Background(), sess)
 	if len(request.Messages) != 2 {
 		t.Fatalf("message count = %d, want 2", len(request.Messages))
 	}

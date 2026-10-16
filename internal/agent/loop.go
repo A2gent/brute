@@ -110,7 +110,7 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		// injected while the current request/tool batch was running are visible
 		// to the next LLM turn.
 		a.mergeFreshSessionState(sess)
-		request := a.buildRequest(sess)
+		request := a.buildRequest(ctx, sess)
 		if strings.TrimSpace(transientUserPrompt) != "" {
 			request.Messages = append(request.Messages, llm.Message{
 				Role:    "user",
@@ -383,7 +383,7 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 }
 
 func (a *Agent) finalizeAfterStepLimit(ctx context.Context, sess *session.Session, step int, onEvent func(Event)) (string, llm.TokenUsage, error) {
-	request := a.buildRequest(sess)
+	request := a.buildRequest(ctx, sess)
 	request.Tools = nil
 	request.Messages = append(request.Messages, llm.Message{
 		Role:    "user",

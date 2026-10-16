@@ -14,10 +14,10 @@ import (
 )
 
 // buildRequest builds a chat request from the session
-func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
+func (a *Agent) buildRequest(ctx context.Context, sess *session.Session) *llm.ChatRequest {
 	// Convert session messages to LLM messages
 	activeMessages := a.getActiveConversationMessages(sess)
-	a.prepareScreenshotRetention(sess, activeMessages)
+	a.prepareScreenshotRetention(ctx, sess, activeMessages)
 	previousResponseID := ""
 	transitioned := len(session.ProviderTransitions(sess)) > 0 && sess.Metadata["provider_context_epoch"] != nil
 	if a.config.UsePreviousResponse && !transitioned {
@@ -37,13 +37,17 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 		}
 	}
 	messages := make([]llm.Message, 0, len(activeMessages))
-	systemPrompt := a.config.SystemPrompt
 
 	for _, m := range activeMessages {
-		// Anthropic/Gemini reject system-role conversation messages. Keep the
-		// nudge in history for persistence, but send it as system instructions.
+		// Anthropic/Gemini reject system-role conversation messages. Send the
+		// nudge as user text at its chronological position: folding it into the
+		// system prompt would invalidate the whole prompt cache and keep it forever.
 		if m.Role == "system" && m.Metadata["stall_nudge"] == true {
-			systemPrompt += "\n\n" + m.Content
+			if last := len(messages) - 1; last >= 0 && messages[last].Role == "user" && len(messages[last].ToolResults) == 0 {
+				messages[last].Content += "\n\n" + m.Content
+			} else {
+				messages = append(messages, llm.Message{Role: "user", Content: m.Content})
+			}
 			continue
 		}
 		msg := llm.Message{Role: m.Role, Content: m.Content}
@@ -137,7 +141,7 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 		Messages:              messages,
 		Tools:                 a.toolDefinitions(sess),
 		Temperature:           a.config.Temperature,
-		SystemPrompt:          systemPrompt,
+		SystemPrompt:          a.config.SystemPrompt,
 		SessionID:             sess.ID,
 		PreviousResponseID:    previousResponseID,
 		ProviderSessionCursor: providerSessionCursor,

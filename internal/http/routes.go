@@ -427,6 +427,7 @@ func (s *Server) registerProjectRoutes(r chi.Router) {
 		r.Post("/{projectID}/people", s.handleCreateProjectPerson)
 		r.Put("/{projectID}/people", s.handleSaveProjectPerson)
 		r.Put("/{projectID}/people/telegram-link", s.handleLinkProjectPersonTelegram)
+		r.Put("/{projectID}/people/linkedin-sync", s.handleSyncProjectPersonLinkedIn)
 
 		r.Get("/{projectID}/tasks", s.handleListProjectTasks)
 		r.Post("/{projectID}/tasks", s.handleCreateProjectTask)

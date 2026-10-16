@@ -265,6 +265,14 @@ func (s *Server) createBaseLLMClientForSession(providerType config.ProviderType,
 	if config.IsClaudeProviderRef(string(providerType)) {
 		opts := s.claudecliOptionsForRef(string(providerType))
 		opts.WorkDir = s.resolveSessionWorkDir(sess)
+		// The CLI's own Bash tool must see the worktree slot env too (isolated tests, ports).
+		if wt := s.sessionWorktree(sess); wt != nil {
+			base := opts.Environment
+			if len(base) == 0 {
+				base = os.Environ()
+			}
+			opts.Environment = append(append([]string{}, base...), s.sessionWorktreeEnv(wt)...)
+		}
 		return claudecli.NewClientWithOptions(modelName, opts), nil
 	}
 	if providerType == config.ProviderKimiCLI {

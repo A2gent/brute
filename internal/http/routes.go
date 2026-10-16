@@ -326,6 +326,7 @@ func (s *Server) registerSessionRoutes(r chi.Router) {
 		r.Post("/{sessionID}/archive", s.handleArchiveSession)
 		r.Post("/{sessionID}/convert-to-task", s.handleConvertSessionToTask)
 		r.Post("/{sessionID}/unarchive", s.handleUnarchiveSession)
+		r.Post("/{sessionID}/worktree/handoff", s.handleSessionWorktreeHandoff)
 		r.Post("/{sessionID}/chat", s.handleChat)
 		r.Post("/{sessionID}/chat/stream", s.handleChatStream)
 		r.Post("/{sessionID}/inject", s.handleInjectSessionMessage)

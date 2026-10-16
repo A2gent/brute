@@ -27,7 +27,9 @@ type CreateSessionRequest struct {
 	UnifiedAgentID string `json:"unified_agent_id,omitempty"`
 	DockerAgentID  string `json:"docker_agent_id,omitempty"`
 	// Optional team launch target. When set, create a team_run header for the parent session.
-	TeamID    string                 `json:"team_id,omitempty"`
+	TeamID string `json:"team_id,omitempty"`
+	// Optional branch for the session worktree (worktree-enabled projects); defaults to a2gent/<session-short-id>.
+	Branch    string                 `json:"branch,omitempty"`
 	Queued    bool                   `json:"queued,omitempty"`     // If true, create session without starting it
 	QueueMode string                 `json:"queue_mode,omitempty"` // "serial" queues, "now" starts immediately, "auto" classifies task effects.
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
@@ -107,6 +109,7 @@ type SessionResponse struct {
 	A2ATargetAgentID   string                   `json:"a2a_target_agent_id,omitempty"`
 	A2ATargetAgentName string                   `json:"a2a_target_agent_name,omitempty"`
 	RunModeDecision    *session.RunModeDecision `json:"run_mode_decision,omitempty"`
+	Worktree           *SessionWorktreePayload  `json:"worktree,omitempty"`
 }
 
 type ProviderFailurePayload struct {

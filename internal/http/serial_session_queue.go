@@ -2,15 +2,20 @@ package http
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
+	"github.com/A2gent/brute/internal/storage"
 )
 
 const serialQueueGlobalScope = "__global__"
+
+const serialQueueWorktreeRetryDelay = 3 * time.Second
 
 // Project setting that raises how many queued sessions may run at once within a project.
 const (
@@ -250,6 +255,28 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 			return true
 		}
 		return true
+	}
+
+	// The worktree is created only now, at start time. With all slots taken the session stays
+	// queued; this worker waits (keeping FIFO order) and retries until a slot is freed.
+	if sess.ProjectID != nil && (sess.ParentID == nil || *sess.ParentID == "") && s.sessionWorktree(sess) == nil {
+		if err := s.createSessionWorktree(sess.ID, *sess.ProjectID, ""); err != nil {
+			if errors.Is(err, storage.ErrNoFreeWorktreeSlot) {
+				select {
+				case <-ctx.Done():
+					return false
+				case <-time.After(serialQueueWorktreeRetryDelay):
+				}
+				return true
+			}
+			logging.Warn("Serial session queue could not create worktree for %s: %v", sess.ID, err)
+			sess.AddAssistantMessage("Queued session could not start: failed to create worktree: "+err.Error(), nil)
+			sess.SetStatus(session.StatusFailed)
+			if saveErr := s.sessionManager.Save(sess); saveErr != nil {
+				logging.Warn("Serial session queue failed to mark session %s failed: %v", sess.ID, saveErr)
+			}
+			return true
+		}
 	}
 
 	// Only the project queue owner may lift the read-only execution guard.

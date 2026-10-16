@@ -99,6 +99,9 @@ func (s *Server) resolveSessionWorkDir(sess *session.Session) string {
 	if projectID == "" {
 		return defaultDir
 	}
+	if wt := s.sessionWorktree(sess); wt != nil {
+		return wt.Path
+	}
 
 	project, err := s.store.GetProject(projectID)
 	if err != nil {
@@ -191,6 +194,9 @@ func (s *Server) toolManagerForSession(sess *session.Session) *tools.Manager {
 
 	if sess != nil {
 		s.registerBrowserSessionTool(sess.ID, manager)
+	}
+	if wt := s.sessionWorktree(sess); wt != nil {
+		manager.Register(tools.NewBashToolWithEnv(workDir, s.sessionWorktreeEnv(wt)))
 	}
 
 	for toolName := range disabledTools {

@@ -71,8 +71,9 @@ func (s *Server) resolveBranchTaskDocSection(sess *session.Session, _ string, bl
 		return "", "", 0, "Session project has no folder."
 	}
 
-	projectRoot := absoluteCleanPath(strings.TrimSpace(*project.Folder), strings.TrimSpace(s.config.WorkDir))
-	branch, err := currentGitBranch(projectRoot)
+	// The branch comes from the session cwd (its worktree, if any); the docs directory
+	// below does not, so worktree sessions read the docs of the main project folder.
+	branch, err := currentGitBranch(s.resolveSessionWorkDir(sess))
 	if err != nil {
 		return "", "", 0, "Failed to resolve current git branch: " + err.Error()
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ const (
 // BashTool executes shell commands
 type BashTool struct {
 	workDir string
+	env     []string // extra KEY=VALUE pairs on top of the server environment
 }
 
 // BashParams defines parameters for the bash tool
@@ -32,6 +34,12 @@ type BashParams struct {
 // NewBashTool creates a new bash tool
 func NewBashTool(workDir string) *BashTool {
 	return &BashTool{workDir: workDir}
+}
+
+// NewBashToolWithEnv creates a bash tool whose commands also see env, e.g. the
+// worktree slot variables of a session working in a git worktree.
+func NewBashToolWithEnv(workDir string, env []string) *BashTool {
+	return &BashTool{workDir: workDir, env: env}
 }
 
 func (t *BashTool) Name() string {
@@ -97,6 +105,9 @@ func (t *BashTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 	// Execute command
 	cmd := exec.CommandContext(ctx, "bash", "-c", p.Command)
 	cmd.Dir = workDir
+	if len(t.env) > 0 {
+		cmd.Env = append(os.Environ(), t.env...)
+	}
 	configureBashProcess(cmd)
 	// A child can inherit the output pipes even after Bash exits, or escape its
 	// process group. Bound pipe draining so neither case can stall the agent.

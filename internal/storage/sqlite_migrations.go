@@ -390,6 +390,19 @@ func (s *SQLiteStore) migrate() error {
 				id TEXT PRIMARY KEY,
 				seeded_at TIMESTAMP NOT NULL
 			)`,
+		// A table instead of session metadata so slot allocation is one atomic INSERT.
+		`CREATE TABLE IF NOT EXISTS session_worktrees (
+				session_id TEXT PRIMARY KEY,
+				project_id TEXT NOT NULL,
+				path TEXT NOT NULL,
+				branch TEXT NOT NULL,
+				base_ref TEXT NOT NULL,
+				slot INTEGER NOT NULL,
+				created_at TIMESTAMP NOT NULL,
+				FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+				FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+			)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_session_worktrees_project_slot ON session_worktrees(project_id, slot)`,
 	}
 
 	for _, m := range migrations {

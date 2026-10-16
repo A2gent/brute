@@ -109,6 +109,10 @@ func (s *Server) setSessionArchived(w http.ResponseWriter, sessionID string, arc
 			if sessionArchivedAt(sess) != nil {
 				continue
 			}
+			if err := s.teardownSessionWorktree(sess.ID); err != nil {
+				s.errorResponse(w, http.StatusConflict, err.Error())
+				return
+			}
 			sess.Metadata = storage.SetSessionMetadataTime(sess.Metadata, storage.SessionArchivedAtKey, &now)
 		} else {
 			sess.Metadata = storage.SetSessionMetadataTime(sess.Metadata, storage.SessionArchivedAtKey, nil)

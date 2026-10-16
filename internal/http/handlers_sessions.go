@@ -383,6 +383,20 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		if err := s.sessionManager.Save(sess); err != nil {
 			logging.Warn("Failed to persist session project metadata: %v", err)
 		}
+		// Child sessions reuse the worktree of their parent (see sessionWorktree).
+		// Queued serial sessions get theirs when the queue starts them (runSerialQueuedSession),
+		// so a full set of slots makes them wait instead of failing the creation.
+		if req.ParentID == "" && !(req.Queued && sessionIsSerialQueuedAutoRun(sess)) {
+			if err := s.createSessionWorktree(sess.ID, req.ProjectID, strings.TrimSpace(req.Branch)); err != nil {
+				_ = s.sessionManager.Delete(sess.ID)
+				status := http.StatusBadRequest
+				if errors.Is(err, storage.ErrNoFreeWorktreeSlot) {
+					status = http.StatusConflict
+				}
+				s.errorResponse(w, status, "Failed to create session worktree: "+err.Error())
+				return
+			}
+		}
 	}
 	if linkedTask != nil {
 		if _, err := s.store.UpdateTask(req.ProjectID, linkedTask.ID, storage.TaskUpdate{SessionID: &sess.ID}); err != nil {
@@ -669,6 +683,12 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	for _, id := range sessionIDsToDelete {
 		s.cancelActiveSessionRuns(id)
 		s.closeBrowserPageForSession(id)
+	}
+	for _, id := range sessionIDsToDelete {
+		if err := s.teardownSessionWorktree(id); err != nil {
+			s.errorResponse(w, http.StatusConflict, err.Error())
+			return
+		}
 	}
 
 	sess, err := s.sessionManager.Get(sessionID)

@@ -36,14 +36,15 @@ func screenshotDecision(message session.Message, toolCallID string, index int) s
 	return decision
 }
 
-// Only screenshots age out. User attachments (including the latest user message)
-// never consume this window and are never sent to the optional classifier.
+// User attachments share the image-message window but never go to the optional
+// classifier. Original payloads stay in session history for replay and recovery.
 func (a *Agent) prepareScreenshotRetention(sess *session.Session, messages []session.Message) {
 	type candidate struct {
 		message int
 		key     string
 		step    int
 		image   llm.Image
+		user    bool
 	}
 	originals := make(map[string]*session.Message, len(sess.Messages))
 	steps := make(map[string]int, len(sess.Messages))
@@ -55,20 +56,38 @@ func (a *Agent) prepareScreenshotRetention(sess *session.Session, messages []ses
 		}
 		originals[msg.ID], steps[msg.ID] = msg, step
 	}
+	ages := imageAnswerAges(sess.Messages)
 	var screenshots []candidate
+	var imageMessages []int
 	for mi, msg := range messages {
+		before := len(screenshots)
+		if msg.Role == "user" {
+			for i, img := range sessionImagesToLLM(msg.Images) {
+				screenshots = append(screenshots, candidate{mi, screenshotKey("attachment", i), steps[msg.ID], img, true})
+			}
+		}
 		for _, tr := range msg.ToolResults {
 			for i, img := range toolScreenshotImages(tr.Metadata) {
-				screenshots = append(screenshots, candidate{mi, screenshotKey(tr.ToolCallID, i), steps[msg.ID], img})
+				screenshots = append(screenshots, candidate{mi, screenshotKey(tr.ToolCallID, i), steps[msg.ID], img, false})
 			}
+		}
+		if len(screenshots) > before {
+			imageMessages = append(imageMessages, mi)
 		}
 	}
 	keepLatest := a.config.ScreenshotKeepLatest
 	if keepLatest <= 0 {
 		keepLatest = DefaultScreenshotKeepLatest
 	}
+	firstKeptMessage := 0
+	if len(imageMessages) > keepLatest {
+		firstKeptMessage = imageMessages[len(imageMessages)-keepLatest]
+	}
 	var older []candidate
-	for _, image := range screenshots[:max(0, len(screenshots)-keepLatest)] {
+	for _, image := range screenshots {
+		if image.message >= firstKeptMessage && ages[messages[image.message].ID] < imageAnswerLimit {
+			continue
+		}
 		msg := &messages[image.message]
 		if original := originals[msg.ID]; original != nil {
 			if original.Metadata == nil {
@@ -88,15 +107,17 @@ func (a *Agent) prepareScreenshotRetention(sess *session.Session, messages []ses
 	if gate := a.config.ScreenshotGate; gate != nil {
 		// Fail open for missing credentials, unsafe task text, invalid images,
 		// timeouts and partial batches. Persist that outcome too, without retries.
-		for i := range keep {
-			keep[i] = true
+		var indexes []int
+		var images []llm.Image
+		for i, image := range older {
+			if !image.user {
+				keep[i] = true
+				indexes = append(indexes, i)
+				images = append(images, image.image)
+			}
 		}
 		task := contextcompress.RelevanceTask(sess)
-		if task != "" && jev.SafeEgressText(task, gate.Secrets) {
-			images := make([]llm.Image, len(older))
-			for i := range older {
-				images[i] = older[i].image
-			}
+		if len(images) > 0 && task != "" && jev.SafeEgressText(task, gate.Secrets) {
 			threshold, confidence := gate.Threshold, gate.MinConfidence
 			if threshold <= 0 || threshold > 1 || math.IsNaN(threshold) {
 				threshold = 0.5
@@ -109,7 +130,7 @@ func (a *Agent) prepareScreenshotRetention(sess *session.Session, messages []ses
 			cancel()
 			if err == nil {
 				for i, score := range scores {
-					keep[i] = score >= threshold
+					keep[indexes[i]] = score >= threshold
 				}
 			}
 		}
@@ -126,7 +147,8 @@ func (a *Agent) prepareScreenshotRetention(sess *session.Session, messages []ses
 		}
 		decision := "keep"
 		if !keep[i] {
-			decision = fmt.Sprintf("[screenshot from step %d omitted; re-capture if needed]", image.step)
+			fallback := fmt.Sprintf("[screenshot from step %d omitted; re-capture if needed]", image.step)
+			decision = a.imageOmission(sess, image.image, fallback)
 		}
 		decisions[image.key] = decision
 		sess.MarkMessageChanged(msg.ID)

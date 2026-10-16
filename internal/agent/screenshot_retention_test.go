@@ -45,7 +45,7 @@ func screenshotAgent(t *testing.T, cfg Config) *Agent {
 	return New(cfg, nil, tools.NewManager(t.TempDir()), nil)
 }
 
-func TestScreenshotRetentionLatestNAndUserImages(t *testing.T) {
+func TestScreenshotRetentionLatestNImageMessages(t *testing.T) {
 	for _, n := range []int{0, 1, 3, 10} {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			sess := session.New("vision")
@@ -59,10 +59,12 @@ func TestScreenshotRetentionLatestNAndUserImages(t *testing.T) {
 			if latest == 0 {
 				latest = 2
 			}
-			screenshots := []string{"one", "two", "three", "four"}
-			want := map[string]bool{"user-old": true, "user-latest-1": true, "user-latest-2": true}
-			for _, data := range screenshots[max(0, len(screenshots)-latest):] {
-				want[data] = true
+			groups := [][]string{{"user-old"}, {"one", "two"}, {"three"}, {"user-latest-1", "user-latest-2"}, {"four"}}
+			want := map[string]bool{}
+			for _, group := range groups[max(0, len(groups)-latest):] {
+				for _, data := range group {
+					want[data] = true
+				}
 			}
 			got := map[string]bool{}
 			for _, data := range requestImageData(req) {
@@ -80,7 +82,7 @@ func TestScreenshotRetentionLatestNAndUserImages(t *testing.T) {
 					}
 				}
 			}
-			if stubCount != max(0, 4-latest) {
+			if stubCount != 7-len(want) {
 				t.Fatalf("stubs = %d", stubCount)
 			}
 			if len(sess.Messages[2].ToolResults[0].Metadata["admission_images"].([]interface{})) != 2 {
@@ -107,7 +109,8 @@ func TestScreenshotRetentionStickyStubSurvivesSaveAndReload(t *testing.T) {
 	if err := sm.Save(sess); err != nil {
 		t.Fatal(err)
 	}
-	addScreenshotStep(sess, "two", "three")
+	addScreenshotStep(sess, "two")
+	addScreenshotStep(sess, "three")
 	ag := screenshotAgent(t, Config{})
 	first := ag.buildRequest(sess)
 	prefix, _ := json.Marshal(first.Messages[:4])

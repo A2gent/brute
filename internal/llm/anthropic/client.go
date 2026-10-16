@@ -277,12 +277,12 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	reqBody := anthropicRequest{
 		Model:       model,
 		Messages:    messages,
-		System:      c.transformSystemPrompt(request.SystemPrompt),
 		MaxTokens:   maxTokens,
 		Temperature: request.Temperature,
 		Tools:       tools,
 	}
 
+	c.applyPromptCaching(&reqBody, request.SystemPrompt)
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
@@ -329,10 +329,7 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	// Convert response
 	response := &llm.ChatResponse{
 		StopReason: anthroResp.StopReason,
-		Usage: llm.TokenUsage{
-			InputTokens:  anthroResp.Usage.InputTokens,
-			OutputTokens: anthroResp.Usage.OutputTokens,
-		},
+		Usage:      anthroResp.Usage.tokenUsage(),
 	}
 
 	// Extract content and tool calls
@@ -410,12 +407,12 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	reqBody := anthropicRequest{
 		Model:       model,
 		Messages:    messages,
-		System:      c.transformSystemPrompt(request.SystemPrompt),
 		MaxTokens:   maxTokens,
 		Temperature: request.Temperature,
 		Tools:       tools,
 		Stream:      true,
 	}
+	c.applyPromptCaching(&reqBody, request.SystemPrompt)
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
@@ -484,8 +481,11 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 
 		switch currentEvent {
 		case "message_start":
-			result.Usage.InputTokens = ev.Usage.InputTokens
-			result.Usage.OutputTokens = ev.Usage.OutputTokens
+			usage := ev.Message.Usage
+			if usage == (anthropicUsage{}) {
+				usage = ev.Usage // Also accept legacy compatible endpoints.
+			}
+			result.Usage = usage.tokenUsage()
 			if onEvent != nil {
 				if err := onEvent(llm.StreamEvent{Type: llm.StreamEventUsage, Usage: result.Usage}); err != nil {
 					return nil, err
@@ -533,9 +533,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 				result.StopReason = ev.Delta.StopReason
 			}
 			if ev.Usage.OutputTokens > 0 || ev.Usage.InputTokens > 0 {
-				if ev.Usage.InputTokens > 0 {
-					result.Usage.InputTokens = ev.Usage.InputTokens
-				}
+				// Input (including cache reads/writes) was reported at message_start.
 				result.Usage.OutputTokens = ev.Usage.OutputTokens
 				if onEvent != nil {
 					if err := onEvent(llm.StreamEvent{Type: llm.StreamEventUsage, Usage: result.Usage}); err != nil {

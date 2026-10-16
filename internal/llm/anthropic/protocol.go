@@ -4,7 +4,7 @@ package anthropic
 type anthropicRequest struct {
 	Model       string             `json:"model"`
 	Messages    []anthropicMessage `json:"messages"`
-	System      string             `json:"system,omitempty"`
+	System      []contentBlock     `json:"system,omitempty"`
 	MaxTokens   int                `json:"max_tokens"`
 	Temperature float64            `json:"temperature,omitempty"`
 	Tools       []anthropicTool    `json:"tools,omitempty"`
@@ -16,22 +16,28 @@ type anthropicMessage struct {
 	Content interface{} `json:"content"` // string or []contentBlock
 }
 
+type cacheControl struct {
+	Type string `json:"type"`
+}
+
 type contentBlock struct {
-	Type      string `json:"type"`
-	Text      string `json:"text,omitempty"`
-	Source    any    `json:"source,omitempty"`
-	ID        string `json:"id,omitempty"`
-	Name      string `json:"name,omitempty"`
-	Input     any    `json:"input,omitempty"`
-	ToolUseID string `json:"tool_use_id,omitempty"`
-	Content   any    `json:"content,omitempty"`
-	IsError   bool   `json:"is_error,omitempty"`
+	CacheControl *cacheControl `json:"cache_control,omitempty"`
+	Type         string        `json:"type"`
+	Text         string        `json:"text,omitempty"`
+	Source       any           `json:"source,omitempty"`
+	ID           string        `json:"id,omitempty"`
+	Name         string        `json:"name,omitempty"`
+	Input        any           `json:"input,omitempty"`
+	ToolUseID    string        `json:"tool_use_id,omitempty"`
+	Content      any           `json:"content,omitempty"`
+	IsError      bool          `json:"is_error,omitempty"`
 }
 
 type anthropicTool struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	InputSchema map[string]interface{} `json:"input_schema"`
+	CacheControl *cacheControl          `json:"cache_control,omitempty"`
+	Name         string                 `json:"name"`
+	Description  string                 `json:"description"`
+	InputSchema  map[string]interface{} `json:"input_schema"`
 }
 
 type anthropicResponse struct {
@@ -42,10 +48,7 @@ type anthropicResponse struct {
 	Model        string         `json:"model"`
 	StopReason   string         `json:"stop_reason"`
 	StopSequence *string        `json:"stop_sequence"`
-	Usage        struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
-	} `json:"usage"`
+	Usage        anthropicUsage `json:"usage"`
 }
 
 type anthropicError struct {
@@ -54,12 +57,12 @@ type anthropicError struct {
 }
 
 type anthropicStreamEvent struct {
-	Type  string `json:"type"`
-	Index int    `json:"index"`
-	Usage struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
-	} `json:"usage"`
+	Type    string         `json:"type"`
+	Index   int            `json:"index"`
+	Usage   anthropicUsage `json:"usage"`
+	Message struct {
+		Usage anthropicUsage `json:"usage"`
+	} `json:"message"`
 	ContentBlock struct {
 		Type string `json:"type"`
 		ID   string `json:"id"`

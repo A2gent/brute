@@ -9,6 +9,7 @@ import (
 	"github.com/A2gent/brute/internal/contextcompress"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/claudecli"
+	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 )
 
@@ -38,10 +39,13 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 	messages := make([]llm.Message, 0, len(activeMessages))
 
 	for _, m := range activeMessages {
-		msg := llm.Message{
-			Role:    m.Role,
-			Content: m.Content,
-			Images:  sessionImagesToLLM(m.Images),
+		msg := llm.Message{Role: m.Role, Content: m.Content}
+		for i, image := range sessionImagesToLLM(m.Images) {
+			if decision := screenshotDecision(m, "attachment", i); decision != "" && decision != "keep" {
+				msg.Content += "\n" + decision
+			} else {
+				msg.Images = append(msg.Images, image)
+			}
 		}
 
 		epoch, _ := sess.Metadata["provider_context_epoch"].(string)
@@ -173,6 +177,11 @@ func (a *Agent) buildRequest(sess *session.Session) *llm.ChatRequest {
 		}
 	}
 	a.admitExpandedRequestResults(sess, request)
+	inlineImages := 0
+	for _, msg := range request.Messages {
+		inlineImages += len(msg.Images)
+	}
+	logging.Debug("Image retention: session=%s inline_images=%d", sess.ID, inlineImages)
 	return request
 }
 

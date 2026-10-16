@@ -241,14 +241,22 @@ sends roughly 40% of the previous tool-list tokens; each enabled group adds its 
 `internal/agent/screenshot_retention.go` now bounds the screenshots reattached by
 `internal/agent/request_builder.go`. This is independent of text admission/compression:
 
-- Keep the latest **2 tool screenshots** by default. Set `tools.screenshot_keep_latest`
-  to a positive integer to change the window; non-positive values use 2.
-- User-attached images are exempt, including **every attachment in the latest user
-  message**. Older user attachments are also preserved rather than silently losing
-  reference material. They do not consume the screenshot window.
-- When an older tool screenshot first leaves the window, replace its outgoing image
-  with `[screenshot from step K omitted; re-capture if needed]`. Original image data
-  stays in the session. Multiple screenshots in one tool result count individually.
+- Keep images in the latest **2 user/tool image-bearing messages** by default. Set
+  `tools.screenshot_keep_latest` to a positive integer to change the message window;
+  non-positive values use 2. All attachments in a retained message stay together.
+- Images also age out after **2 completed assistant answers** following the image.
+  Intermediate tool-call messages and empty/failed assistant responses do not count.
+  This bounds resends even when an extension screenshot is followed only by text.
+- User attachments now participate in aging, but are never sent to the optional
+  screenshot relevance classifier. Jev routing and its image resizing are unchanged.
+- At omission time, valid inline screenshots are saved under
+  `<sessions-folder>/<session-id>/images/<content-hash>.<ext>` with private permissions.
+  The outgoing image is replaced by
+  `[screenshot omitted from context: <name>, saved at <absolute-path>]`.
+  `read` can reopen PNG, JPEG, GIF and WebP images up to 20 MiB through the native
+  image channel. Originals also stay in session history. If session-file persistence
+  is disabled or saving fails, the fallback says to re-capture instead of claiming
+  a file was saved. Already-decided images do not get decoded/saved every request.
 - Decisions live in the owning message's `metadata.screenshot_retention`, keyed by
   tool-call ID / image index. Historical messages are marked dirty for incremental
   SQLite saves. Both `keep` and the exact omission stub survive reloads, new tasks,
@@ -323,3 +331,34 @@ For archives already containing inline `admission_images`, omit
 unit tests cover window sizes, multi-image results, user attachments, stable stubs,
 incremental save/reload, batched Jev decisions, sticky fail-open outcomes including
 partial-batch failure, and path-only provider attachments.
+
+### Anthropic API prefix caching and verification
+
+Both `Chat` and `ChatStream` set `cache_control: {"type":"ephemeral"}` on
+three breakpoints: the last tool definition, the system text block, and the last
+non-empty input message's final content block. Absent sections do not consume a
+breakpoint. This covers retained image blocks as well as text/tool-result prefixes,
+uses Anthropic's default five-minute TTL, and stays below its four-breakpoint cap.
+Cache availability still depends on model minimum-prefix size and an exact prefix
+match; image aging can invalidate a conversation prefix once at the transition.
+
+Cache usage is read from the normal response or nested SSE `message_start.message.usage`.
+`InputTokens` includes uncached input, cache creation and cache reads;
+`CachedInputTokens` reports the cache-read subset. Debug logs expose both
+`Anthropic prompt cache: read_tokens=... creation_tokens=... uncached_tokens=...`
+and `Image retention: session=... inline_images=...` without logging image bytes.
+
+Verification:
+
+1. Run `go test ./internal/agent/... ./internal/llm/... ./internal/tools` from `brute/`.
+2. With the rebuilt server, create a session from the Chrome extension with a
+   screenshot, then get two completed answers with text-only follow-ups. The old
+   screenshot should leave the next request (`inline_images=0` if no other images).
+3. Attach a new screenshot. Confirm `inline_images=1`, the earlier screenshot has a
+   saved-path placeholder, and `read` on that path returns a native image.
+4. On the Anthropic API provider, continue within five minutes using a sufficiently
+   long unchanged prefix. Check `read_tokens>0` in the prompt-cache log. Short
+   prefixes or the first request may legitimately show no cache hit.
+
+The archived replay table above is a historical tool-only latest-two baseline,
+not a new token-cost or cache-hit measurement for the attachment/answer aging policy.

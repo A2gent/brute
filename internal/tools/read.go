@@ -50,7 +50,8 @@ Use offset and limit for reading specific sections of large files.
 Use start_line and end_line for exact 1-based range reads.
 Set include_line_numbers=true to prefix each line with its 1-based line number.
 Unchanged repeat reads return a reference to an earlier full result still in context.
-Set force=true to always return the full body.`
+Set force=true to always return the full body.
+PNG, JPEG, GIF and WebP files are returned as images (up to 20 MiB), so saved screenshots can be reopened.`
 }
 
 func (t *ReadTool) Schema() map[string]interface{} {
@@ -130,6 +131,10 @@ func (t *ReadTool) Execute(ctx context.Context, params json.RawMessage) (*Result
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
 	defer file.Close()
+
+	if result, err := readImage(file, info.Size()); result != nil || err != nil {
+		return result, err
+	}
 
 	// Set defaults
 	offset := p.Offset

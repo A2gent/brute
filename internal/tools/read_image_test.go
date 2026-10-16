@@ -1,13 +1,19 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/A2gent/brute/internal/llm"
 )
 
 func TestReadImage(t *testing.T) {
@@ -48,5 +54,32 @@ func TestReadImage(t *testing.T) {
 				t.Fatalf("image read did not use the image channel: %+v", result)
 			}
 		})
+	}
+}
+
+func TestReadImageDownscalesLargePNG(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 8500, 1000))
+	for x := 0; x < 8500; x++ {
+		img.Set(x, x%1000, color.Black)
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "wide.png")
+	if err := os.WriteFile(path, buf.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	params, _ := json.Marshal(map[string]string{"path": path})
+	result, err := NewReadTool(dir).Execute(context.Background(), params)
+	if err != nil || !result.Success {
+		t.Fatalf("read failed: %v %+v", err, result)
+	}
+	inline, _ := result.Metadata["image_inline"].(map[string]interface{})
+	raw, _ := base64.StdEncoding.DecodeString(inline["data_base64"].(string))
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(raw))
+	if err != nil || inline["media_type"] != "image/"+format || cfg.Width > llm.ProviderImageMaxSide || len(raw) > llm.ProviderImageMaxBytes {
+		t.Fatalf("image not fitted: %v %v %dx%d %d bytes", err, inline["media_type"], cfg.Width, cfg.Height, len(raw))
 	}
 }

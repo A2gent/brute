@@ -138,6 +138,7 @@ func (a *Agent) buildRequest(ctx context.Context, sess *session.Session) *llm.Ch
 			messages = append(messages, llm.Message{Role: "user", Content: content, Images: screenshots})
 		}
 	}
+	fitRequestImages(messages)
 
 	request := &llm.ChatRequest{
 		Model:                 a.config.Model,

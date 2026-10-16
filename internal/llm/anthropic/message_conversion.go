@@ -224,7 +224,13 @@ func extractInlineImage(metadata map[string]interface{}) *inlineImage {
 		if int64(len(raw)) > maxBytes {
 			return nil
 		}
-		dataBase64 = base64.StdEncoding.EncodeToString(raw)
+		// A small file can still exceed the provider's pixel limit.
+		fittedType, fitted, err := llm.FitImageBytes(mediaType, raw)
+		if err != nil {
+			return nil
+		}
+		mediaType = fittedType
+		dataBase64 = base64.StdEncoding.EncodeToString(fitted)
 	}
 	if dataBase64 == "" {
 		return nil

@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+
+	"github.com/A2gent/brute/internal/llm"
 )
 
 const maxReadImageBytes = 20 * 1024 * 1024
@@ -35,10 +37,19 @@ func readImage(file *os.File, size int64) (*Result, error) {
 	if len(raw) > maxReadImageBytes {
 		return &Result{Success: false, Error: fmt.Sprintf("image exceeds %d byte limit", maxReadImageBytes)}, nil
 	}
-	inline := map[string]interface{}{"media_type": mediaType, "data_base64": base64.StdEncoding.EncodeToString(raw)}
+	// Providers reject oversized images on every later request, so fit them now.
+	fittedType, fitted, err := llm.FitImageBytes(mediaType, raw)
+	if err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("cannot decode image: %v", err)}, nil
+	}
+	output := fmt.Sprintf("Image: %s (%s, %d bytes)", filepath.Base(file.Name()), mediaType, len(raw))
+	if len(fitted) != len(raw) || fittedType != mediaType {
+		output += fmt.Sprintf(", downscaled to %s %d bytes for the model", fittedType, len(fitted))
+	}
+	inline := map[string]interface{}{"media_type": fittedType, "data_base64": base64.StdEncoding.EncodeToString(fitted)}
 	return &Result{
 		Success: true,
-		Output:  fmt.Sprintf("Image: %s (%s, %d bytes)", filepath.Base(file.Name()), mediaType, len(raw)),
+		Output:  output,
 		Metadata: map[string]interface{}{
 			"image_inline":     inline,
 			"admission_images": []interface{}{inline},

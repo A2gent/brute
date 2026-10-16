@@ -160,6 +160,7 @@ func (s *Server) registerProviderRoutes(r chi.Router) {
 		r.Post("/claude-instances", s.handleCreateClaudeInstance)
 		r.Post("/{providerType}/usage/enable", s.handleEnableClaudeUsage)
 		r.Get("/{providerType}/usage", s.handleProviderUsage)
+		r.Get("/{providerType}/usage/history", s.handleProviderUsageHistory)
 		r.Put("/{providerType}", s.handleUpdateProvider)
 		r.Delete("/{providerType}", s.handleDeleteProvider)
 		r.Post("/{providerType}/test", s.handleTestProvider)

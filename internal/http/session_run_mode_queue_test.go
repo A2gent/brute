@@ -78,12 +78,12 @@ func TestSerialQueueGrantsEscalatedWriteAccess(t *testing.T) {
 	if err := s.sessionManager.Save(sess); err != nil {
 		t.Fatal(err)
 	}
-	// Build the actual escalation transcript through the agent, without adding
-	// a user message between the tool result/notice and the serial queue resume.
+	// Build the actual escalation transcript through the agent without adding
+	// a user message between the tool result and the serial queue resume.
 	if _, err := s.runSessionWithoutStreaming(context.Background(), sess, "Analyze this and update it if needed"); err != nil {
 		t.Fatal(err)
 	}
-	if sess.Status != session.StatusQueued || !sess.WriteRequested() || len(sess.Messages) != 4 || len(sess.Messages[1].ToolCalls) != 1 || sess.Messages[1].ToolCalls[0].Name != "request_write" || len(sess.Messages[2].ToolResults) != 1 || sess.Messages[3].Role != "assistant" {
+	if sess.Status != session.StatusQueued || !sess.WriteRequested() || len(sess.Messages) != 3 || len(sess.Messages[1].ToolCalls) != 1 || sess.Messages[1].ToolCalls[0].Name != "request_write" || len(sess.Messages[2].ToolResults) != 1 {
 		t.Fatalf("invalid escalation fixture: %+v", sess)
 	}
 	// An existing run lease must not lift the guard or start another run.

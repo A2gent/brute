@@ -56,8 +56,13 @@ func TestLocalCompletionRoutesRequestedModel(t *testing.T) {
 			fake := &fakeSpeechTool{name: name, store: clips}
 			manager.Register(fake)
 			s := &Server{toolManager: manager, speechClips: clips}
+			// Silero is Russian-only; any other language reroutes to piper/say instead of the requested model.
+			lang := "en"
+			if model == "silero_tts" {
+				lang = "ru"
+			}
 			rec := httptest.NewRecorder()
-			s.handleCompletionSpeech(rec, httptest.NewRequest("POST", "/speech/completion", strings.NewReader(`{"text":"hello","language":"en","model":"`+model+`"}`)))
+			s.handleCompletionSpeech(rec, httptest.NewRequest("POST", "/speech/completion", strings.NewReader(`{"text":"hello","language":"`+lang+`","model":"`+model+`"}`)))
 			if rec.Code != 200 || fake.calls != 1 {
 				t.Fatalf("%d: %s", rec.Code, rec.Body.String())
 			}
@@ -65,7 +70,7 @@ func TestLocalCompletionRoutesRequestedModel(t *testing.T) {
 			if err := json.Unmarshal(fake.params, &payload); err != nil {
 				t.Fatal(err)
 			}
-			if payload["language"] != "en" {
+			if payload["language"] != lang {
 				t.Fatalf("missing language: %s", fake.params)
 			}
 		})

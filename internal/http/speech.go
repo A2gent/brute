@@ -254,6 +254,17 @@ func (s *Server) synthesizeSpeech(ctx context.Context, reqBody speechCompletionR
 	if err != nil {
 		return nil, newSpeechSynthesisError(http.StatusBadRequest, "%s", err.Error())
 	}
+	// Silero is Russian-only: for other text fall back to the default local chain instead of failing.
+	if engine == "silero_tts" {
+		lang := strings.ToLower(strings.Split(reqBody.Language, "-")[0])
+		if lang == "" || lang == "auto" {
+			lang = detectSpeechLanguage(reqBody.Text)
+			reqBody.Language = lang
+		}
+		if lang != "ru" {
+			toolNames = []string{"piper_tts", "macos_say_tts"}
+		}
+	}
 	if s.toolManager == nil {
 		return nil, newSpeechSynthesisError(http.StatusServiceUnavailable, "Built-in speech tools are unavailable")
 	}

@@ -88,8 +88,10 @@ func TestAutoReadOnlyRequestsSerialEscalation(t *testing.T) {
 	if fresh.Status != session.StatusQueued || !fresh.WriteRequested() || !fresh.IsAutoReadOnly() || fresh.Metadata["queue_mode"] != "serial" || fresh.Metadata["queue_auto_start"] != true || *fresh.ProjectID != projectID {
 		t.Fatalf("escalation not queued safely: %+v", fresh)
 	}
-	if !strings.Contains(fresh.Messages[len(fresh.Messages)-1].Content, "serial queue") {
-		t.Fatal("missing escalation explanation")
+	for _, message := range fresh.Messages {
+		if message.Metadata["run_mode_notice"] == true {
+			t.Fatal("queue escalation should not add a synthetic assistant notice")
+		}
 	}
 	request := ag.buildRequest(context.Background(), fresh)
 	if last := request.Messages[len(request.Messages)-1]; last.Role != "tool" || len(last.ToolResults) != 1 {

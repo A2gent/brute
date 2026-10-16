@@ -45,3 +45,21 @@ func completionSpeechPayload(request speechCompletionRequest, toolName string) (
 	}
 	return json.Marshal(payload)
 }
+
+// detectSpeechLanguage guesses ru or en from the share of Cyrillic letters, so engines that
+// support only one language (Silero: Russian) are not fed text in the other.
+func detectSpeechLanguage(text string) string {
+	var cyr, lat int
+	for _, r := range text {
+		switch {
+		case r >= 0x0400 && r <= 0x04FF:
+			cyr++
+		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'):
+			lat++
+		}
+	}
+	if cyr > lat {
+		return "ru"
+	}
+	return "en"
+}

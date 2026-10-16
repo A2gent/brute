@@ -1,3 +1,4 @@
+- Run Git commands inside the component repository, and pass directories (not file paths) to indexed content_search. Use grep with include for a single-file search.
 # Lessons learned
 
 - Before delegating, verify that the configured agent is available to the current project. If project scoping blocks delegation, continue with an independent local verification instead of retrying the same agent.

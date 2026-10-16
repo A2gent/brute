@@ -2,6 +2,9 @@ package llm
 
 import "unicode/utf8"
 
+// RouterPromptMaxBytes bounds classification state while preserving prompt intent.
+const RouterPromptMaxBytes = 32 * 1024
+
 const headTailMarker = "\n[truncated]\n"
 
 // HeadTail caps text at maxBytes, keeping both ends because a prompt's intent is

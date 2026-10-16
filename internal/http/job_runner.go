@@ -55,7 +55,8 @@ func (s *Server) parseScheduleToCron(ctx context.Context, scheduleText string) (
 	sess.AddUserMessage(prompt)
 
 	targetConfig := s.resolvePromptLLMTarget(settings, promptLLMCaseScheduleToCron)
-	target, err := s.resolveExecutionTarget(ctx, targetConfig.ProviderType, targetConfig.Model, prompt, sess)
+	// Schedule parsing is auxiliary work: never classify it or store an effort decision.
+	target, err := s.resolveExecutionTargetBase(ctx, targetConfig.ProviderType, targetConfig.Model, prompt, sess)
 	if err != nil {
 		return "", fmt.Errorf("failed to initialize provider %s: %w", targetConfig.ProviderType, err)
 	}

@@ -290,7 +290,9 @@ func setSessionRoutedProviderAndModel(sess *session.Session, requestedProvider c
 	}
 
 	changed := false
-	if requestedProvider != config.ProviderAutoRouter {
+	// An explicit provider override clears its stale Jev effort routing event;
+	// initial Jev decisions for a fixed provider remain sticky session metadata.
+	if requestedProvider != config.ProviderAutoRouter && (routedRule != jevEffortRoutingRule || sessionReasoningEffort(sess) != "") {
 		for _, key := range []string{"routed_provider", "routed_model", "routed_rule", "routed_reason"} {
 			if _, ok := sess.Metadata[key]; ok {
 				delete(sess.Metadata, key)

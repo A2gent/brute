@@ -164,7 +164,7 @@ func normalizeRouterRules(raw []config.RouterRule) []config.RouterRule {
 
 // routerPromptMaxBytes keeps the routed prompt far below router context limits
 // (Jev allows 32k tokens per question); intent survives in the head and tail.
-const routerPromptMaxBytes = 32 * 1024
+const routerPromptMaxBytes = llm.RouterPromptMaxBytes
 
 func extractUserPrompt(messages []llm.Message) (string, []llm.Image) {
 	for i := len(messages) - 1; i >= 0; i-- {

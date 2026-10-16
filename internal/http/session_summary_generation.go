@@ -133,7 +133,7 @@ func (s *Server) generateSessionSummary(summaryCtx context.Context, sess *sessio
 	sessionProviderType := s.resolveSessionProviderType(sess)
 	sessionModel := s.resolveSessionModel(sess, sessionProviderType)
 	targetConfig := s.resolvePromptLLMTargetWithFallback(settings, promptLLMCaseSessionSummary, sessionProviderType, sessionModel)
-	target, err := s.resolveExecutionTarget(summaryCtx, targetConfig.ProviderType, targetConfig.Model, prompt, sess)
+	target, err := s.resolveExecutionTargetBase(summaryCtx, targetConfig.ProviderType, targetConfig.Model, prompt, sess)
 	if err != nil {
 		logging.Warn("Failed to resolve provider for session summary: %v", err)
 		return ""

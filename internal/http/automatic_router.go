@@ -27,7 +27,7 @@ type executionTarget struct {
 }
 
 func routerDecisionStreamEvent(requestedProvider config.ProviderType, target *executionTarget) *ChatStreamEvent {
-	if requestedProvider != config.ProviderAutoRouter || target == nil {
+	if target == nil || (requestedProvider != config.ProviderAutoRouter && target.RoutingRule != jevEffortRoutingRule) {
 		return nil
 	}
 	return &ChatStreamEvent{
@@ -150,6 +150,15 @@ func (s *Server) defaultSessionProviderRef() string {
 }
 
 func (s *Server) resolveExecutionTarget(ctx context.Context, providerType config.ProviderType, model string, userPrompt string, sess *session.Session) (*executionTarget, error) {
+	target, err := s.resolveExecutionTargetBase(ctx, providerType, model, userPrompt, sess)
+	if err == nil && providerType != config.ProviderAutoRouter {
+		s.applyJevEffort(ctx, target, userPrompt, sess)
+	}
+	return target, err
+}
+
+// Auxiliary work must not choose the sticky effort for a user's session.
+func (s *Server) resolveExecutionTargetBase(ctx context.Context, providerType config.ProviderType, model string, userPrompt string, sess *session.Session) (*executionTarget, error) {
 	requestedModel := strings.TrimSpace(model)
 	if providerType != config.ProviderAutoRouter {
 		if requestedModel == "" {

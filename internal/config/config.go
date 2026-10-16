@@ -306,6 +306,11 @@ type JevScreenshotsConfig struct {
 	MinConfidence float64 `json:"min_confidence,omitempty"`
 }
 
+// JevEffortConfig opts in to a confidence-gated, session-sticky reasoning effort.
+type JevEffortConfig struct {
+	Enabled bool `json:"enabled"`
+}
+
 // ToolsConfig configures tool permissions.
 type ToolsConfig struct {
 	// ScreenshotKeepLatest defaults to 2 when non-positive. User images are exempt.
@@ -314,6 +319,7 @@ type ToolsConfig struct {
 	WebRelevance          WebRelevanceConfig   `json:"web_relevance,omitempty"`
 	JevAdmission          JevAdmissionConfig   `json:"jev_admission,omitempty"`
 	JevToolsets           JevToolsetsConfig    `json:"jev_toolsets,omitempty"`
+	JevEffort             JevEffortConfig      `json:"jev_effort,omitempty"`
 	RelevanceGateDisabled bool                 `json:"relevance_gate_disabled,omitempty"`
 	// BrowserActEnabled opts in to the Jev-driven browser loop. Off by default: it is a prototype and
 	// it holds the shared Chrome lock for the duration of a multi-step run.

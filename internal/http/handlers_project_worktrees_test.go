@@ -54,6 +54,13 @@ func TestProjectWorktreesCreateListAndRemove(t *testing.T) {
 		t.Fatalf("unexpected worktrees after create: %+v", worktrees)
 	}
 
+	writeGitTestFile(t, worktrees[1].Path, "draft.txt", "wip\n")
+	worktrees, _ = request(http.MethodGet, "", "")
+	if worktrees[1].Changes != 1 || !strings.HasPrefix(worktrees[1].LastCommit, "initial (") {
+		t.Fatalf("expected activity summary for the new worktree: %+v", worktrees[1])
+	}
+	runGitForMindTest(t, worktrees[1].Path, "clean", "-f")
+
 	worktrees, rec = request(http.MethodDelete, "?path="+url.QueryEscape(worktrees[1].Path), "")
 	if rec.Code != http.StatusOK || len(worktrees) != 1 {
 		t.Fatalf("expected worktree to be removed, got %d: %s", rec.Code, rec.Body.String())

@@ -27,6 +27,9 @@ type ProjectWorktree struct {
 	Detached bool   `json:"detached"`
 	Main     bool   `json:"main"`
 	Prunable bool   `json:"prunable"`
+	// Changes counts uncommitted entries (git status --porcelain lines).
+	Changes    int    `json:"changes"`
+	LastCommit string `json:"last_commit,omitempty"`
 }
 
 type CreateProjectWorktreeRequest struct {
@@ -127,6 +130,13 @@ func (s *Server) respondProjectWorktrees(w http.ResponseWriter, root string, sta
 			case "prunable":
 				worktree.Prunable = true
 			}
+		}
+		// Best-effort activity summary for the Worktrees tab; a missing folder has none.
+		if !worktree.Prunable {
+			if changes, _ := runGitCommand(worktree.Path, "status", "--porcelain"); changes != "" {
+				worktree.Changes = len(strings.Split(changes, "\n"))
+			}
+			worktree.LastCommit, _ = runGitCommand(worktree.Path, "log", "-1", "--format=%s (%cr)")
 		}
 		worktrees = append(worktrees, worktree)
 	}

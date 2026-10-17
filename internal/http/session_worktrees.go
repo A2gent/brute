@@ -104,6 +104,17 @@ func (s *Server) teardownSessionWorktree(sessionID string) error {
 	if err != nil || wt == nil {
 		return err
 	}
+	if _, statErr := os.Stat(wt.Path); os.IsNotExist(statErr) {
+		// A worktree may be removed outside the app; its absence must not block archiving.
+		if root, rootErr := s.resolveProjectRootFolder(wt.ProjectID); rootErr == nil {
+			if _, pruneErr := runGitCommand(root, "worktree", "prune"); pruneErr != nil {
+				logging.Warn("Failed to prune missing session worktree: session=%s error=%v", sessionID, pruneErr)
+			}
+		}
+		return s.store.DeleteSessionWorktree(sessionID)
+	} else if statErr != nil {
+		return fmt.Errorf("failed to inspect session worktree path: %w", statErr)
+	}
 	project, err := s.store.GetProject(wt.ProjectID)
 	if err != nil {
 		return err

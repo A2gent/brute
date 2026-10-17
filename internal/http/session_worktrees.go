@@ -174,9 +174,9 @@ func (s *Server) sessionWorktreeEnv(wt *storage.SessionWorktree) []string {
 
 func worktreeEnv(wt *storage.SessionWorktree, mainRoot string) []string {
 	return []string{
-		"A2GENT_WORKTREE_SLOT=" + strconv.Itoa(wt.Slot),
-		"A2GENT_WORKTREE_NAME=" + filepath.Base(wt.Path),
-		"A2GENT_MAIN_ROOT=" + mainRoot,
+		"WORKTREE_SLOT=" + strconv.Itoa(wt.Slot),
+		"WORKTREE_NAME=" + filepath.Base(wt.Path),
+		"WORKTREE_MAIN_ROOT=" + mainRoot,
 	}
 }
 

@@ -50,8 +50,8 @@ func TestSessionWorktreesLifecycle(t *testing.T) {
 	project.Settings[projectWorktreesBaseRefSettingKey] = "master"
 	project.Settings[projectWorktreesMaxSlotsSettingKey] = "2"
 	// Hooks write outside the worktree, an untracked file would block `git worktree remove`.
-	project.Settings[projectWorktreesSetupCmdSettingKey] = `echo "$A2GENT_WORKTREE_SLOT $A2GENT_WORKTREE_NAME $A2GENT_MAIN_ROOT" > ` + hooksDir + `/setup-$A2GENT_WORKTREE_SLOT`
-	project.Settings[projectWorktreesTeardownCmdSettingKey] = `touch ` + hooksDir + `/teardown-$A2GENT_WORKTREE_NAME`
+	project.Settings[projectWorktreesSetupCmdSettingKey] = `echo "$WORKTREE_SLOT $WORKTREE_NAME $WORKTREE_MAIN_ROOT" > ` + hooksDir + `/setup-$WORKTREE_SLOT`
+	project.Settings[projectWorktreesTeardownCmdSettingKey] = `touch ` + hooksDir + `/teardown-$WORKTREE_NAME`
 	project.Settings[projectWorktreesAppURLTemplateSettingKey] = "https://dev.example.com:300{slot}"
 	if err := server.store.SaveProject(project); err != nil {
 		t.Fatalf("failed to save project: %v", err)
@@ -77,7 +77,7 @@ func TestSessionWorktreesLifecycle(t *testing.T) {
 	if branch, _ := currentGitBranch(firstPath); branch != "feature/one" {
 		t.Fatalf("worktree branch = %q", branch)
 	}
-	result, err := server.toolManagerForSession(firstSess).Execute(context.Background(), "bash", json.RawMessage(`{"command":"echo $A2GENT_WORKTREE_SLOT:$A2GENT_WORKTREE_NAME"}`))
+	result, err := server.toolManagerForSession(firstSess).Execute(context.Background(), "bash", json.RawMessage(`{"command":"echo $WORKTREE_SLOT:$WORKTREE_NAME"}`))
 	if err != nil || !strings.HasPrefix(result.Output, "1:feature-one") {
 		t.Fatalf("bash tool did not get the worktree env: %+v %v", result, err)
 	}

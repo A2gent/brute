@@ -473,25 +473,26 @@ func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
 
 	if sessionIsQueuePaused(sess) {
 		setSessionQueuePaused(sess, false)
-		if err := s.sessionManager.Save(sess); err != nil {
-			s.errorResponse(w, http.StatusInternalServerError, "Failed to start session: "+err.Error())
-			return
-		}
 	}
 
 	if sessionIsSerialQueuedAutoRun(sess) {
+		// Serial-queued sessions defer worktree creation until execution; manual Start
+		// bypasses the queue, so provision the isolated workspace before marking running.
+		if sess.ProjectID != nil && (sess.ParentID == nil || *sess.ParentID == "") && s.sessionWorktree(sess) == nil {
+			if err := s.createSessionWorktree(sess.ID, *sess.ProjectID, ""); err != nil {
+				status := http.StatusInternalServerError
+				if errors.Is(err, storage.ErrNoFreeWorktreeSlot) {
+					status = http.StatusConflict
+				}
+				s.errorResponse(w, status, "Failed to start session: "+err.Error())
+				return
+			}
+		}
 		if sess.Metadata == nil {
 			sess.Metadata = map[string]interface{}{}
 		}
 		delete(sess.Metadata, sessionQueueAutoStartKey)
 		delete(sess.Metadata, sessionQueueModeMetadataKey)
-		if err := s.sessionManager.Save(sess); err != nil {
-			s.errorResponse(w, http.StatusInternalServerError, "Failed to start session: "+err.Error())
-			return
-		}
-		logging.LogSession("started", sess.ID, fmt.Sprintf("agent=%s manual override removed serial queue auto-start", sess.AgentID))
-		s.jsonResponse(w, http.StatusOK, s.sessionToResponse(sess))
-		return
 	}
 
 	sess.SetStatus(session.StatusRunning)

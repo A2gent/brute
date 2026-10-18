@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"sync"
 	"testing"
 	"time"
@@ -221,11 +222,70 @@ func TestStartSessionManuallyOverridesSerialQueueAutoStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload session: %v", err)
 	}
-	if fresh.Status != session.StatusQueued {
-		t.Fatalf("session status = %s, want %s", fresh.Status, session.StatusQueued)
+	if fresh.Status != session.StatusRunning {
+		t.Fatalf("session status = %s, want %s after one manual start", fresh.Status, session.StatusRunning)
 	}
 	if sessionIsSerialQueuedAutoRun(fresh) {
 		t.Fatalf("manual start should clear serial queue auto-start metadata")
+	}
+	if sessionQueueMode(fresh) != "" {
+		t.Fatalf("manual start should clear serial queue mode, got %q", sessionQueueMode(fresh))
+	}
+}
+
+func TestStartSerialQueuedSessionCreatesWorktreeBeforeRunning(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is not available")
+	}
+	server, projectID, repoDir := newProjectFileTestServer(t)
+	initMindGitTestRepo(t, repoDir)
+
+	project, err := server.store.GetProject(projectID)
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+	worktreesDir := t.TempDir()
+	project.Settings[projectWorktreesEnabledSettingKey] = "true"
+	project.Settings[projectWorktreesDirectorySettingKey] = worktreesDir
+	project.Settings[projectWorktreesBaseRefSettingKey] = "master"
+	project.Settings[projectWorktreesMaxSlotsSettingKey] = "1"
+	if err := server.store.SaveProject(project); err != nil {
+		t.Fatalf("save project settings: %v", err)
+	}
+
+	sess, err := server.sessionManager.CreateQueued("build")
+	if err != nil {
+		t.Fatalf("create queued session: %v", err)
+	}
+	sess.ProjectID = &projectID
+	sess.Metadata = map[string]interface{}{
+		sessionQueueModeMetadataKey: sessionQueueModeSerial,
+		sessionQueueAutoStartKey:    true,
+	}
+	sess.AddUserMessage("Start me in an isolated worktree")
+	if err := server.sessionManager.Save(sess); err != nil {
+		t.Fatalf("save queued session: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sessions/"+sess.ID+"/start", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("start status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	fresh, err := server.sessionManager.Get(sess.ID)
+	if err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+	if fresh.Status != session.StatusRunning {
+		t.Fatalf("session status = %s, want %s", fresh.Status, session.StatusRunning)
+	}
+	worktree, err := server.store.GetSessionWorktree(sess.ID)
+	if err != nil {
+		t.Fatalf("load worktree: %v", err)
+	}
+	if worktree == nil || worktree.Path == "" {
+		t.Fatal("manual start did not create a worktree before running")
 	}
 }
 

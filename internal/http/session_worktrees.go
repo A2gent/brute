@@ -123,6 +123,19 @@ func (s *Server) createSessionWorktree(sessionID string, projectID string, branc
 	return nil
 }
 
+func sameFilesystemPath(first string, second string) bool {
+	resolve := func(path string) string {
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			return filepath.Clean(resolved)
+		}
+		if absolute, err := filepath.Abs(path); err == nil {
+			return filepath.Clean(absolute)
+		}
+		return filepath.Clean(path)
+	}
+	return resolve(first) == resolve(second)
+}
+
 // teardownSessionWorktree runs the teardown hook and removes the worktree folder; the
 // branch is kept. git refuses to remove a worktree with uncommitted changes, which is
 // returned so archive/delete/handoff never throw work away.
@@ -151,6 +164,18 @@ func (s *Server) teardownSessionWorktree(sessionID string) error {
 	root, err := s.resolveProjectRootFolder(wt.ProjectID)
 	if err != nil {
 		return err
+	}
+	topLevel, gitErr := runGitCommand(wt.Path, "rev-parse", "--show-toplevel")
+	if gitErr != nil || !sameFilesystemPath(topLevel, wt.Path) || sameFilesystemPath(topLevel, root) {
+		// A stale DB record can point to an ordinary directory; never run Git there
+		// or remove that directory as if it were an owned worktree.
+		logging.Warn("Session %s has a stale worktree record for non-worktree path %s", sessionID, wt.Path)
+		unlockGit := lockWorktreeGit(root)
+		if _, pruneErr := runGitCommand(root, "worktree", "prune"); pruneErr != nil {
+			logging.Warn("Failed to prune stale session worktree metadata: session=%s error=%v", sessionID, pruneErr)
+		}
+		unlockGit()
+		return s.store.DeleteSessionWorktree(sessionID)
 	}
 	if command := normalizeProjectSettings(project.Settings)[projectWorktreesTeardownCmdSettingKey]; command != "" {
 		if err := runWorktreeHook(wt.Path, command, worktreeEnv(wt, root)); err != nil {

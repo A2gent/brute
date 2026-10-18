@@ -104,7 +104,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 			Messages: s.messagesToResponse(sess.Messages),
 		})
 	}
-	if errors.Is(runErr, agent.ErrTransitionPaused) {
+	if errors.Is(runErr, agent.ErrTransitionPaused) || errors.Is(runErr, agent.ErrLowDiskSpace) {
 		publishError(runErr.Error())
 		return nil
 	}

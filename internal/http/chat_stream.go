@@ -216,6 +216,10 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			_ = writeEvent(ChatStreamEvent{Type: "provider_transition", Transition: session.CurrentProviderTransition(sess), Status: string(sess.Status), Error: err.Error()})
 			return
 		}
+		if errors.Is(err, agent.ErrLowDiskSpace) {
+			_ = writeEvent(ChatStreamEvent{Type: "error", Error: err.Error(), Status: string(sess.Status), Messages: s.messagesToResponse(sess.Messages)})
+			return
+		}
 		if isCancellationError(err) {
 			sess.SetStatus(session.StatusPaused)
 			s.sessionManager.Save(sess)

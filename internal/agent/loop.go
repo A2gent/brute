@@ -44,6 +44,9 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 		ctx = context.WithValue(ctx, "projectID", strings.TrimSpace(*sess.ProjectID))
 	}
 
+	if err := a.pauseIfLowDiskSpace(sess); err != nil {
+		return "", totalUsage, err
+	}
 	if a.readOnlyNeedsSerialRuntime(sess) {
 		return "", totalUsage, a.queueReadOnlyEscalation(sess)
 	}

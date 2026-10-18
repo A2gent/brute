@@ -107,7 +107,7 @@ func (s *Server) createSessionWorktree(sessionID string, projectID string, branc
 		logging.Warn("Session worktree fetch failed, using local refs: session=%s error=%v", sessionID, err)
 	}
 	unlockGit := lockWorktreeGit(root)
-	_, addErr := runGitCommand(root, "worktree", "add", "--relative-paths", "-b", branch, wt.Path, baseRef)
+	addErr := addSessionWorktree(root, wt.Path, branch, baseRef)
 	unlockGit()
 	if addErr != nil {
 		_ = s.store.DeleteSessionWorktree(sessionID)

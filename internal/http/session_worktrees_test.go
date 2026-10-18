@@ -127,6 +127,72 @@ func TestSessionWorktreesLifecycle(t *testing.T) {
 	}
 }
 
+func TestConcurrentSessionWorktreeCreationSerializesGitMetadataUpdates(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is not available")
+	}
+	server, projectID, repoDir := newProjectFileTestServer(t)
+	initMindGitTestRepo(t, repoDir)
+
+	remoteDir := t.TempDir()
+	runGitForMindTest(t, remoteDir, "init", "--bare")
+	runGitForMindTest(t, repoDir, "remote", "add", "origin", remoteDir)
+	runGitForMindTest(t, repoDir, "push", "-u", "origin", "master")
+
+	project, err := server.store.GetProject(projectID)
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+	project.Settings[projectWorktreesEnabledSettingKey] = "true"
+	project.Settings[projectWorktreesDirectorySettingKey] = t.TempDir()
+	project.Settings[projectWorktreesBaseRefSettingKey] = "origin/master"
+	if err := server.store.SaveProject(project); err != nil {
+		t.Fatalf("save project settings: %v", err)
+	}
+
+	const count = 10
+	sessionIDs := make([]string, count)
+	for i := range sessionIDs {
+		sess, err := server.sessionManager.CreateQueued("build")
+		if err != nil {
+			t.Fatalf("create queued session: %v", err)
+		}
+		sess.ProjectID = &projectID
+		if err := server.sessionManager.Save(sess); err != nil {
+			t.Fatalf("save queued session: %v", err)
+		}
+		sessionIDs[i] = sess.ID
+	}
+
+	errs := make(chan error, count)
+	for _, id := range sessionIDs {
+		go func(sessionID string) {
+			errs <- server.createSessionWorktree(sessionID, projectID, "")
+		}(id)
+	}
+	for i := 0; i < count; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("create session worktree concurrently: %v", err)
+		}
+	}
+
+	slots := make(map[int]struct{}, count)
+	for _, id := range sessionIDs {
+		worktree, err := server.store.GetSessionWorktree(id)
+		if err != nil {
+			t.Fatalf("load worktree for %s: %v", id, err)
+		}
+		if worktree == nil {
+			t.Errorf("session %s has no persisted worktree", id)
+			continue
+		}
+		if _, exists := slots[worktree.Slot]; exists {
+			t.Errorf("worktree slot %d was assigned more than once", worktree.Slot)
+		}
+		slots[worktree.Slot] = struct{}{}
+	}
+}
+
 func createWorktreeTestSession(t *testing.T, server *Server, projectID string, branch string, wantStatus int) string {
 	t.Helper()
 	body, _ := json.Marshal(CreateSessionRequest{AgentID: "build", ProjectID: projectID, Branch: branch, Queued: true})

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/A2gent/brute/internal/logging"
@@ -31,6 +32,34 @@ type SessionWorktreePayload struct {
 	BaseRef string `json:"base_ref"`
 	Slot    int    `json:"slot"`
 	AppURL  string `json:"app_url,omitempty"`
+}
+
+var projectWorktreeGitLocks = struct {
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex
+}{locks: make(map[string]*sync.Mutex)}
+
+// lockWorktreeGit serializes operations that update shared Git metadata for the same
+// project. Concurrent worktree adds otherwise race while writing .git/config.lock.
+func lockWorktreeGit(root string) func() {
+	key := root
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		key = resolved
+	}
+	if absolute, err := filepath.Abs(key); err == nil {
+		key = absolute
+	}
+
+	projectWorktreeGitLocks.mu.Lock()
+	lock := projectWorktreeGitLocks.locks[key]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		projectWorktreeGitLocks.locks[key] = lock
+	}
+	projectWorktreeGitLocks.mu.Unlock()
+
+	lock.Lock()
+	return lock.Unlock
 }
 
 // createSessionWorktree is a no-op unless worktrees are enabled for the project.
@@ -77,9 +106,12 @@ func (s *Server) createSessionWorktree(sessionID string, projectID string, branc
 	if _, err := runGitCommand(root, "fetch", "origin"); err != nil {
 		logging.Warn("Session worktree fetch failed, using local refs: session=%s error=%v", sessionID, err)
 	}
-	if _, err := runGitCommand(root, "worktree", "add", "--relative-paths", "-b", branch, wt.Path, baseRef); err != nil {
+	unlockGit := lockWorktreeGit(root)
+	_, addErr := runGitCommand(root, "worktree", "add", "--relative-paths", "-b", branch, wt.Path, baseRef)
+	unlockGit()
+	if addErr != nil {
 		_ = s.store.DeleteSessionWorktree(sessionID)
-		return err
+		return addErr
 	}
 	// A failed setup (e.g. Docker not running) still leaves a usable checkout, so it is only logged.
 	if command := settings[projectWorktreesSetupCmdSettingKey]; command != "" {
@@ -102,9 +134,11 @@ func (s *Server) teardownSessionWorktree(sessionID string) error {
 	if _, statErr := os.Stat(wt.Path); os.IsNotExist(statErr) {
 		// A worktree may be removed outside the app; its absence must not block archiving.
 		if root, rootErr := s.resolveProjectRootFolder(wt.ProjectID); rootErr == nil {
+			unlockGit := lockWorktreeGit(root)
 			if _, pruneErr := runGitCommand(root, "worktree", "prune"); pruneErr != nil {
 				logging.Warn("Failed to prune missing session worktree: session=%s error=%v", sessionID, pruneErr)
 			}
+			unlockGit()
 		}
 		return s.store.DeleteSessionWorktree(sessionID)
 	} else if statErr != nil {

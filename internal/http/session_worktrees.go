@@ -20,7 +20,6 @@ import (
 )
 
 const (
-	projectWorktreesMaxSlotsSettingKey       = "A2GENT_PROJECT_WORKTREES_MAX_SLOTS"
 	projectWorktreesSetupCmdSettingKey       = "A2GENT_PROJECT_WORKTREES_SETUP_CMD"
 	projectWorktreesTeardownCmdSettingKey    = "A2GENT_PROJECT_WORKTREES_TEARDOWN_CMD"
 	projectWorktreesAppURLTemplateSettingKey = "A2GENT_PROJECT_WORKTREES_APP_URL_TEMPLATE"
@@ -62,10 +61,6 @@ func (s *Server) createSessionWorktree(sessionID string, projectID string, branc
 	if baseRef == "" {
 		baseRef = "origin/HEAD"
 	}
-	maxSlots, _ := strconv.Atoi(settings[projectWorktreesMaxSlotsSettingKey])
-	if maxSlots <= 0 {
-		maxSlots = 3
-	}
 
 	// The slot is taken before git runs, so two sessions created at once cannot race.
 	wt := &storage.SessionWorktree{
@@ -76,7 +71,7 @@ func (s *Server) createSessionWorktree(sessionID string, projectID string, branc
 		BaseRef:   baseRef,
 		CreatedAt: time.Now(),
 	}
-	if err := s.store.CreateSessionWorktree(wt, maxSlots); err != nil {
+	if err := s.store.CreateSessionWorktree(wt); err != nil {
 		return err
 	}
 	if _, err := runGitCommand(root, "fetch", "origin"); err != nil {

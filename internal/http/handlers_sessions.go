@@ -384,16 +384,11 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			logging.Warn("Failed to persist session project metadata: %v", err)
 		}
 		// Child sessions reuse the worktree of their parent (see sessionWorktree).
-		// Queued serial sessions get theirs when the queue starts them (runSerialQueuedSession),
-		// so a full set of slots makes them wait instead of failing the creation.
+		// Queued serial sessions get theirs when the queue starts them (runSerialQueuedSession).
 		if req.ParentID == "" && !(req.Queued && sessionIsSerialQueuedAutoRun(sess)) {
 			if err := s.createSessionWorktree(sess.ID, req.ProjectID, strings.TrimSpace(req.Branch)); err != nil {
 				_ = s.sessionManager.Delete(sess.ID)
-				status := http.StatusBadRequest
-				if errors.Is(err, storage.ErrNoFreeWorktreeSlot) {
-					status = http.StatusConflict
-				}
-				s.errorResponse(w, status, "Failed to create session worktree: "+err.Error())
+				s.errorResponse(w, http.StatusBadRequest, "Failed to create session worktree: "+err.Error())
 				return
 			}
 		}
@@ -480,11 +475,7 @@ func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
 		// bypasses the queue, so provision the isolated workspace before marking running.
 		if sess.ProjectID != nil && (sess.ParentID == nil || *sess.ParentID == "") && s.sessionWorktree(sess) == nil {
 			if err := s.createSessionWorktree(sess.ID, *sess.ProjectID, ""); err != nil {
-				status := http.StatusInternalServerError
-				if errors.Is(err, storage.ErrNoFreeWorktreeSlot) {
-					status = http.StatusConflict
-				}
-				s.errorResponse(w, status, "Failed to start session: "+err.Error())
+				s.errorResponse(w, http.StatusInternalServerError, "Failed to start session: "+err.Error())
 				return
 			}
 		}

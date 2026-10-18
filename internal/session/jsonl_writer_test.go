@@ -59,7 +59,7 @@ func (m *memStore) SaveProjectTestCache(*storage.ProjectTestCache) error { retur
 func (m *memStore) GetProjectTestCache(string, string, string, string, string) (*storage.ProjectTestCache, error) {
 	return nil, nil
 }
-func (m *memStore) CreateSessionWorktree(*storage.SessionWorktree, int) error { return nil }
+func (m *memStore) CreateSessionWorktree(*storage.SessionWorktree) error { return nil }
 func (m *memStore) GetSessionWorktree(string) (*storage.SessionWorktree, error) {
 	return nil, nil
 }

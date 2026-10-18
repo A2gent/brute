@@ -2,12 +2,11 @@ package storage
 
 import (
 	"database/sql"
-	"errors"
 	"time"
 )
 
 // SessionWorktree is the git worktree a session works in. Slot is a small per-project
-// number (1..max) the project's hooks use to pick non-clashing ports, databases, etc.
+// number (lowest free, unbounded) the project's hooks use to pick non-clashing ports, databases, etc.
 type SessionWorktree struct {
 	SessionID string
 	ProjectID string
@@ -18,24 +17,22 @@ type SessionWorktree struct {
 	CreatedAt time.Time
 }
 
-var ErrNoFreeWorktreeSlot = errors.New("all worktree slots of the project are taken")
-
 // CreateSessionWorktree stores wt in the lowest free slot of its project and sets wt.Slot.
+// WHY no upper bound: parallelism is limited by running sessions (max_parallel_sessions),
+// so finished sessions that still own a worktree must never block new ones.
 // WHY one INSERT ... SELECT: SQLite serializes writes, so two sessions created at the
 // same time can never pick the same slot; the unique (project_id, slot) index backs it up.
-func (s *SQLiteStore) CreateSessionWorktree(wt *SessionWorktree, maxSlots int) error {
-	err := s.db.QueryRow(`
-		WITH RECURSIVE slots(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM slots WHERE n < ?)
+func (s *SQLiteStore) CreateSessionWorktree(wt *SessionWorktree) error {
+	// The lowest free slot is either 1 or one past a taken slot.
+	return s.db.QueryRow(`
 		INSERT INTO session_worktrees (session_id, project_id, path, branch, base_ref, slot, created_at)
-		SELECT ?, ?, ?, ?, ?, n, ? FROM slots
+		SELECT ?, ?, ?, ?, ?, n, ? FROM (
+			SELECT 1 AS n UNION ALL SELECT slot + 1 FROM session_worktrees WHERE project_id = ?
+		)
 		WHERE n NOT IN (SELECT slot FROM session_worktrees WHERE project_id = ?)
 		ORDER BY n LIMIT 1
 		RETURNING slot
-	`, maxSlots, wt.SessionID, wt.ProjectID, wt.Path, wt.Branch, wt.BaseRef, wt.CreatedAt, wt.ProjectID).Scan(&wt.Slot)
-	if err == sql.ErrNoRows {
-		return ErrNoFreeWorktreeSlot
-	}
-	return err
+	`, wt.SessionID, wt.ProjectID, wt.Path, wt.Branch, wt.BaseRef, wt.CreatedAt, wt.ProjectID, wt.ProjectID).Scan(&wt.Slot)
 }
 
 // GetSessionWorktree returns nil without error when the session has no worktree.

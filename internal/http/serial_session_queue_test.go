@@ -248,7 +248,6 @@ func TestStartSerialQueuedSessionCreatesWorktreeBeforeRunning(t *testing.T) {
 	project.Settings[projectWorktreesEnabledSettingKey] = "true"
 	project.Settings[projectWorktreesDirectorySettingKey] = worktreesDir
 	project.Settings[projectWorktreesBaseRefSettingKey] = "master"
-	project.Settings[projectWorktreesMaxSlotsSettingKey] = "1"
 	if err := server.store.SaveProject(project); err != nil {
 		t.Fatalf("save project settings: %v", err)
 	}

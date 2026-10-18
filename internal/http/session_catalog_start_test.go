@@ -121,7 +121,7 @@ func TestSerialQueueMissingMessagePublishesSavedFailure(t *testing.T) {
 			}
 			events, unsubscribe := server.SubscribeSessionCatalogEvents("")
 			defer unsubscribe()
-			if cont, _ := server.runSerialQueuedSession(context.Background(), sess.ID); !cont {
+			if cont := server.runSerialQueuedSession(context.Background(), sess.ID); !cont {
 				t.Fatal("missing-message session should allow queue advancement")
 			}
 			select {

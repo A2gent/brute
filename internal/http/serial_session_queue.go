@@ -2,20 +2,15 @@ package http
 
 import (
 	"context"
-	"errors"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
-	"github.com/A2gent/brute/internal/storage"
 )
 
 const serialQueueGlobalScope = "__global__"
-
-const serialQueueWorktreeRetryDelay = 3 * time.Second
 
 // Project setting that raises how many queued sessions may run at once within a project.
 const (
@@ -130,17 +125,8 @@ func (s *Server) runSerialSessionQueueWorker(ctx context.Context, scope string) 
 			return
 		}
 
-		shouldContinue, waitForSlot := s.runSerialQueuedSession(ctx, next.ID)
+		shouldContinue := s.runSerialQueuedSession(ctx, next.ID)
 		s.releaseSerialQueueClaim(next.ID)
-		if waitForSlot {
-			// WHY here: waiting inside runSerialQueuedSession held the session's run lease,
-			// so a manual Start of that queued session failed with "Session is busy".
-			select {
-			case <-ctx.Done():
-				shouldContinue = false
-			case <-time.After(serialQueueWorktreeRetryDelay):
-			}
-		}
 		if !shouldContinue {
 			s.clearSerialSessionQueueWorker(scope)
 			return
@@ -239,22 +225,21 @@ func serialQueueScopeForSession(sess *session.Session) string {
 	return serialQueueGlobalScope
 }
 
-// runSerialQueuedSession returns whether the worker may continue and whether it should
-// wait before the next attempt because all worktree slots are taken.
-func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) (bool, bool) {
+// runSerialQueuedSession returns whether the worker may continue.
+func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) bool {
 	ctx, release, leaseErr := s.sessionManager.AcquireRun(ctx, sessionID)
 	if leaseErr != nil {
-		return true, false
+		return true
 	}
 	defer release()
 
 	sess, err := s.sessionManager.Get(sessionID)
 	if err != nil {
 		logging.Warn("Serial session queue could not load session %s: %v", sessionID, err)
-		return true, false
+		return true
 	}
 	if sess.Status != session.StatusQueued || !sessionIsSerialQueuedAutoRun(sess) || sessionIsQueuePaused(sess) || sessionPromptEditing(sess) {
-		return true, false
+		return true
 	}
 
 	prompt, _, ok := firstQueuedUserMessage(sess)
@@ -263,25 +248,21 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) (
 		sess.SetStatus(session.StatusFailed)
 		if err := s.sessionManager.Save(sess); err != nil {
 			logging.Warn("Serial session queue failed to mark session %s failed: %v", sess.ID, err)
-			return true, false
+			return true
 		}
-		return true, false
+		return true
 	}
 
-	// The worktree is created only now, at start time. With all slots taken the session stays
-	// queued; this worker waits (keeping FIFO order) and retries until a slot is freed.
+	// The worktree is created only now, at start time.
 	if sess.ProjectID != nil && (sess.ParentID == nil || *sess.ParentID == "") && s.sessionWorktree(sess) == nil {
 		if err := s.createSessionWorktree(sess.ID, *sess.ProjectID, ""); err != nil {
-			if errors.Is(err, storage.ErrNoFreeWorktreeSlot) {
-				return true, true
-			}
 			logging.Warn("Serial session queue could not create worktree for %s: %v", sess.ID, err)
 			sess.AddAssistantMessage("Queued session could not start: failed to create worktree: "+err.Error(), nil)
 			sess.SetStatus(session.StatusFailed)
 			if saveErr := s.sessionManager.Save(sess); saveErr != nil {
 				logging.Warn("Serial session queue failed to mark session %s failed: %v", sess.ID, saveErr)
 			}
-			return true, false
+			return true
 		}
 	}
 
@@ -293,7 +274,7 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) (
 	sess.SetStatus(session.StatusRunning)
 	if err := s.sessionManager.Save(sess); err != nil {
 		logging.Warn("Serial session queue failed to mark session %s running: %v", sess.ID, err)
-		return true, false
+		return true
 	}
 	defer s.queueTelegramSessionMessageSync(sess.ID)
 
@@ -318,9 +299,9 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) (
 	fresh, err := s.sessionManager.Get(sess.ID)
 	if err != nil {
 		logging.Warn("Serial session queue failed to reload session %s: %v", sess.ID, err)
-		return true, false
+		return true
 	}
-	return serialQueueCanAdvanceAfterStatus(fresh.Status), false
+	return serialQueueCanAdvanceAfterStatus(fresh.Status)
 }
 
 func firstQueuedUserMessage(sess *session.Session) (string, []session.ImageAttachment, bool) {

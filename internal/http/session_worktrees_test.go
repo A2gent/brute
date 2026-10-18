@@ -48,7 +48,6 @@ func TestSessionWorktreesLifecycle(t *testing.T) {
 	project.Settings[projectWorktreesEnabledSettingKey] = "true"
 	project.Settings[projectWorktreesDirectorySettingKey] = worktreesDir
 	project.Settings[projectWorktreesBaseRefSettingKey] = "master"
-	project.Settings[projectWorktreesMaxSlotsSettingKey] = "2"
 	// Hooks write outside the worktree, an untracked file would block `git worktree remove`.
 	project.Settings[projectWorktreesSetupCmdSettingKey] = `echo "$WORKTREE_SLOT $WORKTREE_NAME $WORKTREE_MAIN_ROOT" > ` + hooksDir + `/setup-$WORKTREE_SLOT`
 	project.Settings[projectWorktreesTeardownCmdSettingKey] = `touch ` + hooksDir + `/teardown-$WORKTREE_NAME`
@@ -82,13 +81,12 @@ func TestSessionWorktreesLifecycle(t *testing.T) {
 		t.Fatalf("bash tool did not get the worktree env: %+v %v", result, err)
 	}
 
-	// Second session: default branch name, slot 2; third: no slot left.
+	// Second session: default branch name, slot 2.
 	second := createWorktreeTestSession(t, server, projectID, "", http.StatusCreated)
 	secondWt, _ := server.store.GetSessionWorktree(second)
 	if secondWt == nil || secondWt.Slot != 2 || secondWt.Branch != "a2gent/"+second[:8] {
 		t.Fatalf("unexpected second worktree: %+v", secondWt)
 	}
-	createWorktreeTestSession(t, server, projectID, "", http.StatusConflict)
 
 	// Archive tears down: hook, folder removed, branch kept, slot 1 free again.
 	if rec := serveWorktreeTest(server, http.MethodPost, "/sessions/"+first+"/archive"); rec.Code != http.StatusOK {

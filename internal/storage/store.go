@@ -246,7 +246,7 @@ type Store interface {
 	GetProjectPRDescription(projectID string, repoPath string, branch string, baseBranch string) (*ProjectPRDescription, error)
 	SaveProjectTestCache(cache *ProjectTestCache) error
 	GetProjectTestCache(projectID string, repoPath string, branch string, baseBranch string, scopeHash string) (*ProjectTestCache, error)
-	CreateSessionWorktree(wt *SessionWorktree, maxSlots int) error
+	CreateSessionWorktree(wt *SessionWorktree) error
 	GetSessionWorktree(sessionID string) (*SessionWorktree, error)
 	DeleteSessionWorktree(sessionID string) error
 

@@ -130,8 +130,17 @@ func (s *Server) runSerialSessionQueueWorker(ctx context.Context, scope string) 
 			return
 		}
 
-		shouldContinue := s.runSerialQueuedSession(ctx, next.ID)
+		shouldContinue, waitForSlot := s.runSerialQueuedSession(ctx, next.ID)
 		s.releaseSerialQueueClaim(next.ID)
+		if waitForSlot {
+			// WHY here: waiting inside runSerialQueuedSession held the session's run lease,
+			// so a manual Start of that queued session failed with "Session is busy".
+			select {
+			case <-ctx.Done():
+				shouldContinue = false
+			case <-time.After(serialQueueWorktreeRetryDelay):
+			}
+		}
 		if !shouldContinue {
 			s.clearSerialSessionQueueWorker(scope)
 			return
@@ -230,20 +239,22 @@ func serialQueueScopeForSession(sess *session.Session) string {
 	return serialQueueGlobalScope
 }
 
-func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) bool {
+// runSerialQueuedSession returns whether the worker may continue and whether it should
+// wait before the next attempt because all worktree slots are taken.
+func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) (bool, bool) {
 	ctx, release, leaseErr := s.sessionManager.AcquireRun(ctx, sessionID)
 	if leaseErr != nil {
-		return true
+		return true, false
 	}
 	defer release()
 
 	sess, err := s.sessionManager.Get(sessionID)
 	if err != nil {
 		logging.Warn("Serial session queue could not load session %s: %v", sessionID, err)
-		return true
+		return true, false
 	}
 	if sess.Status != session.StatusQueued || !sessionIsSerialQueuedAutoRun(sess) || sessionIsQueuePaused(sess) || sessionPromptEditing(sess) {
-		return true
+		return true, false
 	}
 
 	prompt, _, ok := firstQueuedUserMessage(sess)
@@ -252,9 +263,9 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 		sess.SetStatus(session.StatusFailed)
 		if err := s.sessionManager.Save(sess); err != nil {
 			logging.Warn("Serial session queue failed to mark session %s failed: %v", sess.ID, err)
-			return true
+			return true, false
 		}
-		return true
+		return true, false
 	}
 
 	// The worktree is created only now, at start time. With all slots taken the session stays
@@ -262,12 +273,7 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 	if sess.ProjectID != nil && (sess.ParentID == nil || *sess.ParentID == "") && s.sessionWorktree(sess) == nil {
 		if err := s.createSessionWorktree(sess.ID, *sess.ProjectID, ""); err != nil {
 			if errors.Is(err, storage.ErrNoFreeWorktreeSlot) {
-				select {
-				case <-ctx.Done():
-					return false
-				case <-time.After(serialQueueWorktreeRetryDelay):
-				}
-				return true
+				return true, true
 			}
 			logging.Warn("Serial session queue could not create worktree for %s: %v", sess.ID, err)
 			sess.AddAssistantMessage("Queued session could not start: failed to create worktree: "+err.Error(), nil)
@@ -275,7 +281,7 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 			if saveErr := s.sessionManager.Save(sess); saveErr != nil {
 				logging.Warn("Serial session queue failed to mark session %s failed: %v", sess.ID, saveErr)
 			}
-			return true
+			return true, false
 		}
 	}
 
@@ -287,7 +293,7 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 	sess.SetStatus(session.StatusRunning)
 	if err := s.sessionManager.Save(sess); err != nil {
 		logging.Warn("Serial session queue failed to mark session %s running: %v", sess.ID, err)
-		return true
+		return true, false
 	}
 	defer s.queueTelegramSessionMessageSync(sess.ID)
 
@@ -312,9 +318,9 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 	fresh, err := s.sessionManager.Get(sess.ID)
 	if err != nil {
 		logging.Warn("Serial session queue failed to reload session %s: %v", sess.ID, err)
-		return true
+		return true, false
 	}
-	return serialQueueCanAdvanceAfterStatus(fresh.Status)
+	return serialQueueCanAdvanceAfterStatus(fresh.Status), false
 }
 
 func firstQueuedUserMessage(sess *session.Session) (string, []session.ImageAttachment, bool) {

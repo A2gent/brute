@@ -97,7 +97,7 @@ func TestSerialQueueGrantsEscalatedWriteAccess(t *testing.T) {
 		t.Fatal("write grant bypassed the existing lease")
 	}
 	release()
-	if !s.runSerialQueuedSession(context.Background(), sess.ID) {
+	if cont, _ := s.runSerialQueuedSession(context.Background(), sess.ID); !cont {
 		t.Fatal("queue did not advance")
 	}
 	fresh, err = s.sessionManager.Get(sess.ID)

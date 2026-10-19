@@ -136,52 +136,55 @@ func sameFilesystemPath(first string, second string) bool {
 	return resolve(first) == resolve(second)
 }
 
-// teardownSessionWorktree runs the teardown hook and removes the worktree folder; the
-// branch is kept. Archive may commit its changes first so completion never drops work.
+// teardownSessionWorktree delivers completed work into local main/master before
+// removing the checkout. Delete (commitChanges=false) deliberately does not merge.
+// Branches are kept so committed work remains recoverable even after removal.
 func (s *Server) teardownSessionWorktree(sessionID string, commitChanges bool) error {
 	wt, err := s.store.GetSessionWorktree(sessionID)
 	if err != nil || wt == nil {
-		return err
-	}
-	if _, statErr := os.Stat(wt.Path); os.IsNotExist(statErr) {
-		// A worktree may be removed outside the app; its absence must not block archiving.
-		if root, rootErr := s.resolveProjectRootFolder(wt.ProjectID); rootErr == nil {
-			unlockGit := lockWorktreeGit(root)
-			if _, pruneErr := runGitCommand(root, "worktree", "prune"); pruneErr != nil {
-				logging.Warn("Failed to prune missing session worktree: session=%s error=%v", sessionID, pruneErr)
-			}
-			unlockGit()
-		}
-		return s.store.DeleteSessionWorktree(sessionID)
-	} else if statErr != nil {
-		return fmt.Errorf("failed to inspect session worktree path: %w", statErr)
-	}
-	project, err := s.store.GetProject(wt.ProjectID)
-	if err != nil {
 		return err
 	}
 	root, err := s.resolveProjectRootFolder(wt.ProjectID)
 	if err != nil {
 		return err
 	}
+	unlockGit := lockWorktreeGit(root)
+	defer unlockGit()
+
+	_, statErr := os.Stat(wt.Path)
+	if statErr != nil && !os.IsNotExist(statErr) {
+		return fmt.Errorf("failed to inspect session worktree path: %w", statErr)
+	}
 	topLevel, gitErr := runGitCommand(wt.Path, "rev-parse", "--show-toplevel")
-	if gitErr != nil || !sameFilesystemPath(topLevel, wt.Path) || sameFilesystemPath(topLevel, root) {
-		// A stale DB record can point to an ordinary directory; never run Git there
-		// or remove that directory as if it were an owned worktree.
-		logging.Warn("Session %s has a stale worktree record for non-worktree path %s", sessionID, wt.Path)
-		unlockGit := lockWorktreeGit(root)
-		if _, pruneErr := runGitCommand(root, "worktree", "prune"); pruneErr != nil {
-			logging.Warn("Failed to prune stale session worktree metadata: session=%s error=%v", sessionID, pruneErr)
+	valid := statErr == nil && gitErr == nil && sameFilesystemPath(topLevel, wt.Path) && !sameFilesystemPath(topLevel, root)
+	if !valid {
+		// A missing folder can still have undelivered commits on its branch.
+		// Deliver those before dropping the DB record; never touch a plain folder
+		// that happens to occupy the stale path.
+		if commitChanges {
+			if err := integrateSessionWorktree(sessionID, root, "refs/heads/"+wt.Branch); err != nil {
+				return err
+			}
 		}
-		unlockGit()
+		if _, err := runGitCommand(root, "worktree", "prune"); err != nil {
+			return fmt.Errorf("failed to prune stale session worktree: %w", err)
+		}
 		return s.store.DeleteSessionWorktree(sessionID)
 	}
-	if command := normalizeProjectSettings(project.Settings)[projectWorktreesTeardownCmdSettingKey]; command != "" {
-		if err := runWorktreeHook(sessionID, wt.Path, command, worktreeEnv(wt, root)); err != nil {
-			logging.Warn("Session worktree teardown failed: session=%s error=%v", sessionID, err)
-		}
+	// A stale record can also point at a different repository. Never stage,
+	// merge or remove files there on behalf of this project.
+	rootCommon, rootErr := runGitCommand(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	worktreeCommon, worktreeErr := runGitCommand(wt.Path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if rootErr != nil || worktreeErr != nil || !sameFilesystemPath(rootCommon, worktreeCommon) {
+		return fmt.Errorf("session worktree does not belong to the project's Git repository; checkout is kept")
+	}
+	project, err := s.store.GetProject(wt.ProjectID)
+	if err != nil {
+		return err
 	}
 	if commitChanges {
+		// Use the actual checkout, not the stored branch name: agents may rename
+		// their branch. Keep detached commits too by merging their immutable SHA.
 		status, err := runGitCommand(wt.Path, "status", "--porcelain")
 		if err != nil {
 			return fmt.Errorf("failed to inspect session worktree changes: %w", err)
@@ -191,23 +194,27 @@ func (s *Server) teardownSessionWorktree(sessionID string, commitChanges bool) e
 				return fmt.Errorf("failed to stage session worktree changes: %w", err)
 			}
 			shortID := sessionID[:min(8, len(sessionID))]
-			// --no-verify: this is an automatic snapshot commit; slow pre-commit hooks must not block Complete.
 			message := fmt.Sprintf("Complete session %s", shortID)
-			if _, err := runGitLogged(sessionID, wt.Path, "commit", "--no-verify", "-m", message); err != nil {
+			if _, err := runGitLogged(sessionID, wt.Path, "commit", "-m", message); err != nil {
 				return fmt.Errorf("failed to commit session worktree changes: %w", err)
 			}
 			logging.LogSession("worktree-commit", sessionID, fmt.Sprintf("branch=%s", wt.Branch))
 		}
+		commit, err := runGitCommand(wt.Path, "rev-parse", "HEAD")
+		if err != nil {
+			return err
+		}
+		if err := integrateSessionWorktree(sessionID, root, commit); err != nil {
+			return err
+		}
 	}
-	// A folder deleted by hand only needs its stale git metadata pruned.
-	unlockGit := lockWorktreeGit(root)
-	if _, statErr := os.Stat(wt.Path); statErr != nil {
-		_, err = runGitCommand(root, "worktree", "prune")
-	} else {
-		_, err = runGitLogged(sessionID, root, "worktree", "remove", wt.Path)
+	// Do not stop the session's dev environment until local delivery succeeds.
+	if command := normalizeProjectSettings(project.Settings)[projectWorktreesTeardownCmdSettingKey]; command != "" {
+		if err := runWorktreeHook(sessionID, wt.Path, command, worktreeEnv(wt, root)); err != nil {
+			logging.Warn("Session worktree teardown failed: session=%s error=%v", sessionID, err)
+		}
 	}
-	unlockGit()
-	if err != nil {
+	if _, err := runGitLogged(sessionID, root, "worktree", "remove", wt.Path); err != nil {
 		return fmt.Errorf("failed to remove session worktree %s: %w", wt.Path, err)
 	}
 	return s.store.DeleteSessionWorktree(sessionID)

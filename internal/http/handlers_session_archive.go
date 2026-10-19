@@ -161,6 +161,17 @@ func (s *Server) setSessionArchived(w http.ResponseWriter, ctx context.Context, 
 		}
 	}
 
+	// Deliver every owned worktree before marking any session archived. A later
+	// descendant's merge failure must not leave the root falsely completed.
+	if archived {
+		for _, id := range ids {
+			shareArchiveProgress(root.ID, id)
+			if err := s.teardownSessionWorktree(id, true); err != nil {
+				s.errorResponse(w, http.StatusConflict, err.Error())
+				return
+			}
+		}
+	}
 	now := time.Now()
 	for _, id := range ids {
 		sess := root
@@ -181,12 +192,6 @@ func (s *Server) setSessionArchived(w http.ResponseWriter, ctx context.Context, 
 		if archived {
 			if sessionArchivedAt(sess) != nil {
 				continue
-			}
-			// The UI polls the root session's log, so descendants share the root's progress.
-			shareArchiveProgress(root.ID, sess.ID)
-			if err := s.teardownSessionWorktree(sess.ID, true); err != nil {
-				s.errorResponse(w, http.StatusConflict, err.Error())
-				return
 			}
 			sess.Metadata = storage.SetSessionMetadataTime(sess.Metadata, storage.SessionArchivedAtKey, &now)
 		} else {

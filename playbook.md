@@ -114,3 +114,6 @@
 - The full `internal/http` Go package can exceed the foreground command timeout after a targeted test passes; run broad Go test commands in the background and poll the log plus exit-code file. On macOS, `mktemp` requires six Xs at the end of the template (or use `mktemp -t name`).
 - In multi-repository workspaces, align `workdir` with the repository root before using repository-relative file paths; the workspace root may not contain nested component files directly.
 - If a pre-commit hook runs package tests and times out, inspect `HEAD`, the index, and active processes before retrying; validate the staged tree separately so unrelated working-tree changes are not mistaken for hook failures.
+
+- Treat local-checkout delivery and remote publication as separate facts: Complete must verify local main/master ancestry before removing a session worktree; never infer delivery from push success or a preserved branch. Validate failure/retry paths with isolated Git repositories and preserve foreign WIP.
+- Background the whole long verification pipeline, including temporary worktree creation, not just its test command. A short foreground timeout can interrupt checkout setup and leave a locked, half-populated scratch worktree. Verify ownership before cleaning only that disposable directory.

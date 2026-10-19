@@ -415,6 +415,8 @@ Brute supports A2A communication in two modes:
 
 ## 7. Session Model
 
+- **Complete** saves worktree changes and merges them into local `main`/`master` before archiving, without pushing. Dirty/conflicting main blocks completion and preserves the session checkout. See [Session worktrees and local delivery](docs/session-worktrees.md).
+
 - Sessions are persisted in a single SQLite DB (`AAGENT_DATA_PATH/aagent.db`).
 - Session fields include `id`, `agent_id`, `title`, `status`, timestamps, optional `parent_id` and `job_id`.
 - Grouping available now: parent/child sessions and job sessions.

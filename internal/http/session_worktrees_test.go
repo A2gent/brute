@@ -157,7 +157,7 @@ func TestSessionWorktreesLifecycle(t *testing.T) {
 	runGitForMindTest(t, repoDir, "clean", "-f")
 	thirdPath := filepath.Join(worktreesDir, "a2gent-"+third[:8])
 	thirdSess, _ := server.sessionManager.Get(third)
-	if prompt, _ := server.resolveEnvironmentContextSection(thirdSess); !strings.Contains(prompt, "git branch -m") || !strings.Contains(prompt, thirdPath) {
+	if prompt, _ := server.resolveEnvironmentContextSection(thirdSess); !strings.Contains(prompt, "git branch -m") || !strings.Contains(prompt, thirdPath) || !strings.Contains(prompt, "merges into local main/master without pushing") {
 		t.Fatalf("system prompt lacks worktree branch guidance: %s", prompt)
 	}
 	// The agent renames its branch: the payload and the handoff follow git, not the stored name.

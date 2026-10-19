@@ -320,6 +320,7 @@ func (s *Server) handleSessionChange(change session.Change) {
 		sess = loaded
 	}
 	item := s.sessionListItem(sess)
+	item.Worktree, item.MainFolder = s.sessionWorktreeFields(sess)
 	// filterSessionListMetadata copies the selected keys, so the event never
 	// shares the live metadata map with a running agent.
 	item.Metadata = filterSessionListMetadata(sess.Metadata, sessionCatalogMetadataKeys)

@@ -68,6 +68,7 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		modelContextWindow = config.ResolveContextWindowForRef(routedProvider, s.config.Providers[routedProvider], routedModel)
 	}
 	isOutbound, targetAgentID, targetAgentName := sessionA2AOutboundMeta(sess)
+	worktree, mainFolder := s.sessionWorktreeFields(sess)
 	channel, channelDetail := sessionChannel(sess)
 
 	return SessionResponse{
@@ -113,7 +114,8 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		A2AOutbound:            isOutbound,
 		A2ATargetAgentID:       targetAgentID,
 		A2ATargetAgentName:     targetAgentName,
-		Worktree:               s.sessionWorktreePayload(sess),
+		Worktree:               worktree,
+		MainFolder:             mainFolder,
 	}
 }
 

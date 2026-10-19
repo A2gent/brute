@@ -110,6 +110,8 @@ type SessionResponse struct {
 	A2ATargetAgentName string                   `json:"a2a_target_agent_name,omitempty"`
 	RunModeDecision    *session.RunModeDecision `json:"run_mode_decision,omitempty"`
 	Worktree           *SessionWorktreePayload  `json:"worktree,omitempty"`
+	// MainFolder: the project uses worktrees, but this session works in the main project folder.
+	MainFolder bool `json:"main_folder,omitempty"`
 }
 
 type ProviderFailurePayload struct {
@@ -377,6 +379,8 @@ type SessionListItem struct {
 	// Deleted marks an updated_since tombstone; only ID/ProjectID are set.
 	Deleted         bool                     `json:"deleted,omitempty"`
 	RunModeDecision *session.RunModeDecision `json:"run_mode_decision,omitempty"`
+	Worktree        *SessionWorktreePayload  `json:"worktree,omitempty"`
+	MainFolder      bool                     `json:"main_folder,omitempty"`
 }
 
 // SubAgentRequest represents a request to create or update a sub-agent.

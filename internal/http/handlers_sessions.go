@@ -62,6 +62,21 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Worktrees come from one query and project settings from one lookup per project,
+	// so the list does not query per row; catalog events load the same fields per session.
+	worktrees, err := s.store.ListSessionWorktrees()
+	if err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to list session worktrees: "+err.Error())
+		return
+	}
+	parents := make(map[string]string, len(sessions))
+	for _, sess := range sessions {
+		if sess.ParentID != nil {
+			parents[sess.ID] = *sess.ParentID
+		}
+	}
+	projectSettings := make(map[string]map[string]string)
+
 	items := make([]SessionListItem, 0, len(sessions))
 	for _, sess := range sessions {
 		if !sessionMatchesArchiveFilter(sess, archiveFilter) {
@@ -86,6 +101,21 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		if includeMetadata {
 			item.Metadata = filterSessionListMetadata(sess.Metadata, metadataKeys)
+		}
+		if item.ProjectID != "" {
+			settings, loaded := projectSettings[item.ProjectID]
+			if !loaded {
+				if project, err := s.store.GetProject(item.ProjectID); err == nil {
+					settings = normalizeProjectSettings(project.Settings)
+				}
+				projectSettings[item.ProjectID] = settings
+			}
+			// Continuations work in their ancestor's worktree, same walk as sessionWorktree.
+			wt := worktrees[sess.ID]
+			for id := sess.ID; wt == nil && parents[id] != ""; id = parents[id] {
+				wt = worktrees[parents[id]]
+			}
+			item.Worktree, item.MainFolder = sessionWorktreePayload(wt, settings)
 		}
 		items = append(items, item)
 	}

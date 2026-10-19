@@ -248,6 +248,7 @@ type Store interface {
 	GetProjectTestCache(projectID string, repoPath string, branch string, baseBranch string, scopeHash string) (*ProjectTestCache, error)
 	CreateSessionWorktree(wt *SessionWorktree) error
 	GetSessionWorktree(sessionID string) (*SessionWorktree, error)
+	ListSessionWorktrees() (map[string]*SessionWorktree, error)
 	DeleteSessionWorktree(sessionID string) error
 
 	// Project task operations. Every operation requires an explicit project scope.

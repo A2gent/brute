@@ -51,6 +51,25 @@ func (s *SQLiteStore) GetSessionWorktree(sessionID string) (*SessionWorktree, er
 	return &wt, nil
 }
 
+// ListSessionWorktrees returns every live worktree keyed by session ID, so session lists
+// get them in one query instead of one per row.
+func (s *SQLiteStore) ListSessionWorktrees() (map[string]*SessionWorktree, error) {
+	rows, err := s.db.Query(`SELECT session_id, project_id, path, branch, base_ref, slot, created_at FROM session_worktrees`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]*SessionWorktree)
+	for rows.Next() {
+		var wt SessionWorktree
+		if err := rows.Scan(&wt.SessionID, &wt.ProjectID, &wt.Path, &wt.Branch, &wt.BaseRef, &wt.Slot, &wt.CreatedAt); err != nil {
+			return nil, err
+		}
+		out[wt.SessionID] = &wt
+	}
+	return out, rows.Err()
+}
+
 func (s *SQLiteStore) DeleteSessionWorktree(sessionID string) error {
 	_, err := s.db.Exec(`DELETE FROM session_worktrees WHERE session_id = ?`, sessionID)
 	return err

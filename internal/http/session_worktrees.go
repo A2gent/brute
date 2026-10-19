@@ -245,22 +245,31 @@ func runWorktreeHook(dir string, command string, env []string) error {
 	return nil
 }
 
-// Only project sessions can have a worktree, which also skips the lookup for all others.
-func (s *Server) sessionWorktreePayload(sess *session.Session) *SessionWorktreePayload {
+// sessionWorktreePayload tells the UI where a session works: wt (its own or an ancestor's
+// worktree), or mainFolder when the project uses worktrees but the session has none, e.g.
+// it was created before worktrees were enabled. settings are the normalized project settings.
+func sessionWorktreePayload(wt *storage.SessionWorktree, settings map[string]string) (payload *SessionWorktreePayload, mainFolder bool) {
+	if wt == nil {
+		return nil, settings[projectWorktreesEnabledSettingKey] == "true"
+	}
+	payload = &SessionWorktreePayload{Path: wt.Path, Branch: wt.Branch, BaseRef: wt.BaseRef, Slot: wt.Slot}
+	if template := settings[projectWorktreesAppURLTemplateSettingKey]; template != "" {
+		payload.AppURL = strings.ReplaceAll(template, "{slot}", strconv.Itoa(wt.Slot))
+	}
+	return payload, false
+}
+
+// sessionWorktreeFields loads the worktree fields of a single session; lists preload them instead.
+// Only project sessions can have a worktree, which also skips the lookups for all others.
+func (s *Server) sessionWorktreeFields(sess *session.Session) (*SessionWorktreePayload, bool) {
 	if sess.ProjectID == nil {
-		return nil
+		return nil, false
 	}
-	wt, err := s.store.GetSessionWorktree(sess.ID)
-	if err != nil || wt == nil {
-		return nil
+	var settings map[string]string
+	if project, err := s.store.GetProject(*sess.ProjectID); err == nil {
+		settings = normalizeProjectSettings(project.Settings)
 	}
-	payload := &SessionWorktreePayload{Path: wt.Path, Branch: wt.Branch, BaseRef: wt.BaseRef, Slot: wt.Slot}
-	if project, err := s.store.GetProject(wt.ProjectID); err == nil {
-		if template := normalizeProjectSettings(project.Settings)[projectWorktreesAppURLTemplateSettingKey]; template != "" {
-			payload.AppURL = strings.ReplaceAll(template, "{slot}", strconv.Itoa(wt.Slot))
-		}
-	}
-	return payload
+	return sessionWorktreePayload(s.sessionWorktree(sess), settings)
 }
 
 // handleSessionWorktreeHandoff moves the session's branch into the main project folder,
@@ -283,14 +292,20 @@ func (s *Server) handleSessionWorktreeHandoff(w http.ResponseWriter, r *http.Req
 		s.errorResponse(w, http.StatusConflict, "Session is still running; stop it before the handoff")
 		return
 	}
-	wt, err := s.store.GetSessionWorktree(sess.ID)
-	if err != nil {
-		s.errorResponse(w, http.StatusInternalServerError, err.Error())
-		return
-	}
+	// A continuation works in its ancestor's worktree, so the handoff moves that one.
+	wt := s.sessionWorktree(sess)
 	if wt == nil {
 		s.errorResponse(w, http.StatusBadRequest, "Session has no worktree")
 		return
+	}
+	if wt.SessionID != sess.ID {
+		// The owner's lease too, so it cannot start while its folder is being removed.
+		_, releaseOwner, err := s.sessionManager.AcquireRun(r.Context(), wt.SessionID)
+		if err != nil {
+			s.errorResponse(w, http.StatusConflict, "The session that owns this worktree is still running; stop it before the handoff")
+			return
+		}
+		defer releaseOwner()
 	}
 	root, err := s.resolveProjectRootFolder(wt.ProjectID)
 	if err != nil {
@@ -312,7 +327,7 @@ func (s *Server) handleSessionWorktreeHandoff(w http.ResponseWriter, r *http.Req
 		s.errorResponse(w, http.StatusBadRequest, "Failed to read worktree branch: "+err.Error())
 		return
 	}
-	if err := s.teardownSessionWorktree(sess.ID); err != nil {
+	if err := s.teardownSessionWorktree(wt.SessionID); err != nil {
 		s.errorResponse(w, http.StatusConflict, err.Error())
 		return
 	}

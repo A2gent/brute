@@ -63,6 +63,9 @@ func (m *memStore) CreateSessionWorktree(*storage.SessionWorktree) error { retur
 func (m *memStore) GetSessionWorktree(string) (*storage.SessionWorktree, error) {
 	return nil, nil
 }
+func (m *memStore) ListSessionWorktrees() (map[string]*storage.SessionWorktree, error) {
+	return nil, nil
+}
 func (m *memStore) DeleteSessionWorktree(string) error { return nil }
 
 // Task stubs keep memStore aligned with storage.Store; session tests do not exercise tasks.

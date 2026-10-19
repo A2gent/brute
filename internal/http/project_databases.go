@@ -354,3 +354,19 @@ func (s *Server) handleProjectDatabaseQuery(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(result))
 }
+
+// handleDiagnoseProjectDatabase checks an unsaved (or edited) connection stage by stage.
+// Failures are reported inside the steps, so the response is always 200.
+func (s *Server) handleDiagnoseProjectDatabase(w http.ResponseWriter, r *http.Request) {
+	var req DiagnoseProjectDatabaseRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+	if req.Engine == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Engine is required")
+		return
+	}
+	steps := dbtool.Diagnose(r.Context(), dbtool.Config{Engine: req.Engine, DSN: req.DSN})
+	s.jsonResponse(w, http.StatusOK, steps)
+}

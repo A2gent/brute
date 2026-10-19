@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
@@ -23,6 +24,13 @@ type Config struct {
 
 // Connect opens a SQL database connection based on engine type.
 func Connect(cfg Config) (*sql.DB, error) {
+	// WHY: db.Ping() without a deadline hangs ~75s on filtered ports; bound it.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	return connectContext(ctx, cfg)
+}
+
+func connectContext(ctx context.Context, cfg Config) (*sql.DB, error) {
 	var driverName string
 	switch strings.ToLower(strings.TrimSpace(cfg.Engine)) {
 	case "postgres":
@@ -40,7 +48,7 @@ func Connect(cfg Config) (*sql.DB, error) {
 		return nil, err
 	}
 
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(ctx); err != nil {
 		db.Close()
 		return nil, err
 	}

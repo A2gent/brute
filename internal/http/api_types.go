@@ -789,3 +789,9 @@ type MessagePagePayload struct {
 	HasMore       bool   `json:"has_more"`
 	BeforeMessage string `json:"before_message,omitempty"`
 }
+
+// DiagnoseProjectDatabaseRequest is the payload for checking a connection before saving.
+type DiagnoseProjectDatabaseRequest struct {
+	Engine string `json:"engine"`
+	DSN    string `json:"dsn"`
+}

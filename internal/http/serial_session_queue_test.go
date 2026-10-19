@@ -260,6 +260,7 @@ func TestStartSerialQueuedSessionCreatesWorktreeBeforeRunning(t *testing.T) {
 	sess.Metadata = map[string]interface{}{
 		sessionQueueModeMetadataKey: sessionQueueModeSerial,
 		sessionQueueAutoStartKey:    true,
+		"worktree_branch":           "feature/queued",
 	}
 	sess.AddUserMessage("Start me in an isolated worktree")
 	if err := server.sessionManager.Save(sess); err != nil {
@@ -285,6 +286,9 @@ func TestStartSerialQueuedSessionCreatesWorktreeBeforeRunning(t *testing.T) {
 	}
 	if worktree == nil || worktree.Path == "" {
 		t.Fatal("manual start did not create a worktree before running")
+	}
+	if worktree.Branch != "feature/queued" {
+		t.Fatalf("deferred worktree branch = %q, want the branch requested at creation", worktree.Branch)
 	}
 }
 

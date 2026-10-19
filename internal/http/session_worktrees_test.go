@@ -58,8 +58,10 @@ func TestSessionWorktreesLifecycle(t *testing.T) {
 
 	// First session: requested branch, slot 1, setup hook gets the env contract.
 	first := createWorktreeTestSession(t, server, projectID, "feature/one", http.StatusCreated)
-	firstPath := filepath.Join(worktreesDir, "feature-one")
-	if setup, _ := os.ReadFile(filepath.Join(hooksDir, "setup-1")); strings.TrimSpace(string(setup)) != "1 feature-one "+repoDir {
+	// The folder is named after the session, not the branch, so renaming the branch never moves it.
+	firstName := "a2gent-" + first[:8]
+	firstPath := filepath.Join(worktreesDir, firstName)
+	if setup, _ := os.ReadFile(filepath.Join(hooksDir, "setup-1")); strings.TrimSpace(string(setup)) != "1 "+firstName+" "+repoDir {
 		t.Fatalf("unexpected setup hook env: %q", setup)
 	}
 	var resp SessionResponse
@@ -77,7 +79,7 @@ func TestSessionWorktreesLifecycle(t *testing.T) {
 		t.Fatalf("worktree branch = %q", branch)
 	}
 	result, err := server.toolManagerForSession(firstSess).Execute(context.Background(), "bash", json.RawMessage(`{"command":"echo $WORKTREE_SLOT:$WORKTREE_NAME"}`))
-	if err != nil || !strings.HasPrefix(result.Output, "1:feature-one") {
+	if err != nil || !strings.HasPrefix(result.Output, "1:"+firstName) {
 		t.Fatalf("bash tool did not get the worktree env: %+v %v", result, err)
 	}
 
@@ -92,7 +94,7 @@ func TestSessionWorktreesLifecycle(t *testing.T) {
 	if rec := serveWorktreeTest(server, http.MethodPost, "/sessions/"+first+"/archive"); rec.Code != http.StatusOK {
 		t.Fatalf("archive failed: %d %s", rec.Code, rec.Body.String())
 	}
-	if _, err := os.Stat(filepath.Join(hooksDir, "teardown-feature-one")); err != nil {
+	if _, err := os.Stat(filepath.Join(hooksDir, "teardown-"+firstName)); err != nil {
 		t.Fatalf("teardown hook did not run: %v", err)
 	}
 	if _, err := os.Stat(firstPath); !os.IsNotExist(err) {
@@ -118,7 +120,26 @@ func TestSessionWorktreesLifecycle(t *testing.T) {
 		t.Fatalf("expected handoff to be refused on a dirty main folder, got %d", rec.Code)
 	}
 	runGitForMindTest(t, repoDir, "clean", "-f")
-	runGitForMindTest(t, filepath.Join(worktreesDir, "feature-three"), "branch", "-m", "feature/renamed")
+	thirdPath := filepath.Join(worktreesDir, "a2gent-"+third[:8])
+	thirdSess, _ := server.sessionManager.Get(third)
+	if prompt, _ := server.resolveEnvironmentContextSection(thirdSess); !strings.Contains(prompt, "git branch -m") || !strings.Contains(prompt, thirdPath) {
+		t.Fatalf("system prompt lacks worktree branch guidance: %s", prompt)
+	}
+	// The agent renames its branch: the payload and the handoff follow git, not the stored name.
+	runGitForMindTest(t, thirdPath, "branch", "-m", "feature/renamed")
+	if body := getWorktreeTestSession(t, server, third); !strings.Contains(body, `"branch":"feature/renamed"`) {
+		t.Fatalf("payload did not pick up the renamed branch: %s", body)
+	}
+	// Detached HEAD shows the short commit and blocks the handoff.
+	runGitForMindTest(t, thirdPath, "switch", "--detach")
+	commit, _ := runGitCommand(thirdPath, "rev-parse", "--short", "HEAD")
+	if body := getWorktreeTestSession(t, server, third); !strings.Contains(body, `"branch":"`+commit+`"`) {
+		t.Fatalf("payload did not show the detached commit %s: %s", commit, body)
+	}
+	if rec := serveWorktreeTest(server, http.MethodPost, "/sessions/"+third+"/worktree/handoff"); rec.Code != http.StatusConflict {
+		t.Fatalf("expected handoff to be refused on a detached HEAD, got %d", rec.Code)
+	}
+	runGitForMindTest(t, thirdPath, "switch", "feature/renamed")
 	if rec := serveWorktreeTest(server, http.MethodPost, "/sessions/"+third+"/worktree/handoff"); rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"worktree"`) {
 		t.Fatalf("handoff failed: %d %s", rec.Code, rec.Body.String())
 	}

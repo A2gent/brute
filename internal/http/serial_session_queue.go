@@ -255,7 +255,8 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 
 	// The worktree is created only now, at start time.
 	if sess.ProjectID != nil && (sess.ParentID == nil || *sess.ParentID == "") && s.sessionWorktree(sess) == nil {
-		if err := s.createSessionWorktree(sess.ID, *sess.ProjectID, ""); err != nil {
+		branch, _ := sess.Metadata["worktree_branch"].(string)
+		if err := s.createSessionWorktree(sess.ID, *sess.ProjectID, branch); err != nil {
 			logging.Warn("Serial session queue could not create worktree for %s: %v", sess.ID, err)
 			sess.AddAssistantMessage("Queued session could not start: failed to create worktree: "+err.Error(), nil)
 			sess.SetStatus(session.StatusFailed)

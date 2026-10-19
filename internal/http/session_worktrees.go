@@ -63,7 +63,9 @@ func lockWorktreeGit(root string) func() {
 }
 
 // createSessionWorktree is a no-op unless worktrees are enabled for the project.
-// Branch defaults to a2gent/<session-short-id>; the folder is named after the branch.
+// Branch defaults to a2gent/<session-short-id>. The folder is always a2gent-<session-short-id>:
+// the branch may be renamed later, but the session cwd and WORKTREE_NAME-derived resources
+// (e.g. Spareto's app container) are bound to the folder.
 func (s *Server) createSessionWorktree(sessionID string, projectID string, branch string) error {
 	project, err := s.store.GetProject(projectID)
 	if err != nil {
@@ -77,15 +79,10 @@ func (s *Server) createSessionWorktree(sessionID string, projectID string, branc
 	if err != nil {
 		return err
 	}
+	shortID := sessionID[:min(8, len(sessionID))]
 	if branch == "" {
-		branch = "a2gent/" + sessionID[:min(8, len(sessionID))]
+		branch = "a2gent/" + shortID
 	}
-	name := strings.Map(func(r rune) rune {
-		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-' {
-			return r
-		}
-		return '-'
-	}, branch)
 	baseRef := settings[projectWorktreesBaseRefSettingKey]
 	if baseRef == "" {
 		baseRef = "origin/HEAD"
@@ -95,7 +92,7 @@ func (s *Server) createSessionWorktree(sessionID string, projectID string, branc
 	wt := &storage.SessionWorktree{
 		SessionID: sessionID,
 		ProjectID: projectID,
-		Path:      filepath.Join(projectWorktreesDirectory(root, settings[projectWorktreesDirectorySettingKey]), name),
+		Path:      filepath.Join(projectWorktreesDirectory(root, settings[projectWorktreesDirectorySettingKey]), "a2gent-"+shortID),
 		Branch:    branch,
 		BaseRef:   baseRef,
 		CreatedAt: time.Now(),
@@ -252,11 +249,24 @@ func sessionWorktreePayload(wt *storage.SessionWorktree, settings map[string]str
 	if wt == nil {
 		return nil, settings[projectWorktreesEnabledSettingKey] == "true"
 	}
-	payload = &SessionWorktreePayload{Path: wt.Path, Branch: wt.Branch, BaseRef: wt.BaseRef, Slot: wt.Slot}
+	payload = &SessionWorktreePayload{Path: wt.Path, Branch: worktreeBranch(wt), BaseRef: wt.BaseRef, Slot: wt.Slot}
 	if template := settings[projectWorktreesAppURLTemplateSettingKey]; template != "" {
 		payload.AppURL = strings.ReplaceAll(template, "{slot}", strconv.Itoa(wt.Slot))
 	}
 	return payload, false
+}
+
+// worktreeBranch reads the checked-out branch from git, because the agent or the user may
+// rename it with `git branch -m`; the stored name is only the initial one and the fallback
+// when git cannot be read (e.g. the folder was removed). Detached HEAD shows the short commit.
+func worktreeBranch(wt *storage.SessionWorktree) string {
+	if branch, err := currentGitBranch(wt.Path); err == nil && branch != "" {
+		return branch
+	}
+	if commit, err := runGitCommand(wt.Path, "rev-parse", "--short", "HEAD"); err == nil && commit != "" {
+		return commit
+	}
+	return wt.Branch
 }
 
 // sessionWorktreeFields loads the worktree fields of a single session; lists preload them instead.
@@ -325,6 +335,11 @@ func (s *Server) handleSessionWorktreeHandoff(w http.ResponseWriter, r *http.Req
 	branch, err := currentGitBranch(wt.Path)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Failed to read worktree branch: "+err.Error())
+		return
+	}
+	// Removing a worktree on a detached HEAD would leave its commits on no branch.
+	if branch == "" {
+		s.errorResponse(w, http.StatusConflict, "Worktree is on a detached HEAD; check out a branch first")
 		return
 	}
 	if err := s.teardownSessionWorktree(wt.SessionID); err != nil {

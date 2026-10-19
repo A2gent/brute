@@ -223,6 +223,10 @@ func (s *Server) resolveEnvironmentContextSection(sess *session.Session) (string
 	if projectRoot != "" {
 		sb.WriteString(fmt.Sprintf("- Project root: %s\n", projectRoot))
 		sb.WriteString("\nWhen working on files for this session, operate within the project root above unless the user explicitly asks for a different location. The project root may contain multiple components; inspect it before concluding a requested app or package is unavailable.")
+		// The branch is named before the task is known, so the agent may rename it; brute reads it back from git.
+		if wt := s.sessionWorktree(sess); wt != nil {
+			sb.WriteString(fmt.Sprintf("\n\nThis session works in its own git worktree at %s (your working directory). Once the task is clear, you may rename its branch with `git branch -m <name>` following the project's branch naming conventions. Never move or rename the worktree folder: the session and the project's dev environment are bound to it.", wt.Path))
+		}
 	} else {
 		sb.WriteString("\nNo project root is associated with this session. Use the server working directory as the default file scope.")
 	}

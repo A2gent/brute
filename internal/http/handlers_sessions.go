@@ -421,6 +421,12 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 				s.errorResponse(w, http.StatusBadRequest, "Failed to create session worktree: "+err.Error())
 				return
 			}
+		} else if branch := strings.TrimSpace(req.Branch); req.ParentID == "" && branch != "" {
+			// The deferred worktree is created at start time; keep the requested branch until then.
+			sess.Metadata["worktree_branch"] = branch
+			if err := s.sessionManager.Save(sess); err != nil {
+				logging.Warn("Failed to persist session worktree branch: %v", err)
+			}
 		}
 	}
 	if linkedTask != nil {
@@ -504,7 +510,8 @@ func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
 		// Serial-queued sessions defer worktree creation until execution; manual Start
 		// bypasses the queue, so provision the isolated workspace before marking running.
 		if sess.ProjectID != nil && (sess.ParentID == nil || *sess.ParentID == "") && s.sessionWorktree(sess) == nil {
-			if err := s.createSessionWorktree(sess.ID, *sess.ProjectID, ""); err != nil {
+			branch, _ := sess.Metadata["worktree_branch"].(string)
+			if err := s.createSessionWorktree(sess.ID, *sess.ProjectID, branch); err != nil {
 				s.errorResponse(w, http.StatusInternalServerError, "Failed to start session: "+err.Error())
 				return
 			}

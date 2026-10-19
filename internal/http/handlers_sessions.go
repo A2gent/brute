@@ -416,14 +416,15 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		// Child sessions reuse the worktree of their parent (see sessionWorktree).
 		// Queued serial sessions get theirs when the queue starts them (runSerialQueuedSession).
 		if req.ParentID == "" && !(req.Queued && sessionIsSerialQueuedAutoRun(sess)) {
-			if err := s.createSessionWorktree(sess.ID, req.ProjectID, strings.TrimSpace(req.Branch)); err != nil {
+			if err := s.createSessionWorktree(sess.ID, req.ProjectID, strings.TrimSpace(req.Branch), strings.TrimSpace(req.BaseRef)); err != nil {
 				_ = s.sessionManager.Delete(sess.ID)
 				s.errorResponse(w, http.StatusBadRequest, "Failed to create session worktree: "+err.Error())
 				return
 			}
-		} else if branch := strings.TrimSpace(req.Branch); req.ParentID == "" && branch != "" {
-			// The deferred worktree is created at start time; keep the requested branch until then.
-			sess.Metadata["worktree_branch"] = branch
+		} else if req.ParentID == "" && strings.TrimSpace(req.Branch+req.BaseRef) != "" {
+			// The deferred worktree is created at start time; keep the requested branch and base until then.
+			sess.Metadata["worktree_branch"] = strings.TrimSpace(req.Branch)
+			sess.Metadata["worktree_base_ref"] = strings.TrimSpace(req.BaseRef)
 			if err := s.sessionManager.Save(sess); err != nil {
 				logging.Warn("Failed to persist session worktree branch: %v", err)
 			}
@@ -511,7 +512,8 @@ func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
 		// bypasses the queue, so provision the isolated workspace before marking running.
 		if sess.ProjectID != nil && (sess.ParentID == nil || *sess.ParentID == "") && s.sessionWorktree(sess) == nil {
 			branch, _ := sess.Metadata["worktree_branch"].(string)
-			if err := s.createSessionWorktree(sess.ID, *sess.ProjectID, branch); err != nil {
+			baseRef, _ := sess.Metadata["worktree_base_ref"].(string)
+			if err := s.createSessionWorktree(sess.ID, *sess.ProjectID, branch, baseRef); err != nil {
 				s.errorResponse(w, http.StatusInternalServerError, "Failed to start session: "+err.Error())
 				return
 			}

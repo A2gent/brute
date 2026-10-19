@@ -29,7 +29,10 @@ type CreateSessionRequest struct {
 	// Optional team launch target. When set, create a team_run header for the parent session.
 	TeamID string `json:"team_id,omitempty"`
 	// Optional branch for the session worktree (worktree-enabled projects); defaults to a2gent/<session-short-id>.
-	Branch    string                 `json:"branch,omitempty"`
+	// An existing branch is continued instead of created.
+	Branch string `json:"branch,omitempty"`
+	// Optional ref a new worktree branch starts from; defaults to the project worktrees base ref.
+	BaseRef   string                 `json:"base_ref,omitempty"`
 	Queued    bool                   `json:"queued,omitempty"`     // If true, create session without starting it
 	QueueMode string                 `json:"queue_mode,omitempty"` // "serial" queues, "now" starts immediately, "auto" classifies task effects.
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`

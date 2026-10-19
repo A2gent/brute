@@ -188,7 +188,7 @@ func TestConcurrentSessionWorktreeCreationSerializesGitMetadataUpdates(t *testin
 	errs := make(chan error, count)
 	for _, id := range sessionIDs {
 		go func(sessionID string) {
-			errs <- server.createSessionWorktree(sessionID, projectID, "")
+			errs <- server.createSessionWorktree(sessionID, projectID, "", "")
 		}(id)
 	}
 	for i := 0; i < count; i++ {

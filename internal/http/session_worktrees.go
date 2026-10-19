@@ -63,10 +63,11 @@ func lockWorktreeGit(root string) func() {
 }
 
 // createSessionWorktree is a no-op unless worktrees are enabled for the project.
-// Branch defaults to a2gent/<session-short-id>. The folder is always a2gent-<session-short-id>:
-// the branch may be renamed later, but the session cwd and WORKTREE_NAME-derived resources
-// (e.g. Spareto's app container) are bound to the folder.
-func (s *Server) createSessionWorktree(sessionID string, projectID string, branch string) error {
+// Branch defaults to a2gent/<session-short-id>, an existing branch is continued (see
+// addSessionWorktree); baseRef defaults to the project setting. The folder is always
+// a2gent-<session-short-id>: the branch may be renamed later, but the session cwd and
+// WORKTREE_NAME-derived resources (e.g. Spareto's app container) are bound to the folder.
+func (s *Server) createSessionWorktree(sessionID string, projectID string, branch string, baseRef string) error {
 	project, err := s.store.GetProject(projectID)
 	if err != nil {
 		return err
@@ -83,7 +84,9 @@ func (s *Server) createSessionWorktree(sessionID string, projectID string, branc
 	if branch == "" {
 		branch = "a2gent/" + shortID
 	}
-	baseRef := settings[projectWorktreesBaseRefSettingKey]
+	if baseRef == "" {
+		baseRef = settings[projectWorktreesBaseRefSettingKey]
+	}
 	if baseRef == "" {
 		baseRef = "origin/HEAD"
 	}

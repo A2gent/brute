@@ -9,20 +9,38 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 
 	"github.com/A2gent/brute/internal/logging"
 )
 
-// addSessionWorktree creates the worktree for a new branch at path from baseRef.
+// git names the folder that already has the branch checked out (wording differs by version).
+var worktreeBranchInUsePattern = regexp.MustCompile(`(?:checked out|used by worktree) at '([^']+)'`)
+
+// addSessionWorktree checks out branch at path. An existing local branch is continued as is,
+// a remote-only one gets a local tracking branch; otherwise a new branch starts from baseRef.
 func addSessionWorktree(root string, path string, branch string, baseRef string) error {
-	if runtime.GOOS != "darwin" {
-		_, err := runGitCommand(root, "worktree", "add", "--relative-paths", "-b", branch, path, baseRef)
+	args := []string{"-b", branch, path, baseRef}
+	created := true
+	if _, err := runGitCommand(root, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
+		args, created = []string{path, branch}, false
+	} else if _, err := runGitCommand(root, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+branch); err == nil {
+		args = []string{"--track", "-b", branch, path, "origin/" + branch}
+	}
+	if runtime.GOOS == "darwin" {
+		args = append([]string{"--no-checkout"}, args...)
+	}
+	if _, err := runGitCommand(root, append([]string{"worktree", "add", "--relative-paths"}, args...)...); err != nil {
+		// git refuses to check out one branch in two folders; tell the user which folder holds it.
+		if match := worktreeBranchInUsePattern.FindStringSubmatch(err.Error()); match != nil {
+			return fmt.Errorf("branch %s is open in %s; switch that folder to another branch first", branch, match[1])
+		}
 		return err
 	}
-	if _, err := runGitCommand(root, "worktree", "add", "--relative-paths", "--no-checkout", "-b", branch, path, baseRef); err != nil {
-		return err
+	if runtime.GOOS != "darwin" {
+		return nil
 	}
 	cloneProjectFolder(root, path)
 	// reset fills the index from baseRef without touching files, checkout then rewrites only
@@ -31,7 +49,10 @@ func addSessionWorktree(root string, path string, branch string, baseRef string)
 	for _, args := range [][]string{{"reset", "-q"}, {"checkout", "--", "."}, {"clean", "-fdq"}} {
 		if _, err := runGitCommand(path, args...); err != nil {
 			_, _ = runGitCommand(root, "worktree", "remove", "--force", path)
-			_, _ = runGitCommand(root, "branch", "-D", branch)
+			// A continued branch existed before the session and must survive the failure.
+			if created {
+				_, _ = runGitCommand(root, "branch", "-D", branch)
+			}
 			return fmt.Errorf("failed to populate session worktree: %w", err)
 		}
 	}

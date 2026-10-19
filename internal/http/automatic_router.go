@@ -189,10 +189,14 @@ func (s *Server) resolveExecutionTargetBase(ctx context.Context, providerType co
 		return nil, err
 	}
 	rules, _ := s.normalizeAndValidateRouterRules(autoCfg.RouterRules)
-	chosen, reason, err := s.selectRoutingRule(ctx, strings.TrimSpace(userPrompt), autoCfg, rules)
-	if err != nil {
-		logging.Error("Automatic router model decision failed: %v", err)
-		return nil, fmt.Errorf("automatic router failed: %w", err)
+	chosen, reason := stickyRoutingRule(sess, rules)
+	if chosen == nil {
+		var err error
+		chosen, reason, err = s.selectRoutingRule(ctx, strings.TrimSpace(userPrompt), autoCfg, rules)
+		if err != nil {
+			logging.Error("Automatic router model decision failed: %v", err)
+			return nil, fmt.Errorf("automatic router failed: %w", err)
+		}
 	}
 	if chosen == nil {
 		return nil, fmt.Errorf("automatic router could not resolve a route")
@@ -220,6 +224,25 @@ func (s *Server) resolveExecutionTargetBase(ctx context.Context, providerType co
 		ProviderSessionIdentity: s.claudeProviderSessionIdentity(string(targetProvider)),
 		Client:                  client,
 	}, nil
+}
+
+// stickyRoutingRule returns the rule a session was already routed to. Routing
+// happens once per session: re-classifying every follow-up ("merged", a pasted
+// password) silently swapped models mid-task, so further switches are left to
+// the user. A provider transition clears routed_provider and allows a new route;
+// a rule removed from config also falls through to a fresh decision.
+func stickyRoutingRule(sess *session.Session, rules []config.RouterRule) (*config.RouterRule, string) {
+	routedProvider, _ := sessionRoutedProviderAndModel(sess)
+	routedRule, routedReason := sessionRoutingRuleAndReason(sess)
+	if routedProvider == "" || routedRule == "" || routedRule == jevEffortRoutingRule {
+		return nil, ""
+	}
+	for i := range rules {
+		if rules[i].Match == routedRule && config.NormalizeProviderRef(rules[i].Provider) == config.NormalizeProviderRef(routedProvider) {
+			return &rules[i], routedReason
+		}
+	}
+	return nil, ""
 }
 
 func (s *Server) selectRoutingRule(ctx context.Context, userPrompt string, autoCfg config.Provider, rules []config.RouterRule) (*config.RouterRule, string, error) {

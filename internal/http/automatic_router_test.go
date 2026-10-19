@@ -233,3 +233,42 @@ func TestResolveExecutionTargetPreservesProviderReasoningEffortWhenSessionUnset(
 		t.Fatalf("target reasoning effort = %q, want medium", target.ReasoningEffort)
 	}
 }
+
+func TestResolveExecutionTargetKeepsSessionRouteForFollowUps(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Providers[string(config.ProviderOpenAICodex)] = config.Provider{
+		Name:    string(config.ProviderOpenAICodex),
+		APIKey:  "test-key",
+		BaseURL: "http://127.0.0.1:1",
+		Model:   "gpt-5.6-codex",
+	}
+	// The router endpoint is unreachable, so any re-classification fails the test.
+	cfg.Providers[string(config.ProviderAutoRouter)] = config.Provider{
+		RouterProvider: string(config.ProviderOpenAICodex),
+		RouterModel:    "gpt-5.6-codex",
+		RouterRules: []config.RouterRule{
+			{Match: "sensitive", Provider: string(config.ProviderOpenAICodex), Model: "gpt-5.6-codex"},
+			{Match: "coding", Provider: string(config.ProviderOpenAICodex), Model: "gpt-5.6-codex", ReasoningEffort: "high"},
+		},
+	}
+	server := &Server{config: cfg}
+	sess := session.New("build")
+	sess.Metadata["routed_provider"] = string(config.ProviderOpenAICodex)
+	sess.Metadata["routed_model"] = "gpt-5.6-codex"
+	sess.Metadata["routed_rule"] = "coding"
+	sess.Metadata["routed_reason"] = "jev confidence=0.89"
+
+	target, err := server.resolveExecutionTarget(context.Background(), config.ProviderAutoRouter, "", "`secret-password`", sess)
+	if err != nil {
+		t.Fatalf("follow-up must reuse the session route without re-routing: %v", err)
+	}
+	if target.RoutingRule != "coding" || target.ReasoningEffort != "high" || target.RoutingReason != "jev confidence=0.89" {
+		t.Fatalf("unexpected sticky target: %+v", target)
+	}
+
+	// A rule removed from config must not be reused.
+	sess.Metadata["routed_rule"] = "deleted rule"
+	if _, err := server.resolveExecutionTarget(context.Background(), config.ProviderAutoRouter, "", "next", sess); err == nil {
+		t.Fatal("expected a fresh routing attempt for an unknown stored rule")
+	}
+}

@@ -22,6 +22,6 @@ Output always has `answer`, `confidence`, and `probabilities`. Choice answers ar
 
 Jev limits are measured in tokens: 64k per request and 32k per question (state plus one question), see https://docs.typesafe.ai/models#context-length. The 64 KiB tool cap is a local byte policy and can still exceed 32k tokens for dense non-English text; the API then returns `400 max_tokens_exceeded`.
 
-The automatic router caps the routed prompt at 32 KiB (head and tail) and, on `max_tokens_exceeded`, retries with the prompt halved. Images from the latest user message are forwarded to Jev only (resized JPEG, `TypeSafe-Danger-Zone-Images` header) and dropped if Jev rejects them.
+The automatic router caps the routed prompt at 32 KiB (head and tail) and, on `max_tokens_exceeded`, retries with the prompt halved. Routing is sticky: only the first prompt of a session is classified; follow-ups reuse the stored route until the user switches provider (which clears it) or the routed rule is removed from config. Images from the latest user message are forwarded to Jev only (resized JPEG, `TypeSafe-Danger-Zone-Images` header) and dropped if Jev rejects them.
 
 References: https://docs.typesafe.ai/primitives/choice, https://docs.typesafe.ai/primitives/score, https://docs.typesafe.ai/primitives/noul.

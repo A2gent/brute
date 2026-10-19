@@ -196,6 +196,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	applyLeadingSessionQueueDirective(&req)
 	req.ParentID = strings.TrimSpace(req.ParentID)
+	if req.ParentID != "" {
+		s.sessionTreeMu.RLock()
+		defer s.sessionTreeMu.RUnlock()
+	}
 	linkType, err := normalizeSessionLinkType(req.LinkType)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
@@ -218,6 +222,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		parentSession, err = s.sessionManager.Get(req.ParentID)
 		if err != nil {
 			s.errorResponse(w, http.StatusBadRequest, "Parent session not found: "+err.Error())
+			return
+		}
+		if sessionArchivedAt(parentSession) != nil {
+			s.errorResponse(w, http.StatusConflict, "Parent session is archived; restore it before creating a child")
 			return
 		}
 		if req.ProjectID == "" && parentSession.ProjectID != nil {
@@ -716,7 +724,7 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		s.closeBrowserPageForSession(id)
 	}
 	for _, id := range sessionIDsToDelete {
-		if err := s.teardownSessionWorktree(id); err != nil {
+		if err := s.teardownSessionWorktree(id, false); err != nil {
 			s.errorResponse(w, http.StatusConflict, err.Error())
 			return
 		}

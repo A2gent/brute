@@ -4,6 +4,7 @@
 package http
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -51,11 +52,11 @@ func sessionMatchesArchiveFilter(sess *session.Session, filter string) bool {
 }
 
 func (s *Server) handleArchiveSession(w http.ResponseWriter, r *http.Request) {
-	s.setSessionArchived(w, chi.URLParam(r, "sessionID"), true)
+	s.setSessionArchived(w, r.Context(), chi.URLParam(r, "sessionID"), true)
 }
 
 func (s *Server) handleUnarchiveSession(w http.ResponseWriter, r *http.Request) {
-	s.setSessionArchived(w, chi.URLParam(r, "sessionID"), false)
+	s.setSessionArchived(w, r.Context(), chi.URLParam(r, "sessionID"), false)
 }
 
 func (s *Server) sessionIsBusy(sess *session.Session) bool {
@@ -72,8 +73,14 @@ func (s *Server) sessionIsBusy(sess *session.Session) bool {
 		return false
 	}
 }
-
-func (s *Server) setSessionArchived(w http.ResponseWriter, sessionID string, archived bool) {
+func (s *Server) setSessionArchived(w http.ResponseWriter, ctx context.Context, sessionID string, archived bool) {
+	if archived {
+		// Lets the UI show live progress while the (possibly slow) teardown runs.
+		defer startArchiveProgress(sessionID)()
+		// Archive tears down the shared worktree, so serialize it with child creation.
+		s.sessionTreeMu.Lock()
+		defer s.sessionTreeMu.Unlock()
+	}
 	root, err := s.sessionManager.Get(sessionID)
 	if err != nil {
 		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
@@ -86,13 +93,72 @@ func (s *Server) setSessionArchived(w http.ResponseWriter, sessionID string, arc
 		return
 	}
 
+	var rootWorktree *storage.SessionWorktree
+	if archived {
+		rootWorktree, err = s.store.GetSessionWorktree(root.ID)
+		if err != nil {
+			s.errorResponse(w, http.StatusInternalServerError, "Failed to load session worktree: "+err.Error())
+			return
+		}
+	}
 	// Archive the whole subtree like delete does, so child sessions do not
 	// resurface as orphaned roots in the main list.
 	ids := []string{root.ID}
-	if all, listErr := s.sessionManager.List(); listErr != nil {
+	all, listErr := s.sessionManager.List()
+	if listErr != nil {
 		logging.Warn("Failed to list sessions before archive cascade for %s: %v", sessionID, listErr)
+		if archived && rootWorktree != nil {
+			s.errorResponse(w, http.StatusInternalServerError, "Failed to list sessions before archiving worktree")
+			return
+		}
 	} else {
 		ids = sessionSubtreeIDs(all, root.ID)
+	}
+
+	hasWorktree := rootWorktree != nil
+	if archived && !hasWorktree {
+		for _, id := range ids[1:] {
+			worktree, worktreeErr := s.store.GetSessionWorktree(id)
+			if worktreeErr != nil {
+				s.errorResponse(w, http.StatusInternalServerError, "Failed to load session worktree: "+worktreeErr.Error())
+				return
+			}
+			if worktree != nil {
+				hasWorktree = true
+				break
+			}
+		}
+	}
+
+	// Child sessions share an ancestor's worktree. Hold every lease in the subtree
+	// through commit/removal so no active run can write into the checkout mid-archive.
+	var releases []func()
+	defer func() {
+		for i := len(releases) - 1; i >= 0; i-- {
+			releases[i]()
+		}
+	}()
+	if archived && hasWorktree {
+		for _, id := range ids {
+			candidate := root
+			if id != root.ID {
+				candidate, err = s.sessionManager.Get(id)
+				if err != nil {
+					s.errorResponse(w, http.StatusInternalServerError, "Failed to load descendant session: "+err.Error())
+					return
+				}
+			}
+			if s.sessionIsBusy(candidate) {
+				s.errorResponse(w, http.StatusConflict, "A descendant session is still running; stop it before completing")
+				return
+			}
+			_, release, leaseErr := s.sessionManager.AcquireRun(ctx, id)
+			if leaseErr != nil {
+				s.errorResponse(w, http.StatusConflict, "A descendant session is still running; stop it before completing")
+				return
+			}
+			releases = append(releases, release)
+		}
 	}
 
 	now := time.Now()
@@ -100,7 +166,14 @@ func (s *Server) setSessionArchived(w http.ResponseWriter, sessionID string, arc
 		sess := root
 		if id != root.ID {
 			child, getErr := s.sessionManager.Get(id)
-			if getErr != nil || (archived && s.sessionIsBusy(child)) {
+			if getErr != nil {
+				if hasWorktree {
+					s.errorResponse(w, http.StatusInternalServerError, "Failed to load descendant session: "+getErr.Error())
+					return
+				}
+				continue
+			}
+			if archived && !hasWorktree && s.sessionIsBusy(child) {
 				continue
 			}
 			sess = child
@@ -109,7 +182,9 @@ func (s *Server) setSessionArchived(w http.ResponseWriter, sessionID string, arc
 			if sessionArchivedAt(sess) != nil {
 				continue
 			}
-			if err := s.teardownSessionWorktree(sess.ID); err != nil {
+			// The UI polls the root session's log, so descendants share the root's progress.
+			shareArchiveProgress(root.ID, sess.ID)
+			if err := s.teardownSessionWorktree(sess.ID, true); err != nil {
 				s.errorResponse(w, http.StatusConflict, err.Error())
 				return
 			}

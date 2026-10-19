@@ -115,7 +115,7 @@ func (s *Server) createSessionWorktree(sessionID string, projectID string, branc
 	}
 	// A failed setup (e.g. Docker not running) still leaves a usable checkout, so it is only logged.
 	if command := settings[projectWorktreesSetupCmdSettingKey]; command != "" {
-		if err := runWorktreeHook(wt.Path, command, worktreeEnv(wt, root)); err != nil {
+		if err := runWorktreeHook(sessionID, wt.Path, command, worktreeEnv(wt, root)); err != nil {
 			logging.Warn("Session worktree setup failed: session=%s error=%v", sessionID, err)
 		}
 	}
@@ -137,9 +137,8 @@ func sameFilesystemPath(first string, second string) bool {
 }
 
 // teardownSessionWorktree runs the teardown hook and removes the worktree folder; the
-// branch is kept. git refuses to remove a worktree with uncommitted changes, which is
-// returned so archive/delete/handoff never throw work away.
-func (s *Server) teardownSessionWorktree(sessionID string) error {
+// branch is kept. Archive may commit its changes first so completion never drops work.
+func (s *Server) teardownSessionWorktree(sessionID string, commitChanges bool) error {
 	wt, err := s.store.GetSessionWorktree(sessionID)
 	if err != nil || wt == nil {
 		return err
@@ -178,16 +177,36 @@ func (s *Server) teardownSessionWorktree(sessionID string) error {
 		return s.store.DeleteSessionWorktree(sessionID)
 	}
 	if command := normalizeProjectSettings(project.Settings)[projectWorktreesTeardownCmdSettingKey]; command != "" {
-		if err := runWorktreeHook(wt.Path, command, worktreeEnv(wt, root)); err != nil {
+		if err := runWorktreeHook(sessionID, wt.Path, command, worktreeEnv(wt, root)); err != nil {
 			logging.Warn("Session worktree teardown failed: session=%s error=%v", sessionID, err)
 		}
 	}
+	if commitChanges {
+		status, err := runGitCommand(wt.Path, "status", "--porcelain")
+		if err != nil {
+			return fmt.Errorf("failed to inspect session worktree changes: %w", err)
+		}
+		if status != "" {
+			if _, err := runGitLogged(sessionID, wt.Path, "add", "--all"); err != nil {
+				return fmt.Errorf("failed to stage session worktree changes: %w", err)
+			}
+			shortID := sessionID[:min(8, len(sessionID))]
+			// --no-verify: this is an automatic snapshot commit; slow pre-commit hooks must not block Complete.
+			message := fmt.Sprintf("Complete session %s", shortID)
+			if _, err := runGitLogged(sessionID, wt.Path, "commit", "--no-verify", "-m", message); err != nil {
+				return fmt.Errorf("failed to commit session worktree changes: %w", err)
+			}
+			logging.LogSession("worktree-commit", sessionID, fmt.Sprintf("branch=%s", wt.Branch))
+		}
+	}
 	// A folder deleted by hand only needs its stale git metadata pruned.
+	unlockGit := lockWorktreeGit(root)
 	if _, statErr := os.Stat(wt.Path); statErr != nil {
 		_, err = runGitCommand(root, "worktree", "prune")
 	} else {
-		_, err = runGitCommand(root, "worktree", "remove", wt.Path)
+		_, err = runGitLogged(sessionID, root, "worktree", "remove", wt.Path)
 	}
+	unlockGit()
 	if err != nil {
 		return fmt.Errorf("failed to remove session worktree %s: %w", wt.Path, err)
 	}
@@ -234,13 +253,13 @@ func worktreeEnv(wt *storage.SessionWorktree, mainRoot string) []string {
 	}
 }
 
-func runWorktreeHook(dir string, command string, env []string) error {
+func runWorktreeHook(sessionID string, dir string, command string, env []string) error {
 	cmd := exec.Command("bash", "-c", command)
 	cmd.Dir = dir
 	cmd.Env = append(scrubInheritedGitEnv(os.Environ()), env...)
-	output, err := cmd.CombinedOutput()
+	output, err := runLogged(sessionID, command, cmd)
 	if err != nil {
-		return fmt.Errorf("%q: %w: %s", command, err, strings.TrimSpace(string(output)))
+		return fmt.Errorf("%q: %w: %s", command, err, output)
 	}
 	return nil
 }
@@ -345,7 +364,7 @@ func (s *Server) handleSessionWorktreeHandoff(w http.ResponseWriter, r *http.Req
 		s.errorResponse(w, http.StatusConflict, "Worktree is on a detached HEAD; check out a branch first")
 		return
 	}
-	if err := s.teardownSessionWorktree(wt.SessionID); err != nil {
+	if err := s.teardownSessionWorktree(wt.SessionID, false); err != nil {
 		s.errorResponse(w, http.StatusConflict, err.Error())
 		return
 	}

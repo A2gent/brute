@@ -298,6 +298,15 @@ func (s *SQLiteStore) migrate() error {
 		`ALTER TABLE recurring_jobs ADD COLUMN gate_tool TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE recurring_jobs ADD COLUMN gate_params TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE recurring_jobs ADD COLUMN gate_question TEXT NOT NULL DEFAULT ''`,
+		// Event-triggered loops (hooks) reuse the loop run config but fire on inbound webhooks.
+		`ALTER TABLE recurring_jobs ADD COLUMN trigger_type TEXT NOT NULL DEFAULT 'schedule'`,
+		`ALTER TABLE recurring_jobs ADD COLUMN trigger_source TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE recurring_jobs ADD COLUMN trigger_events TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE recurring_jobs ADD COLUMN trigger_branches TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE recurring_jobs ADD COLUMN trigger_condition TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE recurring_jobs ADD COLUMN webhook_endpoint_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE recurring_jobs ADD COLUMN webhook_url TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE recurring_jobs ADD COLUMN webhook_signing_secret TEXT NOT NULL DEFAULT ''`,
 		// Team definitions keep canonical YAML while SQLite provides fast listing.
 		`CREATE TABLE IF NOT EXISTS teams (
 				id TEXT PRIMARY KEY,

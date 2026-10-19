@@ -67,7 +67,8 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusBadRequest, "Name is required")
 		return
 	}
-	if req.ScheduleText == "" {
+	isWebhook := normalizeJobTriggerType(req.TriggerType) == jobTriggerWebhook
+	if req.ScheduleText == "" && !isWebhook {
 		s.errorResponse(w, http.StatusBadRequest, "Schedule text is required")
 		return
 	}
@@ -100,10 +101,15 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	cronExpr, err := s.parseScheduleToCron(r.Context(), req.ScheduleText)
-	if err != nil {
-		s.errorResponse(w, http.StatusBadRequest, "Failed to parse schedule: "+err.Error())
-		return
+	// Webhook-triggered loops have no cron; the scheduler skips them.
+	cronExpr := ""
+	if !isWebhook {
+		parsed, err := s.parseScheduleToCron(r.Context(), req.ScheduleText)
+		if err != nil {
+			s.errorResponse(w, http.StatusBadRequest, "Failed to parse schedule: "+err.Error())
+			return
+		}
+		cronExpr = parsed
 	}
 
 	now := time.Now()
@@ -122,10 +128,15 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:        now,
 	}
 	applyCreateJobRunConfig(job, req)
+	if err := applyJobTrigger(job, req.JobTriggerFields); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
-	nextRun, err := s.calculateNextRun(cronExpr, now)
-	if err == nil {
-		job.NextRunAt = &nextRun
+	if !isWebhook {
+		if nextRun, err := s.calculateNextRun(cronExpr, now); err == nil {
+			job.NextRunAt = &nextRun
+		}
 	}
 
 	if err := s.saveJob(job); err != nil {
@@ -215,8 +226,21 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 	job.TaskPromptFile = strings.TrimSpace(taskPromptFile)
 	job.TaskPrompt = strings.TrimSpace(taskPrompt)
 	applyUpdateJobRunConfig(job, req)
+	wasWebhook := job.TriggerType == jobTriggerWebhook
+	if err := applyJobTriggerUpdate(job, req.JobTriggerUpdateFields); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	isWebhook := job.TriggerType == jobTriggerWebhook
+	if isWebhook {
+		// Clear the cron so finishing a hook run cannot compute a stale next_run_at.
+		job.ScheduleHuman, job.ScheduleCron, job.NextRunAt = "", "", nil
+	} else if wasWebhook && req.ScheduleText == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Schedule text is required")
+		return
+	}
 
-	if req.ScheduleText != "" && req.ScheduleText != job.ScheduleHuman {
+	if !isWebhook && req.ScheduleText != "" && (req.ScheduleText != job.ScheduleHuman || wasWebhook || job.ScheduleCron == "") {
 		cronExpr, err := s.parseScheduleToCron(r.Context(), req.ScheduleText)
 		if err != nil {
 			s.errorResponse(w, http.StatusBadRequest, "Failed to parse schedule: "+err.Error())
@@ -244,6 +268,13 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteJob(w http.ResponseWriter, r *http.Request) {
 	jobID := chi.URLParam(r, "jobID")
+
+	if job, err := s.store.GetJob(jobID); err == nil && job.WebhookEndpointID != "" {
+		// Best effort: a stale Square endpoint would keep relaying events to nothing.
+		if err := s.revokeSquareWebhookEndpoint(r.Context(), job.WebhookEndpointID); err != nil {
+			logging.Warn("Failed to revoke Square webhook endpoint for job %s: %v", jobID, err)
+		}
+	}
 
 	if err := s.deleteJob(jobID); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete job: "+err.Error())
@@ -378,6 +409,12 @@ func (s *Server) jobToResponse(job *storage.RecurringJob) JobResponse {
 		NextRunAt:          job.NextRunAt,
 		CreatedAt:          job.CreatedAt,
 		UpdatedAt:          job.UpdatedAt,
+		JobTriggerFields:   jobTriggerFieldsFromJob(job),
+		JobWebhookFields: JobWebhookFields{
+			WebhookConnected:     job.WebhookEndpointID != "",
+			WebhookURL:           job.WebhookURL,
+			WebhookSigningSecret: job.WebhookSigningSecret,
+		},
 	}
 }
 

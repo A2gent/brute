@@ -82,3 +82,15 @@ func TestProviderTransitionHTTPActiveRunAndChatGuard(t *testing.T) {
 		t.Fatal("guard mutated history")
 	}
 }
+
+func TestRecoverInterruptedRunsPausesRunningSessions(t *testing.T) {
+	s, _ := newBruteHTTPProxyTestServer(t)
+	sess, _ := s.sessionManager.Create("test")
+	sess.SetStatus(session.StatusRunning)
+	_ = s.sessionManager.Save(sess)
+	s.recoverInterruptedRuns()
+	fresh, _ := s.sessionManager.Get(sess.ID)
+	if fresh.Status != session.StatusPaused {
+		t.Fatalf("status %s", fresh.Status)
+	}
+}

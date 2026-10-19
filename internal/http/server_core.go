@@ -64,6 +64,7 @@ type Server struct {
 	serialQueueMu            sync.Mutex
 	serialQueueWorkers       map[string]int      // scope -> live worker count; guarded by serialQueueMu
 	serialQueueClaimed       map[string]struct{} // session IDs picked by a worker but not yet finished; guarded by serialQueueMu
+	sessionTreeMu            sync.RWMutex        // serializes child creation with archiving a session subtree
 	sessionSummaryWG         sync.WaitGroup      // tracks async session summary goroutines (tests wait on it)
 	sessionSummaryMu         sync.Mutex
 	sessionSummarySeq        uint64                           // guarded by sessionSummaryMu
@@ -147,6 +148,7 @@ func NewServer(
 		sessionManager.SetChangeListener(s.handleSessionChange)
 	}
 	s.recoverProviderTransitions()
+	s.recoverInterruptedRuns()
 	s.installPronunciationResolver()
 	s.initApprovalBroker()
 	s.dockerRuntime = newDockerRuntimeManager(s)

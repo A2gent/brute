@@ -35,6 +35,7 @@ func (s *Server) handleGetProjectCodeReview(w http.ResponseWriter, r *http.Reque
 		Repository: repo, Branch: branch,
 		PullRequestID: strings.TrimSpace(r.URL.Query().Get("pullRequestID")),
 		IntegrationID: strings.TrimSpace(r.URL.Query().Get("integrationID")),
+		SkipComments:  strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("skipComments")), "true"),
 	})
 	if err != nil {
 		s.errorResponse(w, http.StatusBadGateway, err.Error())

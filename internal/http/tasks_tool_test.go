@@ -204,3 +204,31 @@ func TestTasksToolGetIncludesSavedScreenshots(t *testing.T) {
 		t.Fatalf("metadata = %#v", result.Metadata)
 	}
 }
+
+func TestTasksToolFiltersPagingAndNext(t *testing.T) {
+	tool, ctx, _, _ := newTasksToolFixture(t)
+	mk := func(title string, prio, compl int, tags ...string) {
+		runTasksTool(t, tool, ctx, map[string]any{"action": "create", "title": title, "status": "todo", "priority": prio, "complexity": compl, "tags": tags})
+	}
+	mk("qa run", 1, 5, "qa")
+	mk("blocked art", 0, 1, "blocked-external")
+	mk("small fix", 2, 2, "simple-loop")
+	mk("tiny fix", 1, 1)
+
+	out := runTasksTool(t, tool, ctx, map[string]any{"action": "list", "max_priority": 1, "max_complexity": 2, "exclude_tag": "blocked-external", "sort": "priority"})
+	if !strings.Contains(out, "tiny fix") || strings.Contains(out, "qa run") || strings.Contains(out, "blocked art") || strings.Contains(out, "small fix") {
+		t.Fatalf("filtered list = %q", out)
+	}
+	paged := runTasksTool(t, tool, ctx, map[string]any{"action": "list", "limit": 2, "offset": 2})
+	if !strings.Contains(paged, "showing 2 from offset 2") || !strings.Contains(paged, "tiny fix") {
+		t.Fatalf("paged list = %q", paged)
+	}
+	next := runTasksTool(t, tool, ctx, map[string]any{"action": "next", "exclude_tag": "blocked-external", "max_complexity": 2})
+	if !strings.Contains(next, "tiny fix") {
+		t.Fatalf("next = %q, want filtered pick", next)
+	}
+	tagged := runTasksTool(t, tool, ctx, map[string]any{"action": "next", "tag": "#simple-loop"})
+	if !strings.Contains(tagged, "small fix") {
+		t.Fatalf("tagged next = %q", tagged)
+	}
+}

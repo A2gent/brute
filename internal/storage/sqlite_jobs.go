@@ -12,7 +12,9 @@ const recurringJobSelectColumns = `
 	id, project_id, name, schedule_human, schedule_cron, task_prompt, task_prompt_source, task_prompt_file,
 	run_target,
 	launch_agent_id, launch_agent_name, launch_agent_runtime, unified_agent_id, docker_agent_id,
-	llm_provider, llm_model, queue_serial, gate_tool, gate_params, gate_question, enabled, last_run_at, next_run_at, created_at, updated_at
+	llm_provider, llm_model, queue_serial, gate_tool, gate_params, gate_question,
+	trigger_type, trigger_source, trigger_events, trigger_branches, trigger_condition, webhook_endpoint_id, webhook_url, webhook_signing_secret,
+	enabled, last_run_at, next_run_at, created_at, updated_at
 `
 
 func scanRecurringJob(
@@ -27,7 +29,9 @@ func scanRecurringJob(
 		&job.ID, &projectID, &job.Name, &job.ScheduleHuman, &job.ScheduleCron, &job.TaskPrompt, &job.TaskPromptSource, &job.TaskPromptFile,
 		&job.RunTarget,
 		&job.LaunchAgentID, &job.LaunchAgentName, &job.LaunchAgentRun, &job.UnifiedAgentID, &job.DockerAgentID,
-		&job.LLMProvider, &job.LLMModel, &queueSerial, &job.GateTool, &job.GateParams, &job.GateQuestion, &enabled, &lastRunAt, &nextRunAt, &job.CreatedAt, &job.UpdatedAt,
+		&job.LLMProvider, &job.LLMModel, &queueSerial, &job.GateTool, &job.GateParams, &job.GateQuestion,
+		&job.TriggerType, &job.TriggerSource, &job.TriggerEvents, &job.TriggerBranches, &job.TriggerCondition, &job.WebhookEndpointID, &job.WebhookURL, &job.WebhookSigningSecret,
+		&enabled, &lastRunAt, &nextRunAt, &job.CreatedAt, &job.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -49,7 +53,7 @@ func scanRecurringJob(
 func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
 	_, err := s.db.Exec(`
 		INSERT INTO recurring_jobs (`+recurringJobSelectColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			project_id = excluded.project_id,
 			name = excluded.name,
@@ -70,6 +74,14 @@ func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
 			gate_tool = excluded.gate_tool,
 			gate_params = excluded.gate_params,
 			gate_question = excluded.gate_question,
+			trigger_type = excluded.trigger_type,
+			trigger_source = excluded.trigger_source,
+			trigger_events = excluded.trigger_events,
+			trigger_branches = excluded.trigger_branches,
+			trigger_condition = excluded.trigger_condition,
+			webhook_endpoint_id = excluded.webhook_endpoint_id,
+			webhook_url = excluded.webhook_url,
+			webhook_signing_secret = excluded.webhook_signing_secret,
 			enabled = excluded.enabled,
 			last_run_at = excluded.last_run_at,
 			next_run_at = excluded.next_run_at,
@@ -77,7 +89,9 @@ func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
 	`, job.ID, nullableString(job.ProjectID), job.Name, job.ScheduleHuman, job.ScheduleCron, job.TaskPrompt, job.TaskPromptSource, job.TaskPromptFile,
 		job.RunTarget,
 		job.LaunchAgentID, job.LaunchAgentName, job.LaunchAgentRun, job.UnifiedAgentID, job.DockerAgentID,
-		job.LLMProvider, job.LLMModel, job.QueueSerial, job.GateTool, job.GateParams, job.GateQuestion, job.Enabled, job.LastRunAt, job.NextRunAt, job.CreatedAt, job.UpdatedAt)
+		job.LLMProvider, job.LLMModel, job.QueueSerial, job.GateTool, job.GateParams, job.GateQuestion,
+		normalizeTriggerType(job.TriggerType), job.TriggerSource, job.TriggerEvents, job.TriggerBranches, job.TriggerCondition, job.WebhookEndpointID, job.WebhookURL, job.WebhookSigningSecret,
+		job.Enabled, job.LastRunAt, job.NextRunAt, job.CreatedAt, job.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to save job: %w", err)
 	}
@@ -161,7 +175,7 @@ func (s *SQLiteStore) GetDueJobs(now time.Time) ([]*RecurringJob, error) {
 	rows, err := s.db.Query(`
 		SELECT `+recurringJobSelectColumns+`
 		FROM recurring_jobs 
-		WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?
+		WHERE enabled = 1 AND trigger_type = 'schedule' AND next_run_at IS NOT NULL AND next_run_at <= ?
 		ORDER BY next_run_at ASC
 	`, now)
 	if err != nil {
@@ -280,4 +294,12 @@ func (s *SQLiteStore) ListJobExecutions(jobID string, limit int) ([]*JobExecutio
 	}
 
 	return executions, nil
+}
+
+// normalizeTriggerType keeps legacy/empty values on the cron path.
+func normalizeTriggerType(value string) string {
+	if value == "webhook" {
+		return value
+	}
+	return "schedule"
 }

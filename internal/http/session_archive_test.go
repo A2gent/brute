@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/A2gent/brute/internal/config"
@@ -153,6 +154,31 @@ func TestArchiveSessionRejectsRunningSession(t *testing.T) {
 	rec := callSessionArchiveHandler(t, server.handleArchiveSession, sess.ID)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateChildRejectsArchivedParent(t *testing.T) {
+	server, sessionManager := newSessionArchiveTestServer(t)
+	parent, err := sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	parent.SetStatus(session.StatusCompleted)
+	if err := sessionManager.Save(parent); err != nil {
+		t.Fatalf("save parent: %v", err)
+	}
+	if rec := callSessionArchiveHandler(t, server.handleArchiveSession, parent.ID); rec.Code != http.StatusOK {
+		t.Fatalf("archive status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	body, err := json.Marshal(CreateSessionRequest{AgentID: "build", ParentID: parent.ID, Task: "child"})
+	if err != nil {
+		t.Fatalf("marshal child request: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sessions", strings.NewReader(string(body))))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("create child status = %d, want conflict: %s", rec.Code, rec.Body.String())
 	}
 }
 

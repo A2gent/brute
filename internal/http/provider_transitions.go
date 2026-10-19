@@ -312,6 +312,22 @@ func (s *Server) handleUpdateSessionProviderTransition(w http.ResponseWriter, r 
 	s.createProviderTransition(w, r, createProviderTransitionRequest{ID: req.ID, Provider: req.Provider, Model: req.Model, Mode: req.Mode})
 }
 
+// WHY: runs live only in this process, so a session still "running" at startup lost its
+// run in a restart; it would show a spinner forever and look empty and unstoppable.
+// WHAT: mark such sessions paused so the user can resume or complete them.
+func (s *Server) recoverInterruptedRuns() {
+	sessions, err := s.sessionManager.List()
+	if err != nil {
+		return
+	}
+	for _, sess := range sessions {
+		if sess.Status == session.StatusRunning {
+			sess.SetStatus(session.StatusPaused)
+			_ = s.sessionManager.Save(sess)
+		}
+	}
+}
+
 // Startup never replays an external request. Pre-submission phases remain
 // resumable; a continuing checkpoint needs human inspection for native effects.
 func (s *Server) recoverProviderTransitions() {

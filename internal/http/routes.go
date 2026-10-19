@@ -324,6 +324,7 @@ func (s *Server) registerSessionRoutes(r chi.Router) {
 		r.Post("/{sessionID}/provider-transitions/{transitionID}/resume", s.handleResumeProviderTransition)
 		r.Put("/{sessionID}/needs-feedback", s.handleUpdateSessionNeedsFeedback)
 		r.Post("/{sessionID}/archive", s.handleArchiveSession)
+		r.Get("/{sessionID}/archive-progress", s.handleArchiveProgress)
 		r.Post("/{sessionID}/convert-to-task", s.handleConvertSessionToTask)
 		r.Post("/{sessionID}/unarchive", s.handleUnarchiveSession)
 		r.Post("/{sessionID}/worktree/handoff", s.handleSessionWorktreeHandoff)
@@ -370,6 +371,7 @@ func (s *Server) registerProjectRoutes(r chi.Router) {
 		r.Get("/git/branch-changes", s.handleProjectGitBranchChanges)
 		r.Get("/git/branch-diff", s.handleProjectGitBranchDiff)
 		r.Get("/git/history", s.handleProjectGitHistory)
+		r.Get("/git/events", s.handleProjectGitEvents)
 		r.Get("/git/commit-files", s.handleProjectGitCommitFiles)
 		r.Get("/git/commit-diff", s.handleProjectGitCommitDiff)
 		r.Get("/git/pr-description", s.handleGetProjectGitPRDescription)
@@ -465,6 +467,12 @@ func (s *Server) registerJobRoutes(r chi.Router) {
 		r.Post("/{jobID}/run", s.handleRunJobNow)
 		r.Get("/{jobID}/executions", s.handleListJobExecutions)
 		r.Get("/{jobID}/sessions", s.handleListJobSessions)
+		// Event-triggered loops (hooks)
+		r.Post("/{jobID}/trigger", s.handleTriggerJob)
+		r.Post("/{jobID}/webhook", s.handleConnectJobWebhook)
+		r.Delete("/{jobID}/webhook", s.handleDisconnectJobWebhook)
+		r.Get("/{jobID}/webhook/repository", s.handleGetJobWebhookRepository)
+		r.Post("/{jobID}/webhook/bitbucket", s.handleRegisterJobBitbucketWebhook)
 	})
 }
 

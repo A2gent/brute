@@ -15,10 +15,12 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
-	gopkg.in/yaml.v2 v2.4.0
 	golang.org/x/image v0.30.0
+	gopkg.in/yaml.v2 v2.4.0
 	modernc.org/sqlite v1.44.3
 )
+
+require github.com/fsnotify/fsnotify v1.10.1 // indirect
 
 require (
 	github.com/andybalholm/brotli v1.2.1 // indirect

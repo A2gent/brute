@@ -343,3 +343,21 @@ func buildProjectGitBranches(repoRoot string, currentBranch string) ([]ProjectGi
 
 	return branches, nil
 }
+
+// projectGitRemoteURL returns the origin URL (or the first remote when origin is missing)
+// so the UI can link the branch and pull requests on the hosting provider.
+func projectGitRemoteURL(repoRoot string) string {
+	if out, err := runGitCommand(repoRoot, "remote", "get-url", "origin"); err == nil && strings.TrimSpace(out) != "" {
+		return strings.TrimSpace(out)
+	}
+	remotes, err := runGitCommand(repoRoot, "remote")
+	if err != nil {
+		return ""
+	}
+	for _, name := range strings.Fields(remotes) {
+		if out, err := runGitCommand(repoRoot, "remote", "get-url", name); err == nil && strings.TrimSpace(out) != "" {
+			return strings.TrimSpace(out)
+		}
+	}
+	return ""
+}

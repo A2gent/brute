@@ -441,6 +441,7 @@ type CreateJobRequest struct {
 	GateParams         string `json:"gate_params,omitempty"`
 	GateQuestion       string `json:"gate_question,omitempty"`
 	Enabled            bool   `json:"enabled"`
+	JobTriggerFields
 }
 
 // UpdateJobRequest represents a request to update a recurring job
@@ -464,6 +465,7 @@ type UpdateJobRequest struct {
 	GateParams         *string `json:"gate_params,omitempty"`
 	GateQuestion       *string `json:"gate_question,omitempty"`
 	Enabled            *bool   `json:"enabled,omitempty"`
+	JobTriggerUpdateFields
 }
 
 // JobResponse represents a recurring job response
@@ -493,6 +495,8 @@ type JobResponse struct {
 	NextRunAt          *time.Time `json:"next_run_at,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
+	JobTriggerFields
+	JobWebhookFields
 }
 
 type SessionTemplateRequest struct {

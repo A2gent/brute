@@ -80,6 +80,32 @@ func TestServiceGetsBitbucketReviewAndNormalizesReplies(t *testing.T) {
 	}
 }
 
+func TestServiceFindsBitbucketPullRequestWithoutLoadingComments(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/2.0/repositories/acme/widgets/pullrequests" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"values":[{"id":42,"title":"Review","state":"OPEN","source":{"branch":{"name":"feature/review"}},"destination":{"branch":{"name":"main"}},"links":{"html":{"href":"https://bitbucket.org/acme/widgets/pull-requests/42"}}}]}`))
+	}))
+	defer server.Close()
+
+	service := NewService(newReviewTestStore(t, server.URL), server.Client())
+	result, err := service.GetReview(context.Background(), GetReviewRequest{
+		Repository:   Repository{Provider: "bitbucket", Owner: "acme", Name: "widgets"},
+		Branch:       "feature/review",
+		SkipComments: true,
+	})
+	if err != nil {
+		t.Fatalf("GetReview: %v", err)
+	}
+	if result.PullRequest == nil || result.PullRequest.URL != "https://bitbucket.org/acme/widgets/pull-requests/42" || len(result.Comments) != 0 {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
 func TestServiceRepliesToBitbucketComment(t *testing.T) {
 	var body map[string]interface{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

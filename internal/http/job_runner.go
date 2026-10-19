@@ -107,7 +107,7 @@ func (s *Server) ExecuteJob(ctx context.Context, job *storage.RecurringJob) (*st
 	if decision := s.evaluateJobGate(ctx, job); !decision.Run {
 		return s.recordSkippedJobExecution(job, decision.Reason)
 	}
-	prepared, err := s.prepareJobExecution(job)
+	prepared, err := s.prepareJobExecution(job, "")
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +121,7 @@ func (s *Server) ExecuteJob(ctx context.Context, job *storage.RecurringJob) (*st
 // StartJobExecutionAsync prepares a loop run and continues execution in the background.
 // Manual "Run Now" uses this so the API can return session_id immediately for UI redirect.
 func (s *Server) StartJobExecutionAsync(job *storage.RecurringJob) (*storage.JobExecution, error) {
-	prepared, err := s.prepareJobExecution(job)
+	prepared, err := s.prepareJobExecution(job, "")
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +132,9 @@ func (s *Server) StartJobExecutionAsync(job *storage.RecurringJob) (*storage.Job
 	return prepared.exec, nil
 }
 
-func (s *Server) prepareJobExecution(job *storage.RecurringJob) (*preparedJobExecution, error) {
+// prepareJobExecution creates the execution record and session. extraContext (e.g. the
+// triggering webhook event) is appended to the task prompt when non-empty.
+func (s *Server) prepareJobExecution(job *storage.RecurringJob, extraContext string) (*preparedJobExecution, error) {
 	now := time.Now()
 
 	exec := &storage.JobExecution{
@@ -174,6 +176,9 @@ func (s *Server) prepareJobExecution(job *storage.RecurringJob) (*preparedJobExe
 	if resolveErr != nil {
 		s.failJobExecution(exec, sess, "Failed to resolve task instructions: "+resolveErr.Error())
 		return &preparedJobExecution{exec: exec, sess: sess, startedAt: now}, nil
+	}
+	if strings.TrimSpace(extraContext) != "" {
+		effectiveTaskPrompt += "\n\n" + strings.TrimSpace(extraContext)
 	}
 	sess.AddUserMessage(effectiveTaskPrompt)
 	if job.QueueSerial {

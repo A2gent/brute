@@ -129,12 +129,15 @@ func (s *Service) GetReview(ctx context.Context, request GetReviewRequest) (Revi
 		}
 		pullRequestID = pullRequest.ID
 	}
+	if pullRequest == nil {
+		pullRequest = &PullRequest{ID: pullRequestID}
+	}
+	if request.SkipComments {
+		return Review{Provider: repo.Provider, Repository: repo, PullRequest: pullRequest, Comments: []Comment{}}, nil
+	}
 	comments, err := s.listBitbucketComments(ctx, creds, repo, pullRequestID)
 	if err != nil {
 		return Review{}, err
-	}
-	if pullRequest == nil {
-		pullRequest = &PullRequest{ID: pullRequestID}
 	}
 	return Review{Provider: repo.Provider, Repository: repo, PullRequest: pullRequest, Comments: comments}, nil
 }

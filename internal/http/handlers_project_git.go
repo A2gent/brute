@@ -53,6 +53,7 @@ func (s *Server) handleProjectGitStatus(w http.ResponseWriter, r *http.Request) 
 		CurrentBranch:           currentBranch,
 		BranchChangesAvailable:  branchChangesAvailable,
 		BranchChangesBaseBranch: baseBranch,
+		RemoteURL:               projectGitRemoteURL(targetRepoRoot),
 		Files:                   parseGitPorcelain(porcelainOutput),
 	})
 }

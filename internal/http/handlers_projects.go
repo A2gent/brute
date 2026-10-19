@@ -182,6 +182,12 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The parallel limit is only read when the queue is triggered; re-trigger so a raised
+	// max_parallel_sessions spawns extra workers for already queued sessions immediately.
+	if req.Settings != nil {
+		s.triggerSerialSessionQueue(project.ID)
+	}
+
 	s.jsonResponse(w, http.StatusOK, projectToResponse(project))
 }
 

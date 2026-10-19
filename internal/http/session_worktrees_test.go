@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/A2gent/brute/internal/session"
 )
 
 func TestSessionWorktreesDisabledKeepMainFolder(t *testing.T) {
@@ -89,8 +91,32 @@ func TestSessionWorktreesLifecycle(t *testing.T) {
 	if secondWt == nil || secondWt.Slot != 2 || secondWt.Branch != "a2gent/"+second[:8] {
 		t.Fatalf("unexpected second worktree: %+v", secondWt)
 	}
+	// Completing a session commits all changes, but must wait for running descendants.
+	child, err := server.sessionManager.CreateWithParent("build", first)
+	if err != nil {
+		t.Fatalf("failed to create child session: %v", err)
+	}
+	child.SetStatus(session.StatusRunning)
+	if err := server.sessionManager.Save(child); err != nil {
+		t.Fatalf("failed to save running child: %v", err)
+	}
+	if rec := serveWorktreeTest(server, http.MethodPost, "/sessions/"+first+"/archive"); rec.Code != http.StatusConflict {
+		t.Fatalf("archive with a running child = %d, want conflict: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(firstPath); err != nil {
+		t.Fatalf("running child worktree was removed: %v", err)
+	}
+	if archived, _ := server.sessionManager.Get(first); sessionArchivedAt(archived) != nil {
+		t.Fatal("parent was archived despite its running child")
+	}
+	child.SetStatus(session.StatusCompleted)
+	if err := server.sessionManager.Save(child); err != nil {
+		t.Fatalf("failed to save completed child: %v", err)
+	}
+	writeGitTestFile(t, firstPath, "README.md", "completed work\n")
+	writeGitTestFile(t, firstPath, "session-output.txt", "saved output\n")
 
-	// Archive tears down: hook, folder removed, branch kept, slot 1 free again.
+	// Completing commits changes, then tears down: hook, folder removed, branch kept, slot reused.
 	if rec := serveWorktreeTest(server, http.MethodPost, "/sessions/"+first+"/archive"); rec.Code != http.StatusOK {
 		t.Fatalf("archive failed: %d %s", rec.Code, rec.Body.String())
 	}
@@ -101,6 +127,15 @@ func TestSessionWorktreesLifecycle(t *testing.T) {
 		t.Fatalf("worktree folder still exists: %v", err)
 	}
 	runGitForMindTest(t, repoDir, "rev-parse", "--verify", "feature/one")
+	if got, err := runGitCommand(repoDir, "show", "feature/one:README.md"); err != nil || got != "completed work" {
+		t.Fatalf("committed tracked changes = %q, err = %v", got, err)
+	}
+	if got, err := runGitCommand(repoDir, "show", "feature/one:session-output.txt"); err != nil || got != "saved output" {
+		t.Fatalf("committed untracked changes = %q, err = %v", got, err)
+	}
+	if got, err := runGitCommand(repoDir, "log", "-1", "--format=%s", "feature/one"); err != nil || got != "Complete session "+first[:8] {
+		t.Fatalf("auto-commit message = %q, err = %v", got, err)
+	}
 	third := createWorktreeTestSession(t, server, projectID, "feature/three", http.StatusCreated)
 	if wt, _ := server.store.GetSessionWorktree(third); wt == nil || wt.Slot != 1 {
 		t.Fatalf("expected slot 1 to be reused: %+v", wt)

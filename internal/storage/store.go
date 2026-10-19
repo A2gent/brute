@@ -68,11 +68,20 @@ type RecurringJob struct {
 	GateTool         string // Optional read-only fetch tool (e.g. gmail_query) run before the LLM; empty disables the Jev gate
 	GateParams       string // JSON params for GateTool
 	GateQuestion     string // Optional Jev noul question; defaults to the job task prompt
-	Enabled          bool
-	LastRunAt        *time.Time
-	NextRunAt        *time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// Event trigger ("hook"): TriggerType "webhook" runs on inbound events instead of the cron schedule.
+	TriggerType          string // "schedule" (default) | "webhook"
+	TriggerSource        string // "github" | "bitbucket" | "generic"; empty accepts any source
+	TriggerEvents        string // Comma-separated normalized (ci_failed) or raw (workflow_run) event types; empty = any
+	TriggerBranches      string // Comma-separated branch globs; empty = any
+	TriggerCondition     string // Optional plain-text condition checked by Jev against the event
+	WebhookEndpointID    string // Square webhook endpoint relaying events to this hook
+	WebhookURL           string // Public Square URL (includes ?secret=) to paste into the provider
+	WebhookSigningSecret string // HMAC secret for X-Hub-Signature(-256) verification
+	Enabled              bool
+	LastRunAt            *time.Time
+	NextRunAt            *time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 // JobExecution represents a single execution of a recurring job

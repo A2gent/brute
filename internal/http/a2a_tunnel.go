@@ -532,6 +532,12 @@ func (s *Server) handleA2AInternalEvent(ctx context.Context, payload json.RawMes
 			return nil, err
 		}
 		return &a2atunnel.InternalEventResult{Payload: payload, ConversationID: conversationID}, nil
+	case webhookInboundInternalEvent:
+		result, err := s.handleWebhookInboundInternalEvent(payload)
+		if err != nil {
+			return nil, err
+		}
+		return &a2atunnel.InternalEventResult{Payload: result}, nil
 	default:
 		return nil, fmt.Errorf("unsupported internal event: %s", eventType)
 	}

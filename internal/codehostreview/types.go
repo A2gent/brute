@@ -50,6 +50,7 @@ type GetReviewRequest struct {
 	PullRequestID   string
 	IntegrationID   string
 	IntegrationName string
+	SkipComments    bool
 }
 
 type ReplyRequest struct {

@@ -43,6 +43,37 @@ func TestParseMaxParallelSessions(t *testing.T) {
 // waits for them to complete and returns the peak number of concurrent provider requests.
 func runQueuedProjectSessions(t *testing.T, settings map[string]string, taskCount int) int {
 	t.Helper()
+	return runQueuedProjectSessionsWithHook(t, settings, taskCount, nil)
+}
+
+func TestRaisingMaxParallelSessionsSpawnsWorkersForQueuedSessions(t *testing.T) {
+	runQueuedProjectSessionsWithHook(t, map[string]string{projectMaxParallelSessionsKey: "1"}, 3, func(apiURL, projectID string, active func() int) {
+		body, _ := json.Marshal(map[string]interface{}{
+			"settings": map[string]string{projectMaxParallelSessionsKey: "2"},
+		})
+		req, _ := http.NewRequest(http.MethodPut, apiURL+"/projects/"+projectID, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("update project settings: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("update project status = %d, want 200", resp.StatusCode)
+		}
+		time.Sleep(100 * time.Millisecond) // let the extra worker claim a session and hit the provider
+		// Asserted before the held replies are released: once they finish, completions
+		// re-trigger the queue on their own and would mask a missing trigger in the handler.
+		if got := active(); got != 2 {
+			t.Fatalf("concurrent provider requests after raising limit = %d, want 2", got)
+		}
+	})
+}
+
+// runQueuedProjectSessionsWithHook is runQueuedProjectSessions with an optional hook that runs
+// after all sessions are queued and before the held provider replies are released.
+func runQueuedProjectSessionsWithHook(t *testing.T, settings map[string]string, taskCount int, beforeRelease func(apiURL, projectID string, active func() int)) int {
+	t.Helper()
 	var mu sync.Mutex
 	activeRequests := 0
 	maxActiveRequests := 0
@@ -50,6 +81,8 @@ func runQueuedProjectSessions(t *testing.T, settings map[string]string, taskCoun
 	// Creating a session over HTTP is slower than a fake provider reply, so responses are held
 	// until every session is queued; otherwise runs never overlap and the peak is always 1.
 	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseAll := func() { releaseOnce.Do(func() { close(release) }) }
 
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got, want := r.URL.Path, "/v1/responses"; got != want {
@@ -79,6 +112,9 @@ func runQueuedProjectSessions(t *testing.T, settings map[string]string, taskCoun
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer provider.Close()
+	// Registered after provider.Close so it runs first: on early failure provider.Close()
+	// would otherwise wait forever on held requests.
+	defer releaseAll()
 
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	if err != nil {
@@ -144,7 +180,14 @@ func runQueuedProjectSessions(t *testing.T, settings map[string]string, taskCoun
 		ids = append(ids, createQueued(fmt.Sprintf("queued task %d", i)))
 	}
 	time.Sleep(100 * time.Millisecond) // let workers pick up the last queued session
-	close(release)
+	if beforeRelease != nil {
+		beforeRelease(api.URL, project.ID, func() int {
+			mu.Lock()
+			defer mu.Unlock()
+			return activeRequests
+		})
+	}
+	releaseAll()
 
 	allCompleted := func() bool {
 		for _, id := range ids {

@@ -32,7 +32,13 @@ type tasksToolParams struct {
 	Hours      *int      `json:"hours,omitempty"`
 	Query      string    `json:"q,omitempty"`
 	Tag        string    `json:"tag,omitempty"`
+	ExcludeTag string    `json:"exclude_tag,omitempty"`
+	MaxPrio    *int      `json:"max_priority,omitempty"`
+	MaxCompl   *int      `json:"max_complexity,omitempty"`
+	MaxHours   *int      `json:"max_hours,omitempty"`
+	Sort       string    `json:"sort,omitempty"`
 	Limit      int       `json:"limit,omitempty"`
+	Offset     int       `json:"offset,omitempty"`
 	Claim      bool      `json:"claim,omitempty"`
 	ProjectID  string    `json:"project_id,omitempty"`
 }
@@ -44,7 +50,7 @@ func newTasksTool(server *Server) *tasksTool {
 func (t *tasksTool) Name() string { return "tasks" }
 
 func (t *tasksTool) Description() string {
-	return `Read and manage the project task board (the database that replaced TODO.md). Actions: list (filter by status/tag/text), next (pick the next open task, optionally claim it), get (full task with body), create, update, delete, stats (counts per status). Tasks are scoped to the current session's project and identified by a short ref like AG-42. Use this instead of reading or writing TODO.md.`
+	return `Read and manage the project task board (the database that replaced TODO.md). Actions: list (filter by status/tag/exclude_tag/priority/complexity/hours/text, sort, offset paging), next (pick the next open task using the same filters, optionally claim it), get (full task with body), create, update, delete, stats (counts per status). Tasks are scoped to the current session's project and identified by a short ref like AG-42. Use this instead of reading or writing TODO.md.`
 }
 
 func (t *tasksTool) Schema() map[string]interface{} {
@@ -174,16 +180,26 @@ func (t *tasksTool) list(projectID string, p tasksToolParams) (string, error) {
 	}
 	total := len(tasks)
 	filtered := filterTasks(tasks, p)
+	if strings.EqualFold(strings.TrimSpace(p.Sort), "priority") {
+		sort.SliceStable(filtered, func(i, j int) bool { return taskLess(filtered[i], filtered[j]) })
+	}
 	limit := p.Limit
 	if limit <= 0 {
 		limit = 20
 	}
-	shown := filtered
+	start := p.Offset
+	if start < 0 || start > len(filtered) {
+		start = len(filtered)
+	}
+	shown := filtered[start:]
 	if len(shown) > limit {
 		shown = shown[:limit]
 	}
 	var out strings.Builder
-	fmt.Fprintf(&out, "%d task(s) match, showing %d (project total %d)\n", len(filtered), len(shown), total)
+	fmt.Fprintf(&out, "%d task(s) match, showing %d from offset %d (project total %d)\n", len(filtered), len(shown), start, total)
+	if start+len(shown) < len(filtered) {
+		fmt.Fprintf(&out, "More available: repeat with offset=%d or narrow the filters.\n", start+len(shown))
+	}
 	for _, task := range shown {
 		out.WriteString(formatTaskLine(task) + "\n")
 	}
@@ -205,7 +221,7 @@ func (t *tasksTool) next(projectID string, p tasksToolParams) (string, error) {
 	}
 	candidates := []*storage.Task{}
 	for _, task := range tasks {
-		if _, ok := statuses[task.Status]; ok && matchesTaskText(task, p) && taskDependenciesDone(task, tasks) {
+		if _, ok := statuses[task.Status]; ok && matchesTaskFilters(task, p) && taskDependenciesDone(task, tasks) {
 			candidates = append(candidates, task)
 		}
 	}
@@ -218,13 +234,7 @@ func (t *tasksTool) next(projectID string, p tasksToolParams) (string, error) {
 		if (a.Status == storage.TaskStatusTodo) != (b.Status == storage.TaskStatusTodo) {
 			return a.Status == storage.TaskStatusTodo
 		}
-		if a.Priority != b.Priority {
-			return a.Priority < b.Priority
-		}
-		if a.Complexity != b.Complexity {
-			return a.Complexity < b.Complexity
-		}
-		return a.Position < b.Position
+		return taskLess(a, b)
 	})
 	task := candidates[0]
 	if p.Claim {
@@ -325,7 +335,6 @@ func (t *tasksTool) stats(projectID string) (string, error) {
 
 func filterTasks(tasks []*storage.Task, p tasksToolParams) []*storage.Task {
 	statuses := parseStatusFilter(p.Status)
-	tag := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(p.Tag), "#"))
 	filtered := []*storage.Task{}
 	for _, task := range tasks {
 		if len(statuses) > 0 {
@@ -333,15 +342,61 @@ func filterTasks(tasks []*storage.Task, p tasksToolParams) []*storage.Task {
 				continue
 			}
 		}
-		if tag != "" && !containsString(task.Tags, tag) {
-			continue
+		if matchesTaskFilters(task, p) {
+			filtered = append(filtered, task)
 		}
-		if !matchesTaskText(task, p) {
-			continue
-		}
-		filtered = append(filtered, task)
 	}
 	return filtered
+}
+
+// matchesTaskFilters applies every non-status filter; shared by list and next so a loop can
+// narrow a large board the same way in both.
+func matchesTaskFilters(task *storage.Task, p tasksToolParams) bool {
+	if tags := parseTagList(p.Tag); len(tags) > 0 && !hasAnyTag(task.Tags, tags) {
+		return false
+	}
+	if hasAnyTag(task.Tags, parseTagList(p.ExcludeTag)) {
+		return false
+	}
+	if p.MaxPrio != nil && task.Priority > *p.MaxPrio {
+		return false
+	}
+	if p.MaxCompl != nil && (task.Complexity < 1 || task.Complexity > *p.MaxCompl) {
+		return false
+	}
+	if p.MaxHours != nil && (task.Hours < 1 || task.Hours > *p.MaxHours) {
+		return false
+	}
+	return matchesTaskText(task, p)
+}
+
+func taskLess(a, b *storage.Task) bool {
+	if a.Priority != b.Priority {
+		return a.Priority < b.Priority
+	}
+	if a.Complexity != b.Complexity {
+		return a.Complexity < b.Complexity
+	}
+	return a.Position < b.Position
+}
+
+func parseTagList(raw string) []string {
+	tags := []string{}
+	for _, part := range strings.Split(raw, ",") {
+		if part = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(part), "#")); part != "" {
+			tags = append(tags, part)
+		}
+	}
+	return tags
+}
+
+func hasAnyTag(values, tags []string) bool {
+	for _, tag := range tags {
+		if containsString(values, tag) {
+			return true
+		}
+	}
+	return false
 }
 
 func matchesTaskText(task *storage.Task, p tasksToolParams) bool {

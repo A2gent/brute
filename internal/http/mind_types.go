@@ -84,6 +84,7 @@ type ProjectGitStatusResponse struct {
 	CurrentBranch           string                  `json:"current_branch,omitempty"`
 	BranchChangesAvailable  bool                    `json:"branch_changes_available"`
 	BranchChangesBaseBranch string                  `json:"branch_changes_base_branch,omitempty"`
+	RemoteURL               string                  `json:"remote_url,omitempty"`
 	Files                   []ProjectGitChangedFile `json:"files"`
 }
 

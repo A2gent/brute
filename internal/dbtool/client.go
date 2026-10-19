@@ -56,6 +56,125 @@ func connectContext(ctx context.Context, cfg Config) (*sql.DB, error) {
 	return db, nil
 }
 
+// isSelectQuery identifies SELECT statements before pagination is appended. For CTEs,
+// it inspects only top-level tokens so SELECTs inside CTE bodies do not mask DDL/DML.
+func isSelectQuery(query string) bool {
+	keyword, position := nextSQLKeyword(query, 0)
+	if keyword == "SELECT" {
+		return true
+	}
+	if keyword != "WITH" {
+		return false
+	}
+
+	depth := 0
+	for position < len(query) {
+		position = skipSQLTrivia(query, position)
+		if position >= len(query) {
+			break
+		}
+
+		switch query[position] {
+		case '\'', '"', '`':
+			position = skipSQLQuoted(query, position)
+		case '(':
+			depth++
+			position++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+			position++
+		default:
+			if !isSQLIdentifierStart(query[position]) {
+				position++
+				continue
+			}
+			start := position
+			for position < len(query) && isSQLIdentifierPart(query[position]) {
+				position++
+			}
+			if depth == 0 && isSQLStatementKeyword(query[start:position]) {
+				return strings.EqualFold(query[start:position], "SELECT")
+			}
+		}
+	}
+	return false
+}
+
+func nextSQLKeyword(query string, position int) (string, int) {
+	position = skipSQLTrivia(query, position)
+	if position >= len(query) || !isSQLIdentifierStart(query[position]) {
+		return "", position
+	}
+	start := position
+	for position < len(query) && isSQLIdentifierPart(query[position]) {
+		position++
+	}
+	return strings.ToUpper(query[start:position]), position
+}
+
+func skipSQLTrivia(query string, position int) int {
+	for position < len(query) {
+		switch {
+		case query[position] == ' ' || query[position] == '\t' || query[position] == '\n' || query[position] == '\r' || query[position] == '\f':
+			position++
+		case strings.HasPrefix(query[position:], "--"):
+			if end := strings.IndexByte(query[position:], '\n'); end >= 0 {
+				position += end + 1
+			} else {
+				return len(query)
+			}
+		case strings.HasPrefix(query[position:], "/*"):
+			if end := strings.Index(query[position+2:], "*/"); end >= 0 {
+				position += end + 4
+			} else {
+				return len(query)
+			}
+		default:
+			return position
+		}
+	}
+	return position
+}
+
+func skipSQLQuoted(query string, position int) int {
+	quote := query[position]
+	position++
+	for position < len(query) {
+		if query[position] == quote {
+			if position+1 < len(query) && query[position+1] == quote {
+				position += 2
+				continue
+			}
+			return position + 1
+		}
+		if query[position] == '\\' && position+1 < len(query) {
+			position += 2
+		} else {
+			position++
+		}
+	}
+	return position
+}
+
+func isSQLIdentifierStart(character byte) bool {
+	return character == '_' || character == '$' || character >= 'A' && character <= 'Z' || character >= 'a' && character <= 'z'
+}
+
+func isSQLIdentifierPart(character byte) bool {
+	return isSQLIdentifierStart(character) || character >= '0' && character <= '9'
+}
+
+func isSQLStatementKeyword(keyword string) bool {
+	switch strings.ToUpper(keyword) {
+	case "SELECT", "INSERT", "UPDATE", "DELETE", "MERGE", "VALUES", "CALL", "CREATE", "ALTER", "DROP", "TRUNCATE", "GRANT", "REVOKE", "EXEC", "EXECUTE", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "PRAGMA", "VACUUM", "SET", "RESET", "ANALYZE", "REFRESH", "COMMENT", "DO", "TABLE":
+		return true
+	default:
+		return false
+	}
+}
+
 // ExecuteQuery runs a SQL query or Redis command and returns results in a specified format (csv or json).
 // It also enforces read-only safety by inspecting the query/command.
 func ExecuteQuery(ctx context.Context, cfg Config, query string, limit, offset int, format string) (string, error) {
@@ -96,9 +215,12 @@ func ExecuteQuery(ctx context.Context, cfg Config, query string, limit, offset i
 	query = strings.TrimSpace(query)
 	query = strings.TrimSuffix(query, ";")
 
-	if limit > 0 {
+	// Pagination only applies to row-returning SELECTs. Appending LIMIT to DDL/DML
+	// makes otherwise valid commands fail (for example, ALTER ... LIMIT ...).
+	if limit > 0 && isSelectQuery(query) {
 		if engine == "postgres" || engine == "sqlite" || engine == "mysql" {
-			query = fmt.Sprintf("%s LIMIT %d OFFSET %d", query, limit, offset)
+			// Start the clause on a new line so a trailing SQL line comment cannot swallow it.
+			query = fmt.Sprintf("%s\nLIMIT %d OFFSET %d", query, limit, offset)
 		}
 	}
 

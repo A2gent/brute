@@ -43,6 +43,63 @@ func TestSQLExecuteQueryFormatsResultsAndAppliesPagination(t *testing.T) {
 	}
 }
 
+func TestSQLExecuteQueryDoesNotPaginateDDL(t *testing.T) {
+	dbPath := createSQLiteFixture(t)
+
+	output, err := ExecuteQuery(
+		context.Background(),
+		Config{Engine: "sqlite", DSN: dbPath},
+		"ALTER TABLE items RENAME TO renamed_items",
+		10,
+		0,
+		"json",
+	)
+	if err != nil {
+		t.Fatalf("ExecuteQuery ALTER returned error: %v", err)
+	}
+	if output != "[]" {
+		t.Fatalf("expected empty JSON result for ALTER, got %q", output)
+	}
+
+	tables, err := GetTables(context.Background(), Config{Engine: "sqlite", DSN: dbPath})
+	if err != nil {
+		t.Fatalf("GetTables returned error: %v", err)
+	}
+	for _, table := range tables {
+		if table == "renamed_items" {
+			return
+		}
+	}
+	t.Fatalf("ALTER did not rename the table, got tables %v", tables)
+}
+
+func TestSQLExecuteQueryAppliesPaginationToCommentedAndCTESelects(t *testing.T) {
+	dbPath := createSQLiteFixture(t)
+	queries := []string{
+		"-- preview query\nSELECT name FROM items ORDER BY id",
+		"WITH source AS (SELECT name FROM items) SELECT name FROM source ORDER BY name",
+		"SELECT name FROM items ORDER BY id -- trailing comment",
+	}
+
+	for _, query := range queries {
+		output, err := ExecuteQuery(context.Background(), Config{Engine: "sqlite", DSN: dbPath}, query, 1, 1, "json")
+		if err != nil {
+			t.Fatalf("ExecuteQuery(%q) returned error: %v", query, err)
+		}
+		var rows []map[string]interface{}
+		if err := json.Unmarshal([]byte(output), &rows); err != nil {
+			t.Fatalf("result for %q is not valid JSON: %v", query, err)
+		}
+		if len(rows) != 1 || rows[0]["name"] != `beta"quoted` {
+			t.Fatalf("unexpected paginated result for %q: %#v", query, rows)
+		}
+	}
+
+	if isSelectQuery("WITH source AS (SELECT 1) UPDATE items SET name = 'updated'") {
+		t.Fatal("a CTE ending in UPDATE must not be treated as a SELECT")
+	}
+}
+
 func TestSQLExecuteQueryJSONReturnsEmptyArrayForNoRows(t *testing.T) {
 	dbPath := createSQLiteFixture(t)
 

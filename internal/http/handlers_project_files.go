@@ -234,6 +234,17 @@ func (s *Server) handleGetProjectFileRaw(w http.ResponseWriter, r *http.Request)
 		s.errorResponse(w, http.StatusBadRequest, "File path is required")
 		return
 	}
+	// WHY: sessions work in a git worktree, so files they produce (e.g. images shown in chat)
+	// exist only there, not under the project root. Prefer the session worktree copy when present.
+	if sessionID := strings.TrimSpace(r.URL.Query().Get("sessionID")); sessionID != "" {
+		if wt, wtErr := s.store.GetSessionWorktree(sessionID); wtErr == nil && wt != nil && wt.ProjectID == projectID {
+			if wtPath, _, resErr := resolveProjectPath(wt.Path, relPath); resErr == nil {
+				if _, statErr := os.Stat(wtPath); statErr == nil {
+					resolvedPath = wtPath
+				}
+			}
+		}
+	}
 	if !isProjectRawPreviewFile(normalizedRelPath) {
 		s.errorResponse(w, http.StatusBadRequest, "Only PDF, image, GLB, and HTML files can be previewed")
 		return

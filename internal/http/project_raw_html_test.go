@@ -7,6 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/A2gent/brute/internal/storage"
 )
 
 func TestRawHTMLPreviewIsSandboxed(t *testing.T) {
@@ -72,5 +75,32 @@ func TestRawFilesRequireRevalidation(t *testing.T) {
 		if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
 			t.Fatalf("%s: expected no-cache, got %q", target, got)
 		}
+	}
+}
+
+// Files made by a session live in its worktree; raw requests with sessionID must find them there.
+func TestRawFilePrefersSessionWorktree(t *testing.T) {
+	server, projectID, _ := newProjectFileTestServer(t)
+	wtDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(wtDir, "w.png"), []byte("wt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sess := &storage.Session{ID: "wt-session", ProjectID: &projectID, Status: "running", Metadata: map[string]interface{}{}, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := server.store.SaveSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.store.CreateSessionWorktree(&storage.SessionWorktree{SessionID: sess.ID, ProjectID: projectID, Path: wtDir}); err != nil {
+		t.Fatal(err)
+	}
+	get := func(q string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		server.router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/projects/file/raw?projectID="+url.QueryEscape(projectID)+"&path=w.png"+q, nil))
+		return rec
+	}
+	if rec := get("&sessionID=" + sess.ID); rec.Code != http.StatusOK || rec.Body.String() != "wt" {
+		t.Fatalf("expected worktree file, got %d %q", rec.Code, rec.Body.String())
+	}
+	if rec := get(""); rec.Code == http.StatusOK {
+		t.Fatal("without sessionID the file must not be found in the project root")
 	}
 }

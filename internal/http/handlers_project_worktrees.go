@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/go-chi/chi/v5"
@@ -99,12 +100,17 @@ func (s *Server) handleDeleteProjectWorktree(w http.ResponseWriter, r *http.Requ
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// git refuses to remove the main folder or a worktree with uncommitted changes.
-	if _, err := runGitCommand(root, "worktree", "remove", r.URL.Query().Get("path")); err != nil {
+	args := []string{"worktree", "remove"}
+	if r.URL.Query().Get("force") == "true" {
+		args = append(args, "--force")
+	}
+	args = append(args, r.URL.Query().Get("path"))
+	if _, err := runGitCommand(root, args...); err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Failed to remove worktree: "+err.Error())
 		return
 	}
-	s.respondProjectWorktrees(w, root, http.StatusOK)
+	// Building the full list runs status and log in every remaining worktree; deletion only needs an acknowledgement.
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) respondProjectWorktrees(w http.ResponseWriter, root string, status int) {
@@ -131,15 +137,25 @@ func (s *Server) respondProjectWorktrees(w http.ResponseWriter, root string, sta
 				worktree.Prunable = true
 			}
 		}
-		// Best-effort activity summary for the Worktrees tab; a missing folder has none.
-		if !worktree.Prunable {
+		worktrees = append(worktrees, worktree)
+	}
+	// WHY: status and log spawn git per worktree; running them sequentially took seconds
+	// with many worktrees, so fan out and wait. Best-effort: a missing folder has no summary.
+	var wg sync.WaitGroup
+	for i := range worktrees {
+		if worktrees[i].Prunable {
+			continue
+		}
+		wg.Add(1)
+		go func(worktree *ProjectWorktree) {
+			defer wg.Done()
 			if changes, _ := runGitCommand(worktree.Path, "status", "--porcelain"); changes != "" {
 				worktree.Changes = len(strings.Split(changes, "\n"))
 			}
 			worktree.LastCommit, _ = runGitCommand(worktree.Path, "log", "-1", "--format=%s (%cr)")
-		}
-		worktrees = append(worktrees, worktree)
+		}(&worktrees[i])
 	}
+	wg.Wait()
 	s.jsonResponse(w, status, worktrees)
 }
 

@@ -8,7 +8,10 @@ func isLiveTurnEvent(event ChatStreamEvent) bool {
 	}
 	switch event.Type {
 	case "assistant_delta", "reasoning_delta", "tool_started", "tool_updated",
-		"tool_input_completed", "tool_output", "cost", "runtime_warning":
+		"tool_input_completed", "tool_output", "cost", "runtime_warning",
+		// MCP bridge progress for a CLI runtime tool (carries the runtime turn id), so a
+		// viewer opening the session mid-turn still sees e.g. the sub-agent session link.
+		"tool_progress":
 		return true
 	case "tool_completed":
 		return event.RuntimeTool != nil

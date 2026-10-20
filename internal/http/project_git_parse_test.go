@@ -5,6 +5,17 @@ import (
 	"testing"
 )
 
+func TestParseProjectGitHistoryCommitsIncludesAuthorEmail(t *testing.T) {
+	output := "abc123\x1fabc1234\x1fcommit subject\x1fAda Lovelace\x1f2026-10-20T07:00:00+00:00\x1fHEAD -\u003e main\x1fparent123\x1fada@example.com"
+	commits := parseProjectGitHistoryCommits(output, "main")
+	if len(commits) != 1 {
+		t.Fatalf("commits = %#v, want one commit", commits)
+	}
+	if commits[0].AuthorEmail != "ada@example.com" {
+		t.Fatalf("author email = %q, want ada@example.com", commits[0].AuthorEmail)
+	}
+}
+
 func TestParseProjectGitCommitFileStatusesReadsRenameOldPath(t *testing.T) {
 	statuses := parseProjectGitCommitFileStatuses("" +
 		"R100\tapp/assets/javascripts/store/all.js\tapp/javascript/src/store/index.js\n" +

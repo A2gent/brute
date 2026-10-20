@@ -136,10 +136,11 @@ func sameFilesystemPath(first string, second string) bool {
 	return resolve(first) == resolve(second)
 }
 
-// teardownSessionWorktree delivers completed work into local main/master before
-// removing the checkout. Delete (commitChanges=false) deliberately does not merge.
+// teardownSessionWorktree commits the session's work and, depending on mode, merges it
+// into the branch open in the main folder or in the parent worktree before removing the
+// checkout. completeModeDiscard (Delete, handoff) deliberately neither commits nor merges.
 // Branches are kept so committed work remains recoverable even after removal.
-func (s *Server) teardownSessionWorktree(sessionID string, commitChanges bool) error {
+func (s *Server) teardownSessionWorktree(sessionID string, mode string) error {
 	wt, err := s.store.GetSessionWorktree(sessionID)
 	if err != nil || wt == nil {
 		return err
@@ -147,6 +148,16 @@ func (s *Server) teardownSessionWorktree(sessionID string, commitChanges bool) e
 	root, err := s.resolveProjectRootFolder(wt.ProjectID)
 	if err != nil {
 		return err
+	}
+	commitChanges := mode != completeModeDiscard
+	mergeChanges := commitChanges && mode != completeModeKeep
+	mergeDir := root
+	if mode == completeModeParent {
+		parent := s.parentSessionWorktree(sessionID)
+		if parent == nil {
+			return fmt.Errorf("session has no parent worktree to merge into")
+		}
+		mergeDir = parent.Path
 	}
 	unlockGit := lockWorktreeGit(root)
 	defer unlockGit()
@@ -161,8 +172,11 @@ func (s *Server) teardownSessionWorktree(sessionID string, commitChanges bool) e
 		// A missing folder can still have undelivered commits on its branch.
 		// Deliver those before dropping the DB record; never touch a plain folder
 		// that happens to occupy the stale path.
-		if commitChanges {
-			if err := integrateSessionWorktree(sessionID, root, "refs/heads/"+wt.Branch); err != nil {
+		// If the branch was deleted too there is nothing left to deliver, so
+		// completing must not fail on the missing ref.
+		_, branchErr := runGitCommand(root, "rev-parse", "--verify", "--quiet", "refs/heads/"+wt.Branch+"^{commit}")
+		if mergeChanges && branchErr == nil {
+			if err := integrateSessionWorktree(sessionID, mergeDir, "refs/heads/"+wt.Branch); err != nil {
 				return err
 			}
 		}
@@ -204,8 +218,10 @@ func (s *Server) teardownSessionWorktree(sessionID string, commitChanges bool) e
 		if err != nil {
 			return err
 		}
-		if err := integrateSessionWorktree(sessionID, root, commit); err != nil {
-			return err
+		if mergeChanges {
+			if err := integrateSessionWorktree(sessionID, mergeDir, commit); err != nil {
+				return err
+			}
 		}
 	}
 	// Do not stop the session's dev environment until local delivery succeeds.
@@ -371,7 +387,7 @@ func (s *Server) handleSessionWorktreeHandoff(w http.ResponseWriter, r *http.Req
 		s.errorResponse(w, http.StatusConflict, "Worktree is on a detached HEAD; check out a branch first")
 		return
 	}
-	if err := s.teardownSessionWorktree(wt.SessionID, false); err != nil {
+	if err := s.teardownSessionWorktree(wt.SessionID, completeModeDiscard); err != nil {
 		s.errorResponse(w, http.StatusConflict, err.Error())
 		return
 	}

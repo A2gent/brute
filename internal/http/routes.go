@@ -325,6 +325,7 @@ func (s *Server) registerSessionRoutes(r chi.Router) {
 		r.Put("/{sessionID}/needs-feedback", s.handleUpdateSessionNeedsFeedback)
 		r.Post("/{sessionID}/archive", s.handleArchiveSession)
 		r.Get("/{sessionID}/archive-progress", s.handleArchiveProgress)
+		r.Get("/{sessionID}/complete-preview", s.handleCompletePreview)
 		r.Post("/{sessionID}/convert-to-task", s.handleConvertSessionToTask)
 		r.Post("/{sessionID}/unarchive", s.handleUnarchiveSession)
 		r.Post("/{sessionID}/worktree/handoff", s.handleSessionWorktreeHandoff)

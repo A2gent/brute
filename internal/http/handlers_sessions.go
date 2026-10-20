@@ -724,7 +724,7 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		s.closeBrowserPageForSession(id)
 	}
 	for _, id := range sessionIDsToDelete {
-		if err := s.teardownSessionWorktree(id, false); err != nil {
+		if err := s.teardownSessionWorktree(id, completeModeDiscard); err != nil {
 			s.errorResponse(w, http.StatusConflict, err.Error())
 			return
 		}

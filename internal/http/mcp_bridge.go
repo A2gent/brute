@@ -371,10 +371,15 @@ func (s *Server) mcpBridgeCallTool(tokenCtx context.Context, sess *session.Sessi
 		ctx = context.WithValue(ctx, "projectID", strings.TrimSpace(*sess.ProjectID))
 	}
 	ctx = tools.WithProgressCallback(ctx, func(ev tools.ProgressEvent) {
+		toolCallID, turnID := strings.TrimSpace(ev.ToolCallID), ""
+		if toolCallID == "" {
+			toolCallID, turnID = s.resolveLiveRuntimeToolCall(sess.ID, name, call.Arguments)
+		}
 		s.publishSessionEvent(sess.ID, ChatStreamEvent{
-			Type: "tool_progress",
+			Type:   "tool_progress",
+			TurnID: turnID,
 			ToolProgress: &StreamToolProgressEvent{
-				ToolCallID: ev.ToolCallID,
+				ToolCallID: toolCallID,
 				ToolName:   ev.ToolName,
 				Status:     ev.Status,
 				Content:    ev.Content,

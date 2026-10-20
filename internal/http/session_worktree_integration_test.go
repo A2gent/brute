@@ -1,7 +1,9 @@
 package http
 
 import (
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -199,17 +201,53 @@ func TestDeleteDoesNotMergeSession(t *testing.T) {
 	}
 }
 
-func TestCompleteRejectsWrongMainCheckoutBranch(t *testing.T) {
+// Complete merges into whatever branch the human has open, not only main/master.
+func TestCompleteMergesIntoCurrentBranch(t *testing.T) {
 	server, id, root, path := newLocalCompletionTestSession(t, "main")
 	runGitForMindTest(t, root, "switch", "-c", "human-work")
 	writeGitTestFile(t, path, "agent.txt", "session work\n")
-	rec := serveWorktreeTest(server, http.MethodPost, "/sessions/"+id+"/archive")
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "open local main") {
-		t.Fatalf("wrong branch: %d %s", rec.Code, rec.Body.String())
+	if rec := serveWorktreeTest(server, http.MethodPost, "/sessions/"+id+"/archive"); rec.Code != http.StatusOK {
+		t.Fatalf("complete: %d %s", rec.Code, rec.Body.String())
 	}
-	assertCompletionKeptSession(t, server, id, path)
 	if current, _ := currentGitBranch(root); current != "human-work" {
 		t.Fatalf("changed human branch: %s", current)
+	}
+	if _, err := os.Stat(filepath.Join(root, "agent.txt")); err != nil {
+		t.Fatalf("not merged into current branch: %v", err)
+	}
+	if _, err := runGitCommand(root, "cat-file", "-e", "main:agent.txt"); err == nil {
+		t.Fatal("work leaked into main")
+	}
+}
+
+func TestCompletePreviewAndKeepMode(t *testing.T) {
+	server, id, root, path := newLocalCompletionTestSession(t, "main")
+	preview := func() completePreviewResponse {
+		rec := serveWorktreeTest(server, http.MethodGet, "/sessions/"+id+"/complete-preview")
+		var resp completePreviewResponse
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &resp) != nil {
+			t.Fatalf("preview: %d %s", rec.Code, rec.Body.String())
+		}
+		return resp
+	}
+	if p := preview(); !p.HasWorktree || p.HasChanges || p.TargetBranch != "main" {
+		t.Fatalf("clean preview: %+v", p)
+	}
+	writeGitTestFile(t, path, "agent.txt", "session work\n")
+	if p := preview(); !p.HasChanges {
+		t.Fatalf("dirty preview: %+v", p)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/sessions/"+id+"/archive", strings.NewReader(`{"mode":"keep"}`))
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("keep: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "agent.txt")); err == nil {
+		t.Fatal("keep mode merged into the main folder")
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("worktree was not removed")
 	}
 }
 
@@ -243,18 +281,19 @@ func TestCompleteMergesDetachedSessionCommit(t *testing.T) {
 	}
 }
 
-func TestCompleteMissingSessionRefCannotSilentlyArchive(t *testing.T) {
+// With both the folder and the branch gone there is nothing to deliver; Complete must still archive.
+func TestCompleteMissingWorktreeAndBranchArchives(t *testing.T) {
 	server, id, root, path := newLocalCompletionTestSession(t, "main")
 	branch, _ := currentGitBranch(path)
 	runGitForMindTest(t, root, "worktree", "remove", path)
 	runGitForMindTest(t, root, "branch", "-d", branch)
 	rec := serveWorktreeTest(server, http.MethodPost, "/sessions/"+id+"/archive")
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "session commit is unavailable") {
+	if rec.Code != http.StatusOK {
 		t.Fatalf("missing source: %d %s", rec.Code, rec.Body.String())
 	}
 	sess, _ := server.sessionManager.Get(id)
 	wt, _ := server.store.GetSessionWorktree(id)
-	if sessionArchivedAt(sess) != nil || wt == nil {
-		t.Fatal("missing source silently discarded session recovery metadata")
+	if sessionArchivedAt(sess) == nil || wt != nil {
+		t.Fatal("session was not archived after worktree and branch disappeared")
 	}
 }

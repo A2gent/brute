@@ -36,6 +36,34 @@ func TestHandleProjectGitHistory_NoGitMetadataReturnsEmptyHistory(t *testing.T) 
 	}
 }
 
+func TestHandleProjectGitHistoryIncludesCommitAuthorEmail(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is not available")
+	}
+
+	server, projectID, repoDir := newProjectFileTestServer(t)
+	initMindGitTestRepo(t, repoDir)
+
+	target := "/projects/git/history?projectID=" + url.QueryEscape(projectID)
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected OK for git history, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var response ProjectGitHistoryResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("failed to decode git history: %v", err)
+	}
+	if len(response.Commits) == 0 {
+		t.Fatal("expected at least one git commit")
+	}
+	if response.Commits[0].AuthorEmail != "test@example.com" {
+		t.Fatalf("author email = %q, want test@example.com", response.Commits[0].AuthorEmail)
+	}
+}
+
 func TestHandleProjectGitStatusAcceptsAbsoluteRepoPathInsideProject(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git binary is not available")

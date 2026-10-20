@@ -204,7 +204,7 @@ func (s *Server) handleProjectGitHistory(w http.ResponseWriter, r *http.Request)
 		"log",
 		"--decorate=short",
 		"--date=iso-strict",
-		"--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%D%x1f%P",
+		"--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%D%x1f%P%x1f%ae",
 		"-n",
 		strconv.Itoa(limit),
 	)

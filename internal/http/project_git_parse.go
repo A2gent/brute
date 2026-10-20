@@ -62,6 +62,10 @@ func parseProjectGitHistoryCommits(output string, currentBranch string) []Projec
 
 		refs := parseProjectGitDecorations(parts[5])
 		branch := pickProjectGitPrimaryRef(refs, currentBranch)
+		authorEmail := ""
+		if len(parts) > 7 {
+			authorEmail = strings.TrimSpace(parts[7])
+		}
 
 		parents := make([]string, 0)
 		for _, parent := range strings.Fields(strings.TrimSpace(parts[6])) {
@@ -71,14 +75,15 @@ func parseProjectGitHistoryCommits(output string, currentBranch string) []Projec
 		}
 
 		commits = append(commits, ProjectGitHistoryCommit{
-			Hash:       strings.TrimSpace(parts[0]),
-			ShortHash:  strings.TrimSpace(parts[1]),
-			Subject:    strings.TrimSpace(parts[2]),
-			AuthorName: strings.TrimSpace(parts[3]),
-			AuthoredAt: strings.TrimSpace(parts[4]),
-			Refs:       refs,
-			Parents:    parents,
-			Branch:     branch,
+			Hash:        strings.TrimSpace(parts[0]),
+			ShortHash:   strings.TrimSpace(parts[1]),
+			Subject:     strings.TrimSpace(parts[2]),
+			AuthorName:  strings.TrimSpace(parts[3]),
+			AuthorEmail: authorEmail,
+			AuthoredAt:  strings.TrimSpace(parts[4]),
+			Refs:        refs,
+			Parents:     parents,
+			Branch:      branch,
 		})
 	}
 

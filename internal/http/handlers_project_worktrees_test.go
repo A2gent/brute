@@ -23,7 +23,7 @@ func TestProjectWorktreesCreateListAndRemove(t *testing.T) {
 		rec := httptest.NewRecorder()
 		server.router.ServeHTTP(rec, httptest.NewRequest(method, "/projects/"+projectID+"/worktrees"+target, strings.NewReader(body)))
 		var worktrees []ProjectWorktree
-		if rec.Code < 300 {
+		if rec.Code < 300 && rec.Code != http.StatusNoContent {
 			if err := json.NewDecoder(rec.Body).Decode(&worktrees); err != nil {
 				t.Fatalf("failed to decode worktrees: %v", err)
 			}
@@ -62,7 +62,32 @@ func TestProjectWorktreesCreateListAndRemove(t *testing.T) {
 	runGitForMindTest(t, worktrees[1].Path, "clean", "-f")
 
 	worktrees, rec = request(http.MethodDelete, "?path="+url.QueryEscape(worktrees[1].Path), "")
-	if rec.Code != http.StatusOK || len(worktrees) != 1 {
-		t.Fatalf("expected worktree to be removed, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNoContent || len(worktrees) != 0 {
+		t.Fatalf("expected worktree removal acknowledgement without a redundant list, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	worktrees, rec = request(http.MethodPost, "", `{"name":"dirty"}`)
+	if rec.Code != http.StatusCreated || len(worktrees) != 2 {
+		t.Fatalf("expected dirty-test worktree to be created, got %d: %s", rec.Code, rec.Body.String())
+	}
+	dirtyPath := worktrees[1].Path
+	writeGitTestFile(t, dirtyPath, "draft.txt", "wip\n")
+
+	_, rec = request(http.MethodDelete, "?path="+url.QueryEscape(dirtyPath), "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected dirty worktree removal to require force, got %d: %s", rec.Code, rec.Body.String())
+	}
+	worktrees, rec = request(http.MethodGet, "", "")
+	if rec.Code != http.StatusOK || len(worktrees) != 2 || worktrees[1].Changes != 1 {
+		t.Fatalf("expected dirty worktree to remain after regular removal, got %d: %+v", rec.Code, worktrees)
+	}
+
+	_, rec = request(http.MethodDelete, "?path="+url.QueryEscape(dirtyPath)+"&force=true", "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected forced removal of dirty worktree, got %d: %s", rec.Code, rec.Body.String())
+	}
+	worktrees, rec = request(http.MethodGet, "", "")
+	if rec.Code != http.StatusOK || len(worktrees) != 1 || !worktrees[0].Main {
+		t.Fatalf("expected only main worktree to remain after forced removal, got %d: %+v", rec.Code, worktrees)
 	}
 }

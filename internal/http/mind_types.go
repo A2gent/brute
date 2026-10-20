@@ -135,14 +135,15 @@ type ProjectGitBranch struct {
 }
 
 type ProjectGitHistoryCommit struct {
-	Hash       string   `json:"hash"`
-	ShortHash  string   `json:"short_hash"`
-	Subject    string   `json:"subject"`
-	AuthorName string   `json:"author_name"`
-	AuthoredAt string   `json:"authored_at"`
-	Refs       []string `json:"refs"`
-	Parents    []string `json:"parents"`
-	Branch     string   `json:"branch,omitempty"`
+	Hash        string   `json:"hash"`
+	ShortHash   string   `json:"short_hash"`
+	Subject     string   `json:"subject"`
+	AuthorName  string   `json:"author_name"`
+	AuthorEmail string   `json:"author_email,omitempty"`
+	AuthoredAt  string   `json:"authored_at"`
+	Refs        []string `json:"refs"`
+	Parents     []string `json:"parents"`
+	Branch      string   `json:"branch,omitempty"`
 }
 
 type ProjectGitHistoryResponse struct {

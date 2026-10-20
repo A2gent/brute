@@ -5,6 +5,9 @@ package http
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -52,11 +55,26 @@ func sessionMatchesArchiveFilter(sess *session.Session, filter string) bool {
 }
 
 func (s *Server) handleArchiveSession(w http.ResponseWriter, r *http.Request) {
-	s.setSessionArchived(w, r.Context(), chi.URLParam(r, "sessionID"), true)
+	// The body is optional: callers without the Complete dialog keep the default merge.
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+			return
+		}
+	}
+	// Discard is the Delete path; Complete must never drop work.
+	if !validCompleteMode(req.Mode) || req.Mode == completeModeDiscard {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid complete mode: "+req.Mode)
+		return
+	}
+	s.setSessionArchived(w, r.Context(), chi.URLParam(r, "sessionID"), true, req.Mode)
 }
 
 func (s *Server) handleUnarchiveSession(w http.ResponseWriter, r *http.Request) {
-	s.setSessionArchived(w, r.Context(), chi.URLParam(r, "sessionID"), false)
+	s.setSessionArchived(w, r.Context(), chi.URLParam(r, "sessionID"), false, "")
 }
 
 func (s *Server) sessionIsBusy(sess *session.Session) bool {
@@ -73,7 +91,7 @@ func (s *Server) sessionIsBusy(sess *session.Session) bool {
 		return false
 	}
 }
-func (s *Server) setSessionArchived(w http.ResponseWriter, ctx context.Context, sessionID string, archived bool) {
+func (s *Server) setSessionArchived(w http.ResponseWriter, ctx context.Context, sessionID string, archived bool, mode string) {
 	if archived {
 		// Lets the UI show live progress while the (possibly slow) teardown runs.
 		defer startArchiveProgress(sessionID)()
@@ -161,12 +179,29 @@ func (s *Server) setSessionArchived(w http.ResponseWriter, ctx context.Context, 
 		}
 	}
 
+	// Merging into the parent's checkout must not race with the parent agent writing there.
+	if archived && mode == completeModeParent {
+		if parentWT := s.parentSessionWorktree(root.ID); parentWT != nil {
+			_, release, leaseErr := s.sessionManager.AcquireRun(ctx, parentWT.SessionID)
+			if leaseErr != nil {
+				s.errorResponse(w, http.StatusConflict, "The parent session is still running; stop it before merging into its worktree")
+				return
+			}
+			releases = append(releases, release)
+		}
+	}
+
 	// Deliver every owned worktree before marking any session archived. A later
 	// descendant's merge failure must not leave the root falsely completed.
 	if archived {
 		for _, id := range ids {
 			shareArchiveProgress(root.ID, id)
-			if err := s.teardownSessionWorktree(id, true); err != nil {
+			// The chosen mode is about the session being completed; descendants use the default.
+			idMode := ""
+			if id == root.ID {
+				idMode = mode
+			}
+			if err := s.teardownSessionWorktree(id, idMode); err != nil {
 				s.errorResponse(w, http.StatusConflict, err.Error())
 				return
 			}

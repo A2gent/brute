@@ -232,3 +232,37 @@ func TestTasksToolFiltersPagingAndNext(t *testing.T) {
 		t.Fatalf("tagged next = %q", tagged)
 	}
 }
+
+func TestTasksToolSchemaDeclaresListFilters(t *testing.T) {
+	tool, _, _, _ := newTasksToolFixture(t)
+	props := tool.Schema()["properties"].(map[string]interface{})
+	for _, key := range []string{"offset", "exclude_tag", "exclude_tags", "max_priority", "max_complexity", "min_complexity", "max_hours", "sort"} {
+		if _, ok := props[key]; !ok {
+			t.Errorf("schema missing %q", key)
+		}
+	}
+}
+
+func TestTasksToolStringifiedIntsAndComplexityFilter(t *testing.T) {
+	tool, ctx, _, _ := newTasksToolFixture(t)
+	for i, c := range []int{1, 2, 3, 0} {
+		runTasksTool(t, tool, ctx, map[string]any{"action": "create", "title": "task" + string(rune('A'+i)), "status": "todo", "complexity": c})
+	}
+	out := runTasksTool(t, tool, ctx, map[string]any{"action": "list", "max_complexity": 2})
+	if strings.Contains(out, "taskC") || strings.Contains(out, "taskD") || !strings.Contains(out, "taskB") {
+		t.Fatalf("max_complexity=2 list = %q", out)
+	}
+	out = runTasksTool(t, tool, ctx, map[string]any{"action": "list", "min_complexity": "3"})
+	if !strings.Contains(out, "taskC") || strings.Contains(out, "taskA") {
+		t.Fatalf("min_complexity list = %q", out)
+	}
+	// Offset past the end must parse (as "40") and yield an empty page rather than an unmarshal error.
+	out = runTasksTool(t, tool, ctx, map[string]any{"action": "list", "offset": "40", "limit": "5"})
+	if !strings.Contains(out, "showing 0") {
+		t.Fatalf("stringified offset list = %q", out)
+	}
+	out = runTasksTool(t, tool, ctx, map[string]any{"action": "list", "offset": "2", "limit": "1"})
+	if !strings.Contains(out, "showing 1 from offset 2") {
+		t.Fatalf("offset \"2\" list = %q", out)
+	}
+}

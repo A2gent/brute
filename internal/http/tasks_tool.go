@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/A2gent/brute/internal/storage"
@@ -19,28 +20,73 @@ type tasksTool struct {
 }
 
 type tasksToolParams struct {
-	Action     string    `json:"action"`
-	Ref        string    `json:"ref,omitempty"`
-	Title      string    `json:"title,omitempty"`
-	Body       *string   `json:"body,omitempty"`
-	Status     string    `json:"status,omitempty"`
-	Priority   *int      `json:"priority,omitempty"`
-	Complexity *int      `json:"complexity,omitempty"`
-	DependsOn  *[]string `json:"depends_on,omitempty"`
-	Tags       *[]string `json:"tags,omitempty"`
-	Price      *string   `json:"price,omitempty"`
-	Hours      *int      `json:"hours,omitempty"`
-	Query      string    `json:"q,omitempty"`
-	Tag        string    `json:"tag,omitempty"`
-	ExcludeTag string    `json:"exclude_tag,omitempty"`
-	MaxPrio    *int      `json:"max_priority,omitempty"`
-	MaxCompl   *int      `json:"max_complexity,omitempty"`
-	MaxHours   *int      `json:"max_hours,omitempty"`
-	Sort       string    `json:"sort,omitempty"`
-	Limit      int       `json:"limit,omitempty"`
-	Offset     int       `json:"offset,omitempty"`
-	Claim      bool      `json:"claim,omitempty"`
-	ProjectID  string    `json:"project_id,omitempty"`
+	Action      string    `json:"action"`
+	Ref         string    `json:"ref,omitempty"`
+	Title       string    `json:"title,omitempty"`
+	Body        *string   `json:"body,omitempty"`
+	Status      string    `json:"status,omitempty"`
+	Priority    *int      `json:"priority,omitempty"`
+	Complexity  *int      `json:"complexity,omitempty"`
+	DependsOn   *[]string `json:"depends_on,omitempty"`
+	Tags        *[]string `json:"tags,omitempty"`
+	Price       *string   `json:"price,omitempty"`
+	Hours       *int      `json:"hours,omitempty"`
+	Query       string    `json:"q,omitempty"`
+	Tag         string    `json:"tag,omitempty"`
+	ExcludeTag  string    `json:"exclude_tag,omitempty"`
+	MaxPrio     *int      `json:"max_priority,omitempty"`
+	MaxCompl    *int      `json:"max_complexity,omitempty"`
+	MinCompl    *int      `json:"min_complexity,omitempty"`
+	ExcludeTags *[]string `json:"exclude_tags,omitempty"`
+	MaxHours    *int      `json:"max_hours,omitempty"`
+	Sort        string    `json:"sort,omitempty"`
+	Limit       int       `json:"limit,omitempty"`
+	Offset      int       `json:"offset,omitempty"`
+	Claim       bool      `json:"claim,omitempty"`
+	ProjectID   string    `json:"project_id,omitempty"`
+}
+
+// tasksIntKeys are the numeric params that CLI-backed agents sometimes send as strings ("40").
+var tasksIntKeys = []string{"priority", "complexity", "hours", "max_priority", "max_complexity", "min_complexity", "max_hours", "limit", "offset"}
+
+// UnmarshalJSON accepts numeric strings for integer params so one stringified int does not
+// fail the whole call.
+func (p *tasksToolParams) UnmarshalJSON(data []byte) error {
+	type plain tasksToolParams
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for _, key := range tasksIntKeys {
+		v, ok := raw[key]
+		if !ok {
+			continue
+		}
+		var str string
+		if json.Unmarshal(v, &str) != nil {
+			continue
+		}
+		str = strings.TrimSpace(str)
+		if str == "" {
+			delete(raw, key)
+			continue
+		}
+		n, err := strconv.Atoi(str)
+		if err != nil {
+			return fmt.Errorf("%s must be an integer, got %q", key, str)
+		}
+		raw[key] = json.RawMessage(strconv.Itoa(n))
+	}
+	fixed, err := json.Marshal(raw)
+	if err != nil {
+		return err
+	}
+	var out plain
+	if err := json.Unmarshal(fixed, &out); err != nil {
+		return err
+	}
+	*p = tasksToolParams(out)
+	return nil
 }
 
 func newTasksTool(server *Server) *tasksTool {
@@ -79,13 +125,21 @@ func (t *tasksTool) Schema() map[string]interface{} {
 				"type": "array", "items": map[string]interface{}{"type": "string"},
 				"description": "Existing task refs or UUIDs that must be completed first. Replaces dependencies on update.",
 			},
-			"tags":  map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Tags without '#'."},
-			"price": map[string]interface{}{"type": "string", "description": "Free-text price/estimate, as used on the board."},
-			"hours": map[string]interface{}{"type": "integer", "description": "Time estimate in whole hours, parsed from compact tokens like 1h or 23h."},
-			"q":     map[string]interface{}{"type": "string", "description": "Free-text filter over title and body (list only)."},
-			"tag":   map[string]interface{}{"type": "string", "description": "Filter by a single tag (list only)."},
-			"limit": map[string]interface{}{"type": "integer", "description": "Max rows for list (default 20)."},
-			"claim": map[string]interface{}{"type": "boolean", "description": "For next: immediately move the picked task to in_progress."},
+			"tags":           map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Tags without '#'."},
+			"price":          map[string]interface{}{"type": "string", "description": "Free-text price/estimate, as used on the board."},
+			"hours":          map[string]interface{}{"type": "integer", "description": "Time estimate in whole hours, parsed from compact tokens like 1h or 23h."},
+			"q":              map[string]interface{}{"type": "string", "description": "Free-text filter over title and body (list only)."},
+			"tag":            map[string]interface{}{"type": "string", "description": "Filter by a single tag (list only)."},
+			"limit":          map[string]interface{}{"type": "integer", "description": "Max rows for list (default 20)."},
+			"offset":         map[string]interface{}{"type": "integer", "description": "Rows to skip for list paging (default 0)."},
+			"exclude_tag":    map[string]interface{}{"type": "string", "description": "Skip tasks carrying any of these comma-separated tags (list and next)."},
+			"exclude_tags":   map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Array form of exclude_tag."},
+			"max_priority":   map[string]interface{}{"type": "integer", "description": "List/next filter: only tasks with priority <= this (0 highest)."},
+			"max_complexity": map[string]interface{}{"type": "integer", "description": "List/next filter: only tasks with complexity 1..N (unknown c0 rows are excluded). `complexity` is a create/update field, NOT a list filter; use max_complexity."},
+			"min_complexity": map[string]interface{}{"type": "integer", "description": "List/next filter: only tasks with complexity >= this (use 1 to drop unknown c0 rows)."},
+			"max_hours":      map[string]interface{}{"type": "integer", "description": "List/next filter: only tasks with a 1..N hour estimate."},
+			"sort":           map[string]interface{}{"type": "string", "enum": []string{"priority"}, "description": "List ordering: priority = priority, then complexity, then board order. Default is board order."},
+			"claim":          map[string]interface{}{"type": "boolean", "description": "For next: immediately move the picked task to in_progress."},
 			"project_id": map[string]interface{}{
 				"type": "string", "description": "Only needed when the session has no project bound.",
 			},
@@ -356,6 +410,12 @@ func matchesTaskFilters(task *storage.Task, p tasksToolParams) bool {
 		return false
 	}
 	if hasAnyTag(task.Tags, parseTagList(p.ExcludeTag)) {
+		return false
+	}
+	if p.ExcludeTags != nil && hasAnyTag(task.Tags, parseTagList(strings.Join(*p.ExcludeTags, ","))) {
+		return false
+	}
+	if p.MinCompl != nil && task.Complexity < *p.MinCompl {
 		return false
 	}
 	if p.MaxPrio != nil && task.Priority > *p.MaxPrio {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/A2gent/brute/internal/agent"
@@ -103,6 +104,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		folder = filepath.Join(s.config.DataPath, "sessions")
 	}
 	s.sessionManager.SetJSONLFolder(folder)
+	go s.pruneSessionLogs() // apply new limits right away
 	response := s.settingsResponseWithJev(req.Settings, nextCustomEnv)
 	response.EffectiveProviderTransitionMode = s.transitionMode()
 	s.jsonResponse(w, http.StatusOK, response)
@@ -125,6 +127,9 @@ func settingsResponse(settings map[string]string, customEnv map[string]string) S
 		// WHY: The UI should render the effective runtime default, not a missing key,
 		// so new installs and existing users both see compression enabled by default.
 		out[toolResultCompressionSettingKey] = "true"
+	}
+	if strings.TrimSpace(out[sessionsRetentionMaxMBSettingKey]) == "" {
+		out[sessionsRetentionMaxMBSettingKey] = strconv.Itoa(defaultSessionsRetentionMaxMB)
 	}
 	if strings.TrimSpace(out[filesearch.IndexingEnabledSettingKey]) == "" {
 		out[filesearch.IndexingEnabledSettingKey] = "false"

@@ -221,6 +221,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.refreshCodexContextWindows(ctx)
 	go s.refreshAnthropicContextWindows(ctx)
 	go s.runProviderUsageSampler(ctx)
+	go s.runSessionLogRetention(ctx)
 
 	server := &http.Server{
 		Addr:    addr,

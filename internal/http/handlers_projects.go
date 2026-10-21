@@ -186,6 +186,10 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	// max_parallel_sessions spawns extra workers for already queued sessions immediately.
 	if req.Settings != nil {
 		s.triggerSerialSessionQueue(project.ID)
+		// Switching worktrees off should leave the repository readable by older git again.
+		if root, err := s.resolveProjectRootFolder(project.ID); err == nil && project.Settings[projectWorktreesEnabledSettingKey] != "true" {
+			dropRelativeWorktreesExtension(root)
+		}
 	}
 
 	s.jsonResponse(w, http.StatusOK, projectToResponse(project))

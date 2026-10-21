@@ -246,7 +246,14 @@ func scrubInheritedGitEnv(env []string) []string {
 			"GIT_OBJECT_DIRECTORY",
 			"GIT_ALTERNATE_OBJECT_DIRECTORIES",
 			"GIT_QUARANTINE_PATH",
-			"GIT_PREFIX":
+			"GIT_PREFIX",
+			// Hooks inherit the outer commit's identity, which would override nested repo config.
+			"GIT_AUTHOR_NAME",
+			"GIT_AUTHOR_EMAIL",
+			"GIT_AUTHOR_DATE",
+			"GIT_COMMITTER_NAME",
+			"GIT_COMMITTER_EMAIL",
+			"GIT_COMMITTER_DATE":
 			continue
 		}
 		cleaned = append(cleaned, entry)

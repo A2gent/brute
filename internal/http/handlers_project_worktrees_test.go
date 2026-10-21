@@ -82,9 +82,18 @@ func TestProjectWorktreesCreateListAndRemove(t *testing.T) {
 		t.Fatalf("expected dirty worktree to remain after regular removal, got %d: %+v", rec.Code, worktrees)
 	}
 
+	// Switching worktrees off keeps the extension while a worktree still needs it,
+	// removing the last one then drops it so older git can read the repository again.
+	project.Settings[projectWorktreesEnabledSettingKey] = "false"
+	if err := server.store.SaveProject(project); err != nil {
+		t.Fatalf("failed to save project: %v", err)
+	}
 	_, rec = request(http.MethodDelete, "?path="+url.QueryEscape(dirtyPath)+"&force=true", "")
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("expected forced removal of dirty worktree, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if value, err := runGitCommand(repoDir, "config", "--get", "extensions.relativeworktrees"); err == nil {
+		t.Fatalf("expected relativeworktrees extension to be dropped, got %q", value)
 	}
 	worktrees, rec = request(http.MethodGet, "", "")
 	if rec.Code != http.StatusOK || len(worktrees) != 1 || !worktrees[0].Main {

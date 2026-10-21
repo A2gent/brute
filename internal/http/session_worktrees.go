@@ -233,6 +233,10 @@ func (s *Server) teardownSessionWorktree(sessionID string, mode string) error {
 	if _, err := runGitLogged(sessionID, root, "worktree", "remove", wt.Path); err != nil {
 		return fmt.Errorf("failed to remove session worktree %s: %w", wt.Path, err)
 	}
+	// A session finishing after worktrees were switched off may have held the last one.
+	if normalizeProjectSettings(project.Settings)[projectWorktreesEnabledSettingKey] != "true" {
+		dropRelativeWorktreesExtension(root)
+	}
 	return s.store.DeleteSessionWorktree(sessionID)
 }
 

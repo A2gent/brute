@@ -132,7 +132,8 @@ func TestSerialQueueMissingMessagePublishesSavedFailure(t *testing.T) {
 				if event.Type != "session_updated" || event.SessionID != sess.ID || event.Status != string(session.StatusFailed) {
 					t.Fatalf("unexpected failure catalog event: %+v", event)
 				}
-			default:
+			// Catalog delivery is asynchronous, so allow a grace period instead of polling once.
+			case <-time.After(time.Second):
 				if !failSave {
 					t.Fatal("no catalog event for saved missing-message failure")
 				}

@@ -95,7 +95,13 @@ func (s *Server) handleCreateProjectWorktree(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleDeleteProjectWorktree(w http.ResponseWriter, r *http.Request) {
-	root, err := s.resolveProjectRootFolder(chi.URLParam(r, "projectID"))
+	projectID := chi.URLParam(r, "projectID")
+	root, err := s.resolveProjectRootFolder(projectID)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	project, err := s.store.GetProject(projectID)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
@@ -108,6 +114,10 @@ func (s *Server) handleDeleteProjectWorktree(w http.ResponseWriter, r *http.Requ
 	if _, err := runGitCommand(root, args...); err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Failed to remove worktree: "+err.Error())
 		return
+	}
+	// Removing the last worktree after the feature was switched off finishes the cleanup.
+	if normalizeProjectSettings(project.Settings)[projectWorktreesEnabledSettingKey] != "true" {
+		dropRelativeWorktreesExtension(root)
 	}
 	// Building the full list runs status and log in every remaining worktree; deletion only needs an acknowledgement.
 	w.WriteHeader(http.StatusNoContent)
@@ -157,6 +167,18 @@ func (s *Server) respondProjectWorktrees(w http.ResponseWriter, root string, sta
 	}
 	wg.Wait()
 	s.jsonResponse(w, status, worktrees)
+}
+
+// dropRelativeWorktreesExtension undoes the repository extension that `worktree add
+// --relative-paths` writes. WHY: git before 2.48 (e.g. Debian images of Docker dev stacks
+// that mount the project) refuses the whole repository while it is set. Only safe once no
+// extra worktree is left, since remaining relative links still need it.
+func dropRelativeWorktreesExtension(root string) {
+	if output, err := runGitCommand(root, "worktree", "list", "--porcelain"); err != nil || strings.Contains(output, "\n\n") {
+		return
+	}
+	// Fails with exit code 5 when the key is not set; nothing to undo then.
+	_, _ = runGitCommand(root, "config", "--unset", "extensions.relativeworktrees")
 }
 
 // projectWorktreesDirectory defaults to a sibling "<project>-worktrees" folder so

@@ -309,9 +309,6 @@ func (a *Agent) summarizeTransition(ctx context.Context, sess *session.Session, 
 		return "", usage, 0, err
 	}
 	before := len(raw)
-	if before > 16*1024*1024 {
-		return "", usage, before, errors.New("history exceeds bounded summarization budget")
-	}
 	// A retry after a pause must not show the previous attempt's Jev result.
 	stats.JevUsed, stats.JevScored, stats.JevDropped, stats.JevDroppedBytes = false, 0, 0, 0
 	if len(messages) == 0 {
@@ -320,9 +317,11 @@ func (a *Agent) summarizeTransition(ctx context.Context, sess *session.Session, 
 	// The pending user prompt is still in sess, so it anchors the relevance task.
 	if filtered, jevStats := filterHistoryWithJev(ctx, a.config.RelevanceGate, compactionRelevanceTask(sess), messages); jevStats.Used {
 		stats.JevUsed, stats.JevScored, stats.JevDropped, stats.JevDroppedBytes = true, jevStats.Scored, jevStats.Dropped, jevStats.DroppedBytes
-		if raw, err = json.Marshal(filtered); err != nil {
-			return "", usage, before, err
-		}
+		messages = filtered
+	}
+	raw, err = transitionSummaryHistory(messages)
+	if err != nil {
+		return "", usage, before, err
 	}
 	if window <= 0 {
 		window = 8192
@@ -332,23 +331,42 @@ func (a *Agent) summarizeTransition(ctx context.Context, sess *session.Session, 
 		return "", usage, before, errors.New("target context window too small for summarization")
 	}
 	text := string(raw)
+	// Bound target cost by request count, not archived bytes (which may include
+	// many megabytes of pixels).
+	const maxSummaryRequests = 128
+	requests := 0
 	// Bounded map/reduce uses the target directly, never the failing source or a
 	// fallback wrapper. No tools, cursors or session ID can leak into summary calls.
 	for round := 0; round < 8; round++ {
+		// Check actual encoded chunks before any egress in this round. Leave
+		// room for reduction rather than spending the entire cap on the map.
+		limit := maxSummaryRequests - requests
+		if round == 0 {
+			limit -= 7
+		}
+		chunks := 0
+		for remaining := text; len(remaining) > 0; {
+			if err := ctx.Err(); err != nil {
+				return "", usage, before, err
+			}
+			chunks++
+			if chunks > limit {
+				return "", usage, before, fmt.Errorf("history cannot fit within %d summary requests at the target context window; choose a model with a larger context window or compact with the current model before switching", maxSummaryRequests)
+			}
+			remaining = remaining[transitionSummaryChunkSize(remaining, budget):]
+		}
 		var summaries []string
 		for len(text) > 0 {
-			size := len(text)
-			if size > budget {
-				size = budget
-				for size > 0 && (text[size]&0xc0) == 0x80 {
-					size--
-				}
-			}
+			size := transitionSummaryChunkSize(text, budget)
 			chunk := text[:size]
 			text = text[size:]
 			if err := ctx.Err(); err != nil {
 				return "", usage, before, err
 			}
+			if requests >= maxSummaryRequests {
+				return "", usage, before, fmt.Errorf("summary reduction reached the limit of %d summary requests; choose a model with a larger context window", maxSummaryRequests)
+			}
+			requests++
 			request := &llm.ChatRequest{Model: model, SystemPrompt: defaultCompactionPrompt, Messages: []llm.Message{{Role: "user", Content: chunk}}, MaxTokens: 1024, Temperature: 0.2}
 			var response *llm.ChatResponse
 			var err error

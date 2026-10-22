@@ -44,6 +44,14 @@ func (a *Agent) addTokenUsageMetadata(sess *session.Session, usage llm.TokenUsag
 	// Get previous context size before updating
 	prevContext := metadataFloat(sess.Metadata, metadataCurrentContextTokens)
 
+	// Billed totals: providers charge the full input on every request, so sum the
+	// raw counts. This is what the real spend and prompt-cache hit rate are
+	// computed from (cached_input_tokens / input_tokens).
+	metadataSetFloat(sess, metadataBilledInputTokens, metadataFloat(sess.Metadata, metadataBilledInputTokens)+float64(usage.InputTokens))
+	if usage.CachedInputTokens > 0 {
+		metadataSetFloat(sess, metadataBilledCachedInputTokens, metadataFloat(sess.Metadata, metadataBilledCachedInputTokens)+float64(usage.CachedInputTokens))
+	}
+
 	// OutputTokens are new tokens generated in this step - accumulate them
 	metadataSetFloat(sess, metadataTotalOutputTokens, metadataFloat(sess.Metadata, metadataTotalOutputTokens)+float64(usage.OutputTokens))
 	if usage.CachedInputTokens > 0 {
@@ -69,6 +77,18 @@ func (a *Agent) addTokenUsageMetadata(sess *session.Session, usage llm.TokenUsag
 		if deltaTokens > 0 {
 			metadataSetFloat(sess, metadataTotalInputTokens, metadataFloat(sess.Metadata, metadataTotalInputTokens)+deltaTokens)
 		}
+	}
+}
+
+// llmUsageMetadata snapshots one request's billed token counts onto the
+// assistant message so per-request spend and cache hits stay reconstructible
+// from the transcript (session totals only keep aggregates).
+func llmUsageMetadata(usage llm.TokenUsage) map[string]interface{} {
+	return map[string]interface{}{
+		"input_tokens":        usage.InputTokens,
+		"cached_input_tokens": usage.CachedInputTokens,
+		"output_tokens":       usage.OutputTokens,
+		"reasoning_tokens":    usage.ReasoningTokens,
 	}
 }
 

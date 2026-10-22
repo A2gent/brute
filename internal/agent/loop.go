@@ -159,6 +159,7 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			llmTimingMetadata(llmStart, llmCompleted, a.config.Provider, a.config.Model, response.TimingMetadata),
 			runtimeAcc,
 		)
+		assistantMetadata[messageMetadataLLMUsage] = llmUsageMetadata(response.Usage)
 		preserveReasoningItems(assistantMetadata, response, sess)
 		if a.config.UsePreviousResponse && strings.TrimSpace(response.ResponseID) != "" {
 			assistantMetadata[messageMetadataResponseID] = strings.TrimSpace(response.ResponseID)
@@ -425,6 +426,7 @@ func (a *Agent) finalizeAfterStepLimit(ctx context.Context, sess *session.Sessio
 		}),
 		runtimeAcc,
 	)
+	metadata[messageMetadataLLMUsage] = llmUsageMetadata(usage)
 	preserveReasoningItems(metadata, response, sess)
 	if a.config.UsePreviousResponse && strings.TrimSpace(response.ResponseID) != "" {
 		metadata[messageMetadataResponseID] = strings.TrimSpace(response.ResponseID)

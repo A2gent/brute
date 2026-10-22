@@ -181,6 +181,7 @@ func (a *Agent) compactContext(
 		Timestamp:  time.Now(),
 		Metadata: map[string]interface{}{
 			messageMetadataCompaction: true,
+			messageMetadataLLMUsage:   llmUsageMetadata(response.Usage),
 			"compaction_index":        compactionCount,
 			"trigger_percent":         cfg.TriggerPercent,
 			"triggered_at_step":       step,

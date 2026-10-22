@@ -59,10 +59,14 @@ const (
 )
 
 const (
-	metadataTotalInputTokens               = "total_input_tokens"
-	metadataTotalOutputTokens              = "total_output_tokens"
-	metadataTotalCachedTokens              = "total_cached_input_tokens"
-	metadataTotalReasoningTokens           = "total_reasoning_tokens"
+	metadataTotalInputTokens     = "total_input_tokens"
+	metadataTotalOutputTokens    = "total_output_tokens"
+	metadataTotalCachedTokens    = "total_cached_input_tokens"
+	metadataTotalReasoningTokens = "total_reasoning_tokens"
+	// Billed totals sum the raw per-request input as charged by the provider,
+	// unlike total_input_tokens which only tracks context-growth deltas.
+	metadataBilledInputTokens              = "billed_input_tokens"
+	metadataBilledCachedInputTokens        = "billed_cached_input_tokens"
 	metadataCurrentContextTokens           = "current_context_tokens"
 	metadataContextWindow                  = "context_window"
 	metadataCompactionCount                = "compaction_count"
@@ -76,6 +80,7 @@ const (
 	metadataLastLLMInputTokens             = "last_llm_input_tokens"
 	metadataLastLLMCachedInputTokens       = "last_llm_cached_input_tokens"
 	messageMetadataCompaction              = "context_compaction"
+	messageMetadataLLMUsage                = "llm_usage"
 	messageMetadataReasoningItems          = "reasoning_items"
 	messageMetadataResponseID              = "response_id"
 	messageMetadataProviderSessionCursor   = "provider_session_cursor"

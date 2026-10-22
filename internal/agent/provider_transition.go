@@ -145,6 +145,7 @@ func (a *Agent) transitionBoundary(ctx context.Context, sess *session.Session, o
 			msg := &candidate.Messages[len(sess.Messages)]
 			msg.Provenance = llm.NewProvenance(t.Target.Provider, t.Target.Model)
 			msg.Metadata["llm_provenance"] = map[string]interface{}{"provider": t.Target.Provider, "model": t.Target.Model}
+			msg.Metadata[messageMetadataLLMUsage] = llmUsageMetadata(usage)
 			a.addTokenUsageMetadata(candidate, usage)
 			t.Compaction.Outcome = "succeeded"
 		}

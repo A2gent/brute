@@ -308,6 +308,11 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	if !options.PublicAPI && c.accountID != "" {
 		req.Header.Set("ChatGPT-Account-Id", c.accountID)
 	}
+	if !options.PublicAPI && payload.PromptCacheKey != "" {
+		// WHY: the ChatGPT Codex backend routes prompt caching by this header (as
+		// Codex CLI sends it); prompt_cache_key alone measured 0 cached tokens.
+		req.Header.Set("session_id", payload.PromptCacheKey)
+	}
 
 	resp, err := llm.DoStream(c.httpClient, req)
 	if err != nil {

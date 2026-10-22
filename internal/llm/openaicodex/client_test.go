@@ -221,6 +221,32 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 	}
 }
 
+func TestChat_SendsSessionHeaderOnlyToCodexBackend(t *testing.T) {
+	for _, publicAPI := range []bool{false, true} {
+		var got string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			got = r.Header.Get("session_id")
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte(`data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]}}
+
+`))
+		}))
+		client := NewClientWithOptions("token", "gpt-5.5", server.URL, Options{PublicAPI: publicAPI})
+		client.httpClient = server.Client()
+		if _, err := client.Chat(t.Context(), &llm.ChatRequest{SessionID: "sess-1", Messages: []llm.Message{{Role: "user", Content: "hi"}}}); err != nil {
+			t.Fatalf("Chat returned error: %v", err)
+		}
+		server.Close()
+		want := "sess-1"
+		if publicAPI {
+			want = ""
+		}
+		if got != want {
+			t.Fatalf("publicAPI=%v session_id header = %q, want %q", publicAPI, got, want)
+		}
+	}
+}
+
 func TestChatStreamRequestsEventStreamAndEmitsDeltaBeforeCompletion(t *testing.T) {
 	firstDeltaSeen := make(chan struct{})
 	allowCompletion := make(chan struct{})

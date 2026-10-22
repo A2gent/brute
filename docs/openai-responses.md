@@ -15,6 +15,9 @@ Public requests forward the provider's reasoning effort, text verbosity,
 service tier, prompt-cache key and maximum output tokens. Nonempty request-level
 options override client defaults; the session ID is the fallback cache key.
 Function tools explicitly use `strict:false` to preserve optional parameters.
+The ChatGPT Codex backend also receives the cache key as a `session_id` header,
+like Codex CLI: measured on gpt-6-luna, `prompt_cache_key` alone gave 0 cached
+tokens per turn while the header gave ~99%.
 
 - `stateful_responses` unset or false: `store:false`. Encrypted reasoning items
   are requested, saved with the assistant's session metadata and replayed before

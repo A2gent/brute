@@ -54,7 +54,7 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 	reasoningTokens := int(metadataNumber(sess.Metadata, "total_reasoning_tokens"))
 	currentContextTokens := int(metadataNumber(sess.Metadata, "current_context_tokens"))
 	modelContextWindow := int(metadataNumber(sess.Metadata, "context_window"))
-	if config.IsClaudeProviderRef(provider) || provider == string(config.ProviderLMStudio) {
+	if config.IsClaudeProviderRef(provider) || provider == string(config.ProviderLMStudio) || provider == string(config.ProviderOpenRouter) {
 		// Re-resolve limits for existing sessions too; historical metadata can
 		// contain provider-wide defaults instead of the model's actual limit.
 		modelContextWindow = config.ResolveContextWindowForRef(provider, s.config.Providers[config.NormalizeProviderRef(provider)], model)
@@ -64,7 +64,7 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 		if window := s.fallbackNodeContextWindow(config.FallbackChainNode{Provider: fallbackActiveProvider, Model: fallbackActiveModel}); window > 0 {
 			modelContextWindow = window
 		}
-	} else if routedProvider == string(config.ProviderLMStudio) {
+	} else if routedProvider == string(config.ProviderLMStudio) || routedProvider == string(config.ProviderOpenRouter) {
 		modelContextWindow = config.ResolveContextWindowForRef(routedProvider, s.config.Providers[routedProvider], routedModel)
 	}
 	isOutbound, targetAgentID, targetAgentName := sessionA2AOutboundMeta(sess)

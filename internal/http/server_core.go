@@ -220,6 +220,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.resumeSerialSessionQueues()
 	go s.refreshCodexContextWindows(ctx)
 	go s.refreshAnthropicContextWindows(ctx)
+	go s.refreshOpenRouterContextWindows(ctx)
 	go s.runProviderUsageSampler(ctx)
 	go s.runSessionLogRetention(ctx)
 

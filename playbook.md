@@ -117,3 +117,6 @@
 
 - Treat local-checkout delivery and remote publication as separate facts: Complete must verify local main/master ancestry before removing a session worktree; never infer delivery from push success or a preserved branch. Validate failure/retry paths with isolated Git repositories and preserve foreign WIP.
 - Background the whole long verification pipeline, including temporary worktree creation, not just its test command. A short foreground timeout can interrupt checkout setup and leave a locked, half-populated scratch worktree. Verify ownership before cleaning only that disposable directory.
+
+- Verify file names and line ranges before reading; range reads require ascending start/end lines.
+- Before delegating to local Docker agents, confirm the configured Docker/OrbStack socket is running; if unavailable, continue with explicit local review and report the limitation.

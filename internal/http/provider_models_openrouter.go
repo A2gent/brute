@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/A2gent/brute/internal/config"
+	"github.com/A2gent/brute/internal/logging"
 )
 
 const (
@@ -36,6 +37,16 @@ type openRouterModelsResponse struct {
 		ContextLength   int      `json:"context_length"`
 		SupportedVoices []string `json:"supported_voices"`
 	} `json:"data"`
+}
+
+// refreshOpenRouterContextWindows populates the model context cache at startup,
+// so context resolution does not depend on the user opening the model picker.
+func (s *Server) refreshOpenRouterContextWindows(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	if _, err := fetchOpenRouterCatalog(ctx, s.openRouterModelsClient, "", ""); err != nil {
+		logging.Warn("Failed to refresh OpenRouter model context windows: %v", err)
+	}
 }
 
 func (s *Server) handleListOpenRouterModels(w http.ResponseWriter, r *http.Request) {
@@ -86,7 +97,9 @@ func fetchOpenRouterCatalog(ctx context.Context, client openRouterModelsHTTPClie
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
+	if key := strings.TrimSpace(apiKey); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {

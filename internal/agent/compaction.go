@@ -9,24 +9,58 @@ import (
 	"time"
 
 	"github.com/A2gent/brute/internal/llm"
+	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/google/uuid"
 )
 
 func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, step int, observers ...func(Event)) (llm.TokenUsage, bool, error) {
+	return a.compactContext(ctx, sess, step, false, true, observers...)
+}
+
+// CompactContext summarizes the active conversation on demand without adding a
+// synthetic continuation prompt, so the next agent run remains user-initiated.
+func (a *Agent) CompactContext(ctx context.Context, sess *session.Session) error {
+	if sess == nil || a.sessionManager == nil {
+		return fmt.Errorf("session is unavailable for context compaction")
+	}
+	ctx, release, err := a.sessionManager.AcquireRun(ctx, sess.ID)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	_, compacted, err := a.compactContext(fallback.WithSessionBoundary(ctx), sess, 0, true, false)
+	if err != nil {
+		return err
+	}
+	if !compacted {
+		return fmt.Errorf("no conversation context to compact")
+	}
+	return nil
+}
+
+func (a *Agent) compactContext(
+	ctx context.Context,
+	sess *session.Session,
+	step int,
+	force bool,
+	continueAfter bool,
+	observers ...func(Event),
+) (llm.TokenUsage, bool, error) {
 	cfg := a.resolveCompactionConfig()
 	if !cfg.Enabled || sess == nil {
 		return llm.TokenUsage{}, false, nil
 	}
 
 	currentTokens := metadataFloat(sess.Metadata, metadataCurrentContextTokens)
-	if currentTokens <= 0 {
+	if currentTokens <= 0 && !force {
 		return llm.TokenUsage{}, false, nil
 	}
 
 	usagePercent := (currentTokens / float64(cfg.ContextWindow)) * 100.0
-	if usagePercent < cfg.TriggerPercent {
+	if !force && usagePercent < cfg.TriggerPercent {
 		return llm.TokenUsage{}, false, nil
 	}
 
@@ -198,10 +232,8 @@ func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, 
 
 	if pendingUser != nil {
 		sess.AddMessage(*pendingUser)
-	} else {
-		// Add a synthetic user message to prompt the agent to continue working.
-		// Without this, the LLM may interpret the compaction summary as a final response
-		// and return without tool calls, causing premature completion.
+	} else if continueAfter {
+		// Automatic compaction runs inside an active task and needs a prompt to resume it.
 		sess.AddMessage(session.Message{
 			Role:      "user",
 			Content:   "Continue with the task based on the summary above.",
@@ -210,6 +242,25 @@ func (a *Agent) maybeCompactContext(ctx context.Context, sess *session.Session, 
 				"synthetic_continuation": true,
 			},
 		})
+	}
+
+	beforeMessages := activeMessages
+	if pendingUser != nil {
+		beforeMessages = append(append([]session.Message(nil), activeMessages...), *pendingUser)
+	}
+	beforeContextTokens := currentTokens
+	if beforeContextTokens <= 0 {
+		beforeContextTokens = float64(estimateCompactedContextTokens(beforeMessages, a.config.SystemPrompt))
+	}
+
+	// Persist the pre-compaction measurement and a text-based estimate of the rebuilt active context.
+	activeContext := a.getActiveConversationMessages(sess)
+	for key, value := range compactionContextUsageMetadata(
+		beforeContextTokens,
+		estimateCompactedContextTokens(activeContext, a.config.SystemPrompt),
+		cfg.ContextWindow,
+	) {
+		sess.Messages[insertionIdx].Metadata[key] = value
 	}
 
 	// A provider-side session still contains the pre-compaction transcript. Start a

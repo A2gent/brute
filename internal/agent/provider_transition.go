@@ -235,7 +235,18 @@ func (a *Agent) activateTransitionSummary(sess *session.Session, summary, id str
 		start--
 	}
 	pending := append([]session.Message(nil), sess.Messages[start:]...)
+	// The text summary cannot carry pixels: re-attach the latest earlier user
+	// images so a vision-capable target still sees the original picture.
+	var earlier []session.ImageAttachment
+	for i := start - 1; i >= 0 && len(earlier) == 0; i-- {
+		if sess.Messages[i].Role == "user" {
+			earlier = append(earlier, sess.Messages[i].Images...)
+		}
+	}
 	sess.AddAssistantMessageWithMetadata(summary, nil, map[string]interface{}{messageMetadataCompaction: true, "provider_transition_id": id})
+	if len(earlier) > 0 {
+		sess.AddUserMessageWithImages("Original images attached earlier in this conversation.", earlier)
+	}
 	for _, msg := range pending {
 		msg.ID = ""
 		// Fresh timestamp keeps the copy after the summary when history is reloaded in time order.

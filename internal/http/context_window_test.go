@@ -1,8 +1,12 @@
 package http
 
 import (
+	"context"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/A2gent/brute/internal/config"
@@ -156,5 +160,68 @@ func TestSessionToResponseUsesActiveFallbackNodeWindow(t *testing.T) {
 
 	if got := server.sessionToResponse(sess).ModelContextWindow; got != 1000000 {
 		t.Fatalf("model context window = %d, want active node window 1000000", got)
+	}
+}
+
+func TestRefreshOpenRouterContextWindowsUsesOfficialModelCatalog(t *testing.T) {
+	config.ResetOpenRouterModelContextCache()
+	t.Cleanup(config.ResetOpenRouterModelContextCache)
+
+	requested := false
+	client := openRouterModelsDoFunc(func(req *http.Request) (*http.Response, error) {
+		requested = true
+		if req.URL.String() != openRouterModelsURL {
+			t.Fatalf("OpenRouter catalog URL = %q, want %q", req.URL.String(), openRouterModelsURL)
+		}
+		if got := req.Header.Get("Authorization"); got != "" {
+			t.Fatalf("startup context refresh should use the public catalog without a key, got authorization %q", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"data":[{"id":"xiaomi/mimo-v2.6-pro","context_length":1050000}]}`)),
+			Request:    req,
+		}, nil
+	})
+
+	server := &Server{config: config.DefaultConfig(), openRouterModelsClient: client}
+	server.refreshOpenRouterContextWindows(context.Background())
+	if !requested {
+		t.Fatal("OpenRouter catalog was not requested during context refresh")
+	}
+	if got := server.resolveContextWindowForProvider(config.ProviderOpenRouter, "openrouter/xiaomi/mimo-v2.6-pro"); got != 1050000 {
+		t.Fatalf("resolved MiMo context window = %d, want OpenRouter's 1050000", got)
+	}
+}
+
+func TestSessionToResponseRefreshesOpenRouterContextForExistingSessions(t *testing.T) {
+	config.ResetOpenRouterModelContextCache()
+	config.CacheOpenRouterModelContextWindow("xiaomi/mimo-v2.6-pro", 1050000)
+	t.Cleanup(config.ResetOpenRouterModelContextCache)
+
+	server, _ := newUnifiedAgentsTestServer(t)
+	tests := []struct {
+		name     string
+		provider string
+		model    string
+		routed   bool
+	}{
+		{name: "direct", provider: string(config.ProviderOpenRouter), model: "openrouter/xiaomi/mimo-v2.6-pro"},
+		{name: "automatic router", provider: string(config.ProviderAutoRouter), model: "", routed: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sess := session.New("build")
+			sess.Metadata["provider"] = tt.provider
+			sess.Metadata["model"] = tt.model
+			sess.Metadata["context_window"] = 128000
+			if tt.routed {
+				sess.Metadata["routed_provider"] = string(config.ProviderOpenRouter)
+				sess.Metadata["routed_model"] = "xiaomi/mimo-v2.6-pro"
+			}
+			if got := server.sessionToResponse(sess).ModelContextWindow; got != 1050000 {
+				t.Fatalf("session model context window = %d, want 1050000", got)
+			}
+		})
 	}
 }

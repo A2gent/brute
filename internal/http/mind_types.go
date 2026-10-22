@@ -91,6 +91,8 @@ type ProjectGitStatusResponse struct {
 type ProjectGitCommitRequest struct {
 	Message  string `json:"message"`
 	RepoPath string `json:"repo_path,omitempty"`
+	// NoVerify skips pre-commit/commit-msg hooks (--no-verify) for commits blocked by a broken hook.
+	NoVerify bool `json:"no_verify,omitempty"`
 }
 
 type ProjectGitFileRequest struct {

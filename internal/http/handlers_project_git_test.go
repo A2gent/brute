@@ -51,3 +51,38 @@ func TestHandleProjectGitUnstageFileUnstagesRemovedDirectoryRecursively(t *testi
 		t.Fatalf("expected removed staged directory to disappear from git status, got %q", status)
 	}
 }
+
+func TestHandleProjectGitCommitNoVerifySkipsHooks(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is not available")
+	}
+
+	server, projectID, repoDir := newProjectFileTestServer(t)
+	initMindGitTestRepo(t, repoDir)
+
+	// A hook that always fails: only --no-verify can create a commit while it is installed.
+	hookPath := filepath.Join(repoDir, ".git", "hooks", "pre-commit")
+	if err := os.WriteFile(hookPath, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("failed to write pre-commit hook: %v", err)
+	}
+	writeGitTestFile(t, repoDir, "note.txt", "note\n")
+	runGitForMindTest(t, repoDir, "add", "--", "note.txt")
+
+	commitRequest := func(body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/projects/git/commit?projectID="+url.QueryEscape(projectID), strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := commitRequest(`{"message":"blocked by hook"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected hook-blocked commit to fail, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec := commitRequest(`{"message":"skip hooks","no_verify":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected no-verify commit to succeed, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

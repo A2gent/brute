@@ -614,10 +614,14 @@ func usageFromRaw(raw json.RawMessage) llm.TokenUsage {
 	if err := json.Unmarshal(raw, &values); err != nil {
 		return llm.TokenUsage{}
 	}
+	// Cursor's inputTokens excludes cache reads/writes; normalize to the
+	// "total prompt" convention used by claudecli so cached <= input.
+	cacheRead := intFromMap(values, "cacheReadTokens") + intFromMap(values, "cache_read_tokens") + intFromMap(values, "cached_input_tokens")
+	cacheWrite := intFromMap(values, "cacheWriteTokens") + intFromMap(values, "cache_write_tokens")
 	return llm.TokenUsage{
-		InputTokens:       intFromMap(values, "inputTokens") + intFromMap(values, "input_tokens"),
+		InputTokens:       intFromMap(values, "inputTokens") + intFromMap(values, "input_tokens") + cacheRead + cacheWrite,
 		OutputTokens:      intFromMap(values, "outputTokens") + intFromMap(values, "output_tokens"),
-		CachedInputTokens: intFromMap(values, "cacheReadTokens") + intFromMap(values, "cache_read_tokens") + intFromMap(values, "cached_input_tokens"),
+		CachedInputTokens: cacheRead,
 		ReasoningTokens:   intFromMap(values, "reasoningTokens") + intFromMap(values, "reasoning_tokens"),
 	}
 }

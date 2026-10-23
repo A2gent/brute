@@ -54,7 +54,14 @@ func TestParseCLIResultAndUsage(t *testing.T) {
 		t.Fatalf("unexpected result: %q", parsed.Result)
 	}
 	usage := usageFromRaw(parsed.Usage)
-	if usage.InputTokens != 7 || usage.OutputTokens != 3 || usage.CachedInputTokens != 2 {
+	if usage.InputTokens != 9 || usage.OutputTokens != 3 || usage.CachedInputTokens != 2 {
+		t.Fatalf("unexpected usage: %+v", usage)
+	}
+}
+
+func TestUsageFromRawIncludesCacheInInput(t *testing.T) {
+	usage := usageFromRaw([]byte(`{"inputTokens":251,"outputTokens":18,"cacheReadTokens":20331,"cacheWriteTokens":0}`))
+	if usage.InputTokens != 20582 || usage.CachedInputTokens != 20331 || usage.OutputTokens != 18 {
 		t.Fatalf("unexpected usage: %+v", usage)
 	}
 }

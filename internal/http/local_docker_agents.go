@@ -98,6 +98,34 @@ func (s *Server) resolveLocalDockerAgentProxyLLM(req createLocalDockerAgentReque
 	return resolved
 }
 
+// autoRouterDockerEnvArgs forwards the host's router_provider/rules to a child
+// that runs with provider automatic_router; the child then routes per task and
+// sends each chosen target through the parent LLM proxy.
+func (s *Server) autoRouterDockerEnvArgs(provider string) []string {
+	if s == nil || s.config == nil || config.ProviderType(provider) != config.ProviderAutoRouter {
+		return nil
+	}
+	encoded, err := config.EncodeAutoRouterEnv(s.config.Providers[string(config.ProviderAutoRouter)])
+	if err != nil {
+		return nil
+	}
+	args := []string{"--env", config.AutoRouterEnvKey + "=" + encoded}
+	// Classifier routers (Jev) are not served by the parent proxy, so the child
+	// must call them directly and needs the key.
+	routerCfg := s.config.Providers[string(config.ProviderAutoRouter)]
+	if ref := config.NormalizeProviderRef(routerCfg.RouterProvider); config.IsClassifierProvider(ref) {
+		ptype := config.ProviderType(ref)
+		key := strings.TrimSpace(s.config.Providers[ref].APIKey)
+		if key == "" {
+			key = s.apiKeyFromEnv(ptype)
+		}
+		if envName := s.apiKeyEnvName(ptype); key != "" && envName != "" {
+			args = append(args, "--env", envName+"="+key)
+		}
+	}
+	return args
+}
+
 type localDockerAgentCreateResult struct {
 	Agent   *LocalDockerAgent
 	Name    string
@@ -350,6 +378,7 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 			if provider == string(config.ProviderAnthropic) {
 				args = appendClaudeRateLimitCacheDockerArgs(args)
 			}
+			args = append(args, s.autoRouterDockerEnvArgs(provider)...)
 			args = append(args,
 				"--env", "AAGENT_PROVIDER="+provider,
 				"--env", "A2GENT_PARENT_PROXY_URL="+proxyBaseURL,

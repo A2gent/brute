@@ -453,6 +453,8 @@ func Load() (*Config, error) {
 		}
 	}
 
+	applyAutoRouterEnv(cfg)
+
 	// Apply after file load so operators can raise the budget without editing
 	// a secrets-bearing config.json (and without fighting a stale max_steps value).
 	if maxStepsStr := strings.TrimSpace(os.Getenv("AAGENT_MAX_STEPS")); maxStepsStr != "" {

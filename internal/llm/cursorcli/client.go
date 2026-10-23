@@ -76,6 +76,8 @@ type cliStreamEnvelope struct {
 	TimestampMS *int64          `json:"timestamp_ms"`
 	ModelCallID string          `json:"model_call_id"`
 	DurationMS  int64           `json:"duration_ms"`
+	CallID      string          `json:"call_id"`
+	ToolCall    json.RawMessage `json:"tool_call"`
 }
 
 type cliStreamMessage struct {
@@ -288,6 +290,7 @@ func (c *Client) chatStreamOnce(ctx context.Context, model, prompt, resumeID str
 	var chatID string
 	var finalResult cliResult
 	var sawResult bool
+	tools := newToolEmitter(onEvent)
 
 	scanner := bufio.NewScanner(stdoutPipe)
 	scanner.Buffer(make([]byte, 0, 64*1024), defaultMaxOutputBytes)
@@ -310,6 +313,11 @@ func (c *Client) chatStreamOnce(ctx context.Context, model, prompt, resumeID str
 		}
 		if event.RequestID != "" && responseID == "" {
 			responseID = event.RequestID
+		}
+		if err := tools.handle(event); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return nil, err
 		}
 		switch event.Type {
 		case "assistant":

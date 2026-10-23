@@ -259,10 +259,14 @@ func usageFromRaw(raw json.RawMessage) llm.TokenUsage {
 	if err := json.Unmarshal(raw, &values); err != nil {
 		return llm.TokenUsage{}
 	}
+	// Claude reports uncached input separately from cache reads and writes.
+	// Only reads are cache hits; the normalized alias is already part of input.
+	cacheRead := intFromMap(values, "cache_read_input_tokens")
+	cacheWrite := intFromMap(values, "cache_creation_input_tokens")
 	return llm.TokenUsage{
-		InputTokens:       intFromMap(values, "input_tokens"),
+		InputTokens:       intFromMap(values, "input_tokens") + cacheRead + cacheWrite,
 		OutputTokens:      intFromMap(values, "output_tokens"),
-		CachedInputTokens: intFromMap(values, "cache_read_input_tokens") + intFromMap(values, "cache_creation_input_tokens") + intFromMap(values, "cached_input_tokens"),
+		CachedInputTokens: cacheRead + intFromMap(values, "cached_input_tokens"),
 		ReasoningTokens:   intFromMap(values, "reasoning_tokens"),
 	}
 }

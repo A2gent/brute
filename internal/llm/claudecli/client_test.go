@@ -54,7 +54,7 @@ func TestParseCLIResultAndUsage(t *testing.T) {
 		t.Fatalf("unexpected result: %q", parsed.Result)
 	}
 	usage := usageFromRaw(parsed.Usage)
-	if usage.InputTokens != 7 || usage.OutputTokens != 3 || usage.CachedInputTokens != 2 {
+	if usage.InputTokens != 9 || usage.OutputTokens != 3 || usage.CachedInputTokens != 2 {
 		t.Fatalf("unexpected usage: %+v", usage)
 	}
 }

@@ -225,6 +225,10 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	}
 
 	usage := usageFromRaw(parsed.Usage)
+	if parsed.NumTurns > 1 {
+		// JSON output contains only aggregate usage, not the final turn's input.
+		usage.ContextTokens = -1
+	}
 	logging.LogResponseWithContent(usage.InputTokens, usage.OutputTokens, 0, content, nil)
 	return &llm.ChatResponse{
 		Content:               content,

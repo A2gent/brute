@@ -126,3 +126,37 @@ func TestLoopPersistsPerRequestLLMUsageOnAssistantMessages(t *testing.T) {
 		t.Fatalf("billed_cached_input_tokens = %v, want 1300", got)
 	}
 }
+
+func TestAddTokenUsageMetadataUsesLatestCLIContext(t *testing.T) {
+	ag := New(Config{ContextWindow: 1000000}, nil, nil, nil)
+	sess := session.New("build")
+	ag.addTokenUsageMetadata(sess, llm.TokenUsage{InputTokens: 50000, CachedInputTokens: 40000, ContextTokens: 10000, OutputTokens: 100})
+	ag.addTokenUsageMetadata(sess, llm.TokenUsage{InputTokens: 60000, CachedInputTokens: 50000, ContextTokens: 12000, OutputTokens: 200})
+	for key, want := range map[string]float64{
+		metadataCurrentContextTokens:    12000,
+		metadataTotalInputTokens:        12000,
+		metadataBilledInputTokens:       110000,
+		metadataBilledCachedInputTokens: 90000,
+		metadataTotalOutputTokens:       300,
+	} {
+		if got := metadataFloat(sess.Metadata, key); got != want {
+			t.Errorf("%s = %v, want %v", key, got, want)
+		}
+	}
+}
+
+func TestAddTokenUsageMetadataDoesNotUseAggregateAsUnknownContext(t *testing.T) {
+	ag := New(Config{ContextWindow: 1000000}, nil, nil, nil)
+	sess := session.New("build")
+	ag.addTokenUsageMetadata(sess, llm.TokenUsage{InputTokens: 1000})
+	ag.addTokenUsageMetadata(sess, llm.TokenUsage{InputTokens: 50000, ContextTokens: -1, OutputTokens: 200})
+	if got := metadataFloat(sess.Metadata, metadataCurrentContextTokens); got != 0 {
+		t.Fatalf("unknown context = %v, want 0 for transcript estimate", got)
+	}
+	if got := metadataFloat(sess.Metadata, metadataBilledInputTokens); got != 51000 {
+		t.Fatalf("billed input = %v, want 51000", got)
+	}
+	if got := metadataFloat(sess.Metadata, metadataTotalInputTokens); got != 1000 {
+		t.Fatalf("context growth = %v, want unchanged 1000", got)
+	}
+}

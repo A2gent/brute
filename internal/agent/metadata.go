@@ -61,19 +61,27 @@ func (a *Agent) addTokenUsageMetadata(sess *session.Session, usage llm.TokenUsag
 		metadataSetFloat(sess, metadataTotalReasoningTokens, metadataFloat(sess.Metadata, metadataTotalReasoningTokens)+float64(usage.ReasoningTokens))
 	}
 
-	// InputTokens from API represent the FULL context size (system prompt + all history)
-	// NOT incremental tokens, so we should NOT accumulate them.
-	// Store the current full context size.
-	metadataSetFloat(sess, metadataCurrentContextTokens, float64(usage.InputTokens))
+	// CLI providers may bill several internal turns in one result. Context uses
+	// the latest turn, not that aggregate (nor just its uncached suffix).
+	contextTokens := usage.ContextTokens
+	if contextTokens < 0 {
+		// A multi-turn CLI result without per-turn usage cannot give occupancy.
+		metadataSetFloat(sess, metadataCurrentContextTokens, 0)
+		return
+	}
+	if contextTokens == 0 {
+		contextTokens = usage.InputTokens
+	}
+	metadataSetFloat(sess, metadataCurrentContextTokens, float64(contextTokens))
 
 	// For total_input_tokens, we track cumulative input by calculating the delta:
 	// new tokens = current input - previous context size
 	if prevContext == 0 {
-		// First call - use InputTokens as-is (includes system prompt)
-		metadataSetFloat(sess, metadataTotalInputTokens, float64(usage.InputTokens))
+		// First call includes the system prompt.
+		metadataSetFloat(sess, metadataTotalInputTokens, float64(contextTokens))
 	} else {
 		// Subsequent calls - add only the delta (new user message + new output from previous step)
-		deltaTokens := float64(usage.InputTokens) - prevContext
+		deltaTokens := float64(contextTokens) - prevContext
 		if deltaTokens > 0 {
 			metadataSetFloat(sess, metadataTotalInputTokens, metadataFloat(sess.Metadata, metadataTotalInputTokens)+deltaTokens)
 		}

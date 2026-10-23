@@ -120,3 +120,5 @@
 
 - Verify file names and line ranges before reading; range reads require ascending start/end lines.
 - Before delegating to local Docker agents, confirm the configured Docker/OrbStack socket is running; if unavailable, continue with explicit local review and report the limitation.
+- Claude CLI `result.usage` aggregates internal turns, not current context. Normalize uncached input + cache reads + cache writes, but track the latest assistant/message-start input separately for context occupancy; cache writes are not cache hits.
+- Full-suite Go checks can exceed the parallel tool's 90-second step cap even after a fast previous run. Launch them in the background with log and exit-code files, then poll completion instead of losing the final verification to the wrapper timeout.

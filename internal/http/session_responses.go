@@ -52,7 +52,7 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 	totalTokens := inputTokens + outputTokens
 	cachedInputTokens := int(metadataNumber(sess.Metadata, "total_cached_input_tokens"))
 	reasoningTokens := int(metadataNumber(sess.Metadata, "total_reasoning_tokens"))
-	currentContextTokens := int(metadataNumber(sess.Metadata, "current_context_tokens"))
+	currentContextTokens := sessionCurrentContextTokens(sess)
 	modelContextWindow := int(metadataNumber(sess.Metadata, "context_window"))
 	if config.IsClaudeProviderRef(provider) || provider == string(config.ProviderLMStudio) || provider == string(config.ProviderOpenRouter) {
 		// Re-resolve limits for existing sessions too; historical metadata can

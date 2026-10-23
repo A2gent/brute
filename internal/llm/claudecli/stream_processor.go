@@ -102,7 +102,11 @@ func (p *streamProcessor) handleSystem(event cliStreamEnvelope) error {
 func (p *streamProcessor) handleStreamEvent(event cliStreamEnvelope) error {
 	stream := event.Event
 	if stream.Message.Usage != nil {
-		p.usage = mergeUsage(p.usage, usageFromRaw(stream.Message.Usage))
+		usage := usageFromRaw(stream.Message.Usage)
+		p.usage = mergeUsage(p.usage, usage)
+		if usage.InputTokens > 0 {
+			p.usage.ContextTokens = usage.InputTokens
+		}
 	}
 	if stream.Usage != nil {
 		p.usage = mergeUsage(p.usage, usageFromRaw(stream.Usage))
@@ -229,7 +233,11 @@ func (p *streamProcessor) handleAssistant(event cliStreamEnvelope) error {
 		}
 	}
 	if message.Usage != nil {
-		p.usage = mergeUsage(p.usage, usageFromRaw(message.Usage))
+		usage := usageFromRaw(message.Usage)
+		p.usage = mergeUsage(p.usage, usage)
+		if usage.InputTokens > 0 {
+			p.usage.ContextTokens = usage.InputTokens
+		}
 	}
 	if message.StopReason != "" {
 		p.stopReason = message.StopReason
@@ -439,6 +447,9 @@ func (p *streamProcessor) handleResult(event cliStreamEnvelope) error {
 	}
 	if event.Usage != nil {
 		p.usage = mergeUsage(p.usage, usageFromRaw(event.Usage))
+		if p.usage.ContextTokens == 0 && event.NumTurns > 1 {
+			p.usage.ContextTokens = -1
+		}
 	}
 	if event.StopReason != "" {
 		p.stopReason = event.StopReason

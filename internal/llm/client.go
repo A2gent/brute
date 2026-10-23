@@ -155,6 +155,10 @@ type StreamEvent struct {
 
 // TokenUsage tracks token consumption
 type TokenUsage struct {
+	// ContextTokens is the latest request's input when InputTokens aggregates
+	// multiple provider-managed turns (Claude CLI). Zero uses InputTokens;
+	// a negative value means the provider did not expose the latest turn.
+	ContextTokens     int
 	InputTokens       int
 	OutputTokens      int
 	CachedInputTokens int

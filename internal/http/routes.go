@@ -515,6 +515,9 @@ func (s *Server) registerSubAgentRoutes(r chi.Router) {
 		r.Post("/import-yaml", s.handleImportAgentYAML)
 		r.Post("/{agentDefID}/start", s.handleStartUnifiedAgent)
 		r.Get("/{agentDefID}/yaml", s.handleExportAgentDefinitionYAML)
+		r.Get("/{agentDefID}/avatar", s.handleGetAgentAvatar)
+		r.Put("/{agentDefID}/avatar", s.handleUploadAgentAvatar)
+		r.Delete("/{agentDefID}/avatar", s.handleDeleteAgentAvatar)
 		r.Delete("/{agentDefID}", s.handleDeleteAgentDefinition)
 	})
 }

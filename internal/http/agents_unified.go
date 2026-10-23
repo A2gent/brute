@@ -34,7 +34,8 @@ type UnifiedAgentResponse struct {
 	Runtime     string               `json:"runtime"`
 	ProjectID   string               `json:"project_id,omitempty"`
 	Status      string               `json:"status,omitempty"`
-	Running     *bool                `json:"running,omitempty"`
+	AvatarURL   string               `json:"avatar_url,omitempty"`
+	Running     *bool               `json:"running,omitempty"`
 	APIURL      string               `json:"api_url,omitempty"`
 	Managed     bool                 `json:"managed,omitempty"`
 	Definition  *agentdef.Definition `json:"definition,omitempty"`
@@ -193,6 +194,10 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 			}
 			agents = append(agents, UnifiedAgentResponse{ID: da.ID, Name: da.Name, Runtime: agentdef.RuntimeDocker, Status: status, Running: &running, APIURL: da.APIURL, DockerAgent: &dockerAgents[i]})
 		}
+	}
+
+	for i := range agents {
+		agents[i].AvatarURL = agentAvatarAPIPath(agents[i].Definition, agents[i].ID, projectFilter)
 	}
 
 	s.jsonResponse(w, http.StatusOK, map[string]interface{}{"agents": agents, "warnings": warnings})

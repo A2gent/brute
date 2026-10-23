@@ -10,6 +10,7 @@ The launcher is intentionally a Brute container launcher, not a replacement for 
 - Docker runtime details map to `networking`, `directories`, `credentials`, `environment`, `resources`, and `labels`.
 - A2 Registry/Square registration maps to `registry`; use `registry.enabled: true` to register the running local container and configure its inbound tunnel.
 - Reusable unified definitions can also carry presentation metadata with `agent.description`, `agent.avatar_url`, and `publish.square.category` / `publish.square.avatar_url`; Brute copies that metadata onto managed Docker containers so Caesar can display and publish it.
+- A local avatar image can be placed next to `agent.yaml` as `avatar.png` (or `.jpg`, `.jpeg`, `.webp`, `.gif`). Caesar shows it in the agents list and serves it via `GET/PUT/DELETE /unified-agents/{id}/avatar`; it takes precedence over `avatar_url` in the UI.
 
 ## Minimal Single Agent
 

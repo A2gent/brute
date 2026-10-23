@@ -186,7 +186,7 @@ func (s *Server) providerSessionPersistence(providerType config.ProviderType) bo
 }
 
 func (s *Server) providerSessionPersistenceForConfig(providerType config.ProviderType, configured *bool) bool {
-	if !config.IsClaudeProviderRef(string(providerType)) {
+	if !config.IsClaudeProviderRef(string(providerType)) && providerType != config.ProviderCursor {
 		return false
 	}
 	if configured != nil {

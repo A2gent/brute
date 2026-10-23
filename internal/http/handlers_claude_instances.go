@@ -31,6 +31,15 @@ func (s *Server) claudeProviderSessionIdentity(ref string) string {
 	return config.ClaudeProviderSessionIdentity(normalized, provider)
 }
 
+// providerSessionIdentity covers every provider with CLI session continuation (Claude, Cursor).
+func (s *Server) providerSessionIdentity(ref string) string {
+	normalized := config.NormalizeProviderRef(ref)
+	if normalized == "" {
+		normalized = string(config.ProviderAnthropic)
+	}
+	return config.ProviderSessionIdentity(normalized, s.config.Providers[normalized])
+}
+
 func (s *Server) claudecliOptionsForRef(ref string) claudecli.Options {
 	normalized := config.NormalizeProviderRef(ref)
 	if normalized == "" {

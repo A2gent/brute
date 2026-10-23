@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/logging"
@@ -41,6 +42,9 @@ type Options struct {
 type Client struct {
 	model   string
 	options Options
+
+	accountOnce sync.Once
+	account     string
 }
 
 type cliResult struct {
@@ -163,8 +167,18 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 
 	bridge := c.newMCPBridgeInvocation(ctx)
 	defer bridge.revoke()
-	prompt := buildPrompt(request, len(bridge.args) > 0)
-	args := c.buildArgs(model, prompt, bridge)
+	exposeMCP := len(bridge.args) > 0
+	resumeID := c.resumeChatID(model, request.ProviderSessionCursor)
+	resp, err := c.chatOnce(ctx, model, promptFor(request, resumeID, exposeMCP), resumeID, bridge)
+	if err != nil && resumeID != "" && ctx.Err() == nil && isResumeError(err) {
+		logging.Warn("Cursor Agent CLI could not resume chat %s; retrying as a fresh chat: %v", resumeID, err)
+		resp, err = c.chatOnce(ctx, model, promptFor(request, "", exposeMCP), "", bridge)
+	}
+	return resp, err
+}
+
+func (c *Client) chatOnce(ctx context.Context, model, prompt, resumeID string, bridge mcpBridgeInvocation) (*llm.ChatResponse, error) {
+	args := c.buildArgs(model, prompt, resumeID, bridge)
 
 	agentPath, err := findExecutable(c.options.Executable)
 	if err != nil {
@@ -202,10 +216,11 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	usage := usageFromRaw(parsed.Usage)
 	logging.LogResponseWithContent(usage.InputTokens, usage.OutputTokens, 0, content, nil)
 	return &llm.ChatResponse{
-		Content:    content,
-		Usage:      usage,
-		StopReason: firstNonEmpty(parsed.Subtype, "success"),
-		ResponseID: firstNonEmpty(strings.TrimSpace(parsed.SessionID), strings.TrimSpace(parsed.RequestID)),
+		Content:               content,
+		Usage:                 usage,
+		StopReason:            firstNonEmpty(parsed.Subtype, "success"),
+		ResponseID:            firstNonEmpty(strings.TrimSpace(parsed.SessionID), strings.TrimSpace(parsed.RequestID)),
+		ProviderSessionCursor: c.sessionCursor(model, parsed.SessionID),
 	}, nil
 }
 
@@ -230,8 +245,18 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 
 	bridge := c.newMCPBridgeInvocation(ctx)
 	defer bridge.revoke()
-	prompt := buildPrompt(request, len(bridge.args) > 0)
-	args := c.buildStreamArgs(model, prompt, bridge)
+	exposeMCP := len(bridge.args) > 0
+	resumeID := c.resumeChatID(model, request.ProviderSessionCursor)
+	resp, err := c.chatStreamOnce(ctx, model, promptFor(request, resumeID, exposeMCP), resumeID, bridge, onEvent)
+	if err != nil && resumeID != "" && ctx.Err() == nil && isResumeError(err) {
+		logging.Warn("Cursor Agent CLI could not resume chat %s; retrying as a fresh chat: %v", resumeID, err)
+		resp, err = c.chatStreamOnce(ctx, model, promptFor(request, "", exposeMCP), "", bridge, onEvent)
+	}
+	return resp, err
+}
+
+func (c *Client) chatStreamOnce(ctx context.Context, model, prompt, resumeID string, bridge mcpBridgeInvocation, onEvent func(llm.StreamEvent) error) (*llm.ChatResponse, error) {
+	args := c.buildStreamArgs(model, prompt, resumeID, bridge)
 
 	agentPath, err := findExecutable(c.options.Executable)
 	if err != nil {
@@ -260,6 +285,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	var assistantContent string
 	var usage llm.TokenUsage
 	var responseID string
+	var chatID string
 	var finalResult cliResult
 	var sawResult bool
 
@@ -280,6 +306,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		}
 		if event.SessionID != "" {
 			responseID = event.SessionID
+			chatID = event.SessionID
 		}
 		if event.RequestID != "" && responseID == "" {
 			responseID = event.RequestID
@@ -357,24 +384,28 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	}
 	logging.LogResponseWithContent(usage.InputTokens, usage.OutputTokens, 0, finalContent, nil)
 	return &llm.ChatResponse{
-		Content:    finalContent,
-		Usage:      usage,
-		StopReason: firstNonEmpty(finalResult.Subtype, "success"),
-		ResponseID: firstNonEmpty(responseID, finalResult.SessionID, finalResult.RequestID),
+		Content:               finalContent,
+		Usage:                 usage,
+		StopReason:            firstNonEmpty(finalResult.Subtype, "success"),
+		ResponseID:            firstNonEmpty(responseID, finalResult.SessionID, finalResult.RequestID),
+		ProviderSessionCursor: c.sessionCursor(model, firstNonEmpty(finalResult.SessionID, chatID)),
 	}, nil
 }
 
-func (c *Client) buildArgs(model, prompt string, bridge mcpBridgeInvocation) []string {
+func (c *Client) buildArgs(model, prompt, resumeID string, bridge mcpBridgeInvocation) []string {
 	args := []string{"-p", prompt, "--output-format", "json", "--model", model}
-	return c.appendCommonArgs(args, bridge)
+	return c.appendCommonArgs(args, resumeID, bridge)
 }
 
-func (c *Client) buildStreamArgs(model, prompt string, bridge mcpBridgeInvocation) []string {
+func (c *Client) buildStreamArgs(model, prompt, resumeID string, bridge mcpBridgeInvocation) []string {
 	args := []string{"-p", prompt, "--output-format", "stream-json", "--stream-partial-output", "--model", model}
-	return c.appendCommonArgs(args, bridge)
+	return c.appendCommonArgs(args, resumeID, bridge)
 }
 
-func (c *Client) appendCommonArgs(args []string, bridge mcpBridgeInvocation) []string {
+func (c *Client) appendCommonArgs(args []string, resumeID string, bridge mcpBridgeInvocation) []string {
+	if resumeID != "" {
+		args = append(args, "--resume", resumeID)
+	}
 	args = append(args, "--workspace", c.options.WorkDir)
 	if c.options.Force {
 		args = append(args, "--force")
@@ -424,9 +455,7 @@ func buildPrompt(request *llm.ChatRequest, exposeA2gentMCP bool) string {
 	if request == nil || len(request.Messages) == 0 {
 		return buildSystemPrompt("", exposeA2gentMCP) + "\n\nContinue."
 	}
-	if len(request.Messages) == 1 && request.Messages[0].Role == "user" &&
-		len(request.Messages[0].ToolCalls) == 0 && len(request.Messages[0].ToolResults) == 0 &&
-		len(request.Messages[0].Images) == 0 {
+	if len(request.Messages) == 1 && isPlainUserMessage(request.Messages[0]) {
 		prompt := strings.TrimSpace(request.Messages[0].Content)
 		if systemPrompt := buildSystemPrompt(request.SystemPrompt, exposeA2gentMCP); systemPrompt != "" {
 			return strings.TrimSpace(systemPrompt + "\n\n" + prompt)

@@ -194,17 +194,18 @@ func SensitiveSecretKeysSorted(provider Provider) []string {
 	return keys
 }
 
-// ProviderSessionSettings holds agent-level Claude CLI session continuation flags.
+// ProviderSessionSettings holds agent-level CLI session continuation flags (Claude, Cursor).
 type ProviderSessionSettings struct {
 	UseProviderSession      bool
 	ProviderSessionIdentity string
 }
 
-// ResolveProviderSessionSettings reports whether agent sessions should persist Claude CLI cursors.
+// ResolveProviderSessionSettings reports whether agent sessions should persist CLI session cursors.
 // Config-level only (StatefulResponses + ref type). Apply AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE at entry points.
 func ResolveProviderSessionSettings(ref string, provider Provider) ProviderSessionSettings {
 	normalized := NormalizeProviderRef(ref)
-	if !IsClaudeProviderRef(normalized) {
+	identity := ProviderSessionIdentity(normalized, provider)
+	if identity == "" {
 		return ProviderSessionSettings{}
 	}
 	enabled := true
@@ -213,8 +214,35 @@ func ResolveProviderSessionSettings(ref string, provider Provider) ProviderSessi
 	}
 	return ProviderSessionSettings{
 		UseProviderSession:      enabled,
-		ProviderSessionIdentity: ClaudeProviderSessionIdentity(normalized, provider),
+		ProviderSessionIdentity: identity,
 	}
+}
+
+// ProviderSessionIdentity returns the session-continuation identity for refs that support it.
+func ProviderSessionIdentity(ref string, provider Provider) string {
+	normalized := NormalizeProviderRef(ref)
+	if normalized == string(ProviderCursor) {
+		return CursorProviderSessionIdentity(provider)
+	}
+	return ClaudeProviderSessionIdentity(normalized, provider)
+}
+
+// CursorProviderSessionIdentity fingerprints the configured Cursor API key (or the
+// CLI login when none is set) so a credential change starts a new Cursor chat.
+// Workspace, model and the logged-in account are verified by cursorcli itself,
+// because they are only known where the client is constructed.
+func CursorProviderSessionIdentity(provider Provider) string {
+	apiKey := strings.TrimSpace(provider.APIKey)
+	if apiKey == "" {
+		apiKey = strings.TrimSpace(os.Getenv("CURSOR_API_KEY"))
+	}
+	scope := "login"
+	if apiKey != "" {
+		sum := sha256.Sum256([]byte(apiKey))
+		scope = "key:" + hex.EncodeToString(sum[:8])
+	}
+	sum := sha256.Sum256([]byte(string(ProviderCursor) + "|" + scope))
+	return fmt.Sprintf("cursor:%s", hex.EncodeToString(sum[:8]))
 }
 
 // ClaudeProviderSessionIdentity returns a stable identity for Claude CLI session continuation.

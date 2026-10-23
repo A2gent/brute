@@ -102,7 +102,7 @@ func TestMCPBridgeInvocationWritesPluginAndRevokes(t *testing.T) {
 		t.Fatalf("authorization = %q", server.Headers["Authorization"])
 	}
 
-	args := client.buildArgs("composer-2.5", "hello", inv)
+	args := client.buildArgs("composer-2.5", "hello", "", inv)
 	if !strings.Contains(strings.Join(args, "\n"), "--approve-mcps") {
 		t.Fatalf("buildArgs missing approve-mcps: %v", args)
 	}

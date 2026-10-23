@@ -34,6 +34,12 @@ func TestBuildRequestSetsProviderSessionCursorWhenEnabled(t *testing.T) {
 	if request.Messages[0].Role != "user" || request.Messages[0].Content != "follow up" {
 		t.Fatalf("unexpected trimmed message: %+v", request.Messages[0])
 	}
+	if request.FullMessages == nil {
+		t.Fatal("FullMessages must be set when a provider session cursor is bound")
+	}
+	if full := request.FullMessages(); len(full) != 3 || full[0].Content != "hello" {
+		t.Fatalf("FullMessages must rebuild the uncut transcript, got %+v", full)
+	}
 }
 
 func TestBuildRequestOmitsProviderSessionCursorWhenIdentityMismatches(t *testing.T) {

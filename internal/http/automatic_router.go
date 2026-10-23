@@ -179,7 +179,7 @@ func (s *Server) resolveExecutionTargetBase(ctx context.Context, providerType co
 			ContextWindow:           s.resolveSessionContextWindow(providerType, requestedModel, sess),
 			StatefulResponses:       s.providerStatefulResponses(providerType),
 			ProviderSessions:        s.providerSessionPersistence(providerType),
-			ProviderSessionIdentity: s.claudeProviderSessionIdentity(string(providerType)),
+			ProviderSessionIdentity: s.providerSessionIdentity(string(providerType)),
 			Client:                  client,
 		}, nil
 	}
@@ -221,7 +221,7 @@ func (s *Server) resolveExecutionTargetBase(ctx context.Context, providerType co
 		ContextWindow:           s.resolveSessionContextWindow(targetProvider, targetModel, sess),
 		StatefulResponses:       s.providerStatefulResponses(targetProvider),
 		ProviderSessions:        s.providerSessionPersistence(targetProvider),
-		ProviderSessionIdentity: s.claudeProviderSessionIdentity(string(targetProvider)),
+		ProviderSessionIdentity: s.providerSessionIdentity(string(targetProvider)),
 		Client:                  client,
 	}, nil
 }

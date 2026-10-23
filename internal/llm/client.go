@@ -27,10 +27,14 @@ type ChatRequest struct {
 	PromptCacheKey        string
 	PreviousResponseID    string
 	ProviderSessionCursor string
-	Store                 bool
-	ReasoningEffort       string
-	TextVerbosity         string
-	ServiceTier           string
+	// FullMessages rebuilds the transcript without the ProviderSessionCursor cut.
+	// Set only when a cursor is bound; providers call it when the resumable
+	// session turns out to be unusable and they must start a fresh one.
+	FullMessages    func() []Message `json:"-"`
+	Store           bool
+	ReasoningEffort string
+	TextVerbosity   string
+	ServiceTier     string
 	// JSONSchema requests schema-constrained output from OpenAI-compatible providers
 	// (response_format json_schema). Providers without structured output ignore it.
 	JSONSchema map[string]any

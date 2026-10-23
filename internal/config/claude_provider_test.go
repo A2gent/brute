@@ -260,6 +260,22 @@ func TestResolveProviderSessionSettings(t *testing.T) {
 	}
 }
 
+func TestResolveProviderSessionSettingsCursor(t *testing.T) {
+	t.Setenv("CURSOR_API_KEY", "")
+
+	keyA := ResolveProviderSessionSettings("cursor", Provider{APIKey: "a"})
+	if !keyA.UseProviderSession || !strings.HasPrefix(keyA.ProviderSessionIdentity, "cursor:") {
+		t.Fatalf("cursor settings = %+v, want enabled with cursor identity", keyA)
+	}
+	if keyB := ResolveProviderSessionSettings("cursor", Provider{APIKey: "b"}); keyB.ProviderSessionIdentity == keyA.ProviderSessionIdentity {
+		t.Fatal("API key change must change the cursor identity")
+	}
+	disabled := false
+	if got := ResolveProviderSessionSettings("cursor", Provider{StatefulResponses: &disabled}); got.UseProviderSession {
+		t.Fatal("StatefulResponses false should disable cursor provider sessions")
+	}
+}
+
 func TestClaudeProviderSessionIdentity(t *testing.T) {
 	t.Parallel()
 

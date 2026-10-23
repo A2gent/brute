@@ -253,7 +253,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *storage.RecurringJob) {
 	ref := config.NormalizeProviderRef(string(providerType))
 	provider := s.config.Providers[ref]
 	sessionSettings := config.ResolveProviderSessionSettings(ref, provider)
-	if envBoolDefault("AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE", false) {
+	if config.IsClaudeProviderRef(ref) && envBoolDefault("AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE", false) {
 		sessionSettings.UseProviderSession = false
 	}
 

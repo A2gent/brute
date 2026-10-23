@@ -26,6 +26,7 @@ func (a *Agent) buildRequest(ctx context.Context, sess *session.Session) *llm.Ch
 	if previousResponseID != "" {
 		activeMessages = messagesAfterResponseID(activeMessages, previousResponseID)
 	}
+	fullMessages := activeMessages
 	providerSessionCursor := ""
 	if a.config.UseProviderSession && !transitioned {
 		storedIdentity := lastProviderSessionIdentityForRequest(sess)
@@ -36,109 +37,115 @@ func (a *Agent) buildRequest(ctx context.Context, sess *session.Session) *llm.Ch
 			activeMessages = messagesAfterProviderSessionCursor(activeMessages, storedCursor)
 		}
 	}
-	messages := make([]llm.Message, 0, len(activeMessages))
+	// convert is reused by FullMessages so a provider can rebuild the uncut
+	// transcript when its resumable session is rejected.
+	convert := func(activeMessages []session.Message) []llm.Message {
+		messages := make([]llm.Message, 0, len(activeMessages))
 
-	for _, m := range activeMessages {
-		// Anthropic/Gemini reject system-role conversation messages. Send the
-		// nudge as user text at its chronological position: folding it into the
-		// system prompt would invalidate the whole prompt cache and keep it forever.
-		if m.Role == "system" && m.Metadata["stall_nudge"] == true {
-			if last := len(messages) - 1; last >= 0 && messages[last].Role == "user" && len(messages[last].ToolResults) == 0 {
-				messages[last].Content += "\n\n" + m.Content
-			} else {
-				messages = append(messages, llm.Message{Role: "user", Content: m.Content})
-			}
-			continue
-		}
-		msg := llm.Message{Role: m.Role, Content: m.Content}
-		for i, attachment := range m.Images {
-			if decision := screenshotDecision(m, "attachment", i); decision != "" && decision != "keep" {
-				msg.Content += "\n" + decision
-			} else {
-				loaded := sessionImagesToLLM([]session.ImageAttachment{attachment})
-				if len(loaded) == 0 && attachment.Path != "" {
-					msg.Content += "\n[image attachment unavailable: " + attachment.Path + "]"
-				}
-				msg.Images = append(msg.Images, loaded...)
-			}
-		}
-
-		epoch, _ := sess.Metadata["provider_context_epoch"].(string)
-		// Opaque reasoning is valid only for the context that produced it.
-		if m.Role == "assistant" && (!transitioned || m.Metadata["reasoning_context_epoch"] == epoch) {
-			if raw, ok := m.Metadata[messageMetadataReasoningItems].(string); ok {
-				_ = json.Unmarshal([]byte(raw), &msg.ReasoningItems)
-			}
-		}
-
-		// Convert tool calls
-		if len(m.ToolCalls) > 0 {
-			msg.ToolCalls = make([]llm.ToolCall, len(m.ToolCalls))
-			for i, tc := range m.ToolCalls {
-				msg.ToolCalls[i] = llm.ToolCall{
-					ID:               tc.ID,
-					Name:             tc.Name,
-					Input:            string(tc.Input),
-					ThoughtSignature: tc.ThoughtSignature,
-				}
-			}
-		}
-
-		// Convert tool results
-		if len(m.ToolResults) > 0 {
-			msg.ToolResults = make([]llm.ToolResult, len(m.ToolResults))
-			for i, tr := range m.ToolResults {
-				msg.ToolResults[i] = llm.ToolResult{
-					ToolCallID: tr.ToolCallID,
-					Content:    tr.Content,
-					IsError:    tr.IsError,
-					Metadata:   tr.Metadata,
-					Name:       tr.Name,
-					DurationMs: tr.DurationMs,
-				}
-			}
-		}
-
-		if transitioned {
-			for i := range msg.ToolCalls {
-				msg.ToolCalls[i].ThoughtSignature = ""
-			}
-		}
-		messages = append(messages, msg)
-		// Tool-role image metadata is not supported by every provider. Normalize
-		// extracted screenshots into the shared user-image channel after the batch.
-		var screenshots []llm.Image
-		var omitted []string
-		for i, tr := range msg.ToolResults {
-			images := toolScreenshotImages(tr.Metadata)
-			for j, image := range images {
-				decision := screenshotDecision(m, tr.ToolCallID, j)
-				if decision != "" && decision != "keep" {
-					omitted = append(omitted, decision)
+		for _, m := range activeMessages {
+			// Anthropic/Gemini reject system-role conversation messages. Send the
+			// nudge as user text at its chronological position: folding it into the
+			// system prompt would invalidate the whole prompt cache and keep it forever.
+			if m.Role == "system" && m.Metadata["stall_nudge"] == true {
+				if last := len(messages) - 1; last >= 0 && messages[last].Role == "user" && len(messages[last].ToolResults) == 0 {
+					messages[last].Content += "\n\n" + m.Content
 				} else {
-					screenshots = append(screenshots, image)
+					messages = append(messages, llm.Message{Role: "user", Content: m.Content})
+				}
+				continue
+			}
+			msg := llm.Message{Role: m.Role, Content: m.Content}
+			for i, attachment := range m.Images {
+				if decision := screenshotDecision(m, "attachment", i); decision != "" && decision != "keep" {
+					msg.Content += "\n" + decision
+				} else {
+					loaded := sessionImagesToLLM([]session.ImageAttachment{attachment})
+					if len(loaded) == 0 && attachment.Path != "" {
+						msg.Content += "\n[image attachment unavailable: " + attachment.Path + "]"
+					}
+					msg.Images = append(msg.Images, loaded...)
 				}
 			}
-			if len(images) > 0 {
-				metadata := make(map[string]interface{}, len(tr.Metadata))
-				for key, value := range tr.Metadata {
-					metadata[key] = value
+
+			epoch, _ := sess.Metadata["provider_context_epoch"].(string)
+			// Opaque reasoning is valid only for the context that produced it.
+			if m.Role == "assistant" && (!transitioned || m.Metadata["reasoning_context_epoch"] == epoch) {
+				if raw, ok := m.Metadata[messageMetadataReasoningItems].(string); ok {
+					_ = json.Unmarshal([]byte(raw), &msg.ReasoningItems)
 				}
-				delete(metadata, "image_inline") // Avoid sending the first image twice to Anthropic.
-				delete(metadata, "admission_images")
-				delete(metadata, "image_original_text")
-				messages[len(messages)-1].ToolResults[i].Metadata = metadata
+			}
+
+			// Convert tool calls
+			if len(m.ToolCalls) > 0 {
+				msg.ToolCalls = make([]llm.ToolCall, len(m.ToolCalls))
+				for i, tc := range m.ToolCalls {
+					msg.ToolCalls[i] = llm.ToolCall{
+						ID:               tc.ID,
+						Name:             tc.Name,
+						Input:            string(tc.Input),
+						ThoughtSignature: tc.ThoughtSignature,
+					}
+				}
+			}
+
+			// Convert tool results
+			if len(m.ToolResults) > 0 {
+				msg.ToolResults = make([]llm.ToolResult, len(m.ToolResults))
+				for i, tr := range m.ToolResults {
+					msg.ToolResults[i] = llm.ToolResult{
+						ToolCallID: tr.ToolCallID,
+						Content:    tr.Content,
+						IsError:    tr.IsError,
+						Metadata:   tr.Metadata,
+						Name:       tr.Name,
+						DurationMs: tr.DurationMs,
+					}
+				}
+			}
+
+			if transitioned {
+				for i := range msg.ToolCalls {
+					msg.ToolCalls[i].ThoughtSignature = ""
+				}
+			}
+			messages = append(messages, msg)
+			// Tool-role image metadata is not supported by every provider. Normalize
+			// extracted screenshots into the shared user-image channel after the batch.
+			var screenshots []llm.Image
+			var omitted []string
+			for i, tr := range msg.ToolResults {
+				images := toolScreenshotImages(tr.Metadata)
+				for j, image := range images {
+					decision := screenshotDecision(m, tr.ToolCallID, j)
+					if decision != "" && decision != "keep" {
+						omitted = append(omitted, decision)
+					} else {
+						screenshots = append(screenshots, image)
+					}
+				}
+				if len(images) > 0 {
+					metadata := make(map[string]interface{}, len(tr.Metadata))
+					for key, value := range tr.Metadata {
+						metadata[key] = value
+					}
+					delete(metadata, "image_inline") // Avoid sending the first image twice to Anthropic.
+					delete(metadata, "admission_images")
+					delete(metadata, "image_original_text")
+					messages[len(messages)-1].ToolResults[i].Metadata = metadata
+				}
+			}
+			if len(screenshots) > 0 || len(omitted) > 0 {
+				content := "Screenshots from the preceding tool results."
+				if len(omitted) > 0 {
+					content += "\n" + strings.Join(omitted, "\n")
+				}
+				messages = append(messages, llm.Message{Role: "user", Content: content, Images: screenshots})
 			}
 		}
-		if len(screenshots) > 0 || len(omitted) > 0 {
-			content := "Screenshots from the preceding tool results."
-			if len(omitted) > 0 {
-				content += "\n" + strings.Join(omitted, "\n")
-			}
-			messages = append(messages, llm.Message{Role: "user", Content: content, Images: screenshots})
-		}
+		fitRequestImages(messages)
+		return messages
 	}
-	fitRequestImages(messages)
+	messages := convert(activeMessages)
 
 	request := &llm.ChatRequest{
 		Model:                 a.config.Model,
@@ -150,6 +157,9 @@ func (a *Agent) buildRequest(ctx context.Context, sess *session.Session) *llm.Ch
 		SessionID:             sess.ID,
 		PreviousResponseID:    previousResponseID,
 		ProviderSessionCursor: providerSessionCursor,
+	}
+	if providerSessionCursor != "" {
+		request.FullMessages = func() []llm.Message { return convert(fullMessages) }
 	}
 	if transitioned {
 		if epoch, ok := sess.Metadata["provider_context_epoch"].(string); ok {

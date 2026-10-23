@@ -183,7 +183,7 @@ func (m Model) activateProvider(providerType config.ProviderType) (tea.Model, te
 	m.agentConfig.ContextWindow = m.contextWindow
 	sessionSettings := config.ResolveProviderSessionSettings(string(providerType), provider)
 	m.agentConfig.UsePreviousResponse = providerType == config.ProviderOpenAI && provider.StatefulResponses != nil && *provider.StatefulResponses
-	m.agentConfig.UseProviderSession = sessionSettings.UseProviderSession && !tuiEnvBool("AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE", false)
+	m.agentConfig.UseProviderSession = sessionSettings.UseProviderSession && !(config.IsClaudeProviderRef(string(providerType)) && tuiEnvBool("AAGENT_CLAUDE_CLI_NO_SESSION_PERSISTENCE", false))
 	m.agentConfig.ProviderSessionIdentity = sessionSettings.ProviderSessionIdentity
 
 	// Save config

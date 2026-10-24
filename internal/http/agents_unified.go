@@ -37,7 +37,8 @@ type UnifiedAgentResponse struct {
 	AvatarURL   string               `json:"avatar_url,omitempty"`
 	Running     *bool               `json:"running,omitempty"`
 	APIURL      string               `json:"api_url,omitempty"`
-	Managed     bool                 `json:"managed,omitempty"`
+	Managed      bool                 `json:"managed,omitempty"`
+	HasContainer bool                 `json:"has_container,omitempty"`
 	Definition  *agentdef.Definition `json:"definition,omitempty"`
 	SubAgent    *SubAgentResponse    `json:"sub_agent,omitempty"`
 	DockerAgent *LocalDockerAgent    `json:"docker_agent,omitempty"`
@@ -192,7 +193,10 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 			if da.Running && !localDockerAgentAvailableForUse(da) {
 				status = agentDefinitionStatusUnhealthy
 			}
-			agents = append(agents, UnifiedAgentResponse{ID: da.ID, Name: da.Name, Runtime: agentdef.RuntimeDocker, Status: status, Running: &running, APIURL: da.APIURL, DockerAgent: &dockerAgents[i]})
+			agents = append(agents, UnifiedAgentResponse{
+				ID: da.ID, Name: da.Name, Runtime: agentdef.RuntimeDocker, Status: status, Running: &running,
+				APIURL: da.APIURL, DockerAgent: &dockerAgents[i], HasContainer: true,
+			})
 		}
 	}
 
@@ -316,6 +320,7 @@ func agentDefinitionRecordProjectID(record *storage.AgentDefinitionRecord) strin
 
 func applyUnifiedAgentContainerStatus(entry *UnifiedAgentResponse, containers []LocalDockerAgent) {
 	entry.Containers = containers
+	entry.HasContainer = len(containers) > 0
 	entry.Status = agentDefinitionStatusStopped
 	sawUnhealthyRunning := false
 	for i := range containers {

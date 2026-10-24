@@ -1327,3 +1327,20 @@ func TestAgentVisibleInProjectSession(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyUnifiedAgentContainerStatusSetsHasContainer(t *testing.T) {
+	entry := UnifiedAgentResponse{ID: "a1", Status: agentDefinitionStatusNotCreated}
+	applyUnifiedAgentContainerStatus(&entry, nil)
+	if entry.HasContainer {
+		t.Fatalf("expected has_container false for empty container list")
+	}
+
+	stopped := LocalDockerAgent{ID: "c1", Running: false}
+	applyUnifiedAgentContainerStatus(&entry, []LocalDockerAgent{stopped})
+	if !entry.HasContainer {
+		t.Fatalf("expected has_container true when a managed container exists")
+	}
+	if entry.Status != agentDefinitionStatusStopped {
+		t.Fatalf("expected stopped status, got %q", entry.Status)
+	}
+}

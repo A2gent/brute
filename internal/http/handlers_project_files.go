@@ -224,6 +224,24 @@ func (s *Server) handleGetProjectFileRaw(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// WHY: chat messages reference generated models by absolute path, often outside the project folder.
+	// Only .glb files are served this way, so this cannot be used to read arbitrary local files.
+	if absPath := strings.TrimSpace(r.URL.Query().Get("absPath")); absPath != "" {
+		cleaned := filepath.Clean(absPath)
+		if !filepath.IsAbs(cleaned) || !isGLBFile(cleaned) {
+			s.errorResponse(w, http.StatusBadRequest, "Only absolute .glb paths can be previewed outside the project")
+			return
+		}
+		if info, statErr := os.Stat(cleaned); statErr != nil || info.IsDir() {
+			s.errorResponse(w, http.StatusNotFound, "File not found")
+			return
+		}
+		w.Header().Set("Content-Type", projectRawPreviewContentType(cleaned))
+		w.Header().Set("Cache-Control", "no-cache")
+		http.ServeFile(w, r, cleaned)
+		return
+	}
+
 	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
 	resolvedPath, normalizedRelPath, err := resolveProjectPath(resolvedRoot, relPath)
 	if err != nil {

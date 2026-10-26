@@ -44,6 +44,9 @@ type Provider struct {
 	RouterReasoningEffort string              `json:"router_reasoning_effort,omitempty"`
 	RouterRules           []RouterRule        `json:"router_rules,omitempty"`
 	ContextWindow         int                 `json:"context_window,omitempty"` // in tokens
+	// MinBalancePercent stops using the provider once its weekly usage left drops below this percent.
+	// nil means DefaultMinBalancePercent; 0 disables the limit.
+	MinBalancePercent *int `json:"min_balance_percent,omitempty"`
 
 	// Claude CLI instance fields (anthropic and anthropic:<id> providers).
 	BinaryPath       string            `json:"binary_path,omitempty"`
@@ -54,6 +57,17 @@ type Provider struct {
 
 	// OAuth support
 	OAuth *OAuthConfig `json:"oauth,omitempty"`
+}
+
+// DefaultMinBalancePercent is the weekly-usage reserve applied when a provider has no explicit setting.
+const DefaultMinBalancePercent = 10
+
+// EffectiveMinBalancePercent returns the configured reserve, clamped to 0..100.
+func (p Provider) EffectiveMinBalancePercent() int {
+	if p.MinBalancePercent == nil {
+		return DefaultMinBalancePercent
+	}
+	return min(max(*p.MinBalancePercent, 0), 100)
 }
 
 // OAuthConfig stores OAuth tokens for a provider
@@ -189,7 +203,7 @@ func SupportedProviders() []ProviderDefinition {
 			DefaultURL:    "",
 			RequiresKey:   false,
 			DefaultModel:  "composer-2.5",
-			ContextWindow: 0,
+			ContextWindow: 200000,
 		},
 		{
 			Type:          ProviderGoogle,

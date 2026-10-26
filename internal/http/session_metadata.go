@@ -173,6 +173,41 @@ func (s *Server) applyProviderTraceToSession(sess *session.Session, targetProvid
 	}
 }
 
+func isRoutingOnlyProviderRef(ref string) bool {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return false
+	}
+	return ref == string(config.ProviderAutoRouter) || config.IsFallbackAggregateRef(ref) || strings.HasPrefix(ref, "fallback_chain:")
+}
+
+// sessionAnsweringLLMForContext picks the provider/model whose window should be shown in the UI
+// when the configured session provider is a router or fallback chain aggregate.
+func sessionAnsweringLLMForContext(
+	sess *session.Session,
+	configuredProvider, configuredModel,
+	fallbackActiveProvider, fallbackActiveModel,
+	routedProvider, routedModel string,
+) (string, string) {
+	if fallbackActiveProvider != "" {
+		return fallbackActiveProvider, fallbackActiveModel
+	}
+	if routedProvider != "" && !isRoutingOnlyProviderRef(routedProvider) {
+		return routedProvider, routedModel
+	}
+	if sess != nil && sess.Metadata != nil {
+		lastProvider := strings.TrimSpace(sessionMetadataString(sess.Metadata, "last_llm_provider"))
+		lastModel := strings.TrimSpace(sessionMetadataString(sess.Metadata, "last_llm_model"))
+		if lastProvider != "" && !isRoutingOnlyProviderRef(lastProvider) {
+			return lastProvider, lastModel
+		}
+	}
+	if configuredProvider != "" && !isRoutingOnlyProviderRef(configuredProvider) {
+		return configuredProvider, configuredModel
+	}
+	return "", ""
+}
+
 func sessionProviderAndModel(sess *session.Session) (string, string) {
 	if sess == nil || sess.Metadata == nil {
 		return "", ""

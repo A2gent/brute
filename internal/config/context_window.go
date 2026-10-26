@@ -75,6 +75,12 @@ func modelContextWindow(providerType ProviderType, model string) int {
 		if window := openRouterCachedContextWindow(normalizedModel); window > 0 {
 			return window
 		}
+	case ProviderCursor:
+		// Cursor CLI does not expose per-model limits yet; Composer sessions use a
+		// large default so Caesar can show context usage for router-delegated runs.
+		if strings.HasPrefix(normalizedModel, "composer") {
+			return 200000
+		}
 	}
 
 	return 0

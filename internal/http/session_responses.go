@@ -67,6 +67,16 @@ func (s *Server) sessionToResponse(sess *session.Session) SessionResponse {
 	} else if routedProvider == string(config.ProviderLMStudio) || routedProvider == string(config.ProviderOpenRouter) {
 		modelContextWindow = config.ResolveContextWindowForRef(routedProvider, s.config.Providers[routedProvider], routedModel)
 	}
+	if modelContextWindow <= 0 {
+		answeringProvider, answeringModel := sessionAnsweringLLMForContext(
+			sess, provider, model, fallbackActiveProvider, fallbackActiveModel, routedProvider, routedModel,
+		)
+		if answeringProvider != "" {
+			if window := s.resolveContextWindowForProvider(config.ProviderType(config.NormalizeProviderRef(answeringProvider)), answeringModel); window > 0 {
+				modelContextWindow = window
+			}
+		}
+	}
 	isOutbound, targetAgentID, targetAgentName := sessionA2AOutboundMeta(sess)
 	worktree, mainFolder := s.sessionWorktreeFields(sess)
 	channel, channelDetail := sessionChannel(sess)

@@ -194,6 +194,18 @@ func TestRefreshOpenRouterContextWindowsUsesOfficialModelCatalog(t *testing.T) {
 	}
 }
 
+func TestSessionToResponseUsesLastLLMContextForAutomaticRouterCursor(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+	sess := session.New("build")
+	sess.Metadata["provider"] = string(config.ProviderAutoRouter)
+	sess.Metadata["last_llm_provider"] = string(config.ProviderCursor)
+	sess.Metadata["last_llm_model"] = "composer-2.5"
+
+	if got := server.sessionToResponse(sess).ModelContextWindow; got != 200000 {
+		t.Fatalf("model context window = %d, want cursor composer default 200000", got)
+	}
+}
+
 func TestSessionToResponseRefreshesOpenRouterContextForExistingSessions(t *testing.T) {
 	config.ResetOpenRouterModelContextCache()
 	config.CacheOpenRouterModelContextWindow("xiaomi/mimo-v2.6-pro", 1050000)

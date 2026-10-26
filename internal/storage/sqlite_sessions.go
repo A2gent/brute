@@ -48,6 +48,9 @@ func (s *SQLiteStore) saveSessionMessages(sess *Session, ids []string, dirty map
 				sessionMetadata[key] = value
 			}
 		}
+		if err := mergeStoredDockerChildSessions(tx, sess.ID, sessionMetadata); err != nil {
+			return err
+		}
 		metadata, err := json.Marshal(sessionMetadata)
 		if err != nil {
 			return fmt.Errorf("marshal session metadata: %w", err)
@@ -635,4 +638,74 @@ func (s *SQLiteStore) ListSessionTree(rootID string) ([]SessionRef, error) {
 		refs = append(refs, ref)
 	}
 	return refs, rows.Err()
+}
+
+const dockerChildSessionsMetadataKey = "docker_child_sessions"
+
+// Merge the append-only child lookup list from storage because the active agent may save an older parent snapshot after delegation completes.
+func mergeStoredDockerChildSessions(tx *sql.Tx, sessionID string, metadata map[string]interface{}) error {
+	var storedJSON sql.NullString
+	if err := tx.QueryRow(`SELECT metadata FROM sessions WHERE id = ?`, sessionID).Scan(&storedJSON); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("load existing session metadata: %w", err)
+	}
+	if !storedJSON.Valid {
+		return nil
+	}
+
+	var storedMetadata map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(storedJSON.String), &storedMetadata); err != nil {
+		return nil
+	}
+	storedEntries := dockerChildSessionEntriesFromJSON(storedMetadata[dockerChildSessionsMetadataKey])
+	incomingEntries := dockerChildSessionEntriesFromValue(metadata[dockerChildSessionsMetadataKey])
+	mergedEntries := mergeDockerChildSessionEntries(storedEntries, incomingEntries)
+	if len(mergedEntries) > 0 {
+		metadata[dockerChildSessionsMetadataKey] = mergedEntries
+	}
+	return nil
+}
+
+func dockerChildSessionEntriesFromJSON(raw json.RawMessage) []map[string]interface{} {
+	var entries []map[string]interface{}
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil
+	}
+	return entries
+}
+
+func dockerChildSessionEntriesFromValue(value interface{}) []map[string]interface{} {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	return dockerChildSessionEntriesFromJSON(raw)
+}
+
+func mergeDockerChildSessionEntries(stored, incoming []map[string]interface{}) []map[string]interface{} {
+	merged := make([]map[string]interface{}, 0, len(stored)+len(incoming))
+	indexes := make(map[string]int, len(stored)+len(incoming))
+	appendEntry := func(entry map[string]interface{}) {
+		childID, _ := entry["child_session_id"].(string)
+		childID = strings.TrimSpace(childID)
+		if childID == "" {
+			merged = append(merged, entry)
+			return
+		}
+		if index, exists := indexes[childID]; exists {
+			merged[index] = entry
+			return
+		}
+		indexes[childID] = len(merged)
+		merged = append(merged, entry)
+	}
+	for _, entry := range stored {
+		appendEntry(entry)
+	}
+	for _, entry := range incoming {
+		appendEntry(entry)
+	}
+	return merged
 }

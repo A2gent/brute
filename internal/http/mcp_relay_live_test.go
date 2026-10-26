@@ -28,6 +28,13 @@ func TestLiveDockerClaudeMCP(t *testing.T) {
 	if os.Getenv("AAGENT_DOCKER_CLAUDE_MCP_LIVE") != "1" {
 		t.Skip("set AAGENT_DOCKER_CLAUDE_MCP_LIVE=1 to exercise Docker -> host Claude -> child MCP")
 	}
+	runLiveDockerMCP(t, config.ProviderAnthropic)
+}
+
+// runLiveDockerMCP uses real Docker inspection and the parent's real CLI. Keep
+// quota gates in the public tests, before compiling or launching any processes.
+func runLiveDockerMCP(t *testing.T, provider config.ProviderType) {
+	t.Helper()
 	t.Setenv("A2GENT_PARENT_PROXY_URL", "")
 	t.Setenv(parentMCPKeyEnv, "")
 	t.Setenv("AAGENT_CLAUDE_AGENT_SDK_SIDECAR_PATH", "")
@@ -44,8 +51,11 @@ func TestLiveDockerClaudeMCP(t *testing.T) {
 	}
 
 	parent := newMCPBridgeTestServer(t)
-	parent.config.HostClaudeCLI = true
+	parent.config.HostClaudeCLI = provider == config.ProviderAnthropic
 	parent.config.WorkDir = t.TempDir()
+	if provider == config.ProviderCursor {
+		prepareLiveCursorRelayAudit(t, parent.config.WorkDir)
+	}
 	var parentCalls atomic.Int32
 	parent.toolManager.Register(&bridgeDelegationProbe{name: "bridge_mcp_probe", execute: func(context.Context, json.RawMessage) (*tools.Result, error) {
 		parentCalls.Add(1)
@@ -92,13 +102,15 @@ func TestLiveDockerClaudeMCP(t *testing.T) {
 		"--mount", "type=bind,src="+binary+",dst=/relay-test,readonly",
 		"--entrypoint", "/relay-test",
 		"-e", "T237_MCP_CHILD=1",
+		"-e", "AAGENT_MCP_RELAY_CHILD_PROVIDER="+string(provider),
+		"-e", "AAGENT_DOCKER_CURSOR_MCP_MODEL="+os.Getenv("AAGENT_DOCKER_CURSOR_MCP_MODEL"),
 		"-e", "A2GENT_PARENT_PROXY_URL=http://host.docker.internal:"+port+"/v1",
 		"-e", parentMCPKeyEnv+"="+key,
 		"a2gent-brute:latest", "-test.run", "^TestDockerMCPRelayChild$", "-test.v", "-test.timeout=165s")
 	out, err := cmd.CombinedOutput()
 	t.Logf("Docker child output:\n%s", out)
 	if err != nil {
-		t.Fatalf("Docker Claude MCP round trip: %v (context: %v)", err, ctx.Err())
+		t.Fatalf("Docker %s MCP round trip: %v (context: %v)", provider, err, ctx.Err())
 	}
 	if !strings.Contains(string(out), "--- PASS: TestDockerMCPRelayChild") {
 		t.Fatal("Docker child did not run and pass its probe assertions")
@@ -120,8 +132,15 @@ func TestDockerMCPRelayChild(t *testing.T) {
 	if os.Getenv("T237_MCP_CHILD") != "1" {
 		t.Skip("Docker child helper")
 	}
-	if path, err := exec.LookPath("claude"); err == nil {
-		t.Fatalf("child must not have a Claude executable: %s", path)
+	provider, model, executable := config.ProviderAnthropic, "sonnet", "claude"
+	if os.Getenv("AAGENT_MCP_RELAY_CHILD_PROVIDER") == string(config.ProviderCursor) {
+		provider, model, executable = config.ProviderCursor, "composer-2.5", "agent"
+		if override := os.Getenv("AAGENT_DOCKER_CURSOR_MCP_MODEL"); override != "" {
+			model = override
+		}
+	}
+	if path, err := exec.LookPath(executable); err == nil {
+		t.Fatalf("child must not have a %s executable: %s", executable, path)
 	}
 	if os.Getenv(parentMCPKeyEnv) == "" || os.Getenv("A2GENT_PARENT_PROXY_URL") == "" {
 		t.Fatal("missing parent relay bootstrap environment")
@@ -147,7 +166,7 @@ func TestDockerMCPRelayChild(t *testing.T) {
 	if err := child.sessionManager.Save(sess); err != nil {
 		t.Fatal(err)
 	}
-	marker := "T237_CHILD_MCP_OK_" + sess.ID
+	marker := ""
 	var calls atomic.Int32
 	child.toolManager.Register(&bridgeDelegationProbe{name: "bridge_mcp_probe", execute: func(ctx context.Context, args json.RawMessage) (*tools.Result, error) {
 		calls.Add(1)
@@ -162,7 +181,7 @@ func TestDockerMCPRelayChild(t *testing.T) {
 		}
 		return &tools.Result{Success: true, Output: marker}, nil
 	}})
-	client, err := child.createBaseLLMClientForSession(config.ProviderAnthropic, "sonnet", sess)
+	client, err := child.createBaseLLMClientForSession(provider, model, sess)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,32 +190,31 @@ func TestDockerMCPRelayChild(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.WithValue(t.Context(), "session_id", sess.ID), 150*time.Second)
 	defer cancel()
-	resp, err := client.Chat(ctx, &llm.ChatRequest{
-		SessionID: sess.ID,
-		Messages:  []llm.Message{{Role: "user", Content: "Call mcp__a2gent__bridge_mcp_probe exactly once with {} and reply with its exact returned text. Do not use any other tools."}},
-		Tools:     []llm.ToolDefinition{{Name: "bridge_mcp_probe", Description: "Return the owning child session test marker", InputSchema: map[string]interface{}{"type": "object"}}},
-	})
-	if err != nil {
-		t.Fatal(err)
+	for _, streaming := range []bool{false, true} {
+		// The marker never enters the prompt and changes between invocations, so
+		// returning a cached/fabricated tool response cannot pass the test.
+		marker, err = randomMCPRelaySecret()
+		if err != nil {
+			t.Fatal(err)
+		}
+		calls.Store(0)
+		request := &llm.ChatRequest{
+			SessionID: sess.ID,
+			Messages:  []llm.Message{{Role: "user", Content: "Call bridge_mcp_probe from the A2gent MCP server exactly once with {} and reply with its exact returned text. Discover that tool if needed. Do not use any other tools."}},
+			Tools:     []llm.ToolDefinition{{Name: "bridge_mcp_probe", Description: "Return the owning child session test marker", InputSchema: map[string]interface{}{"type": "object"}}},
+		}
+		var response *llm.ChatResponse
+		if streaming {
+			response, err = client.(llm.StreamingClient).ChatStream(ctx, request, func(llm.StreamEvent) error { return nil })
+		} else {
+			response, err = client.Chat(ctx, request)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if calls.Load() != 1 || strings.TrimSpace(response.Content) != marker {
+			t.Fatalf("child MCP failed (provider=%s streaming=%v): calls=%d response=%q", provider, streaming, calls.Load(), response.Content)
+		}
+		t.Logf("real host %s returned owning Docker child marker (streaming=%v)", provider, streaming)
 	}
-	if calls.Load() != 1 {
-		t.Fatalf("probe calls=%d, want exactly 1; response=%s", calls.Load(), resp.Content)
-	}
-	if strings.TrimSpace(resp.Content) != marker {
-		t.Fatalf("model did not return exact child marker: got %q, want %q", resp.Content, marker)
-	}
-	t.Logf("real host Claude returned owning Docker child marker: %s", marker)
-	calls.Store(0)
-	streamed, err := client.(llm.StreamingClient).ChatStream(ctx, &llm.ChatRequest{
-		SessionID: sess.ID,
-		Messages:  []llm.Message{{Role: "user", Content: "Call mcp__a2gent__bridge_mcp_probe exactly once with {} and reply with its exact returned text. Do not use any other tools."}},
-		Tools:     []llm.ToolDefinition{{Name: "bridge_mcp_probe", Description: "Return the owning child session test marker", InputSchema: map[string]interface{}{"type": "object"}}},
-	}, func(llm.StreamEvent) error { return nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if calls.Load() != 1 || strings.TrimSpace(streamed.Content) != marker {
-		t.Fatalf("streaming child MCP failed: calls=%d response=%q", calls.Load(), streamed.Content)
-	}
-	t.Logf("streamed host Claude returned owning Docker child marker: %s", marker)
 }

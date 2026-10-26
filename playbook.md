@@ -136,3 +136,10 @@
 - Inspect storage/approval API signatures before writing fixtures (`SaveSettings`, `PendingForSession`, and `Resolve(requestID, sessionID, DecisionAllowOnce)`). Persist session metadata before another manager lookup; `Get` does not preserve unsaved mutations.
 - HTTP error envelopes are not JSON-RPC responses. Negative bridge-auth tests should inspect status with a recorder, not the helper that decodes an MCP RPC response.
 - Anchor scripted edits to the actual current source and inspect assertions before running tests. A delegate may legitimately change the shape of a concurrent implementation. Keep task-unrelated cache-key behavior out of a transport fix.
+
+## Codex - Cursor relay live-test lessons (2026-10-26)
+- Inspect component guidance before Git commands: the a2gent workspace root is not a repository; use brute/ for this backend task.
+- Re-read numbered file ranges immediately before replace_lines; preceding edits change the file length and invalidate remembered endpoints.
+- A canceled delegation can still have edited its assigned file. Check the working tree before retrying and keep agent edit scopes disjoint.
+- Cursor reads user MCP configuration from ~/.cursor/mcp.json independently of CURSOR_CONFIG_DIR. Assert exact MCP permissions and absence of blanket --approve-mcps; a successful child probe alone is not a confinement check.
+- A real Cursor CLI rejects `version` in project .cursor/cli.json even though global cli-config.json requires it. Keep schema assertions for both files; fake CLI success cannot validate the installed CLI schema.

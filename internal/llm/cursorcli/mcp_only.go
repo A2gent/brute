@@ -36,7 +36,7 @@ func (c *Client) forInvocation(ctx context.Context) *Client {
 }
 
 type cursorCLIConfig struct {
-	Version      int                       `json:"version"`
+	Version      int                       `json:"version,omitempty"`
 	ApprovalMode string                    `json:"approvalMode,omitempty"`
 	Permissions  cursorCLIPermissions      `json:"permissions"`
 	Sandbox      *cursorCLISandboxSettings `json:"sandbox,omitempty"`
@@ -79,7 +79,8 @@ func (c *Client) prepareMCPOnlyWorkspace() error {
 			"WebFetch(*)",
 		},
 	}
-	projectConfig := cursorCLIConfig{Version: 1, Permissions: permissions}
+	// Cursor's project schema rejects version; only cli-config.json uses it.
+	projectConfig := cursorCLIConfig{Permissions: permissions}
 	if err := writePrivateJSON(filepath.Join(cursorDir, "cli.json"), projectConfig); err != nil {
 		return fmt.Errorf("write isolated Cursor tool permissions: %w", err)
 	}

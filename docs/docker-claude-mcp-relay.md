@@ -30,4 +30,41 @@ AAGENT_DOCKER_CLAUDE_MCP_LIVE=1 go test ./internal/http -run '^TestLiveDockerCla
 AAGENT_CLAUDE_MCP_LIVE=1 go test ./internal/http -run '^TestLiveHostClaudeMCP$' -count=1 -v -timeout=5m
 ```
 
-The Docker live test cross-compiles the current HTTP test binary for Linux/arm64, mounts it into `a2gent-brute:latest` (without Claude), and verifies a real parent Claude CLI handshake/tool call returning the child's exact session marker. Live checks consume Claude subscription quota and are opt-in.
+The Claude Docker live test cross-compiles the current HTTP test binary for Linux/arm64, mounts it into `a2gent-brute:latest` (without Claude), and verifies a real parent Claude CLI handshake/tool call returning the child's exact session marker. Claude live checks consume subscription quota and are opt-in.
+
+### Cursor Agent CLI: opt-in Docker round trip
+
+Run commands from `brute/`. This check makes **two real Cursor completions** (Chat and ChatStream) and consumes Cursor account quota. It is skipped by default, including in normal CI; do not enable the gate globally or run it in parallel with other quota-sensitive checks.
+
+Prerequisites:
+
+- A running Docker daemon and a local `a2gent-brute:latest` image for `linux/arm64`, without an `agent` executable. The test cross-compiles the current source, so the image only supplies the child runtime. Build it when needed: `docker build --platform linux/arm64 -t a2gent-brute:latest .`.
+- Go with Linux cross-compilation support and a host Cursor Agent CLI supporting plugins, allowlist permissions and the workspace sandbox. `agent status` should confirm login, or supply `CURSOR_API_KEY` through the environment. `AAGENT_CURSOR_CLI_PATH` can select another executable.
+- Docker-to-host access through `host.docker.internal`. The test starts an ephemeral host listener; no persistent server or public child MCP port is needed.
+
+```sh
+# Quota-free regression coverage, including a valid existing-chat resume control:
+go test ./internal/http ./internal/llm/cursorcli ./internal/llm/claudecli ./internal/llm/lmstudio \
+  -run 'Test(MCPRelay|MCPBridge|Host|MCPOnly|PrepareRequest|LiveDockerCursorMCP)' -count=1
+
+# Explicitly opt in, without Go's successful-test cache:
+AAGENT_DOCKER_CURSOR_MCP_LIVE=1 go test ./internal/http \
+  -run '^TestLiveDockerCursorMCP$' -count=1 -v -timeout=7m
+
+# Optional: select a model available to this account (default: composer-2.5).
+AAGENT_DOCKER_CURSOR_MCP_LIVE=1 AAGENT_DOCKER_CURSOR_MCP_MODEL=composer-2.5 \
+  go test ./internal/http -run '^TestLiveDockerCursorMCP$' -count=1 -v -timeout=7m
+```
+
+The live test uses real Docker label authentication and the real parent HTTP proxy, not a mocked relay. For each completion it checks that:
+
+- The child has no Cursor executable and obtains an HTTP proxy client. Exactly one MCP probe runs with the owning **child session and project**, and the model returns the probe's fresh unpredictable marker, which was never in the prompt. A parent probe is a failure, and no parent A2gent session may be created.
+- A test-only auditing wrapper snapshots the actual Cursor subprocess argv/configuration and then `exec`s the real CLI. Both invocation paths use separate disposable workspaces/config directories, the workspace sandbox, exact native shell/read/write/web denies, and only the child A2gent MCP allowlist/plugin. They must not pass `--force`, blanket `--approve-mcps`, `--resume`, or `--continue`.
+- An unrelated MCP canary is configured in a disposable parent project, config directory and `HOME/.cursor/mcp.json`. A quota-free `agent mcp list` control confirms it is discoverable, but the relay must never contact it. The real user's MCP files/chats are not modified. Login tokens, when needed, are copied only into private temporary auth files and never passed into Docker or printed.
+- Temporary relay workspaces and plugin directories have been removed after completion. Separate quota-free Cursor subprocess tests supply an existing, scope-valid synthetic chat cursor and prove that MCP-only Chat and ChatStream still start fresh; this prevents a missing/mismatched chat from making the no-resume assertion pass accidentally.
+
+These are subprocess-policy, routing and canary checks, not a general proof that the Cursor sandbox is escape-proof. Cursor's project `.cursor/cli.json` must omit `version`; it belongs only in the global `cli-config.json` schema. The live check catches installed-CLI schema incompatibilities that a fake executable cannot detect.
+
+Cleanup runs on success and ordinary test failure: the uniquely named `t237-mcp-*` container is force-removed, the HTTP listener/stores are closed, and temporary test binaries, workspaces, plugin bearer-token snapshots and auth/config fixtures are removed. The wrapper uses `exec` so cancellation targets the real CLI rather than leaving a wrapper child behind. An external `SIGKILL` or Go's hard test timeout can prevent cleanup; remove only the container named in that run's Docker diagnostics (`docker rm -f <exact-container-name>`) and inspect temporary `TestLiveDockerCursorMCP*`, `brute-mcp-relay-*` and `a2gent-cursor-mcp-*` directories before removing them. Do not delete another running session's resources.
+
+A missing gate or missing credentials is reported as `SKIP`, not a successful live round trip. Once opted in with credentials, CLI, Docker, schema, authentication or model failures are test failures, with no automatic quota-consuming retries.

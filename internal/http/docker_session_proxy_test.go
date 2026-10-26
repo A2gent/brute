@@ -143,3 +143,50 @@ func stubDockerPS(t *testing.T, apiURL string, containerName string) {
 		runCommand = oldRunCommand
 	})
 }
+
+func TestDockerChildSessionRemainsOpenableAfterParentSave(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	child := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":         "docker-child",
+			"agent_id":   "build",
+			"title":      "Docker child transcript",
+			"status":     "completed",
+			"created_at": now,
+			"updated_at": now,
+			"messages":   []interface{}{},
+			"metadata": map[string]interface{}{
+				"parent_session_id": "parent-session",
+			},
+		})
+	}))
+	defer child.Close()
+
+	parent, err := server.sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("failed to create parent session: %v", err)
+	}
+	agent := &LocalDockerAgent{ID: "host-reviewer", Name: "host-reviewer", Runtime: "host", APIURL: child.URL}
+	server.recordDockerDelegationChildSession(parent.ID, agent, "docker-child", nil)
+
+	// The agent loop saves its original session object after the delegated tool finishes.
+	if err := server.sessionManager.Save(parent); err != nil {
+		t.Fatalf("failed to save parent session: %v", err)
+	}
+
+	req := httptest.NewRequest(stdhttp.MethodGet, "/sessions/docker-child", nil)
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+	if rec.Code != stdhttp.StatusOK {
+		t.Fatalf("expected child session to remain openable, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp SessionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode proxied session: %v", err)
+	}
+	if resp.ID != "docker-child" {
+		t.Fatalf("expected docker child session, got %q", resp.ID)
+	}
+}

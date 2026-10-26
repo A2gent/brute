@@ -33,6 +33,12 @@ func projectPreviewContentType(name string) string {
 	if isGLBFile(name) {
 		return "model/gltf-binary"
 	}
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".mp4", ".m4v":
+		return "video/mp4"
+	case ".mov":
+		return "video/quicktime"
+	}
 	if contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(name))); contentType != "" {
 		return contentType
 	}
@@ -40,7 +46,17 @@ func projectPreviewContentType(name string) string {
 }
 
 func isProjectRawPreviewFile(name string) bool {
-	return isPDFFile(name) || isProjectBrowserImageFile(name) || isGLBFile(name) || isHTMLFile(name)
+	return isPDFFile(name) || isProjectBrowserImageFile(name) || isGLBFile(name) || isHTMLFile(name) || isProjectBrowserVideoFile(name)
+}
+
+// Only containers browsers can play natively; http.ServeFile handles Range requests for seeking.
+func isProjectBrowserVideoFile(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".mp4", ".m4v", ".mov", ".webm", ".ogv":
+		return true
+	default:
+		return false
+	}
 }
 
 func isProjectBrowserImageFile(name string) bool {

@@ -8,10 +8,12 @@ import (
 )
 
 // Host children have the CLI and the session's MCP server on the same machine.
-// Sending Claude through the OpenAI proxy loses that session-scoped bridge.
+// Sending CLI providers through the OpenAI proxy loses that session-scoped
+// bridge, and the parent rejects them without a Docker MCP relay.
 func (s *Server) useLocalHostLLM(ref string) bool {
 	return s.config.HostClaudeCLI &&
-		(config.IsClaudeProviderRef(ref) || config.IsFallbackAggregateRef(ref) || ref == string(config.ProviderFallback))
+		(config.IsClaudeProviderRef(ref) || ref == string(config.ProviderCursor) || ref == string(config.ProviderKimiCLI) ||
+			config.IsFallbackAggregateRef(ref) || ref == string(config.ProviderFallback))
 }
 
 // Docker uses host.docker.internal; only host runtimes receive a loopback URL.

@@ -33,6 +33,11 @@ func TestHostClaudeUsesSessionLocalClient(t *testing.T) {
 			}
 		}
 	}
+	for _, ref := range []config.ProviderType{config.ProviderCursor, config.ProviderKimiCLI} {
+		if client, ok := server.createParentProxyLLMClient(ref, "test"); ok {
+			t.Fatalf("provider %s: host CLI must run locally, got %T", ref, client)
+		}
+	}
 	client, ok := server.createParentProxyLLMClient(config.ProviderOpenAI, "test")
 	if !ok || reflect.TypeOf(client).String() != "*lmstudio.Client" {
 		t.Fatalf("API providers must keep the parent proxy, got %T", client)

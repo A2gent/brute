@@ -483,7 +483,9 @@ func (s *Server) createParentProxyLLMClient(providerType config.ProviderType, mo
 	if proxyAPIKey == "" {
 		proxyAPIKey = "a2gent-proxy"
 	}
-	return lmstudio.NewClient(proxyAPIKey, modelName, proxyBaseURL), true
+	client := lmstudio.NewClient(proxyAPIKey, modelName, proxyBaseURL)
+	s.configureParentMCPRelay(client, parentProxyURL)
+	return client, true
 }
 
 func (s *Server) parentProxyAvailable() bool {

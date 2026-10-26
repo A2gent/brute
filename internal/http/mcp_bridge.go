@@ -44,6 +44,10 @@ var mcpBridgeExcludedTools = map[string]struct{}{
 }
 
 func mcpBridgeToolExposed(name string) bool {
+	// Manager normalizes qualified names, so reject aliases before filtering.
+	if strings.Contains(name, ".") {
+		return false
+	}
 	_, excluded := mcpBridgeExcludedTools[name]
 	return !excluded
 }
@@ -54,11 +58,13 @@ type mcpBridgeToken struct {
 	sessionID string
 	ctx       context.Context
 	cancel    context.CancelFunc
+	relay     *mcpRelay
 }
 
 type mcpBridgeState struct {
 	mu              sync.Mutex
 	tokens          map[string]*mcpBridgeToken
+	relays          map[string]*mcpRelay
 	questions       map[string]int
 	questionTimeout time.Duration
 }
@@ -66,6 +72,7 @@ type mcpBridgeState struct {
 func newMCPBridgeState() *mcpBridgeState {
 	return &mcpBridgeState{
 		tokens:          make(map[string]*mcpBridgeToken),
+		relays:          make(map[string]*mcpRelay),
 		questions:       make(map[string]int),
 		questionTimeout: mcpBridgeDefaultTimeout,
 	}
@@ -144,12 +151,22 @@ func (s *Server) claudecliMCPBridgeHook(ctx context.Context, sessionID string) (
 	if sessionID == "" {
 		return "", nil, nil
 	}
-	if _, err := s.sessionManager.Get(sessionID); err != nil {
+	relay, _ := ctx.Value(mcpRelayContextKey{}).(*mcpRelay)
+	if relay != nil {
+		if relay.id != sessionID || relay.ctx.Err() != nil {
+			return "", nil, fmt.Errorf("invalid MCP relay context")
+		}
+	} else if _, err := s.sessionManager.Get(sessionID); err != nil {
 		return "", nil, nil
 	}
 	token, revoke, err := s.mcpBridge.mintWithContext(ctx, sessionID)
 	if err != nil {
 		return "", nil, err
+	}
+	if relay != nil {
+		s.mcpBridge.mu.Lock()
+		s.mcpBridge.tokens[token].relay = relay
+		s.mcpBridge.mu.Unlock()
 	}
 	cfg := map[string]interface{}{
 		"mcpServers": map[string]interface{}{
@@ -215,10 +232,38 @@ func (s *Server) handleMCPBridge(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusForbidden, "MCP bridge token does not match session")
 		return
 	}
-	sess, err := s.sessionManager.Get(sessionID)
-	if err != nil {
-		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
+	s.mcpBridge.mu.Lock()
+	relay := s.mcpBridge.tokens[token]
+	var remote *mcpRelay
+	if relay != nil {
+		remote = relay.relay
+	}
+	s.mcpBridge.mu.Unlock()
+	if relay == nil {
+		s.errorResponse(w, http.StatusUnauthorized, "revoked MCP bridge token")
 		return
+	}
+	callCtx, cancel := context.WithCancel(tokenCtx)
+	defer cancel()
+	stop := context.AfterFunc(r.Context(), cancel)
+	defer stop()
+	var sess *session.Session
+	if remote == nil {
+		var err error
+		sess, err = s.sessionManager.Get(sessionID)
+		if err != nil {
+			s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
+			return
+		}
+	}
+	dispatch := func(msg *mcpBridgeRPCMessage) *mcpBridgeRPCResponse {
+		if remote != nil {
+			if msg.isNotification() {
+				return nil
+			}
+			return remote.call(callCtx, msg)
+		}
+		return s.dispatchMCPBridgeMessage(callCtx, sess, msg)
 	}
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, mcpBridgeMaxBodyBytes))
@@ -240,7 +285,7 @@ func (s *Server) handleMCPBridge(w http.ResponseWriter, r *http.Request) {
 		}
 		responses := make([]mcpBridgeRPCResponse, 0, len(batch))
 		for i := range batch {
-			if resp := s.dispatchMCPBridgeMessage(tokenCtx, sess, &batch[i]); resp != nil {
+			if resp := dispatch(&batch[i]); resp != nil {
 				responses = append(responses, *resp)
 			}
 		}
@@ -257,7 +302,7 @@ func (s *Server) handleMCPBridge(w http.ResponseWriter, r *http.Request) {
 		s.writeMCPBridgeRPCError(w, json.RawMessage("null"), -32700, "parse error: "+err.Error())
 		return
 	}
-	resp := s.dispatchMCPBridgeMessage(tokenCtx, sess, &msg)
+	resp := dispatch(&msg)
 	if resp == nil {
 		w.WriteHeader(http.StatusAccepted)
 		return
@@ -270,6 +315,10 @@ func (s *Server) dispatchMCPBridgeMessage(tokenCtx context.Context, sess *sessio
 		return nil
 	}
 	resp := &mcpBridgeRPCResponse{JSONRPC: "2.0", ID: msg.ID}
+	if err := tokenCtx.Err(); err != nil {
+		resp.Error = &mcpBridgeRPCError{Code: -32603, Message: "MCP callback canceled"}
+		return resp
+	}
 
 	switch strings.TrimSpace(msg.Method) {
 	case "initialize":
@@ -293,7 +342,7 @@ func (s *Server) dispatchMCPBridgeMessage(tokenCtx context.Context, sess *sessio
 	case "ping":
 		resp.Result = map[string]interface{}{}
 	case "tools/list":
-		resp.Result = map[string]interface{}{"tools": s.mcpBridgeToolList(sess)}
+		resp.Result = map[string]interface{}{"tools": s.mcpBridgeToolListContext(tokenCtx, sess)}
 	case "tools/call":
 		text, isError, rpcErr := s.mcpBridgeCallTool(tokenCtx, sess, msg.Params)
 		if rpcErr != nil {
@@ -311,6 +360,10 @@ func (s *Server) dispatchMCPBridgeMessage(tokenCtx context.Context, sess *sessio
 }
 
 func (s *Server) mcpBridgeToolList(sess *session.Session) []map[string]interface{} {
+	return s.mcpBridgeToolListContext(context.Background(), sess)
+}
+
+func (s *Server) mcpBridgeToolListContext(ctx context.Context, sess *session.Session) []map[string]interface{} {
 	manager := s.toolManagerForSession(sess)
 	if manager == nil {
 		return []map[string]interface{}{}
@@ -319,7 +372,7 @@ func (s *Server) mcpBridgeToolList(sess *session.Session) []map[string]interface
 	out := make([]map[string]interface{}, 0, len(defs))
 	for _, def := range defs {
 		name := strings.TrimSpace(def.Name)
-		if name == "" || !mcpBridgeToolExposed(name) {
+		if name == "" || !mcpBridgeToolExposedContext(ctx, name) {
 			continue
 		}
 		out = append(out, map[string]interface{}{
@@ -335,6 +388,9 @@ func (s *Server) mcpBridgeToolList(sess *session.Session) []map[string]interface
 }
 
 func (s *Server) mcpBridgeCallTool(tokenCtx context.Context, sess *session.Session, params json.RawMessage) (string, bool, *mcpBridgeRPCError) {
+	if err := tokenCtx.Err(); err != nil {
+		return err.Error(), true, nil
+	}
 	var call struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
@@ -346,7 +402,7 @@ func (s *Server) mcpBridgeCallTool(tokenCtx context.Context, sess *session.Sessi
 	if name == "" {
 		return "", false, &mcpBridgeRPCError{Code: -32602, Message: "tool name is required"}
 	}
-	if !mcpBridgeToolExposed(name) {
+	if !mcpBridgeToolExposedContext(tokenCtx, name) {
 		return fmt.Sprintf("tool %q is not exposed over the MCP bridge", name), true, nil
 	}
 	if len(call.Arguments) == 0 {
@@ -388,6 +444,9 @@ func (s *Server) mcpBridgeCallTool(tokenCtx context.Context, sess *session.Sessi
 		})
 	})
 
+	if err := ctx.Err(); err != nil {
+		return err.Error(), true, nil
+	}
 	result, err := manager.Execute(ctx, name, call.Arguments)
 	if err != nil {
 		return fmt.Sprintf("Error: %v", err), true, nil

@@ -39,6 +39,8 @@ type Options struct {
 	PermissionMode       string
 	MaxBudgetUSD         string
 	NoSessionPersistence bool
+	// MCPOnly disables native tools and requires the session-scoped MCP bridge.
+	MCPOnly bool
 
 	// Persistent keeps one streaming-input CLI process per session; budgets
 	// remain per-spawn. On by default, AAGENT_CLAUDE_CLI_PERSISTENT=0 disables it.
@@ -79,10 +81,16 @@ type mcpBridgeInvocation struct {
 func (c *Client) newMCPBridgeInvocation(ctx context.Context) mcpBridgeInvocation {
 	inv := mcpBridgeInvocation{revoke: func() {}}
 	if c.options.MCPBridge == nil {
+		if c.options.MCPOnly {
+			inv.err = fmt.Errorf("MCP-only invocation requires an MCP bridge")
+		}
 		return inv
 	}
 	sessionID, _ := ctx.Value("session_id").(string)
 	if strings.TrimSpace(sessionID) == "" {
+		if c.options.MCPOnly {
+			inv.err = fmt.Errorf("MCP-only invocation requires a session context")
+		}
 		return inv
 	}
 	configJSON, revoke, err := c.options.MCPBridge(ctx, sessionID)
@@ -91,10 +99,15 @@ func (c *Client) newMCPBridgeInvocation(ctx context.Context) mcpBridgeInvocation
 			revoke()
 		}
 		inv.err = err
-		logging.Warn("MCP bridge config failed, continuing without bridge: %v", err)
+		if !c.options.MCPOnly {
+			logging.Warn("MCP bridge config failed, continuing without bridge: %v", err)
+		}
 		return inv
 	}
 	if strings.TrimSpace(configJSON) == "" {
+		if c.options.MCPOnly {
+			inv.err = fmt.Errorf("MCP-only invocation requires a non-empty MCP bridge config")
+		}
 		if revoke != nil {
 			revoke()
 		}
@@ -125,6 +138,12 @@ func NewClient(model, workDir string) *Client {
 
 func NewClientWithOptions(model string, options Options) *Client {
 	options.Persistent = options.Persistent || envBoolDefault("AAGENT_CLAUDE_CLI_PERSISTENT", true)
+	if options.MCPOnly {
+		options.NoSessionPersistence = true
+		options.Persistent = false
+		options.SidecarPath = ""
+		options.Broker = nil
+	}
 	options.Executable = normalizeExecutable(options.Executable)
 	options.WorkDir = normalizeWorkDir(options.WorkDir)
 	options.PermissionMode = strings.TrimSpace(options.PermissionMode)
@@ -141,6 +160,7 @@ func IsAvailable() bool {
 }
 
 func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatResponse, error) {
+	c = c.forInvocation(ctx)
 	if request == nil {
 		request = &llm.ChatRequest{}
 	}
@@ -174,6 +194,9 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	prompt := buildPrompt(request)
 	bridge := c.newMCPBridgeInvocation(ctx)
 	defer bridge.revoke()
+	if c.options.MCPOnly && bridge.err != nil {
+		return nil, fmt.Errorf("prepare MCP-only invocation: %w", bridge.err)
+	}
 	args := c.buildArgs(request, model, prompt, bridge)
 
 	claudePath, err := findExecutable(c.options.Executable)
@@ -241,6 +264,7 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 }
 
 func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEvent func(llm.StreamEvent) error) (*llm.ChatResponse, error) {
+	c = c.forInvocation(ctx)
 	if request == nil {
 		request = &llm.ChatRequest{}
 	}
@@ -275,6 +299,9 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	prompt := buildPrompt(request)
 	bridge := c.newMCPBridgeInvocation(ctx)
 	defer bridge.revoke()
+	if c.options.MCPOnly && bridge.err != nil {
+		return nil, fmt.Errorf("prepare MCP-only invocation: %w", bridge.err)
+	}
 	args := c.buildStreamArgs(request, model, prompt, bridge)
 	var stdinPayload []byte
 	if hasInlineImages(request) {
@@ -432,6 +459,14 @@ func (c *Client) appendCommonArgs(args []string, request *llm.ChatRequest, bridg
 	// tools currently enabled in this A2gent request. This lets Sonnet edit files in
 	// non-interactive mode without waiting for an invisible permission prompt.
 	toolsArg, allowedArg, includeTools := claudeToolsArgs(request)
+	if c.options.MCPOnly {
+		// Parent tools must only execute through the scoped A2gent bridge.
+		args = append(args, "--setting-sources", "", "--disable-slash-commands")
+		toolsArg, allowedArg, includeTools = "", "", true
+		if len(bridge.args) == 0 {
+			args = append(args, "--strict-mcp-config")
+		}
+	}
 	if includeTools {
 		args = append(args, "--tools", toolsArg)
 		if bridge.allowedTools != "" {

@@ -321,6 +321,14 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 		projectRoot = resolvedRoot
 	}
 	proxyBaseURL := fmt.Sprintf("http://host.docker.internal:%d/v1", s.port)
+	var relayKey string
+	if useParentLLMProxy {
+		secret, err := randomMCPRelaySecret()
+		if err != nil {
+			return nil, http.StatusInternalServerError, fmt.Errorf("cannot create relay credential: %w", err)
+		}
+		relayKey = name + "." + secret
+	}
 	buildRunArgs := func(publishedPort int) ([]string, error) {
 		args := []string{
 			"run", "-d",
@@ -380,6 +388,8 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 				args = appendClaudeRateLimitCacheDockerArgs(args)
 			}
 			args = append(args, s.parentProxyEnvArgs(provider, proxyBaseURL)...)
+			args = append(args, "--env", parentMCPKeyEnv+"="+relayKey,
+				"--label", mcpRelayKeyLabel+"="+mcpRelayKeyHash(relayKey))
 		}
 		// Docker port mapping publishes hostPort -> container:8080, so force the
 		// child server to bind to 8080 inside the container.

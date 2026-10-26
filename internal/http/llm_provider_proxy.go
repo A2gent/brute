@@ -1,15 +1,18 @@
 package http
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/llm"
+	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -349,8 +352,31 @@ func (s *Server) handleLLMProxyChatCompletionsWithProvider(providerHint string, 
 		return
 	}
 
+	relay, err := s.claimMCPRelay(r)
+	if err != nil {
+		s.errorResponse(w, http.StatusForbidden, err.Error())
+		return
+	}
+	if relay != nil {
+		defer relay.close()
+		ctx, cancel := context.WithCancel(r.Context())
+		defer cancel()
+		stop := context.AfterFunc(relay.ctx, cancel)
+		defer stop()
+		// No parent project, history, settings, or native tools enter a child call.
+		workDir, err := os.MkdirTemp("", "brute-mcp-relay-*")
+		if err != nil {
+			s.errorResponse(w, http.StatusInternalServerError, "cannot isolate relay invocation")
+			return
+		}
+		defer os.RemoveAll(workDir)
+		ctx = context.WithValue(ctx, mcpRelayContextKey{}, relay)
+		ctx = context.WithValue(ctx, "session_id", relay.id)
+		r = r.WithContext(claudecli.WithMCPOnly(ctx, workDir))
+	}
+
 	var req proxyChatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<20)).Decode(&req); err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
 		return
 	}
@@ -369,6 +395,15 @@ func (s *Server) handleLLMProxyChatCompletionsWithProvider(providerHint string, 
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	if err := s.validateProxyCLIConfinement(resolvedProvider, relay != nil); err != nil {
+		s.errorResponse(w, http.StatusForbidden, err.Error())
+		return
+	}
+	if relay != nil {
+		chatReq.SessionID = relay.id
+		chatReq.SystemPrompt += "\nThis invocation belongs to a Docker child. All tools, including file and shell tools, must run through mcp__a2gent tools in that child. No native parent tools are available."
 	}
 
 	client, err := s.createLLMClient(resolvedProvider, resolvedModel, nil)

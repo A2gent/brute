@@ -129,6 +129,7 @@ func (s *Server) registerSettingsRoutes(r chi.Router) {
 func (s *Server) registerLLMProxyRoutes(r chi.Router) {
 	// OpenAI-compatible proxy to this agent's configured providers.
 	r.Route("/v1", func(r chi.Router) {
+		r.Get("/mcp-relay", s.handleMCPRelay)
 		r.Get("/models", s.handleLLMProxyModels)
 		r.Post("/chat/completions", s.handleLLMProxyChatCompletions)
 		r.Get("/providers/{providerRef}/models", s.handleLLMProxyProviderModels)

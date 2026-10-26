@@ -23,6 +23,9 @@ const (
 
 // Client implements the LLM client for LM Studio (OpenAI-compatible API)
 type Client struct {
+	// PrepareRequest optionally supplies per-invocation headers and cleanup.
+	PrepareRequest func(context.Context, *llm.ChatRequest) (http.Header, func(), error)
+
 	apiKey     string
 	baseURL    string
 	model      string
@@ -205,6 +208,12 @@ func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
 
 // Chat sends a chat request to LM Studio
 func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatResponse, error) {
+	headers, cleanup, err := c.prepareRequest(ctx, request)
+	defer cleanup()
+	if err != nil {
+		return nil, err
+	}
+
 	model := request.Model
 	if model == "" {
 		model = c.model
@@ -283,6 +292,7 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 
+	mergeRequestHeaders(httpReq.Header, headers)
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
@@ -376,6 +386,12 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 
 // ChatStream sends a streaming chat request to LM Studio.
 func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEvent func(llm.StreamEvent) error) (*llm.ChatResponse, error) {
+	headers, cleanup, err := c.prepareRequest(ctx, request)
+	defer cleanup()
+	if err != nil {
+		return nil, err
+	}
+
 	model := request.Model
 	if model == "" {
 		model = c.model
@@ -445,6 +461,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 
+	mergeRequestHeaders(httpReq.Header, headers)
 	resp, err := llm.DoStream(c.httpClient, httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)

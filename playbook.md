@@ -129,3 +129,10 @@
 - A Claude tool failure can be a topology issue: host child -> parent OpenAI proxy drops session identity, so the parent's CLI silently starts without the child's MCP bridge. Verify a real CLI -> owning-session MCP call, not just argument construction.
 - Regression fixtures for fallback chains require at least two nodes. Consume secret-bearing bootstrap environment payloads before spawning tools; keep the runtime mode in non-serialized config rather than leaving every profile's credentials in subprocess environments.
 - Verify the exact staged tree in an underscore-prefixed snapshot, not only the shared worktree: unrelated WIP can supply declarations missing from HEAD. Restore missing committed-code declarations only with explicit scope approval, without sweeping the rest of that WIP into the commit.
+
+## 2026-10-26 - Codex: Docker Claude reverse MCP relay
+- Read workspace conventions before Git discovery; the project root contains component repositories. Use the existing `nhooyr.io/websocket` dependency instead of guessing Gorilla APIs or adding a new transport library.
+- A successful WebSocket dial can return a response with a nil body. Only close an error response body when non-nil; verify the real Docker path, not just request construction.
+- Inspect storage/approval API signatures before writing fixtures (`SaveSettings`, `PendingForSession`, and `Resolve(requestID, sessionID, DecisionAllowOnce)`). Persist session metadata before another manager lookup; `Get` does not preserve unsaved mutations.
+- HTTP error envelopes are not JSON-RPC responses. Negative bridge-auth tests should inspect status with a recorder, not the helper that decodes an MCP RPC response.
+- Anchor scripted edits to the actual current source and inspect assertions before running tests. A delegate may legitimately change the shape of a concurrent implementation. Keep task-unrelated cache-key behavior out of a transport fix.

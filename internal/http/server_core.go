@@ -90,6 +90,7 @@ type Server struct {
 	approvalResolvePayloadMu sync.Mutex
 	approvalResolvePayload   map[string]approvalResolvePayload
 	mcpBridge                *mcpBridgeState
+	parentMCPKey             string
 	writeTaskSource          func(string, []byte, os.FileMode) error
 	removeTaskSource         func(string) error
 
@@ -141,6 +142,7 @@ func NewServer(
 		claudeHealthCache:      newClaudeHealthCache(),
 		approvalResolvePayload: make(map[string]approvalResolvePayload),
 		mcpBridge:              newMCPBridgeState(),
+		parentMCPKey:           consumeParentMCPKey(),
 		writeTaskSource:        os.WriteFile,
 		removeTaskSource:       os.Remove,
 	}

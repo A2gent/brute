@@ -472,6 +472,7 @@ func Load() (*Config, error) {
 	if err := applyHostLLMEnv(cfg); err != nil {
 		return nil, err
 	}
+	applyEnvModelToActiveProvider(cfg)
 
 	// Apply after file load so operators can raise the budget without editing
 	// a secrets-bearing config.json (and without fighting a stale max_steps value).
@@ -488,6 +489,29 @@ func Load() (*Config, error) {
 	cfg.CORSAllowedOrigins = normalizeCORSAllowedOriginsOrDefault(cfg.CORSAllowedOrigins)
 
 	return cfg, nil
+}
+
+// applyEnvModelToActiveProvider pins AAGENT_MODEL onto the active provider.
+// Client creation prefers the provider's built-in default model over
+// cfg.DefaultModel, so without this a child agent launched with
+// AAGENT_MODEL=gpt-6.1-sol silently ran the provider default (gpt-5.5).
+func applyEnvModelToActiveProvider(cfg *Config) {
+	model := strings.TrimSpace(os.Getenv("AAGENT_MODEL"))
+	if model == "" || os.Getenv("AAGENT_PROVIDER") == "" {
+		return
+	}
+	cfg.DefaultModel = model
+	ref := NormalizeProviderRef(os.Getenv("AAGENT_PROVIDER"))
+	if ref == "" {
+		return
+	}
+	cfg.ActiveProvider = ref
+	if cfg.Providers == nil {
+		cfg.Providers = map[string]Provider{}
+	}
+	p := cfg.Providers[ref]
+	p.Model = model
+	cfg.Providers[ref] = p
 }
 
 // EffectiveCORSAllowedOrigins returns normalized configured origins, or wildcard fallback.

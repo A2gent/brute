@@ -421,6 +421,11 @@ func TestLoadUsesEnvironmentWhenNoConfigFileExists(t *testing.T) {
 	if cfg.DefaultModel != "gpt-test" || cfg.DataPath != dataPath || cfg.LLMRetries != 5 || cfg.MaxSteps != 175 {
 		t.Fatalf("Load did not apply env overrides: %#v", cfg)
 	}
+	// Client creation reads the provider model before cfg.DefaultModel, so the
+	// env model must be pinned onto the active provider (host child agents).
+	if got := cfg.Providers[string(ProviderOpenAICodex)].Model; got != "gpt-test" {
+		t.Fatalf("openai_codex provider model = %q, want env model gpt-test", got)
+	}
 	wantOrigins := []string{"https://app.example.com", "http://localhost:5173"}
 	if !reflect.DeepEqual(cfg.CORSAllowedOrigins, wantOrigins) {
 		t.Fatalf("CORSAllowedOrigins = %#v, want %#v", cfg.CORSAllowedOrigins, wantOrigins)

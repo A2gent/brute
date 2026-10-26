@@ -125,11 +125,28 @@ func TestResolveAccessTokenPrefersEnvOverride(t *testing.T) {
 	}
 }
 
-func TestEffectiveTotalPercentUsedPrefersLimitRemaining(t *testing.T) {
-	used := EffectiveTotalPercentUsed(PlanUsage{
-		Limit:            7000,
-		Remaining:        4192,
-		TotalPercentUsed: 2.23,
+func TestEffectiveTotalPercentUsedPrefersDisplayMessage(t *testing.T) {
+	used := EffectiveTotalPercentUsed(PeriodUsage{
+		DisplayMessage: "You've used 41% of your included usage",
+		PlanUsage: PlanUsage{
+			Limit:            7000,
+			Remaining:        4192,
+			IncludedSpend:    2843,
+			TotalPercentUsed: 2.23,
+		},
+	})
+	if used < 40.9 || used > 41.1 {
+		t.Fatalf("EffectiveTotalPercentUsed = %v, want ~41 from displayMessage", used)
+	}
+}
+
+func TestEffectiveTotalPercentUsedFallsBackToLimitRemaining(t *testing.T) {
+	used := EffectiveTotalPercentUsed(PeriodUsage{
+		PlanUsage: PlanUsage{
+			Limit:            7000,
+			Remaining:        4192,
+			TotalPercentUsed: 2.23,
+		},
 	})
 	if used < 39.9 || used > 40.2 {
 		t.Fatalf("EffectiveTotalPercentUsed = %v, want ~40", used)
@@ -145,14 +162,10 @@ func TestFormatPeriodUsageSummary(t *testing.T) {
 			TotalPercentUsed: 20.25,
 		},
 	})
-	for _, want := range []string{
-		"You've used 20% of your included usage",
-		"total 80% left",
-		"auto 74% left",
-		"api 87% left",
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("summary %q does not contain %q", text, want)
-		}
+	if text != "You've used 20% of your included usage" {
+		t.Fatalf("summary = %q, want displayMessage only", text)
+	}
+	if strings.Contains(text, "auto") || strings.Contains(text, "api") {
+		t.Fatalf("summary should not include auto/api buckets: %q", text)
 	}
 }

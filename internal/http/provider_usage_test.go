@@ -511,17 +511,11 @@ func TestProviderUsageStatusForCursorReturnsPlanUsage(t *testing.T) {
 	if usage.Source != cursorUsageSource {
 		t.Fatalf("source = %q, want %q", usage.Source, cursorUsageSource)
 	}
-	if len(usage.UsageBars) != 3 {
-		t.Fatalf("usage bars length = %d, want 3: %+v", len(usage.UsageBars), usage.UsageBars)
+	if len(usage.UsageBars) != 1 {
+		t.Fatalf("usage bars length = %d, want 1: %+v", len(usage.UsageBars), usage.UsageBars)
 	}
-	if usage.UsageBars[0].Label != "Cursor total" || usage.UsageBars[0].UsedPercent != 20 || usage.UsageBars[0].LeftPercent != 80 {
-		t.Fatalf("unexpected total usage bar: %+v", usage.UsageBars[0])
-	}
-	if usage.UsageBars[1].Label != "Cursor Auto" || usage.UsageBars[1].UsedPercent != 26 || usage.UsageBars[1].LeftPercent != 74 {
-		t.Fatalf("unexpected auto usage bar: %+v", usage.UsageBars[1])
-	}
-	if usage.UsageBars[2].Label != "Cursor API" || usage.UsageBars[2].UsedPercent != 14 || usage.UsageBars[2].LeftPercent != 86 {
-		t.Fatalf("unexpected api usage bar: %+v", usage.UsageBars[2])
+	if usage.UsageBars[0].Label != "Included usage" || usage.UsageBars[0].UsedPercent != 20 || usage.UsageBars[0].LeftPercent != 80 {
+		t.Fatalf("unexpected included usage bar: %+v", usage.UsageBars[0])
 	}
 	if usage.UsageBars[0].ResetText == "" {
 		t.Fatalf("expected reset text on usage bars: %+v", usage.UsageBars)

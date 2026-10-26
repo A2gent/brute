@@ -290,6 +290,7 @@ func (c *Client) chatStreamOnce(ctx context.Context, model, prompt, resumeID str
 	var chatID string
 	var finalResult cliResult
 	var sawResult bool
+	modelCalls := map[string]struct{}{}
 	tools := newToolEmitter(onEvent)
 
 	scanner := bufio.NewScanner(stdoutPipe)
@@ -318,6 +319,9 @@ func (c *Client) chatStreamOnce(ctx context.Context, model, prompt, resumeID str
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
 			return nil, err
+		}
+		if id := strings.TrimSpace(event.ModelCallID); id != "" {
+			modelCalls[id] = struct{}{}
 		}
 		switch event.Type {
 		case "assistant":
@@ -385,6 +389,12 @@ func (c *Client) chatStreamOnce(ctx context.Context, model, prompt, resumeID str
 		return nil, fmt.Errorf("%s", normalizeCursorCLIErrorMessage(msg))
 	}
 
+	// WHY: Cursor's result usage sums every internal model call of the turn (tool
+	// loops re-send the whole prompt), so it is billing, not context occupancy.
+	// Mark occupancy unknown instead of showing e.g. 264% after compaction.
+	if len(modelCalls) > 1 {
+		usage.ContextTokens = -1
+	}
 	if onEvent != nil {
 		if err := onEvent(llm.StreamEvent{Type: llm.StreamEventUsage, Usage: usage}); err != nil {
 			return nil, err

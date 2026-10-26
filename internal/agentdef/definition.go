@@ -13,7 +13,7 @@ import (
 // Runtime types supported by the unified agent model.
 const (
 	RuntimeDocker = "docker"
-	RuntimeHost   = "host" // legacy YAML import marker; local execution is Docker.
+	RuntimeHost   = "host" // child Brute process on the host, no Docker isolation
 	RuntimeRemote = "remote"
 )
 
@@ -285,7 +285,7 @@ func (d *Definition) Validate() error {
 		return fmt.Errorf("agent.id or agent.name is required")
 	}
 	if _, ok := validRuntimeTypes[d.Runtime.Type]; !ok {
-		return fmt.Errorf("runtime.type must be docker, remote, or legacy host (got %q)", d.Runtime.Type)
+		return fmt.Errorf("runtime.type must be docker, host, or remote (got %q)", d.Runtime.Type)
 	}
 	if d.Workspace.Scope != "" {
 		if _, ok := validWorkspaceScopes[d.Workspace.Scope]; !ok {

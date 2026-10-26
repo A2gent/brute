@@ -466,3 +466,114 @@ func TestSerialQueueCanAdvanceAfterInactiveStatuses(t *testing.T) {
 		})
 	}
 }
+
+// Archive cascades to queued descendants; the queue must not run them in a tree
+// the user completed (they would run hidden from the default session list).
+func TestSerialQueueSkipsArchivedQueuedSessionsUntilUnarchived(t *testing.T) {
+	var mu sync.Mutex
+	totalRequests := 0
+
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		totalRequests++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}],\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}}\n\n")
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer provider.Close()
+
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	project := &storage.Project{ID: "project-archived-queue", Name: "Archived Queue", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatalf("failed to save project: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.DataPath = t.TempDir()
+	cfg.WorkDir = t.TempDir()
+	cfg.ActiveProvider = string(config.ProviderOpenAI)
+	cfg.DefaultModel = "test-model"
+	cfg.LLMRetries = 1
+	cfg.Providers[string(config.ProviderOpenAI)] = config.Provider{APIKey: "test-key", BaseURL: provider.URL + "/v1", Model: "test-model"}
+
+	sessionManager := session.NewManager(store)
+	server := NewServer(cfg, nil, tools.NewManager(cfg.WorkDir), sessionManager, store, speechcache.New(0), 0)
+	api := httptest.NewServer(server.router)
+	defer api.Close()
+
+	projectID := project.ID
+	archivedAt := time.Now()
+	parent, err := sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	parent.ProjectID = &projectID
+	parent.SetStatus(session.StatusCompleted)
+	parent.Metadata = storage.SetSessionMetadataTime(parent.Metadata, storage.SessionArchivedAtKey, &archivedAt)
+	if err := sessionManager.Save(parent); err != nil {
+		t.Fatalf("save parent: %v", err)
+	}
+
+	child, err := sessionManager.CreateQueued("build")
+	if err != nil {
+		t.Fatalf("create queued child: %v", err)
+	}
+	child.ProjectID = &projectID
+	child.ParentID = &parent.ID
+	child.Metadata = map[string]interface{}{
+		sessionQueueModeMetadataKey: sessionQueueModeSerial,
+		sessionQueueAutoStartKey:    true,
+	}
+	child.Metadata = storage.SetSessionMetadataTime(child.Metadata, storage.SessionArchivedAtKey, &archivedAt)
+	child.AddUserMessage("review queued before the parent was completed")
+	if err := sessionManager.Save(child); err != nil {
+		t.Fatalf("save child: %v", err)
+	}
+
+	waitStatus := func(want session.Status, within time.Duration) session.Status {
+		t.Helper()
+		var got session.Status
+		for deadline := time.Now().Add(within); ; time.Sleep(25 * time.Millisecond) {
+			sess, err := sessionManager.Get(child.ID)
+			if err != nil {
+				t.Fatalf("load child: %v", err)
+			}
+			got = sess.Status
+			if got == want || time.Now().After(deadline) {
+				return got
+			}
+		}
+	}
+
+	server.resumeSerialSessionQueues()
+	server.triggerSerialSessionQueue(project.ID)
+	time.Sleep(300 * time.Millisecond)
+	if got := waitStatus(session.StatusQueued, 0); got != session.StatusQueued {
+		t.Fatalf("archived child status = %s, want %s", got, session.StatusQueued)
+	}
+	mu.Lock()
+	if totalRequests != 0 {
+		mu.Unlock()
+		t.Fatalf("provider requests for archived child = %d, want 0", totalRequests)
+	}
+	mu.Unlock()
+
+	resp, err := http.Post(api.URL+"/sessions/"+parent.ID+"/unarchive", "application/json", nil)
+	if err != nil {
+		t.Fatalf("unarchive: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unarchive status = %d, want 200", resp.StatusCode)
+	}
+
+	if got := waitStatus(session.StatusCompleted, 3*time.Second); got != session.StatusCompleted {
+		t.Fatalf("restored child status = %s, want %s", got, session.StatusCompleted)
+	}
+}

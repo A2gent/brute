@@ -633,3 +633,20 @@ func codexTestJWT(t *testing.T, accountID string) string {
 	payload := base64.RawURLEncoding.EncodeToString(claims)
 	return header + "." + payload + ".signature"
 }
+
+func TestProviderUsageBelowMinBalance(t *testing.T) {
+	now := time.Now()
+	usage := ProviderUsageResponse{Status: providerUsageStatusAvailable, UsageBars: []ProviderUsageBar{
+		{Label: "5h", LeftPercent: 2},
+		{Label: "weekly", LeftPercent: 8, LongTerm: true},
+	}}
+	if blocked, _ := providerUsageBelowMinBalance(usage, 10, now); !blocked {
+		t.Fatal("expected weekly bar below 10% to block")
+	}
+	if blocked, _ := providerUsageBelowMinBalance(usage, 0, now); blocked {
+		t.Fatal("0 must disable the limit")
+	}
+	if blocked, _ := providerUsageBelowMinBalance(usage, 5, now); blocked {
+		t.Fatal("8% left must not block at 5% minimum")
+	}
+}

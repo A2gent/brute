@@ -43,6 +43,7 @@ type persistentProcess struct {
 	stop, done           chan struct{}
 	stopOnce, revokeOnce sync.Once
 	revoke               func()
+	guard                *processGuard
 	fingerprint          [32]byte
 	cursor               string
 	busy                 bool
@@ -192,9 +193,10 @@ func (c *Client) startPersistent(ctx context.Context, req *llm.ChatRequest, mode
 		revoke()
 		return nil, err
 	}
-	p := &persistentProcess{cmd: cmd, stdin: stdin, lines: make(chan persistentLine, 32), stop: make(chan struct{}), done: make(chan struct{}), revoke: revoke, fingerprint: fingerprint, busy: true}
+	p := &persistentProcess{cmd: cmd, stdin: stdin, lines: make(chan persistentLine, 32), stop: make(chan struct{}), done: make(chan struct{}), revoke: revoke, guard: guardProcessGroup(cmd), fingerprint: fingerprint, busy: true}
 	go func() {
 		defer close(p.done)
+		defer p.guard.release()
 		defer p.revokeOnce.Do(p.revoke)
 		defer close(p.lines)
 		scanner := bufio.NewScanner(stdout)

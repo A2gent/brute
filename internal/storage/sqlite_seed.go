@@ -28,7 +28,7 @@ const agentDefinitionSchemaYAML = agentDefinitionSchemaManagedMarker + `
 $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "https://a2gent.local/schemas/agent-definition.v1.schema.json"
 title: A2gent Agent Definition
-description: Unified reusable agent definition. Local reusable agents run in Docker; runtime.type=host is accepted only as a legacy import marker and is coerced to docker.
+description: Unified reusable agent definition. Local reusable agents run in Docker by default; runtime.type=host runs the agent as a process directly on the host (no isolation).
 type: object
 additionalProperties: false
 required:
@@ -350,6 +350,14 @@ func (s *SQLiteStore) seedSystemProjects() error {
 			continue
 		}
 		if p.id == SystemProjectAgentID && p.folder != nil {
+			// A data dir previously used by a Docker agent keeps Body at /data/body;
+			// a host-run agent cannot create that path, so re-pin it to the current data path.
+			if project.Folder != nil && s.dataPath != "/data" && isContainerDataPath(*project.Folder) {
+				if _, err := s.db.Exec(`UPDATE projects SET folder = ? WHERE id = ?`, *p.folder, p.id); err != nil {
+					return fmt.Errorf("failed to repin system project %s folder: %w", p.id, err)
+				}
+				project.Folder = p.folder
+			}
 			if projectSystemMetadataNeedsUpdate(project, p.name, p.folder, false) {
 				if _, err := s.db.Exec(`
 					UPDATE projects
@@ -375,6 +383,11 @@ func (s *SQLiteStore) seedSystemProjects() error {
 		}
 	}
 	return nil
+}
+
+func isContainerDataPath(folder string) bool {
+	folder = filepath.ToSlash(strings.TrimSpace(folder))
+	return folder == "/data" || strings.HasPrefix(folder, "/data/")
 }
 
 func subAgentMatchesSeed(existing, seed *SubAgent) bool {

@@ -11,12 +11,14 @@ const sessionActionFenceLanguage = "a2gent-session"
 
 // SuggestSessionParams describes a UI action card that lets the user branch off into a new session.
 type SuggestSessionParams struct {
-	Title     string   `json:"title"`
-	Label     string   `json:"label,omitempty"`
-	Severity  string   `json:"severity,omitempty"`
-	Files     []string `json:"files,omitempty"`
-	Prompt    string   `json:"prompt"`
-	Completed bool     `json:"completed,omitempty"`
+	Title    string   `json:"title"`
+	Label    string   `json:"label,omitempty"`
+	Severity string   `json:"severity,omitempty"`
+	Files    []string `json:"files,omitempty"`
+	Prompt   string   `json:"prompt"`
+	// AgentID optionally assigns the follow-up to a specific configured agent (unified agent ID) for specialization.
+	AgentID   string `json:"agent_id,omitempty"`
+	Completed bool   `json:"completed,omitempty"`
 }
 
 // SuggestSessionTool formats a quick session branch-off card for the Caesar UI.
@@ -120,6 +122,7 @@ func normalizeSuggestSessionParams(p SuggestSessionParams) (SuggestSessionParams
 		Label:     strings.TrimSpace(p.Label),
 		Severity:  strings.ToLower(strings.TrimSpace(p.Severity)),
 		Prompt:    strings.TrimSpace(p.Prompt),
+		AgentID:   strings.TrimSpace(p.AgentID),
 		Completed: p.Completed,
 	}
 

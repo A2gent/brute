@@ -45,6 +45,7 @@ func (c *Client) chatViaSidecar(
 	cmd := exec.CommandContext(ctx, nodePath, sidecarPath)
 	cmd.Dir = c.options.WorkDir
 	cmd.Env = optionsCommandEnv(c.options)
+	configureOwnedCommand(cmd)
 
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
@@ -64,6 +65,7 @@ func (c *Client) chatViaSidecar(
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start Claude Agent SDK sidecar: %w", err)
 	}
+	defer guardProcessGroup(cmd).release()
 	started := true
 	unsafeAfterStart := func(err error) error {
 		if err == nil || !started {

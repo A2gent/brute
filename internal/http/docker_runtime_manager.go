@@ -149,6 +149,9 @@ type dockerWorkspaceBinding struct {
 	Mount                string
 	ContainerNameBinding string
 	ProjectMounts        []dockerWorkspaceProjectMount
+	// Host marks a host-runtime agent: it works in the real project folder, so
+	// there is no /workspace path rewriting.
+	Host bool
 }
 
 type dockerWorkspaceProjectMount struct {
@@ -200,7 +203,7 @@ func (s *Server) resolveDockerWorkspaceBinding(def *agentdef.Definition, current
 	}
 	mount := normalizedDockerWorkspaceMount(def)
 	scope := strings.TrimSpace(def.Workspace.Scope)
-	binding := dockerWorkspaceBinding{Scope: scope, Mount: mount}
+	binding := dockerWorkspaceBinding{Scope: scope, Mount: mount, Host: def.Runtime.Type == agentdef.RuntimeHost}
 
 	switch scope {
 	case "", agentdef.WorkspaceScopeNone:
@@ -328,8 +331,8 @@ func dockerWorkspaceContainerPath(projectID string, usedPaths map[string]struct{
 // creating or starting one only when needed — never `docker run` per delegation
 // in the steady state.
 func (m *dockerRuntimeManager) ensureAgentContainer(ctx context.Context, def *agentdef.Definition, currentProjectID string) (*LocalDockerAgent, error) {
-	if def == nil || def.Runtime.Type != agentdef.RuntimeDocker {
-		return nil, fmt.Errorf("definition is not a docker runtime agent")
+	if def == nil || (def.Runtime.Type != agentdef.RuntimeDocker && def.Runtime.Type != agentdef.RuntimeHost) {
+		return nil, fmt.Errorf("definition is not a local runtime agent")
 	}
 
 	workspace, err := m.server.resolveDockerWorkspaceBinding(def, currentProjectID)
@@ -340,6 +343,11 @@ func (m *dockerRuntimeManager) ensureAgentContainer(ctx context.Context, def *ag
 }
 
 func (m *dockerRuntimeManager) ensureAgentContainerForWorkspace(ctx context.Context, def *agentdef.Definition, workspace dockerWorkspaceBinding) (*LocalDockerAgent, error) {
+	if def != nil && def.Runtime.Type == agentdef.RuntimeHost {
+		// Host agents share this entry point so every caller (delegation, direct
+		// sessions, start) handles both runtimes without branching.
+		return m.server.hostRuntime.ensure(ctx, def, workspace)
+	}
 	if def == nil || def.Runtime.Type != agentdef.RuntimeDocker {
 		return nil, fmt.Errorf("definition is not a docker runtime agent")
 	}
@@ -514,6 +522,12 @@ func removeDockerContainerByName(ctx context.Context, name string) {
 }
 
 func (s *Server) composeDockerAgentSystemPrompt(def *agentdef.Definition, projectID string) (string, error) {
+	return s.composeAgentSystemPrompt(def, projectID, false)
+}
+
+// composeAgentSystemPrompt builds the child agent prompt. Docker agents see the
+// project at /workspace, so host paths are rewritten; host agents keep real paths.
+func (s *Server) composeAgentSystemPrompt(def *agentdef.Definition, projectID string, hostRuntime bool) (string, error) {
 	if err := applyResolvedAgentDefinitionSystemPrompt(def); err != nil {
 		return "", err
 	}
@@ -533,6 +547,9 @@ func (s *Server) composeDockerAgentSystemPrompt(def *agentdef.Definition, projec
 	}
 	combined := strings.TrimSpace(snapshot.CombinedPrompt)
 	combined = s.appendAgentDefinitionSkillsSection(combined, def)
+	if hostRuntime {
+		return combined, nil
+	}
 	return strings.TrimSpace(s.rewriteDockerWorkspacePrompt(combined, projectID)), nil
 }
 

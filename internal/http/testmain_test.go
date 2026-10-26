@@ -8,6 +8,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	runHostAgentHelperIfRequested()
 	testDir, err := os.MkdirTemp("", "aagent-http-tests-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "create isolated HTTP test config directory: %v\n", err)

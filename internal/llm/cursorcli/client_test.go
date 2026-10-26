@@ -250,3 +250,26 @@ func TestCLIErrorMessageExtractsStreamJSONResult(t *testing.T) {
 		t.Fatalf("unexpected cli error message: %q", got)
 	}
 }
+
+func TestClientChatStreamMarksContextUnknownForMultiCallTurns(t *testing.T) {
+	tmp := t.TempDir()
+	fakeAgent := filepath.Join(tmp, "agent")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' '{\"type\":\"assistant\",\"timestamp_ms\":1,\"model_call_id\":\"a\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"x\"}]}}'\n" +
+		"printf '%s\\n' '{\"type\":\"assistant\",\"timestamp_ms\":2,\"model_call_id\":\"b\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"y\"}]}}'\n" +
+		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"xy\",\"usage\":{\"inputTokens\":700000,\"outputTokens\":1}}'\n"
+	if err := os.WriteFile(fakeAgent, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AAGENT_CURSOR_CLI_PATH", "")
+	client := NewClientWithOptions("composer-2.5", Options{Executable: fakeAgent, WorkDir: tmp})
+	resp, err := client.ChatStream(t.Context(), &llm.ChatRequest{
+		Messages: []llm.Message{{Role: "user", Content: "hi"}},
+	}, func(llm.StreamEvent) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Usage.ContextTokens != -1 {
+		t.Fatalf("expected unknown context for multi-call turn, got %+v", resp.Usage)
+	}
+}

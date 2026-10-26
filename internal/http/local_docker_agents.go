@@ -38,6 +38,7 @@ type LocalDockerAgent struct {
 	Labels         map[string]string              `json:"labels,omitempty"`
 	Managed        bool                           `json:"managed"`
 	Running        bool                           `json:"running"`
+	Runtime        string                         `json:"runtime,omitempty"` // "host" for host-runtime agents; empty means docker
 	HostPort       int                            `json:"host_port,omitempty"`
 	APIURL         string                         `json:"api_url,omitempty"`
 	Health         *LocalDockerAgentHealth        `json:"health,omitempty"`
@@ -538,6 +539,11 @@ func (s *Server) handleStopLocalDockerAgent(w http.ResponseWriter, r *http.Reque
 		s.errorResponse(w, http.StatusBadRequest, "Invalid container identifier")
 		return
 	}
+	if s.hostRuntime.stopByName(containerID) {
+		s.publishProjectResourcesChanged("agents", "")
+		s.jsonResponse(w, http.StatusOK, map[string]string{"container": containerID, "status": "stopped"})
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 	if _, err := runCommand(ctx, "docker", "stop", containerID); err != nil {
@@ -569,6 +575,11 @@ func (s *Server) handleRemoveLocalDockerAgent(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	if s.hostRuntime.stopByName(containerID) {
+		s.publishProjectResourcesChanged("agents", "")
+		s.jsonResponse(w, http.StatusOK, map[string]string{"status": "removed", "container": containerID})
+		return
+	}
 	args := []string{"rm"}
 	if req.Force {
 		args = append(args, "-f")
@@ -596,6 +607,10 @@ func (s *Server) handleLocalDockerAgentLogs(w http.ResponseWriter, r *http.Reque
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 5000 {
 			tail = parsed
 		}
+	}
+	if logs, ok := s.hostAgentLogs(containerID, tail); ok {
+		s.jsonResponse(w, http.StatusOK, map[string]interface{}{"container": containerID, "tail": tail, "logs": logs})
+		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()

@@ -560,6 +560,7 @@ type ProviderConfigResponse struct {
 	ServiceTier           string                     `json:"service_tier,omitempty"`
 	MaxTokens             int                        `json:"max_tokens,omitempty"`
 	StatefulResponses     bool                       `json:"stateful_responses,omitempty"`
+	MinBalancePercent     int                        `json:"min_balance_percent"`
 	ProxyManaged          bool                       `json:"proxy_managed"`
 	ProxyBaseURL          string                     `json:"proxy_base_url,omitempty"`
 	FallbackChain         []config.FallbackChainNode `json:"fallback_chain,omitempty"`
@@ -612,6 +613,7 @@ type UpdateProviderRequest struct {
 	ServiceTier           *string                     `json:"service_tier,omitempty"`
 	MaxTokens             *int                        `json:"max_tokens,omitempty"`
 	StatefulResponses     *bool                       `json:"stateful_responses,omitempty"`
+	MinBalancePercent     *int                        `json:"min_balance_percent,omitempty"`
 	FallbackChain         *[]config.FallbackChainNode `json:"fallback_chain,omitempty"`
 	RouterProvider        *string                     `json:"router_provider,omitempty"`
 	RouterModel           *string                     `json:"router_model,omitempty"`
@@ -647,9 +649,10 @@ type CreateClaudeInstanceRequest struct {
 }
 
 type UpdateClaudeInstanceRequest struct {
-	Name   *string `json:"name,omitempty"`
-	Model  *string `json:"model,omitempty"`
-	Active *bool   `json:"active,omitempty"`
+	Name              *string `json:"name,omitempty"`
+	Model             *string `json:"model,omitempty"`
+	Active            *bool   `json:"active,omitempty"`
+	MinBalancePercent *int    `json:"min_balance_percent,omitempty"`
 	ClaudeInstanceConfigRequest
 }
 

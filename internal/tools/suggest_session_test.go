@@ -45,6 +45,21 @@ func TestSuggestSessionTool_Execute(t *testing.T) {
 		}
 	})
 
+	t.Run("keeps trimmed agent_id", func(t *testing.T) {
+		raw, _ := json.Marshal(map[string]interface{}{
+			"title":    "Review migration",
+			"prompt":   "Review the migration.",
+			"agent_id": " reviewer ",
+		})
+		result, err := tool.Execute(context.Background(), raw)
+		if err != nil || !result.Success {
+			t.Fatalf("unexpected failure: %v %#v", err, result)
+		}
+		if !strings.Contains(result.Output, `"agent_id": "reviewer"`) {
+			t.Fatalf("expected agent_id in card, got %q", result.Output)
+		}
+	})
+
 	t.Run("requires title and prompt", func(t *testing.T) {
 		raw, _ := json.Marshal(map[string]interface{}{
 			"title":  " ",

@@ -81,6 +81,7 @@ type Server struct {
 	httpAccessLogEnabled     bool
 	httpAccessLogSeq         uint64
 	dockerRuntime            *dockerRuntimeManager
+	hostRuntime              *hostRuntimeManager
 	contextCompressor        *contextcompress.Compressor
 	claudeHealthCache        *claudeHealthCache
 	usageHistory             *providerUsageHistory
@@ -154,6 +155,7 @@ func NewServer(
 	s.installPronunciationResolver()
 	s.initApprovalBroker()
 	s.dockerRuntime = newDockerRuntimeManager(s)
+	s.hostRuntime = newHostRuntimeManager(s)
 
 	integrationtools.Register(s.toolManager, store, speechClips, sessionManager)
 
@@ -219,6 +221,10 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.runTelegramDuplexLoop(ctx)
 	go s.runA2ATunnelIfConfigured()
 	go s.dockerRuntime.runIdleReaper(ctx)
+	go func() {
+		<-ctx.Done()
+		s.hostRuntime.stopAll() // host agents are child processes; do not orphan them
+	}()
 	go s.resumeSerialSessionQueues()
 	go s.refreshCodexContextWindows(ctx)
 	go s.refreshAnthropicContextWindows(ctx)

@@ -21,6 +21,7 @@ const (
 type dockerSessionCandidate struct {
 	APIURL          string
 	AgentName       string
+	Runtime         string // "host" for host-runtime agents; empty means docker
 	ParentSessionID string
 }
 
@@ -46,7 +47,7 @@ func (s *Server) recordDockerDelegationChildSession(parentSessionID string, agen
 		"agent_id":          agent.ID,
 		"agent_name":        agent.Name,
 		"agent_api_url":     strings.TrimRight(strings.TrimSpace(agent.APIURL), "/"),
-		"agent_runtime":     "docker",
+		"agent_runtime":     agentRuntimeName(agent),
 		"created_at":        time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	if workspace != nil {
@@ -144,6 +145,7 @@ func (s *Server) dockerSessionCandidates(ctx context.Context, childSessionID str
 				addCandidate(dockerSessionCandidate{
 					APIURL:          metadataString(entry["agent_api_url"]),
 					AgentName:       metadataString(entry["agent_name"]),
+					Runtime:         metadataString(entry["agent_runtime"]),
 					ParentSessionID: parentID,
 				})
 			}
@@ -154,9 +156,10 @@ func (s *Server) dockerSessionCandidates(ctx context.Context, childSessionID str
 
 	agents, err := listLocalBruteContainers(ctx)
 	if err != nil {
+		// Docker may be absent; host agents can still own child sessions.
 		logging.Debug("Docker session proxy: failed to list local Brute containers: %v", err)
-		return candidates
 	}
+	agents = append(agents, s.hostRuntime.list()...)
 	for _, agent := range agents {
 		if !agent.Running {
 			continue
@@ -164,6 +167,7 @@ func (s *Server) dockerSessionCandidates(ctx context.Context, childSessionID str
 		addCandidate(dockerSessionCandidate{
 			APIURL:    agent.APIURL,
 			AgentName: agent.Name,
+			Runtime:   agent.Runtime,
 		})
 	}
 	return candidates
@@ -219,7 +223,7 @@ func decorateDockerSessionResponse(resp *SessionResponse, candidate dockerSessio
 	if resp.Metadata == nil {
 		resp.Metadata = map[string]interface{}{}
 	}
-	resp.Metadata["agent_runtime"] = "docker"
+	resp.Metadata["agent_runtime"] = firstNonEmptyLocalAgentString(candidate.Runtime, "docker")
 	resp.Metadata["proxied_from_docker_agent"] = true
 	if candidate.AgentName != "" {
 		resp.Metadata["docker_agent_name"] = candidate.AgentName

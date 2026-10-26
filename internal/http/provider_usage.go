@@ -155,6 +155,23 @@ func providerUsageLimitReached(usage ProviderUsageResponse, now time.Time) (bool
 	return false, ""
 }
 
+// providerUsageBelowMinBalance reports whether a long-term (weekly) bar has less than
+// minLeftPercent left, so sessions stop using the provider before it is fully drained.
+// WHY: short windows (5h) reset quickly and are already handled by the hard limit check.
+func providerUsageBelowMinBalance(usage ProviderUsageResponse, minLeftPercent int, now time.Time) (bool, string) {
+	if minLeftPercent <= 0 || usage.Status != providerUsageStatusAvailable {
+		return false, ""
+	}
+	for _, bar := range usage.UsageBars {
+		if !bar.LongTerm || bar.LeftPercent >= minLeftPercent || providerUsageResetElapsed(bar, now) {
+			continue
+		}
+		detail := fmt.Sprintf("%s %d%% left, below %d%% minimum", strings.TrimSpace(bar.Label), bar.LeftPercent, minLeftPercent)
+		return true, strings.TrimSpace(detail)
+	}
+	return false, ""
+}
+
 func providerUsageResetElapsed(bar ProviderUsageBar, now time.Time) bool {
 	if raw := strings.TrimSpace(bar.ResetsAt); raw != "" {
 		resetAt, err := time.Parse(time.RFC3339, raw)

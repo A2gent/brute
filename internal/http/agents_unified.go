@@ -29,20 +29,20 @@ const (
 
 // UnifiedAgentResponse is one entry in the unified agents list.
 type UnifiedAgentResponse struct {
-	ID          string               `json:"id"`
-	Name        string               `json:"name"`
-	Runtime     string               `json:"runtime"`
-	ProjectID   string               `json:"project_id,omitempty"`
-	Status      string               `json:"status,omitempty"`
-	AvatarURL   string               `json:"avatar_url,omitempty"`
-	Running     *bool               `json:"running,omitempty"`
-	APIURL      string               `json:"api_url,omitempty"`
+	ID           string               `json:"id"`
+	Name         string               `json:"name"`
+	Runtime      string               `json:"runtime"`
+	ProjectID    string               `json:"project_id,omitempty"`
+	Status       string               `json:"status,omitempty"`
+	AvatarURL    string               `json:"avatar_url,omitempty"`
+	Running      *bool                `json:"running,omitempty"`
+	APIURL       string               `json:"api_url,omitempty"`
 	Managed      bool                 `json:"managed,omitempty"`
 	HasContainer bool                 `json:"has_container,omitempty"`
-	Definition  *agentdef.Definition `json:"definition,omitempty"`
-	SubAgent    *SubAgentResponse    `json:"sub_agent,omitempty"`
-	DockerAgent *LocalDockerAgent    `json:"docker_agent,omitempty"`
-	Containers  []LocalDockerAgent   `json:"containers,omitempty"`
+	Definition   *agentdef.Definition `json:"definition,omitempty"`
+	SubAgent     *SubAgentResponse    `json:"sub_agent,omitempty"`
+	DockerAgent  *LocalDockerAgent    `json:"docker_agent,omitempty"`
+	Containers   []LocalDockerAgent   `json:"containers,omitempty"`
 }
 
 type importAgentYAMLRequest struct {
@@ -73,6 +73,8 @@ func (s *Server) handleListUnifiedAgents(w http.ResponseWriter, r *http.Request)
 		// Docker being unavailable should not hide saved configurations.
 		warnings = append(warnings, "docker agents unavailable: "+err.Error())
 	}
+	// Host agents are listed like running containers so status logic is shared.
+	dockerAgents = append(dockerAgents, s.hostRuntime.list()...)
 	annotateLocalDockerAgentHealth(r.Context(), dockerAgents)
 
 	containersByDefID := make(map[string][]LocalDockerAgent)
@@ -413,17 +415,7 @@ func (s *Server) importAgentYAMLDefinition(ctx context.Context, req importAgentY
 	}
 
 	switch def.Runtime.Type {
-	case agentdef.RuntimeHost:
-		def.Runtime.Type = agentdef.RuntimeDocker
-		if strings.TrimSpace(def.Runtime.Lifecycle) == "" {
-			def.Runtime.Lifecycle = "warm"
-		}
-		if strings.TrimSpace(def.Workspace.Scope) == "" {
-			def.Workspace.Scope = agentdef.WorkspaceScopeCurrentProject
-			def.Workspace.Mount = agentdef.WorkspaceMountRW
-		}
-		return s.importDockerAgentDefinition(ctx, def)
-	case agentdef.RuntimeDocker:
+	case agentdef.RuntimeHost, agentdef.RuntimeDocker:
 		return s.importDockerAgentDefinition(ctx, def)
 	default:
 		return nil, http.StatusNotImplemented, fmt.Errorf("Importing remote runtime agents is not supported yet; register them through Square/A2A instead")
@@ -529,7 +521,7 @@ func (s *Server) importDockerAgentDefinition(ctx context.Context, def *agentdef.
 	record := &storage.AgentDefinitionRecord{
 		ID:             id,
 		Name:           name,
-		Runtime:        agentdef.RuntimeDocker,
+		Runtime:        def.Runtime.Type,
 		ProjectID:      projectIDFromDefinition(def),
 		DefinitionYAML: string(raw),
 		CreatedAt:      now,
@@ -554,14 +546,14 @@ func (s *Server) importDockerAgentDefinition(ctx context.Context, def *agentdef.
 	logging.Info("Imported docker agent definition: id=%s name=%s created=%v", record.ID, record.Name, created)
 	s.publishProjectResourcesChanged("agents", "")
 	return &importAgentYAMLResult{
-		Runtime:           agentdef.RuntimeDocker,
+		Runtime:           def.Runtime.Type,
 		Created:           created,
 		ID:                record.ID,
 		Name:              record.Name,
 		ProjectID:         agentDefinitionRecordProjectID(record),
 		Definition:        def,
 		RemovedContainers: removedContainers,
-		Note:              "Container starts on first delegation and is reused warm per project binding.",
+		Note:              "The agent starts on first delegation and is reused warm per project binding.",
 	}, status, nil
 }
 
@@ -630,8 +622,8 @@ func (s *Server) handleStartUnifiedAgent(w http.ResponseWriter, r *http.Request)
 		s.errorResponse(w, status, err.Error())
 		return
 	}
-	if def.Runtime.Type != agentdef.RuntimeDocker {
-		s.errorResponse(w, http.StatusBadRequest, fmt.Sprintf("Agent %q uses runtime %q; only docker agents can be started locally", id, def.Runtime.Type))
+	if def.Runtime.Type != agentdef.RuntimeDocker && def.Runtime.Type != agentdef.RuntimeHost {
+		s.errorResponse(w, http.StatusBadRequest, fmt.Sprintf("Agent %q uses runtime %q; only docker and host agents can be started locally", id, def.Runtime.Type))
 		return
 	}
 	if strings.TrimSpace(def.Agent.ID) == "" {
@@ -739,13 +731,13 @@ func (s *Server) removeManagedContainersForAgentDefinition(ctx context.Context, 
 	if defID == "" {
 		return nil
 	}
+	removedContainers := s.hostRuntime.stopForDefinition(defID, exceptName)
 	containers, err := listLocalBruteContainers(ctx)
 	if err != nil {
 		logging.Warn("Failed to list containers for agent definition %s cleanup: %v", defID, err)
-		return nil
+		return removedContainers
 	}
 
-	removedContainers := []string{}
 	for _, container := range containers {
 		if container.Labels[dockerRuntimeAgentDefLabelKey] != defID {
 			continue

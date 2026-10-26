@@ -140,6 +140,7 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 			ServiceTier:          strings.TrimSpace(existing.ServiceTier),
 			MaxTokens:            existing.MaxTokens,
 			StatefulResponses:    s.providerStatefulResponsesForConfig(def.Type, existing.StatefulResponses),
+			MinBalancePercent:    existing.EffectiveMinBalancePercent(),
 			ProxyManaged:         proxyManaged,
 			ProxyBaseURL:         proxyBaseURL,
 			FallbackChain:        nil,
@@ -237,6 +238,10 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 
 	provider := s.config.Providers[string(providerType)]
 	provider.Name = string(providerType)
+	if req.MinBalancePercent != nil {
+		v := min(max(*req.MinBalancePercent, 0), 100)
+		provider.MinBalancePercent = &v
+	}
 	if providerType == config.ProviderFallback {
 		if req.FallbackChain != nil {
 			chain, err := s.normalizeAndValidateFallbackChain(*req.FallbackChain)

@@ -457,8 +457,11 @@ func (s *Server) fallbackNodeUsageSkipper() fallback.NodeSkipFunc {
 			return false, ""
 		}
 		usage := s.providerUsageStatus(ctx, config.ProviderType(provider))
-		reached, detail := providerUsageLimitReached(usage, time.Now())
-		return reached, detail
+		now := time.Now()
+		if reached, detail := providerUsageLimitReached(usage, now); reached {
+			return true, detail
+		}
+		return providerUsageBelowMinBalance(usage, s.config.Providers[provider].EffectiveMinBalancePercent(), now)
 	}
 }
 

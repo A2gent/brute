@@ -91,7 +91,7 @@ func (s *Server) resolveSubAgentsSection(sess *session.Session) (string, int) {
 				logging.Warn("Failed to parse stored agent definition %s for system prompt: %v", record.ID, parseErr)
 				continue
 			}
-			if def.Runtime.Type != agentdef.RuntimeDocker {
+			if def.Runtime.Type != agentdef.RuntimeDocker && def.Runtime.Type != agentdef.RuntimeHost {
 				continue
 			}
 			agentProjectID := agentDefinitionRecordProjectID(record)
@@ -187,9 +187,10 @@ func (s *Server) dockerAgentDefinitionContainersForPrompt() map[string][]LocalDo
 
 	containers, err := listLocalBruteContainers(ctx)
 	if err != nil {
+		// Docker may be absent; host agents are still delegable.
 		logging.Warn("Failed to list Docker agents for system prompt: %v", err)
-		return map[string][]LocalDockerAgent{}
 	}
+	containers = append(containers, s.hostRuntime.list()...)
 	annotateLocalDockerAgentHealth(ctx, containers)
 
 	byDefinitionID := map[string][]LocalDockerAgent{}

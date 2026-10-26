@@ -194,8 +194,8 @@ func delegationParentProjectID(ctx context.Context, s *Server) string {
 }
 
 func (s *Server) runDockerDefinitionDelegation(ctx context.Context, agentID string, def *agentdef.Definition, task string) (*tools.Result, error) {
-	if def.Runtime.Type != agentdef.RuntimeDocker {
-		return &tools.Result{Success: false, Error: fmt.Sprintf("agent %q has runtime %q; local configured agents must use docker runtime", agentID, def.Runtime.Type)}, nil
+	if def.Runtime.Type != agentdef.RuntimeDocker && def.Runtime.Type != agentdef.RuntimeHost {
+		return &tools.Result{Success: false, Error: fmt.Sprintf("agent %q has runtime %q; local configured agents must use docker or host runtime", agentID, def.Runtime.Type)}, nil
 	}
 	currentProjectID := delegationParentProjectID(ctx, s)
 
@@ -206,7 +206,7 @@ func (s *Server) runDockerDefinitionDelegation(ctx context.Context, agentID stri
 			Error:   "failed to prepare docker agent: " + err.Error(),
 			Metadata: map[string]interface{}{
 				"agent_id":      agentID,
-				"agent_runtime": agentdef.RuntimeDocker,
+				"agent_runtime": def.Runtime.Type,
 			},
 		}, nil
 	}
@@ -217,7 +217,7 @@ func (s *Server) runDockerDefinitionDelegation(ctx context.Context, agentID stri
 			Error:   "failed to prepare docker agent: " + err.Error(),
 			Metadata: map[string]interface{}{
 				"agent_id":      agentID,
-				"agent_runtime": agentdef.RuntimeDocker,
+				"agent_runtime": def.Runtime.Type,
 			},
 		}, nil
 	}
@@ -232,11 +232,12 @@ func (s *Server) runDockerAgentDelegation(ctx context.Context, agent *LocalDocke
 }
 
 func (s *Server) runDockerAgentDelegationWithWorkspace(ctx context.Context, agent *LocalDockerAgent, task string, workspace *dockerWorkspaceBinding) (*tools.Result, error) {
+	runtimeName := agentRuntimeName(agent)
 	daErrorResult := func(errMsg string, extra ...map[string]interface{}) *tools.Result {
 		metadata := map[string]interface{}{
 			"agent_name":    agent.Name,
 			"agent_id":      agent.ID,
-			"agent_runtime": "docker",
+			"agent_runtime": runtimeName,
 		}
 		if workspace != nil {
 			metadata["docker_workspace"] = dockerWorkspaceMetadata(*workspace)
@@ -331,7 +332,7 @@ func (s *Server) runDockerAgentDelegationWithWorkspace(ctx context.Context, agen
 			"child_session_id":  created.ID,
 			"parent_session_id": parentSessionID,
 			"agent_api_url":     agent.APIURL,
-			"logs_command":      fmt.Sprintf("docker logs --tail 200 %s", agent.Name),
+			"logs_command":      agentLogsCommand(agent),
 		}), nil
 	}
 	// Refresh idleness after the task so the reaper measures from completion.
@@ -348,7 +349,7 @@ func (s *Server) runDockerAgentDelegationWithWorkspace(ctx context.Context, agen
 
 	payload := map[string]interface{}{
 		"success":           true,
-		"agent_runtime":     "docker",
+		"agent_runtime":     runtimeName,
 		"agent_name":        agent.Name,
 		"child_session_id":  created.ID,
 		"parent_session_id": parentSessionID,
@@ -363,7 +364,7 @@ func (s *Server) runDockerAgentDelegationWithWorkspace(ctx context.Context, agen
 		return nil, fmt.Errorf("failed to encode tool output: %w", err)
 	}
 	metadata := map[string]interface{}{
-		"agent_runtime":     "docker",
+		"agent_runtime":     runtimeName,
 		"agent_name":        agent.Name,
 		"child_session_id":  created.ID,
 		"parent_session_id": parentSessionID,
@@ -377,6 +378,20 @@ func (s *Server) runDockerAgentDelegationWithWorkspace(ctx context.Context, agen
 		Output:   string(body),
 		Metadata: metadata,
 	}, nil
+}
+
+func agentLogsCommand(agent *LocalDockerAgent) string {
+	if agent.Runtime == agentdef.RuntimeHost {
+		return fmt.Sprintf("tail -n 200 ~/.a2gent-data/local-agents/%s/agent.log", agent.Name)
+	}
+	return fmt.Sprintf("docker logs --tail 200 %s", agent.Name)
+}
+
+func agentRuntimeName(agent *LocalDockerAgent) string {
+	if agent != nil && agent.Runtime != "" {
+		return agent.Runtime
+	}
+	return agentdef.RuntimeDocker
 }
 
 func dockerDelegationLLMMetadata(agent *LocalDockerAgent) (string, string) {
@@ -409,8 +424,8 @@ type dockerWorkspacePathMapping struct {
 
 func (s *Server) rewriteDockerDelegationTask(task string, workspace dockerWorkspaceBinding) string {
 	task = strings.TrimSpace(task)
-	if task == "" {
-		return ""
+	if task == "" || workspace.Host {
+		return task // host agents use real paths; nothing to rewrite
 	}
 
 	mappings := s.dockerWorkspacePathMappings(workspace)
@@ -728,7 +743,7 @@ func (s *Server) reportDockerDelegationToolProgress(ctx context.Context, agent *
 		return
 	}
 	metadata := map[string]interface{}{
-		"agent_runtime":    "docker",
+		"agent_runtime":    agentRuntimeName(agent),
 		"agent_name":       agent.Name,
 		"child_session_id": childSessionID,
 		"progress_pending": true,

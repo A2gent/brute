@@ -237,6 +237,10 @@ func (s *Server) setSessionArchived(w http.ResponseWriter, ctx context.Context, 
 			s.errorResponse(w, http.StatusInternalServerError, "Failed to update session archive state: "+saveErr.Error())
 			return
 		}
+		if !archived && sess.Status == session.StatusQueued {
+			// The queue skipped this session while it was archived.
+			s.triggerSerialSessionQueueForSession(sess)
+		}
 	}
 
 	s.jsonResponse(w, http.StatusOK, s.sessionToResponse(root))

@@ -8,3 +8,9 @@ func killPersistentCommand(cmd *exec.Cmd) {
 		_ = cmd.Process.Kill()
 	}
 }
+
+type processGuard struct{}
+
+func guardProcessGroup(cmd *exec.Cmd) *processGuard { return nil }
+func (g *processGuard) release()                    {}
+func configureOwnedCommand(cmd *exec.Cmd)           {}

@@ -420,11 +420,18 @@ func unifiedAgentResponseFromDiscoveredDefinition(item discoveredAgentDefinition
 	entry := UnifiedAgentResponse{
 		ID:         item.ID,
 		Name:       item.Name,
-		Runtime:    agentdef.RuntimeDocker,
+		Runtime:    discoveredRuntimeType(item.Definition),
 		ProjectID:  item.ProjectID,
 		Managed:    true,
 		Status:     agentDefinitionStatusNotCreated,
 		Definition: item.Definition,
 	}
 	return entry
+}
+
+func discoveredRuntimeType(def *agentdef.Definition) string {
+	if def != nil && def.Runtime.Type == agentdef.RuntimeHost {
+		return agentdef.RuntimeHost
+	}
+	return agentdef.RuntimeDocker
 }

@@ -92,7 +92,7 @@ func (s *Server) resumeSerialSessionQueues() {
 	}
 	scopes := make(map[string]struct{})
 	for _, sess := range sessions {
-		if sess == nil || sess.Status != session.StatusQueued || !sessionIsSerialQueuedAutoRun(sess) {
+		if sess == nil || sess.Status != session.StatusQueued || !sessionIsSerialQueuedAutoRun(sess) || sessionArchivedAt(sess) != nil {
 			continue
 		}
 		scopes[serialQueueScopeForSession(sess)] = struct{}{}
@@ -202,6 +202,11 @@ func (s *Server) serialQueueCandidates(scope string) ([]*session.Session, error)
 		if sessionIsQueuePaused(sess) || sessionPromptEditing(sess) {
 			continue
 		}
+		// Archive cascades to queued descendants: a completed tree stays dormant
+		// until unarchived, instead of running hidden from the session list.
+		if sessionArchivedAt(sess) != nil {
+			continue
+		}
 		if !sessionIsSerialQueuedAutoRun(sess) {
 			continue
 		}
@@ -238,7 +243,7 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 		logging.Warn("Serial session queue could not load session %s: %v", sessionID, err)
 		return true
 	}
-	if sess.Status != session.StatusQueued || !sessionIsSerialQueuedAutoRun(sess) || sessionIsQueuePaused(sess) || sessionPromptEditing(sess) {
+	if sess.Status != session.StatusQueued || !sessionIsSerialQueuedAutoRun(sess) || sessionIsQueuePaused(sess) || sessionPromptEditing(sess) || sessionArchivedAt(sess) != nil {
 		return true
 	}
 

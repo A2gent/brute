@@ -190,7 +190,7 @@ func TestLocalDockerCreateRequestBaseFromDefinitionCarriesPublishMetadata(t *tes
 	}
 }
 
-func TestImportHostAgentYAMLMigratesToDockerDefinition(t *testing.T) {
+func TestImportHostAgentYAMLKeepsHostRuntime(t *testing.T) {
 	server, store := newUnifiedAgentsTestServer(t)
 
 	yamlDef := `
@@ -225,18 +225,15 @@ instructions:
 	if err != nil {
 		t.Fatalf("imported docker definition not found: %v", err)
 	}
-	if record.Runtime != agentdef.RuntimeDocker || record.Name != "Imported Reviewer" {
-		t.Fatalf("legacy host import should store a docker definition: %+v", record)
+	if record.Runtime != agentdef.RuntimeHost || record.Name != "Imported Reviewer" {
+		t.Fatalf("host import should store a host definition: %+v", record)
 	}
 	def, err := agentdef.ParseYAML([]byte(record.DefinitionYAML))
 	if err != nil {
 		t.Fatalf("stored definition YAML invalid: %v", err)
 	}
-	if def.Runtime.Type != agentdef.RuntimeDocker {
-		t.Fatalf("legacy host import should be coerced to docker: %+v", def.Runtime)
-	}
-	if def.Workspace.Scope != agentdef.WorkspaceScopeCurrentProject || def.Workspace.Mount != agentdef.WorkspaceMountRW {
-		t.Fatalf("legacy host import should preserve current-project rw semantics: %+v", def.Workspace)
+	if def.Runtime.Type != agentdef.RuntimeHost {
+		t.Fatalf("host import must not be coerced to docker: %+v", def.Runtime)
 	}
 	if def.LLM.Provider != "openai" || def.LLM.Model != "gpt-5.5" {
 		t.Fatalf("imported definition lost LLM fields: %+v", def.LLM)

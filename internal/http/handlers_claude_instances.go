@@ -258,6 +258,7 @@ func (s *Server) claudeInstanceResponse(ref string, provider config.Provider) Pr
 		BaseURL:             "",
 		Model:               model,
 		StatefulResponses:   s.providerSessionPersistenceForRef(ref),
+		MinBalancePercent:   provider.EffectiveMinBalancePercent(),
 		BinaryPath:          strings.TrimSpace(provider.BinaryPath),
 		ConfigDir:           strings.TrimSpace(provider.ClaudeConfigDir),
 		HomePath:            strings.TrimSpace(provider.HomePath),
@@ -356,6 +357,10 @@ func (s *Server) handleUpdateClaudeInstance(w http.ResponseWriter, r *http.Reque
 	}
 	if req.Model != nil {
 		provider.Model = strings.TrimSpace(*req.Model)
+	}
+	if req.MinBalancePercent != nil {
+		v := min(max(*req.MinBalancePercent, 0), 100)
+		provider.MinBalancePercent = &v
 	}
 	if req.Active != nil && *req.Active {
 		s.config.ActiveProvider = providerRef

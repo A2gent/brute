@@ -184,6 +184,7 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	cmd := exec.CommandContext(ctx, claudePath, args...)
 	cmd.Dir = c.options.WorkDir
 	cmd.Env = c.commandEnv()
+	configureOwnedCommand(cmd)
 
 	var stdout limitedBuffer
 	var stderr limitedBuffer
@@ -195,6 +196,7 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start Claude CLI: %w", err)
 	}
+	defer guardProcessGroup(cmd).release()
 	if err := cmd.Wait(); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
@@ -292,6 +294,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	cmd := exec.CommandContext(ctx, claudePath, args...)
 	cmd.Dir = c.options.WorkDir
 	cmd.Env = c.commandEnv()
+	configureOwnedCommand(cmd)
 	if stdinPayload != nil {
 		cmd.Stdin = bytes.NewReader(stdinPayload)
 	}
@@ -312,6 +315,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start Claude CLI: %w", err)
 	}
+	defer guardProcessGroup(cmd).release()
 	started := true
 	unsafeAfterStart := func(err error) error {
 		if err == nil || !started {

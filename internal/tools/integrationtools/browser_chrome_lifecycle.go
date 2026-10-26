@@ -148,6 +148,12 @@ func (t *BrowserChromeTool) ensureBrowserAndPageAttemptForSession(probeCtx, conn
 		return err
 	}
 
+	// Development sites often use self-signed/private-CA certificates. Configure
+	// every connection, including already-running agent Chrome, without changing OS trust.
+	if err := t.browser.Context(probeCtx).IgnoreCertErrors(true); err != nil {
+		return fmt.Errorf("failed to configure Chrome certificate error handling: %w", err)
+	}
+
 	if sessionID != "" {
 		if targetID := t.sessionTargets[sessionID]; targetID != "" {
 			if _, err := (proto.TargetGetTargetInfo{TargetID: targetID}).Call(t.browser.Context(probeCtx)); err == nil {

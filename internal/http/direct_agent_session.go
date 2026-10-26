@@ -145,10 +145,20 @@ func directAgentReplyMetadata(resp ChatResponse) map[string]interface{} {
 			continue
 		}
 		// Only the latest reply: older assistant messages belong to previous turns.
-		if turnID, ok := msg.Metadata["runtime_turn_id"].(string); ok && strings.TrimSpace(turnID) != "" {
-			return map[string]interface{}{"runtime_turn_id": turnID}
+		turnID, ok := msg.Metadata["runtime_turn_id"].(string)
+		if !ok || strings.TrimSpace(turnID) == "" {
+			return nil
 		}
-		return nil
+		// WHY: runtime_tools/reasoning/cost/warnings describe the steps between the
+		// user request and the answer; without them a reloaded parent session shows
+		// only the final text. Copy every runtime_* key of the child reply.
+		meta := map[string]interface{}{}
+		for k, v := range msg.Metadata {
+			if strings.HasPrefix(k, "runtime_") {
+				meta[k] = v
+			}
+		}
+		return meta
 	}
 	return nil
 }

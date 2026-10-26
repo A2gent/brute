@@ -62,9 +62,11 @@ type openAIStreamResponse struct {
 		} `json:"error,omitempty"`
 	} `json:"choices"`
 	Error *struct {
-		Message string `json:"message"`
-		Type    string `json:"type"`
-		Code    any    `json:"code"`
+		Message        string `json:"message"`
+		Type           string `json:"type"`
+		Code           any    `json:"code"`
+		UnsafeForRetry bool   `json:"unsafe_for_retry,omitempty"`
+		NonRetryable   bool   `json:"non_retryable,omitempty"`
 	} `json:"error,omitempty"`
 	Usage struct {
 		PromptTokens        int `json:"prompt_tokens"`

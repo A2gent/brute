@@ -48,6 +48,17 @@ func (s *Server) handleLLMProxyChatCompletionsStream(
 		return nil
 	}
 
+	writeError := func(err error) {
+		// Headers are already flushed, so preserve failures in-band rather than
+		// letting a bare [DONE] look like a successful empty model response.
+		payload, _ := json.Marshal(map[string]any{"error": map[string]any{
+			"message": err.Error(), "unsafe_for_retry": llm.IsUnsafeForRetry(err),
+			"non_retryable": llm.IsNonRetryable(err),
+		}})
+		_, _ = w.Write([]byte("data: " + string(payload) + "\n\ndata: [DONE]\n\n"))
+		flusher.Flush()
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -71,8 +82,7 @@ func (s *Server) handleLLMProxyChatCompletionsStream(
 	if !supportsStreaming {
 		resp, err := client.Chat(r.Context(), chatReq)
 		if err != nil {
-			_, _ = w.Write([]byte("data: [DONE]\n\n"))
-			flusher.Flush()
+			writeError(err)
 			return
 		}
 		provenance = resp.Provenance
@@ -188,8 +198,7 @@ func (s *Server) handleLLMProxyChatCompletionsStream(
 		return nil
 	})
 	if streamErr != nil {
-		_, _ = w.Write([]byte("data: [DONE]\n\n"))
-		flusher.Flush()
+		writeError(streamErr)
 		return
 	}
 

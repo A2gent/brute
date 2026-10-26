@@ -337,6 +337,13 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 			return result, llm.UnsafeForRetry(retryErr)
 		}
 		logging.LogResponse(0, 0, 0, err)
+		// Preserve permanent request/auth failures even when a proxy adds a
+		// "stream error" prefix that the retry layer normally treats as transient.
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 &&
+			resp.StatusCode != http.StatusRequestTimeout && resp.StatusCode != http.StatusConflict &&
+			resp.StatusCode != http.StatusTooManyRequests {
+			return nil, llm.NonRetryable(err)
+		}
 		return nil, err
 	}
 

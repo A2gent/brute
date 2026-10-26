@@ -33,3 +33,23 @@ func IsUnsafeForRetry(err error) bool {
 	var marker *unsafeForRetryError
 	return errors.As(err, &marker)
 }
+
+// nonRetryableError forbids repeating a request, but unlike unsafeForRetryError
+// does not imply side effects that would make switching providers unsafe.
+type nonRetryableError struct{ error }
+
+func (e *nonRetryableError) Unwrap() error { return e.error }
+
+// NonRetryable preserves an error while forbidding retries on the same provider.
+func NonRetryable(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &nonRetryableError{err}
+}
+
+// IsNonRetryable reports whether same-provider retries were explicitly forbidden.
+func IsNonRetryable(err error) bool {
+	var marker *nonRetryableError
+	return errors.As(err, &marker)
+}

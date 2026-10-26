@@ -73,7 +73,7 @@ func TestProviderUsageStatusForCursorUsesStoredOAuth(t *testing.T) {
 	if usage.Status != providerUsageStatusAvailable {
 		t.Fatalf("status = %q, want %q: %+v", usage.Status, providerUsageStatusAvailable, usage)
 	}
-	if !strings.Contains(usage.UsageLeftText, "10% of your included usage") {
+	if usage.UsageLeftText != "10% of included usage used" {
 		t.Fatalf("unexpected usage text: %q", usage.UsageLeftText)
 	}
 }

@@ -520,12 +520,12 @@ func TestProviderUsageStatusForCursorReturnsPlanUsage(t *testing.T) {
 	if usage.UsageBars[0].ResetText == "" {
 		t.Fatalf("expected reset text on usage bars: %+v", usage.UsageBars)
 	}
-	if !strings.Contains(usage.UsageLeftText, "You've used 20% of your included usage") {
-		t.Fatalf("expected usage summary in %q", usage.UsageLeftText)
+	if usage.UsageLeftText != "20% of included usage used" {
+		t.Fatalf("expected usage summary %q, got %q", "20% of included usage used", usage.UsageLeftText)
 	}
 }
 
-func TestProviderUsageStatusForCursorUsesLimitRemainingForTotalBar(t *testing.T) {
+func TestProviderUsageStatusForCursorUsesTotalPercentUsedForBar(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
@@ -550,8 +550,11 @@ func TestProviderUsageStatusForCursorUsesLimitRemainingForTotalBar(t *testing.T)
 	if usage.Status != providerUsageStatusAvailable {
 		t.Fatalf("status = %q, want %q: %+v", usage.Status, providerUsageStatusAvailable, usage)
 	}
-	if usage.UsageBars[0].UsedPercent != 40 || usage.UsageBars[0].LeftPercent != 60 {
+	if usage.UsageBars[0].UsedPercent != 2 || usage.UsageBars[0].LeftPercent != 98 {
 		t.Fatalf("unexpected total usage bar: %+v", usage.UsageBars[0])
+	}
+	if usage.UsageLeftText != "2% of included usage used" {
+		t.Fatalf("usage summary = %q, want totalPercentUsed summary", usage.UsageLeftText)
 	}
 }
 

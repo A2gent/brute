@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -236,33 +235,13 @@ func FetchPeriodUsage(ctx context.Context, client *http.Client, usageURL, access
 	return payload, nil
 }
 
-// displayMessageUsedPercentRE matches Cursor dashboard copy such as
-// "You've used 41% of your included usage".
-var displayMessageUsedPercentRE = regexp.MustCompile(`(?i)you'?ve used (\d+(?:\.\d+)?)% of your included usage`)
-
-// UsedPercentFromDisplayMessage parses the primary included-usage percent from Cursor's displayMessage.
-func UsedPercentFromDisplayMessage(message string) (float64, bool) {
-	message = strings.TrimSpace(message)
-	if message == "" {
-		return 0, false
-	}
-	match := displayMessageUsedPercentRE.FindStringSubmatch(message)
-	if len(match) < 2 {
-		return 0, false
-	}
-	parsed, err := strconv.ParseFloat(match[1], 64)
-	if err != nil {
-		return 0, false
-	}
-	return clampCursorPercent(parsed), true
-}
-
-// EffectiveTotalPercentUsed matches Cursor dashboard included usage for progress bars.
+// EffectiveTotalPercentUsed is the plan-wide usage percent for provider UI (planUsage.totalPercentUsed).
 func EffectiveTotalPercentUsed(usage PeriodUsage) float64 {
-	if used, ok := UsedPercentFromDisplayMessage(usage.DisplayMessage); ok {
-		return used
+	plan := usage.PlanUsage
+	if plan.TotalPercentUsed > 0 {
+		return clampCursorPercent(plan.TotalPercentUsed)
 	}
-	return effectiveTotalPercentUsedFromPlan(usage.PlanUsage)
+	return effectiveTotalPercentUsedFromPlan(plan)
 }
 
 func effectiveTotalPercentUsedFromPlan(plan PlanUsage) float64 {
@@ -275,18 +254,18 @@ func effectiveTotalPercentUsedFromPlan(plan PlanUsage) float64 {
 			return clampCursorPercent(float64(plan.IncludedSpend) / float64(plan.Limit) * 100)
 		}
 	}
-	return plan.TotalPercentUsed
+	return clampCursorPercent(plan.TotalPercentUsed)
 }
 
 // FormatPeriodUsageSummary renders a compact usage-left summary for provider cards.
 func FormatPeriodUsageSummary(usage PeriodUsage) string {
-	if msg := strings.TrimSpace(usage.DisplayMessage); msg != "" {
-		return msg
-	}
 	totalUsed := EffectiveTotalPercentUsed(usage)
 	if totalUsed > 0 {
-		left := int(math.Max(0, math.Round(100-clampCursorPercent(totalUsed))))
-		return fmt.Sprintf("%d%% of included usage left", left)
+		used := int(math.Round(clampCursorPercent(totalUsed)))
+		return fmt.Sprintf("%d%% of included usage used", used)
+	}
+	if msg := strings.TrimSpace(usage.DisplayMessage); msg != "" {
+		return msg
 	}
 	return "Cursor usage endpoint responded but did not include plan usage details."
 }

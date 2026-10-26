@@ -127,6 +127,26 @@ func (s *Server) runDirectAgentSession(ctx context.Context, sess *session.Sessio
 	return postLocalDockerAgentChatStream(ctx, client, baseURL+"/sessions/"+childID+"/chat/stream", ChatRequest{Message: prompt}, onEvent)
 }
 
+// directAgentReplyMetadata links the parent's copy of the agent reply to the
+// child's runtime turn. WHY: the UI already rendered that turn live from the
+// forwarded child events (keyed by turn_id); a persisted reply without the same
+// runtime_turn_id looks like a different message, so the live bubble stayed as
+// "in flight" next to it and the answer showed twice until reload.
+func directAgentReplyMetadata(resp ChatResponse) map[string]interface{} {
+	for i := len(resp.Messages) - 1; i >= 0; i-- {
+		msg := resp.Messages[i]
+		if msg.Role != "assistant" {
+			continue
+		}
+		// Only the latest reply: older assistant messages belong to previous turns.
+		if turnID, ok := msg.Metadata["runtime_turn_id"].(string); ok && strings.TrimSpace(turnID) != "" {
+			return map[string]interface{}{"runtime_turn_id": turnID}
+		}
+		return nil
+	}
+	return nil
+}
+
 // reusableDirectAgentChild returns the agent session used by the previous turn.
 // WHY: a fresh child per turn dropped the conversation context and re-ran the
 // automatic router on every follow-up, so models switched without the user

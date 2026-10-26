@@ -18,6 +18,7 @@ type sessionRunResult struct {
 	Content      string
 	Usage        llm.TokenUsage
 	DirectAgent  bool
+	ReplyMeta    map[string]interface{}
 	Status       string
 	ProviderType config.ProviderType
 }
@@ -52,8 +53,15 @@ func (s *Server) runSessionWithoutStreaming(ctx context.Context, sess *session.S
 	publishEvent := func(event ChatStreamEvent) { stream.Write(event) }
 	if s.hasDirectAgentTarget(sess) {
 		result.DirectAgent = true
-		chatResp, err := s.runDirectAgentSession(ctx, sess, userMessage, publishEvent)
+		// The child's done/error carry the child's transcript; the parent publishes
+		// its own terminal event below (same filter as the streaming chat path).
+		chatResp, err := s.runDirectAgentSession(ctx, sess, userMessage, func(event ChatStreamEvent) {
+			if event.Type != "done" && event.Type != "error" {
+				publishEvent(event)
+			}
+		})
 		result.Content = chatResp.Content
+		result.ReplyMeta = directAgentReplyMetadata(chatResp)
 		result.Usage = llm.TokenUsage{InputTokens: chatResp.Usage.InputTokens, OutputTokens: chatResp.Usage.OutputTokens}
 		result.Status = chatResp.Status
 		return result, err
@@ -145,7 +153,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 	}
 
 	if result.DirectAgent {
-		sess.AddAssistantMessage(result.Content, nil)
+		sess.AddAssistantMessageWithMetadata(result.Content, nil, result.ReplyMeta)
 		sess.SetStatus(session.StatusCompleted)
 		if result.Status == string(session.StatusInputRequired) || result.Status == string(session.StatusPaused) || result.Status == string(session.StatusWaitingExternal) {
 			sess.SetStatus(session.Status(result.Status))

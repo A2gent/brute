@@ -61,6 +61,8 @@ type Server struct {
 	liveTurnEvents           map[string][]*bufferedStreamEvent // guarded by sessionEventsMu
 	sessionCatalogMu         sync.Mutex
 	sessionCatalog           *sessionCatalogHub
+	catalogUpdateMu          sync.Mutex
+	catalogUpdates           map[string]*catalogUpdateState // session_updated throttle windows; guarded by catalogUpdateMu
 	serialQueueMu            sync.Mutex
 	serialQueueWorkers       map[string]int      // scope -> live worker count; guarded by serialQueueMu
 	serialQueueClaimed       map[string]struct{} // session IDs picked by a worker but not yet finished; guarded by serialQueueMu

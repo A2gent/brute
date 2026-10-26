@@ -463,9 +463,9 @@ func (s *Server) fallbackNodeUsageSkipper() fallback.NodeSkipFunc {
 }
 
 func (s *Server) createParentProxyLLMClient(providerType config.ProviderType, modelName string) (llm.Client, bool) {
-	if config.IsClassifierProvider(string(providerType)) {
-		// WHY: Jev talks System One, not OpenAI chat completions. Sending it
-		// through the parent proxy would break routing classification.
+	if config.IsClassifierProvider(string(providerType)) || s.useLocalHostLLM(string(providerType)) {
+		// Classifiers are not OpenAI-compatible; host Claude needs the child's
+		// session-local MCP bridge, including when selected by a fallback chain.
 		return nil, false
 	}
 	parentProxyURL := strings.TrimSpace(os.Getenv("A2GENT_PARENT_PROXY_URL"))
@@ -623,7 +623,7 @@ func (s *Server) fallbackNodesForProvider(providerRef config.ProviderType) ([]co
 		return s.normalizeAndValidateFallbackChain(legacyProvidersToFallbackNodes(provider.FallbackChain, s.resolveModelForProvider))
 	}
 	if config.IsFallbackAggregateRef(ref) {
-		if s.parentProxyAvailable() {
+		if s.parentProxyAvailable() && !s.useLocalHostLLM(ref) {
 			return nil, nil
 		}
 		aggregate, _ := s.findFallbackAggregateByRef(ref)
@@ -671,7 +671,7 @@ func (s *Server) providerRefExists(ref string) bool {
 		return true
 	}
 	if config.IsFallbackAggregateRef(normalized) {
-		if s.parentProxyAvailable() {
+		if s.parentProxyAvailable() && !s.useLocalHostLLM(normalized) {
 			return true
 		}
 		aggregate, _ := s.findFallbackAggregateByRef(normalized)
@@ -701,7 +701,7 @@ func (s *Server) validateProviderRefForExecution(ref string) error {
 		return nil
 	}
 	if config.IsFallbackAggregateRef(normalized) {
-		if s.parentProxyAvailable() {
+		if s.parentProxyAvailable() && !s.useLocalHostLLM(normalized) {
 			return nil
 		}
 		_, err := s.fallbackNodesForProvider(ptype)
@@ -713,10 +713,13 @@ func (s *Server) validateProviderRefForExecution(ref string) error {
 func (s *Server) providerConfiguredForUse(providerType config.ProviderType) bool {
 	ref := config.NormalizeProviderRef(string(providerType))
 	if config.IsFallbackAggregateRef(ref) {
+		if s.useLocalHostLLM(ref) {
+			return s.providerRefExists(ref)
+		}
 		return s.parentProxyAvailable()
 	}
 	if config.IsClaudeProviderRef(ref) {
-		if s.parentProxyAvailable() {
+		if s.parentProxyAvailable() && !s.useLocalHostLLM(ref) {
 			return true
 		}
 		opts := s.claudecliOptionsForRef(ref)

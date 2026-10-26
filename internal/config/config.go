@@ -10,6 +10,7 @@ import (
 
 // Config holds the application configuration
 type Config struct {
+	HostClaudeCLI          bool                `json:"-"` // Host children execute Claude beside their session MCP server.
 	ProviderTransitionMode string              `json:"provider_transition_mode,omitempty"`
 	DefaultModel           string              `json:"default_model"`
 	ActiveProvider         string              `json:"active_provider"` // Provider reference: built-in provider or named fallback aggregate
@@ -468,6 +469,9 @@ func Load() (*Config, error) {
 	}
 
 	applyAutoRouterEnv(cfg)
+	if err := applyHostLLMEnv(cfg); err != nil {
+		return nil, err
+	}
 
 	// Apply after file load so operators can raise the budget without editing
 	// a secrets-bearing config.json (and without fighting a stale max_steps value).

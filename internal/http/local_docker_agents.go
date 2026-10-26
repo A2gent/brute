@@ -378,21 +378,7 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 			if provider == string(config.ProviderAnthropic) {
 				args = appendClaudeRateLimitCacheDockerArgs(args)
 			}
-			args = append(args, s.autoRouterDockerEnvArgs(provider)...)
-			args = append(args,
-				"--env", "AAGENT_PROVIDER="+provider,
-				"--env", "A2GENT_PARENT_PROXY_URL="+proxyBaseURL,
-				"--env", "LM_STUDIO_BASE_URL="+proxyBaseURL+"/providers/lmstudio",
-				"--env", "OPENAI_API_KEY=a2gent-proxy",
-				"--env", "OPENAI_BASE_URL="+proxyBaseURL+"/providers/openai",
-				"--env", "KIMI_API_KEY=a2gent-proxy",
-				"--env", "KIMI_BASE_URL="+proxyBaseURL+"/providers/kimi",
-				"--env", "GOOGLE_API_KEY=a2gent-proxy",
-				"--env", "GOOGLE_BASE_URL="+proxyBaseURL+"/providers/google",
-				"--env", "OPENROUTER_API_KEY=a2gent-proxy",
-				"--env", "OPENROUTER_BASE_URL="+proxyBaseURL+"/providers/openrouter",
-				"--env", "ANTHROPIC_API_KEY=a2gent-proxy",
-			)
+			args = append(args, s.parentProxyEnvArgs(provider, proxyBaseURL)...)
 		}
 		// Docker port mapping publishes hostPort -> container:8080, so force the
 		// child server to bind to 8080 inside the container.

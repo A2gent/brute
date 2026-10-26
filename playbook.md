@@ -123,3 +123,9 @@
 - Before delegating to local Docker agents, confirm the configured Docker/OrbStack socket is running; if unavailable, continue with explicit local review and report the limitation.
 - Claude CLI `result.usage` aggregates internal turns, not current context. Normalize uncached input + cache reads + cache writes, but track the latest assistant/message-start input separately for context occupancy; cache writes are not cache hits.
 - Full-suite Go checks can exceed the parallel tool's 90-second step cap even after a fast previous run. Launch them in the background with log and exit-code files, then poll completion instead of losing the final verification to the wrapper timeout.
+
+## 2026-10-26 - Codex: host Claude MCP diagnosis
+- Read `AGENTS.md` before Git/build probes: the workspace root is not a repository, and Brute uses `justfile`, not `Makefile`. Discover filenames before bounded reads; indexed searches need a directory root, not a single-file path.
+- A Claude tool failure can be a topology issue: host child -> parent OpenAI proxy drops session identity, so the parent's CLI silently starts without the child's MCP bridge. Verify a real CLI -> owning-session MCP call, not just argument construction.
+- Regression fixtures for fallback chains require at least two nodes. Consume secret-bearing bootstrap environment payloads before spawning tools; keep the runtime mode in non-serialized config rather than leaving every profile's credentials in subprocess environments.
+- Verify the exact staged tree in an underscore-prefixed snapshot, not only the shared worktree: unrelated WIP can supply declarations missing from HEAD. Restore missing committed-code declarations only with explicit scope approval, without sweeping the rest of that WIP into the commit.

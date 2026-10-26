@@ -596,6 +596,8 @@ type ProviderUsageBar struct {
 	// budgets such as prepaid credits.
 	ResetsAt      string `json:"resets_at,omitempty"`
 	WindowSeconds int64  `json:"window_seconds,omitempty"`
+	// LongTerm marks weekly/billing-cycle budgets so clients style them apart from short-term windows.
+	LongTerm bool `json:"long_term,omitempty"`
 }
 
 type UpdateProviderRequest struct {

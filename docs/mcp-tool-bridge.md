@@ -2,6 +2,36 @@
 
 Design for exposing A2gent's declared tools (`question`, image generation, integrations) to the Anthropic provider while keeping Claude Code CLI as the executor. Verified against **Claude Code CLI 2.1.217**.
 
+## Host-runtime agents and the parent proxy
+
+Host-runtime Claude agents must execute the CLI in the child Brute process, next to
+that child's session-scoped MCP server. The parent's OpenAI-compatible proxy does
+not carry the child session or MCP configuration: routing Claude through it produces
+a CLI with native tools only, even when the prompt lists Brute tools.
+
+`A2GENT_HOST_LLM_CONFIG` transfers Claude CLI profiles and fallback definitions to
+host children (the parent proxy URL is loopback for this runtime). Claude and
+fallback selection then run locally; API-based providers still use the parent
+proxy. This preserves the selected Claude identity and lets the MCP hook mint a
+token for the owning child session. The payload is consumed and removed from the
+environment before tools or CLI subprocesses start, because it can contain profile
+secrets. Host Claude authentication is inherited, not replaced with `a2gent-proxy`.
+
+Docker children retain the parent-proxy route because the CLI may not exist in the
+container. Session-aware MCP relay for that route is separate work; forwarding only
+a session ID would incorrectly bind tools to the parent's session manager.
+
+Regression coverage: `internal/http/host_llm_runtime_test.go` and
+`internal/config/host_llm_env_test.go`. To verify an actual CLI -> HTTP MCP -> child
+tool call in both spawn and persistent modes (uses subscription quota):
+
+```sh
+AAGENT_CLAUDE_MCP_LIVE=1 go test ./internal/http -run '^TestLiveHostClaudeMCP$' -v -count=1
+```
+
+Verified with Claude Code CLI 2.1.310. Existing host agent processes must be restarted
+after updating Brute so they receive the new configuration.
+
 ## Problem
 
 For the `anthropic` provider Brute does not call the Messages API. `config.IsClaudeProviderRef` routes to `claudecli`, which shells out to the `claude` binary (`internal/http/provider_clients.go:216-220`).

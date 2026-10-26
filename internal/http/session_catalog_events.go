@@ -48,7 +48,10 @@ var sessionCatalogMetadataKeys = map[string]struct{}{
 	"queue_mode": {}, "queue_paused": {}, "needs_feedback": {}, "team_id": {},
 	"run_mode_override": {},
 	"team_run_id":       {}, "team_role": {}, "team_message_count": {}, "team_talking_line": {},
-	"launch_target": {}, "link_type": {}, "sub_agent_id": {}, "session_action_source_key": {},
+	"launch_target": {}, "link_type": {},
+	"launch_agent_id": {}, "launch_agent_name": {}, "launch_agent_runtime": {},
+	"unified_agent_id": {}, "sub_agent_id": {}, "sub_agent_name": {},
+	"session_action_source_key": {},
 	"session_action_card_key": {}, "session_action_prompt_hash": {}, "title": {}, "severity": {},
 	"files": {}, "continuation_reason": {}, "from_provider": {}, "from_model": {},
 }
@@ -307,10 +310,90 @@ func (s *Server) handleSessionChange(change session.Change) {
 	if s == nil || change.ID == "" {
 		return
 	}
+	if change.Kind == session.ChangeUpdated {
+		s.scheduleCatalogUpdate(change)
+		return
+	}
+	s.cancelCatalogUpdate(change.ID)
 	if change.Kind == session.ChangeDeleted {
 		s.publishSessionCatalogEvent(SessionCatalogEvent{Type: "session_deleted", SessionID: change.ID, ProjectID: change.ProjectID})
 		return
 	}
+	s.publishSessionRow(change)
+}
+
+// catalogUpdateThrottle bounds how often one running session emits session_updated.
+const catalogUpdateThrottle = 300 * time.Millisecond
+
+// catalogUpdateState tracks one session's throttle window. timer is set while a
+// trailing flush is pending; otherwise the window is open until last+throttle.
+type catalogUpdateState struct {
+	last   time.Time
+	status session.Status // status of the last row published immediately
+	timer  *time.Timer
+}
+
+// scheduleCatalogUpdate publishes the first save immediately (so status flips
+// like running show up at once) and coalesces the burst that follows into one
+// trailing event. WHY: every row differs by updated_at, and building it (project
+// and worktree lookups) on the saving goroutine under the session write lock
+// flooded clients and the DB when several sessions were active. The trailing
+// flush reloads the row, so it always carries the latest committed state.
+func (s *Server) scheduleCatalogUpdate(change session.Change) {
+	id := change.ID
+	s.catalogUpdateMu.Lock()
+	if s.catalogUpdates == nil {
+		s.catalogUpdates = make(map[string]*catalogUpdateState)
+	}
+	state := s.catalogUpdates[id]
+	if state == nil {
+		state = &catalogUpdateState{}
+		s.catalogUpdates[id] = state
+	}
+	// Status flips (queued -> running -> completed) are what users wait on, so
+	// they skip the throttle; the pending trailing flush is then redundant.
+	statusChanged := change.Session != nil && change.Session.Status != state.status
+	if statusChanged && state.timer != nil {
+		state.timer.Stop()
+		state.timer = nil
+	}
+	if state.timer != nil {
+		s.catalogUpdateMu.Unlock()
+		return
+	}
+	if wait := catalogUpdateThrottle - time.Since(state.last); wait > 0 && !statusChanged {
+		state.timer = time.AfterFunc(wait, func() {
+			s.catalogUpdateMu.Lock()
+			if st := s.catalogUpdates[id]; st != nil {
+				st.timer = nil
+				st.last = time.Now()
+			}
+			s.catalogUpdateMu.Unlock()
+			s.publishSessionRow(session.Change{Kind: session.ChangeUpdated, ID: id})
+		})
+		s.catalogUpdateMu.Unlock()
+		return
+	}
+	state.last = time.Now()
+	if change.Session != nil {
+		state.status = change.Session.Status
+	}
+	s.catalogUpdateMu.Unlock()
+	s.publishSessionRow(change)
+}
+
+// cancelCatalogUpdate drops throttle state so a create or delete is never
+// followed by a stale update for the same session.
+func (s *Server) cancelCatalogUpdate(id string) {
+	s.catalogUpdateMu.Lock()
+	defer s.catalogUpdateMu.Unlock()
+	if state := s.catalogUpdates[id]; state != nil && state.timer != nil {
+		state.timer.Stop()
+	}
+	delete(s.catalogUpdates, id)
+}
+
+func (s *Server) publishSessionRow(change session.Change) {
 	sess := change.Session
 	if sess == nil {
 		loaded, err := s.sessionManager.GetForDisplay(change.ID, false)

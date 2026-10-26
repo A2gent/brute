@@ -116,6 +116,66 @@ func (s *Server) getDockerDelegatedSession(ctx context.Context, sessionID string
 	return SessionResponse{}, false, nil
 }
 
+func (s *Server) getDockerDelegatedProviderTransitions(ctx context.Context, sessionID string) ([]session.ProviderTransition, bool, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil, false, nil
+	}
+
+	lookupCtx, cancel := context.WithTimeout(ctx, dockerSessionProxyLookupTimeout)
+	defer cancel()
+
+	candidates := s.dockerSessionCandidates(lookupCtx, sessionID)
+	if len(candidates) == 0 {
+		return nil, false, nil
+	}
+
+	client := &nethttp.Client{Timeout: dockerSessionProxyRequestTimeout}
+	failures := make([]string, 0)
+	for _, candidate := range candidates {
+		endpoint := strings.TrimRight(candidate.APIURL, "/") + "/sessions/" + neturl.PathEscape(sessionID) + "/provider-transitions"
+		req, err := nethttp.NewRequestWithContext(lookupCtx, nethttp.MethodGet, endpoint, nil)
+		if err != nil {
+			failures = append(failures, err.Error())
+			continue
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", candidate.APIURL, err))
+			continue
+		}
+		if resp.StatusCode == nethttp.StatusNotFound {
+			_ = resp.Body.Close()
+			continue
+		}
+		if resp.StatusCode < nethttp.StatusOK || resp.StatusCode >= nethttp.StatusMultipleChoices {
+			failures = append(failures, fmt.Sprintf("%s returned %s", candidate.APIURL, resp.Status))
+			_ = resp.Body.Close()
+			continue
+		}
+
+		var result struct {
+			Version     int                          `json:"version"`
+			Transitions []session.ProviderTransition `json:"transitions"`
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&result)
+		_ = resp.Body.Close()
+		if decodeErr != nil {
+			failures = append(failures, fmt.Sprintf("%s decode provider transitions: %v", candidate.APIURL, decodeErr))
+			continue
+		}
+		if result.Version != 1 {
+			failures = append(failures, fmt.Sprintf("%s returned unsupported provider transition version %d", candidate.APIURL, result.Version))
+			continue
+		}
+		return result.Transitions, true, nil
+	}
+	if len(failures) > 0 {
+		return nil, false, fmt.Errorf("%s", strings.Join(failures, "; "))
+	}
+	return nil, false, nil
+}
+
 func (s *Server) dockerSessionCandidates(ctx context.Context, childSessionID string) []dockerSessionCandidate {
 	candidates := make([]dockerSessionCandidate, 0)
 	seen := map[string]struct{}{}

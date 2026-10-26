@@ -52,16 +52,29 @@ func (s *Server) publishTransition(sess *session.Session, t *session.ProviderTra
 	s.publishSessionEvent(sess.ID, ChatStreamEvent{Type: "provider_transition", Transition: t, Status: string(sess.Status)})
 }
 func (s *Server) handleListProviderTransitions(w http.ResponseWriter, r *http.Request) {
-	sess, err := s.sessionManager.Get(chi.URLParam(r, "sessionID"))
+	id := chi.URLParam(r, "sessionID")
+	sess, err := s.sessionManager.Get(id)
 	if err != nil {
-		s.errorResponse(w, 404, "Session not found")
+		transitions, proxied, proxyErr := s.getDockerDelegatedProviderTransitions(r.Context(), id)
+		if proxyErr != nil {
+			s.errorResponse(w, http.StatusBadGateway, "Failed to load delegated provider transitions")
+			return
+		}
+		if proxied {
+			if transitions == nil {
+				transitions = []session.ProviderTransition{}
+			}
+			s.jsonResponse(w, http.StatusOK, map[string]interface{}{"version": 1, "transitions": transitions})
+			return
+		}
+		s.errorResponse(w, http.StatusNotFound, "Session not found")
 		return
 	}
 	ts := session.ProviderTransitions(sess)
 	if ts == nil {
 		ts = []session.ProviderTransition{}
 	}
-	s.jsonResponse(w, 200, map[string]interface{}{"version": 1, "transitions": ts})
+	s.jsonResponse(w, http.StatusOK, map[string]interface{}{"version": 1, "transitions": ts})
 }
 func (s *Server) handleCreateProviderTransition(w http.ResponseWriter, r *http.Request) {
 	var req createProviderTransitionRequest

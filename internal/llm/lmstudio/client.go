@@ -25,6 +25,9 @@ const (
 type Client struct {
 	// PrepareRequest optionally supplies per-invocation headers and cleanup.
 	PrepareRequest func(context.Context, *llm.ChatRequest) (http.Header, func(), error)
+	// ErrorLabel names the real upstream in errors when this client only proxies
+	// it (e.g. a child agent's parent proxy), instead of the URL-derived "LM Studio".
+	ErrorLabel string
 
 	apiKey     string
 	baseURL    string
@@ -61,6 +64,13 @@ func (c *Client) providerName() string {
 		return "Meta"
 	}
 	return "LM Studio"
+}
+
+func (c *Client) errorName() string {
+	if label := strings.TrimSpace(c.ErrorLabel); label != "" {
+		return label
+	}
+	return c.providerName()
 }
 
 // NewClient creates a new LM Studio client
@@ -189,13 +199,13 @@ func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to %s: %w", c.providerName(), err)
+		return nil, fmt.Errorf("failed to connect to %s: %w", c.errorName(), err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("%s returned error (%d): %s", c.providerName(), resp.StatusCode, string(body))
+		return nil, fmt.Errorf("%s returned error (%d): %s", c.errorName(), resp.StatusCode, string(body))
 	}
 
 	var modelsResp ModelsResponse
@@ -305,7 +315,7 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		err := fmt.Errorf("%s error (%d): %s", c.providerName(), resp.StatusCode, string(body))
+		err := fmt.Errorf("%s error (%d): %s", c.errorName(), resp.StatusCode, string(body))
 		logging.LogResponse(0, 0, 0, err)
 		return nil, err
 	}
@@ -316,18 +326,18 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	}
 
 	if oaiResp.Error != nil && oaiResp.Error.Message != "" {
-		err := fmt.Errorf("%s returned error: %s", c.providerName(), oaiResp.Error.Message)
+		err := fmt.Errorf("%s returned error: %s", c.errorName(), oaiResp.Error.Message)
 		logging.LogResponse(0, 0, 0, err)
 		return nil, err
 	}
 
 	if len(oaiResp.Choices) == 0 {
-		return nil, fmt.Errorf("no response from %s", c.providerName())
+		return nil, fmt.Errorf("no response from %s", c.errorName())
 	}
 
 	choice := oaiResp.Choices[0]
 	if choice.Error != nil && choice.Error.Message != "" {
-		err := fmt.Errorf("%s model error: %s", c.providerName(), choice.Error.Message)
+		err := fmt.Errorf("%s model error: %s", c.errorName(), choice.Error.Message)
 		logging.LogResponse(0, 0, 0, err)
 		return nil, err
 	}
@@ -343,7 +353,7 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 
 	// If response is completely empty but finish reason indicates length or error
 	if responseText == "" && len(choice.Message.ToolCalls) == 0 && choice.FinishReason != "" && choice.FinishReason != "stop" {
-		return nil, fmt.Errorf("%s model failed (finish_reason: %s)", c.providerName(), choice.FinishReason)
+		return nil, fmt.Errorf("%s model failed (finish_reason: %s)", c.errorName(), choice.FinishReason)
 	}
 
 	response := &llm.ChatResponse{
@@ -470,7 +480,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		err := fmt.Errorf("%s error (%d): %s", c.providerName(), resp.StatusCode, string(body))
+		err := fmt.Errorf("%s error (%d): %s", c.errorName(), resp.StatusCode, string(body))
 		logging.LogResponse(0, 0, 0, err)
 		return nil, err
 	}
@@ -505,7 +515,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 			result.Provenance = chunk.Provenance
 		}
 		if chunk.Error != nil && chunk.Error.Message != "" {
-			return nil, fmt.Errorf("%s stream error: %s", c.providerName(), chunk.Error.Message)
+			return nil, fmt.Errorf("%s stream error: %s", c.errorName(), chunk.Error.Message)
 		}
 
 		if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
@@ -524,7 +534,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 
 		for _, choice := range chunk.Choices {
 			if choice.Error != nil && choice.Error.Message != "" {
-				return nil, fmt.Errorf("%s model stream error: %s", c.providerName(), choice.Error.Message)
+				return nil, fmt.Errorf("%s model stream error: %s", c.errorName(), choice.Error.Message)
 			}
 
 			if choice.Delta.Content != "" {
@@ -610,7 +620,7 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 
 	// If response is completely empty but finish reason indicates length or error
 	if result.Content == "" && len(result.ToolCalls) == 0 && result.StopReason != "" && result.StopReason != "stop" {
-		return nil, fmt.Errorf("%s model failed (finish_reason: %s)", c.providerName(), result.StopReason)
+		return nil, fmt.Errorf("%s model failed (finish_reason: %s)", c.errorName(), result.StopReason)
 	}
 
 	toolNames := make([]string, len(result.ToolCalls))

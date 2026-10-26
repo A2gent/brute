@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/A2gent/brute/internal/agentdef"
+	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 )
 
@@ -101,18 +102,61 @@ func (s *Server) runDirectAgentSession(ctx context.Context, sess *session.Sessio
 		return ChatResponse{}, err
 	}
 	baseURL := strings.TrimRight(agent.APIURL, "/")
-	createMetadata := map[string]interface{}{"source": "direct_agent_session", "parent_session_id": sess.ID}
-	if workspace != nil {
-		createMetadata["docker_workspace"] = dockerWorkspaceMetadata(*workspace)
+	childID := s.reusableDirectAgentChild(ctx, sess, agent)
+	if childID == "" {
+		createMetadata := map[string]interface{}{"source": "direct_agent_session", "parent_session_id": sess.ID}
+		if workspace != nil {
+			createMetadata["docker_workspace"] = dockerWorkspaceMetadata(*workspace)
+		}
+		var created CreateSessionResponse
+		if err := postLocalDockerAgentJSON(ctx, client, baseURL+"/sessions", CreateSessionRequest{AgentID: "build", Metadata: createMetadata}, &created); err != nil {
+			return ChatResponse{}, err
+		}
+		childID = created.ID
+		// Record on the in-memory session: the caller saves it after the run and
+		// would overwrite a mapping written only to a freshly loaded copy.
+		addDockerChildSessionEntry(sess, agent, childID, workspace)
+		if err := s.sessionManager.Save(sess); err != nil {
+			logging.Warn("Direct agent: failed to save child mapping for %s: %v", sess.ID, err)
+		}
 	}
-	var created CreateSessionResponse
-	if err := postLocalDockerAgentJSON(ctx, client, baseURL+"/sessions", CreateSessionRequest{AgentID: "build", Metadata: createMetadata}, &created); err != nil {
-		return ChatResponse{}, err
-	}
-	s.recordDockerDelegationChildSession(sess.ID, agent, created.ID, workspace)
 	prompt := task
 	if workspace != nil {
 		prompt = s.rewriteDockerDelegationTask(task, *workspace)
 	}
-	return postLocalDockerAgentChatStream(ctx, client, baseURL+"/sessions/"+created.ID+"/chat/stream", ChatRequest{Message: prompt}, onEvent)
+	return postLocalDockerAgentChatStream(ctx, client, baseURL+"/sessions/"+childID+"/chat/stream", ChatRequest{Message: prompt}, onEvent)
+}
+
+// reusableDirectAgentChild returns the agent session used by the previous turn.
+// WHY: a fresh child per turn dropped the conversation context and re-ran the
+// automatic router on every follow-up, so models switched without the user
+// asking (e.g. a pasted password was routed to a local model). Reusing the child
+// keeps its sticky route and history. A transition still awaiting confirmation is
+// rejected: sending a new message instead of approving keeps the current provider.
+func (s *Server) reusableDirectAgentChild(ctx context.Context, sess *session.Session, agent *LocalDockerAgent) string {
+	entries := dockerChildSessionEntries(sess.Metadata["docker_child_sessions"])
+	if len(entries) == 0 {
+		return ""
+	}
+	last := entries[len(entries)-1]
+	childID := strings.TrimSpace(metadataString(last["child_session_id"]))
+	if childID == "" || metadataString(last["agent_name"]) != agent.Name {
+		return ""
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, dockerSessionProxyLookupTimeout)
+	defer cancel()
+	client := &nethttp.Client{Timeout: dockerSessionProxyLookupTimeout}
+	child, err := fetchDockerSession(lookupCtx, client, dockerSessionCandidate{APIURL: agent.APIURL}, childID, false)
+	if err != nil || child.Status == string(session.StatusRunning) {
+		logging.Warn("Direct agent: not reusing child %s of %s (status=%q): %v", childID, sess.ID, child.Status, err)
+		return ""
+	}
+	if t := session.CurrentProviderTransition(&session.Session{Metadata: child.Metadata}); t != nil && t.Confirmation == "pending" {
+		url := strings.TrimRight(agent.APIURL, "/") + "/sessions/" + childID + "/provider-transitions/" + t.ID + "/decision"
+		if err := postLocalDockerAgentJSON(lookupCtx, client, url, map[string]string{"decision": "reject"}, nil); err != nil {
+			logging.Warn("Direct agent: failed to reject pending transition in child %s: %v", childID, err)
+			return ""
+		}
+	}
+	return childID
 }

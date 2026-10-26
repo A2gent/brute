@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/A2gent/brute/internal/logging"
+	"github.com/A2gent/brute/internal/session"
 )
 
 const (
@@ -37,6 +38,15 @@ func (s *Server) recordDockerDelegationChildSession(parentSessionID string, agen
 		logging.Warn("Docker delegation: failed to load parent session %s for child mapping: %v", parentSessionID, err)
 		return
 	}
+	addDockerChildSessionEntry(sess, agent, childSessionID, workspace)
+	if err := s.sessionManager.Save(sess); err != nil {
+		logging.Warn("Docker delegation: failed to save parent session %s child mapping: %v", parentSessionID, err)
+	}
+}
+
+// addDockerChildSessionEntry records the child mapping on an in-memory session.
+func addDockerChildSessionEntry(sess *session.Session, agent *LocalDockerAgent, childSessionID string, workspace *dockerWorkspaceBinding) {
+	parentSessionID := sess.ID
 	if sess.Metadata == nil {
 		sess.Metadata = map[string]interface{}{}
 	}
@@ -64,10 +74,6 @@ func (s *Server) recordDockerDelegationChildSession(parentSessionID string, agen
 	}
 	next = append(next, entry)
 	sess.Metadata["docker_child_sessions"] = next
-
-	if err := s.sessionManager.Save(sess); err != nil {
-		logging.Warn("Docker delegation: failed to save parent session %s child mapping: %v", parentSessionID, err)
-	}
 }
 
 func (s *Server) getDockerDelegatedSession(ctx context.Context, sessionID string, includeMessages bool, includeMetadata bool) (SessionResponse, bool, error) {

@@ -484,6 +484,7 @@ func (s *Server) createParentProxyLLMClient(providerType config.ProviderType, mo
 		proxyAPIKey = "a2gent-proxy"
 	}
 	client := lmstudio.NewClient(proxyAPIKey, modelName, proxyBaseURL)
+	client.ErrorLabel = string(providerType) + " (via parent proxy)"
 	s.configureParentMCPRelay(client, parentProxyURL)
 	return client, true
 }

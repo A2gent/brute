@@ -365,10 +365,10 @@ func mcpBridgeToolExposedContext(ctx context.Context, name string) bool {
 }
 
 func (s *Server) validateProxyCLIConfinement(provider config.ProviderType, relayed bool) error {
-	if config.IsClaudeProviderRef(string(provider)) && !relayed {
+	if (config.IsClaudeProviderRef(string(provider)) || provider == config.ProviderCursor) && !relayed {
 		return errors.New("CLI providers require an authenticated child MCP relay")
 	}
-	if provider == config.ProviderCursor || provider == config.ProviderKimiCLI {
+	if provider == config.ProviderKimiCLI {
 		return fmt.Errorf("provider %s does not support isolated child MCP relay", provider)
 	}
 	if config.IsFallbackAggregateRef(string(provider)) || provider == config.ProviderFallback {
@@ -377,7 +377,7 @@ func (s *Server) validateProxyCLIConfinement(provider config.ProviderType, relay
 			return err
 		}
 		for _, node := range chain {
-			if (!relayed && config.IsClaudeProviderRef(node.Provider)) || node.Provider == string(config.ProviderCursor) || node.Provider == string(config.ProviderKimiCLI) {
+			if (!relayed && (config.IsClaudeProviderRef(node.Provider) || node.Provider == string(config.ProviderCursor))) || node.Provider == string(config.ProviderKimiCLI) {
 				return fmt.Errorf("fallback provider %s does not support isolated child MCP relay", node.Provider)
 			}
 		}

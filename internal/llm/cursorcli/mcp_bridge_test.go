@@ -20,7 +20,10 @@ func TestMCPBridgeInvocationRequiresSessionContext(t *testing.T) {
 		},
 	})
 
-	inv := client.newMCPBridgeInvocation(context.Background())
+	inv, err := client.newMCPBridgeInvocation(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if called {
 		t.Fatal("expected missing session id to skip the bridge hook")
 	}
@@ -49,7 +52,10 @@ func TestMCPBridgeInvocationWritesPluginAndRevokes(t *testing.T) {
 	})
 
 	ctx := context.WithValue(context.Background(), "session_id", "sess-1")
-	inv := client.newMCPBridgeInvocation(ctx)
+	inv, err := client.newMCPBridgeInvocation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(inv.revoke)
 
 	joined := strings.Join(inv.args, "\n")
@@ -123,7 +129,10 @@ func TestMCPBridgeInvocationEmptyConfigDisables(t *testing.T) {
 		},
 	})
 	ctx := context.WithValue(context.Background(), "session_id", "sess-1")
-	inv := client.newMCPBridgeInvocation(ctx)
+	inv, err := client.newMCPBridgeInvocation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(inv.args) != 0 {
 		t.Fatalf("args = %v, want bridge disabled", inv.args)
 	}
@@ -131,11 +140,11 @@ func TestMCPBridgeInvocationEmptyConfigDisables(t *testing.T) {
 
 func TestMCPBridgePromptNoteOnlyWhenEnabled(t *testing.T) {
 	request := &llm.ChatRequest{Messages: []llm.Message{{Role: "user", Content: "hello"}}}
-	plain := buildPrompt(request, false)
+	plain := buildPrompt(request, false, false)
 	if strings.Contains(plain, cursorMCPPluginID) {
 		t.Fatalf("plain prompt should not mention the bridge: %s", plain)
 	}
-	bridged := buildPrompt(request, true)
+	bridged := buildPrompt(request, true, false)
 	if !strings.Contains(bridged, cursorMCPPluginID) || !strings.Contains(bridged, "question") {
 		t.Fatalf("bridged prompt missing MCP note: %s", bridged)
 	}

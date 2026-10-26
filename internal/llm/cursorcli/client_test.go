@@ -28,7 +28,7 @@ func TestBuildPromptIncludesConversationToolContext(t *testing.T) {
 			},
 			{Role: "user", Content: "Summarize."},
 		},
-	}, false)
+	}, false, false)
 
 	for _, want := range []string{
 		"Continue the following A2gent conversation",

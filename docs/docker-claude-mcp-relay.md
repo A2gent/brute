@@ -1,6 +1,6 @@
-# Docker Claude MCP relay
+# Docker CLI MCP relay
 
-Docker agents may lack the Claude CLI. Their explicitly configured parent-proxy LM Studio client opens an outbound WebSocket at `/v1/mcp-relay` before each session-scoped completion. The parent still executes Claude, but every tool executes in the owning child.
+Docker agents may lack host CLI providers. Their explicitly configured parent-proxy LM Studio client opens an outbound WebSocket at `/v1/mcp-relay` before each session-scoped completion. The parent runs the selected CLI provider, while every A2gent tool executes in the owning child.
 
 ## Trust boundaries
 
@@ -9,8 +9,8 @@ Docker agents may lack the Claude CLI. Their explicitly configured parent-proxy 
 - The child initiates the connection, with its session ID. The parent returns an unpredictable invocation capability. A completion must present that capability, the same runtime credential, and the same child session ID. It is claimable once. Runtime state and credential rotation are checked again on claim. Private relay headers are opt-in client configuration, never inferred from a provider URL or forwarded upstream to model APIs.
 - The parent creates a separate opaque invocation identity, not a parent session and not a lookup of the child's ID in the parent database. Its existing loopback-only MCP endpoint receives a different invocation-scoped bearer token. Requests with that token go through the reverse channel, not the parent's tool manager.
 - Child dispatch uses its existing session-scoped tool manager, project context, execution context, progress events, delegation restrictions, and approval broker. File/shell tools are exposed through the relay only, so they execute inside Docker. Compound tools and MCP-through-MCP remain excluded; qualified-name aliases cannot bypass exclusions.
-- Claude runs in a fresh temporary directory with native tools disabled, strict MCP configuration, project/user settings and slash commands disabled, and no persistence, resume or sidecar. This confinement follows Claude profile and fallback nodes via the invocation context. Local host-runtime Claude still uses its original local bridge, profiles and fallback definitions.
-- CLI proxy calls without an authenticated relay fail closed, including CLI nodes in fallback chains. Cursor and Kimi CLI proxy execution is rejected because those transports do not yet implement equivalent confinement. API-only proxy requests retain their existing behavior.
+- Claude runs in a fresh temporary directory with native tools disabled, strict MCP configuration, project/user settings and slash commands disabled, and no persistence, resume or sidecar. Cursor runs in a fresh temporary workspace and a fresh `CURSOR_CONFIG_DIR` with allowlist mode, native shell/file/web tools denied, the workspace sandbox enabled, and only the A2gent child MCP plugin allowed. It does not approve other configured MCP servers or resume a host-side chat. These restrictions follow provider fallback nodes through the invocation context. Local host-runtime CLI sessions keep their original behavior.
+- CLI proxy calls without an authenticated relay fail closed, including CLI nodes in fallback chains. Kimi CLI proxy execution remains rejected because it does not yet implement equivalent confinement. API-only proxy requests retain their existing behavior.
 
 ## Lifetime and cancellation
 
@@ -22,10 +22,10 @@ Existing warm containers need recreation with an updated Brute image to receive 
 
 ## Verification
 
-Normal regression coverage includes runtime/session/capability mismatch, one-shot claim, stopped/rotated credentials, loopback token isolation, disabled tools, owning project/session context, approvals, disconnect cancellation, callback revocation, CLI confinement, and opt-in request-header cleanup.
+Normal regression coverage includes runtime/session/capability mismatch, one-shot claim, stopped/rotated credentials, loopback token isolation, disabled tools, owning project/session context, approvals, disconnect cancellation, callback revocation, Claude and Cursor CLI confinement, and opt-in request-header cleanup.
 
 ```sh
-go test ./internal/http ./internal/llm/claudecli ./internal/llm/lmstudio -run 'Test(MCPRelay|MCPBridge|Host|MCPOnly|PrepareRequest)'
+go test ./internal/http ./internal/llm/claudecli ./internal/llm/cursorcli ./internal/llm/lmstudio -run 'Test(MCPRelay|MCPBridge|Host|MCPOnly|PrepareRequest)'
 AAGENT_DOCKER_CLAUDE_MCP_LIVE=1 go test ./internal/http -run '^TestLiveDockerClaudeMCP$' -count=1 -v -timeout=7m
 AAGENT_CLAUDE_MCP_LIVE=1 go test ./internal/http -run '^TestLiveHostClaudeMCP$' -count=1 -v -timeout=5m
 ```

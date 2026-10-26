@@ -36,6 +36,8 @@ type Options struct {
 	// over the loopback MCP server. Cursor has no --mcp-config flag, so the
 	// client turns the returned JSON into a temporary plugin.
 	MCPBridge MCPBridgeHook
+	// MCPOnly disables native Cursor tools for authenticated Docker child relays.
+	MCPOnly bool
 }
 
 // Client implements llm.Client by shelling out to Cursor Agent CLI.
@@ -149,6 +151,10 @@ func IsAvailable() bool {
 }
 
 func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatResponse, error) {
+	c = c.forInvocation(ctx)
+	if err := c.prepareMCPOnlyWorkspace(); err != nil {
+		return nil, err
+	}
 	if request == nil {
 		request = &llm.ChatRequest{}
 	}
@@ -167,14 +173,20 @@ func (c *Client) Chat(ctx context.Context, request *llm.ChatRequest) (*llm.ChatR
 	}
 	logging.LogRequestWithContent(model, len(request.Messages), len(request.Tools) > 0, lastMsg)
 
-	bridge := c.newMCPBridgeInvocation(ctx)
+	bridge, err := c.newMCPBridgeInvocation(ctx)
+	if err != nil {
+		return nil, err
+	}
 	defer bridge.revoke()
 	exposeMCP := len(bridge.args) > 0
-	resumeID := c.resumeChatID(model, request.ProviderSessionCursor)
-	resp, err := c.chatOnce(ctx, model, promptFor(request, resumeID, exposeMCP), resumeID, bridge)
+	resumeID := ""
+	if !c.options.MCPOnly {
+		resumeID = c.resumeChatID(model, request.ProviderSessionCursor)
+	}
+	resp, err := c.chatOnce(ctx, model, promptFor(request, resumeID, exposeMCP, c.options.MCPOnly), resumeID, bridge)
 	if err != nil && resumeID != "" && ctx.Err() == nil && isResumeError(err) {
 		logging.Warn("Cursor Agent CLI could not resume chat %s; retrying as a fresh chat: %v", resumeID, err)
-		resp, err = c.chatOnce(ctx, model, promptFor(request, "", exposeMCP), "", bridge)
+		resp, err = c.chatOnce(ctx, model, promptFor(request, "", exposeMCP, c.options.MCPOnly), "", bridge)
 	}
 	return resp, err
 }
@@ -227,6 +239,10 @@ func (c *Client) chatOnce(ctx context.Context, model, prompt, resumeID string, b
 }
 
 func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEvent func(llm.StreamEvent) error) (*llm.ChatResponse, error) {
+	c = c.forInvocation(ctx)
+	if err := c.prepareMCPOnlyWorkspace(); err != nil {
+		return nil, err
+	}
 	if request == nil {
 		request = &llm.ChatRequest{}
 	}
@@ -245,14 +261,20 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	}
 	logging.LogRequestWithContent(model, len(request.Messages), len(request.Tools) > 0, lastMsg)
 
-	bridge := c.newMCPBridgeInvocation(ctx)
+	bridge, err := c.newMCPBridgeInvocation(ctx)
+	if err != nil {
+		return nil, err
+	}
 	defer bridge.revoke()
 	exposeMCP := len(bridge.args) > 0
-	resumeID := c.resumeChatID(model, request.ProviderSessionCursor)
-	resp, err := c.chatStreamOnce(ctx, model, promptFor(request, resumeID, exposeMCP), resumeID, bridge, onEvent)
+	resumeID := ""
+	if !c.options.MCPOnly {
+		resumeID = c.resumeChatID(model, request.ProviderSessionCursor)
+	}
+	resp, err := c.chatStreamOnce(ctx, model, promptFor(request, resumeID, exposeMCP, c.options.MCPOnly), resumeID, bridge, onEvent)
 	if err != nil && resumeID != "" && ctx.Err() == nil && isResumeError(err) {
 		logging.Warn("Cursor Agent CLI could not resume chat %s; retrying as a fresh chat: %v", resumeID, err)
-		resp, err = c.chatStreamOnce(ctx, model, promptFor(request, "", exposeMCP), "", bridge, onEvent)
+		resp, err = c.chatStreamOnce(ctx, model, promptFor(request, "", exposeMCP, c.options.MCPOnly), "", bridge, onEvent)
 	}
 	return resp, err
 }
@@ -435,8 +457,8 @@ func (c *Client) appendCommonArgs(args []string, resumeID string, bridge mcpBrid
 		args = append(args, "--sandbox", c.options.Sandbox)
 	}
 	// WHY: --force allows shell commands but does not approve MCP servers.
-	// Headless runs cannot answer Cursor's MCP approval prompt, so the bridge
-	// passes --approve-mcps for the temporary A2gent plugin.
+	// Normal runs approve their temporary A2gent plugin; isolated relay runs
+	// approve only the permitted child plugin and never native parent tools.
 	if len(bridge.args) > 0 {
 		args = append(args, bridge.args...)
 	}
@@ -444,23 +466,33 @@ func (c *Client) appendCommonArgs(args []string, resumeID string, bridge mcpBrid
 }
 
 func (c *Client) commandEnv() []string {
-	if c.options.APIKey == "" {
-		return os.Environ()
-	}
 	env := os.Environ()
-	for i, item := range env {
-		if strings.HasPrefix(item, "CURSOR_API_KEY=") {
-			env[i] = "CURSOR_API_KEY=" + c.options.APIKey
-			return env
-		}
+	if c.options.APIKey != "" {
+		setEnvValue(&env, "CURSOR_API_KEY", c.options.APIKey)
 	}
-	return append(env, "CURSOR_API_KEY="+c.options.APIKey)
+	if c.options.MCPOnly {
+		setEnvValue(&env, "CURSOR_CONFIG_DIR", filepath.Join(c.options.WorkDir, ".cursor-cli-config"))
+	}
+	return env
 }
 
-func buildSystemPrompt(systemPrompt string, exposeA2gentMCP bool) string {
+func setEnvValue(env *[]string, key, value string) {
+	prefix := key + "="
+	for i, item := range *env {
+		if strings.HasPrefix(item, prefix) {
+			(*env)[i] = prefix + value
+			return
+		}
+	}
+	*env = append(*env, prefix+value)
+}
+
+func buildSystemPrompt(systemPrompt string, exposeA2gentMCP, mcpOnly bool) string {
 	systemPrompt = strings.TrimSpace(systemPrompt)
 	prefix := cursorPromptPrefix
-	if exposeA2gentMCP {
+	if mcpOnly {
+		prefix = cursorMCPOnlyPrompt
+	} else if exposeA2gentMCP {
 		prefix += "\n\n" + cursorMCPToolNote
 	}
 	if systemPrompt == "" {
@@ -469,20 +501,20 @@ func buildSystemPrompt(systemPrompt string, exposeA2gentMCP bool) string {
 	return prefix + "\n\n" + systemPrompt
 }
 
-func buildPrompt(request *llm.ChatRequest, exposeA2gentMCP bool) string {
+func buildPrompt(request *llm.ChatRequest, exposeA2gentMCP, mcpOnly bool) string {
 	if request == nil || len(request.Messages) == 0 {
-		return buildSystemPrompt("", exposeA2gentMCP) + "\n\nContinue."
+		return buildSystemPrompt("", exposeA2gentMCP, mcpOnly) + "\n\nContinue."
 	}
 	if len(request.Messages) == 1 && isPlainUserMessage(request.Messages[0]) {
 		prompt := strings.TrimSpace(request.Messages[0].Content)
-		if systemPrompt := buildSystemPrompt(request.SystemPrompt, exposeA2gentMCP); systemPrompt != "" {
+		if systemPrompt := buildSystemPrompt(request.SystemPrompt, exposeA2gentMCP, mcpOnly); systemPrompt != "" {
 			return strings.TrimSpace(systemPrompt + "\n\n" + prompt)
 		}
 		return prompt
 	}
 
 	var b strings.Builder
-	if systemPrompt := buildSystemPrompt(request.SystemPrompt, exposeA2gentMCP); systemPrompt != "" {
+	if systemPrompt := buildSystemPrompt(request.SystemPrompt, exposeA2gentMCP, mcpOnly); systemPrompt != "" {
 		b.WriteString(systemPrompt)
 		b.WriteString("\n\n")
 	}

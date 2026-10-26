@@ -96,16 +96,16 @@ func cursorChatExists(chatID string) bool {
 
 // promptFor builds the -p payload: only the new messages when resuming, otherwise
 // the full transcript (rebuilt without the agent's cursor cut when available).
-func promptFor(request *llm.ChatRequest, resumeID string, exposeA2gentMCP bool) string {
+func promptFor(request *llm.ChatRequest, resumeID string, exposeA2gentMCP, mcpOnly bool) string {
 	if resumeID != "" {
 		return buildResumePrompt(request.Messages)
 	}
 	if request.ProviderSessionCursor != "" && request.FullMessages != nil {
 		full := *request
 		full.Messages = request.FullMessages()
-		return buildPrompt(&full, exposeA2gentMCP)
+		return buildPrompt(&full, exposeA2gentMCP, mcpOnly)
 	}
-	return buildPrompt(request, exposeA2gentMCP)
+	return buildPrompt(request, exposeA2gentMCP, mcpOnly)
 }
 
 // buildResumePrompt omits the system prompt and transcript header: the resumed

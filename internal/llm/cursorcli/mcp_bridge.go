@@ -18,6 +18,7 @@ const (
 	cursorMCPPluginName = "a2gent-bridge"
 	cursorMCPPluginID   = "plugin-a2gent-bridge-a2gent"
 	cursorMCPToolNote   = "A2gent tools that have no Cursor native equivalent (question, tasks, suggest_session, suggest_git_commit, session_task_progress, and configured integrations) are exposed by the MCP server a2gent, plugin id plugin-a2gent-bridge-a2gent. Discover them with Cursor's MCP tool listing and call them through Cursor's MCP interface."
+	cursorMCPOnlyPrompt = "You are running Cursor Agent CLI for an isolated A2gent child. Do not use Cursor's native file, shell, or web tools. Use only tools from the A2gent MCP server plugin-a2gent-bridge-a2gent for all operations; those tools execute inside the child container. Return the final result to A2gent."
 )
 
 // MCPBridgeHook builds the per-invocation MCP bridge configuration for a
@@ -33,48 +34,67 @@ type mcpBridgeInvocation struct {
 	revoke func()
 }
 
-func (c *Client) newMCPBridgeInvocation(ctx context.Context) mcpBridgeInvocation {
+func (c *Client) newMCPBridgeInvocation(ctx context.Context) (mcpBridgeInvocation, error) {
 	inv := mcpBridgeInvocation{revoke: func() {}}
 	if c.options.MCPBridge == nil {
-		return inv
+		if c.options.MCPOnly {
+			return inv, fmt.Errorf("isolated Cursor invocation requires the child MCP bridge")
+		}
+		return inv, nil
 	}
 	sessionID, _ := ctx.Value("session_id").(string)
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
-		return inv
+		if c.options.MCPOnly {
+			return inv, fmt.Errorf("isolated Cursor invocation requires a child session")
+		}
+		return inv, nil
 	}
 	configJSON, revoke, err := c.options.MCPBridge(ctx, sessionID)
 	if err != nil || strings.TrimSpace(configJSON) == "" {
 		if revoke != nil {
 			revoke()
 		}
+		if c.options.MCPOnly {
+			if err != nil {
+				return inv, fmt.Errorf("isolated Cursor MCP bridge setup failed: %w", err)
+			}
+			return inv, fmt.Errorf("isolated Cursor MCP bridge returned no configuration")
+		}
 		if err != nil {
 			logging.Warn("MCP bridge config failed, continuing without bridge: %v", err)
 		}
-		return inv
+		return inv, nil
 	}
 	pluginDir, err := writeCursorMCPPlugin(configJSON)
 	if err != nil {
 		if revoke != nil {
 			revoke()
 		}
+		if c.options.MCPOnly {
+			return inv, fmt.Errorf("isolated Cursor MCP plugin setup failed: %w", err)
+		}
 		logging.Warn("MCP bridge plugin setup failed, continuing without bridge: %v", err)
-		return inv
+		return inv, nil
 	}
-	inv.args = []string{"--plugin-dir", pluginDir, "--approve-mcps"}
+	inv.args = []string{"--plugin-dir", pluginDir}
+	if !c.options.MCPOnly {
+		inv.args = append(inv.args, "--approve-mcps")
+	}
 	inv.revoke = func() {
 		_ = os.RemoveAll(pluginDir)
 		if revoke != nil {
 			revoke()
 		}
 	}
-	return inv
+	return inv, nil
 }
 
 // writeCursorMCPPlugin materializes the shared bridge JSON as a Cursor plugin.
 // Cursor Agent CLI has no --mcp-config flag; it loads MCP servers from plugins
 // and from .cursor/mcp.json. A temp plugin keeps the bearer token out of the
-// workspace and out of the user's real MCP config.
+// workspace and out of the user's real MCP config. Isolated invocations approve
+// only this plugin through project permissions, never every configured server.
 func writeCursorMCPPlugin(configJSON string) (string, error) {
 	var payload struct {
 		MCPServers map[string]struct {

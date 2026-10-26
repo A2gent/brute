@@ -13,6 +13,7 @@ import (
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/claudecli"
+	"github.com/A2gent/brute/internal/llm/cursorcli"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -372,7 +373,9 @@ func (s *Server) handleLLMProxyChatCompletionsWithProvider(providerHint string, 
 		defer os.RemoveAll(workDir)
 		ctx = context.WithValue(ctx, mcpRelayContextKey{}, relay)
 		ctx = context.WithValue(ctx, "session_id", relay.id)
-		r = r.WithContext(claudecli.WithMCPOnly(ctx, workDir))
+		ctx = claudecli.WithMCPOnly(ctx, workDir)
+		ctx = cursorcli.WithMCPOnly(ctx, workDir)
+		r = r.WithContext(ctx)
 	}
 
 	var req proxyChatRequest

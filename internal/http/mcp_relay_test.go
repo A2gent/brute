@@ -181,10 +181,13 @@ func TestMCPRelayInvalidBootstrapAndCLIBypass(t *testing.T) {
 			t.Fatalf("unconfined CLI provider accepted: %s", provider)
 		}
 	}
+	if err := parent.validateProxyCLIConfinement(config.ProviderCursor, true); err != nil {
+		t.Fatalf("isolated Cursor invocation rejected: %v", err)
+	}
 	// Keep fallback validation deterministic on machines without Claude installed.
 	t.Setenv("A2GENT_PARENT_PROXY_URL", "http://parent.invalid/v1")
 	parent.config.HostClaudeCLI = true
-	parent.config.FallbackAggregates = []config.FallbackAggregate{{ID: "relay", Chain: []config.FallbackChainNode{{Provider: "lmstudio", Model: "local"}, {Provider: "anthropic", Model: "sonnet"}}}}
+	parent.config.FallbackAggregates = []config.FallbackAggregate{{ID: "relay", Chain: []config.FallbackChainNode{{Provider: "lmstudio", Model: "local"}, {Provider: "anthropic", Model: "sonnet"}}}, {ID: "cursor", Chain: []config.FallbackChainNode{{Provider: "lmstudio", Model: "local"}, {Provider: "cursor", Model: "composer-2.5"}}}}
 	// Host mode bypasses the proxy shortcut for chain lookup, but Claude still
 	// needs an executable. This binary is never executed by the validation test.
 	t.Setenv("AAGENT_CLAUDE_CLI_PATH", "/bin/sh")
@@ -193,6 +196,12 @@ func TestMCPRelayInvalidBootstrapAndCLIBypass(t *testing.T) {
 	}
 	if err := parent.validateProxyCLIConfinement("fallback_chain:relay", true); err != nil {
 		t.Fatalf("confined fallback rejected: %v", err)
+	}
+	if err := parent.validateProxyCLIConfinement("fallback_chain:cursor", false); err == nil {
+		t.Fatal("unconfined fallback Cursor accepted")
+	}
+	if err := parent.validateProxyCLIConfinement("fallback_chain:cursor", true); err != nil {
+		t.Fatalf("isolated fallback Cursor rejected: %v", err)
 	}
 	if err := parent.validateProxyCLIConfinement(config.ProviderAnthropic, true); err != nil {
 		t.Fatal(err)

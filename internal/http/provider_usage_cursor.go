@@ -61,6 +61,11 @@ func (s *Server) cursorUsageStatus(ctx context.Context) (ProviderUsageResponse, 
 func (s *Server) cursorUsageAccessToken() (string, error) {
 	s.syncCursorOAuthFromPlatform()
 
+	// Prefer the live Cursor Agent CLI session over a copied OAuth token in config.
+	if token, err := cursorcli.ResolveAccessToken(); err == nil && strings.TrimSpace(token) != "" {
+		return token, nil
+	}
+
 	provider := s.config.Providers[string(config.ProviderCursor)]
 	if provider.OAuth != nil {
 		if token := strings.TrimSpace(provider.OAuth.AccessToken); token != "" {
@@ -68,11 +73,7 @@ func (s *Server) cursorUsageAccessToken() (string, error) {
 		}
 	}
 
-	token, err := cursorcli.ResolveAccessToken()
-	if err != nil {
-		return "", err
-	}
-	return token, nil
+	return "", fmt.Errorf("Cursor Agent CLI access token not found; run `agent login` or import OAuth from the Cursor provider page")
 }
 
 func (s *Server) fetchParentProviderUsage(ctx context.Context, providerType config.ProviderType) (ProviderUsageResponse, error) {
@@ -123,7 +124,7 @@ func (s *Server) fetchParentProviderUsage(ctx context.Context, providerType conf
 func cursorUsageBars(usage cursorcli.PeriodUsage) []ProviderUsageBar {
 	resetText := cursorBillingCycleResetText(usage.BillingCycleEnd)
 	bars := []ProviderUsageBar{
-		cursorUsageBar("Cursor total", usage.PlanUsage.TotalPercentUsed),
+		cursorUsageBar("Cursor total", cursorcli.EffectiveTotalPercentUsed(usage.PlanUsage)),
 		cursorUsageBar("Cursor Auto", usage.PlanUsage.AutoPercentUsed),
 		cursorUsageBar("Cursor API", usage.PlanUsage.APIPercentUsed),
 	}

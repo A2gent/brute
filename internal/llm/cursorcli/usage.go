@@ -34,6 +34,7 @@ type PlanUsage struct {
 	APIPercentUsed   float64 `json:"apiPercentUsed"`
 	TotalPercentUsed float64 `json:"totalPercentUsed"`
 	Limit            int64   `json:"limit"`
+	Remaining        int64   `json:"remaining"`
 	TotalSpend       int64   `json:"totalSpend"`
 	IncludedSpend    int64   `json:"includedSpend"`
 }
@@ -234,15 +235,30 @@ func FetchPeriodUsage(ctx context.Context, client *http.Client, usageURL, access
 	return payload, nil
 }
 
+// EffectiveTotalPercentUsed matches Cursor dashboard "included usage" when limit/remaining are present.
+func EffectiveTotalPercentUsed(plan PlanUsage) float64 {
+	if plan.Limit > 0 {
+		if plan.IncludedSpend > 0 {
+			return clampCursorPercent(float64(plan.IncludedSpend) / float64(plan.Limit) * 100)
+		}
+		if plan.Remaining >= 0 && plan.Remaining <= plan.Limit {
+			used := float64(plan.Limit-plan.Remaining)
+			return clampCursorPercent(used / float64(plan.Limit) * 100)
+		}
+	}
+	return plan.TotalPercentUsed
+}
+
 // FormatPeriodUsageSummary renders a compact usage-left summary for provider cards.
 func FormatPeriodUsageSummary(usage PeriodUsage) string {
 	parts := make([]string, 0, 4)
 	if msg := strings.TrimSpace(usage.DisplayMessage); msg != "" {
 		parts = append(parts, msg)
 	}
-	if usage.PlanUsage.TotalPercentUsed > 0 || usage.PlanUsage.AutoPercentUsed > 0 || usage.PlanUsage.APIPercentUsed > 0 {
+	totalUsed := EffectiveTotalPercentUsed(usage.PlanUsage)
+	if totalUsed > 0 || usage.PlanUsage.AutoPercentUsed > 0 || usage.PlanUsage.APIPercentUsed > 0 {
 		parts = append(parts,
-			"total "+formatCursorUsageWindow(usage.PlanUsage.TotalPercentUsed),
+			"total "+formatCursorUsageWindow(totalUsed),
 			"auto "+formatCursorUsageWindow(usage.PlanUsage.AutoPercentUsed),
 			"api "+formatCursorUsageWindow(usage.PlanUsage.APIPercentUsed),
 		)

@@ -75,16 +75,19 @@ func (s *Server) handleCursorOAuthDisconnect(w http.ResponseWriter, r *http.Requ
 }
 
 // syncCursorOAuthFromPlatform refreshes stored Cursor OAuth from the local login session.
+// WHY: Cursor rotates the keychain/session token on re-login; a previously imported OAuth
+// copy in config can stay behind and make GetCurrentPeriodUsage return 401 until refreshed.
 func (s *Server) syncCursorOAuthFromPlatform() bool {
-	provider := s.config.Providers[string(config.ProviderCursor)]
-	if provider.OAuth != nil && strings.TrimSpace(provider.OAuth.AccessToken) != "" {
-		return false
-	}
-
 	oauth, _, err := cursorauth.Load("")
 	if err != nil || oauth == nil || strings.TrimSpace(oauth.AccessToken) == "" {
 		return false
 	}
+
+	provider := s.config.Providers[string(config.ProviderCursor)]
+	if provider.OAuth != nil && provider.OAuth.AccessToken == oauth.AccessToken {
+		return false
+	}
+
 	provider.OAuth = oauth
 	s.config.Providers[string(config.ProviderCursor)] = provider
 	if err := s.config.Save(config.GetConfigPath()); err != nil {

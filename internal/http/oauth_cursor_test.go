@@ -78,6 +78,28 @@ func TestProviderUsageStatusForCursorUsesStoredOAuth(t *testing.T) {
 	}
 }
 
+func TestSyncCursorOAuthFromPlatformRefreshesStaleStoredToken(t *testing.T) {
+	t.Setenv("AAGENT_CONFIG_PATH", filepath.Join(t.TempDir(), "config.json"))
+	bruteServer := newCursorUsageTestServer(t)
+	t.Setenv("AAGENT_CURSOR_ACCESS_TOKEN", "fresh-cursor-token")
+	t.Setenv("AAGENT_CURSOR_SKIP_PLATFORM_AUTH", "true")
+
+	bruteServer.config.Providers[string(config.ProviderCursor)] = config.Provider{
+		Name: string(config.ProviderCursor),
+		OAuth: &config.OAuthConfig{
+			AccessToken: "stale-cursor-token",
+		},
+	}
+
+	if !bruteServer.syncCursorOAuthFromPlatform() {
+		t.Fatal("expected sync to refresh stale oauth token")
+	}
+	provider := bruteServer.config.Providers[string(config.ProviderCursor)]
+	if provider.OAuth == nil || provider.OAuth.AccessToken != "fresh-cursor-token" {
+		t.Fatalf("expected fresh token in config, got %+v", provider.OAuth)
+	}
+}
+
 func TestHandleCursorOAuthImportStoresToken(t *testing.T) {
 	// The import handler persists through config.GetConfigPath(), so this test
 	// must never fall through to a developer's real user configuration.

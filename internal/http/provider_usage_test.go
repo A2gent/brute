@@ -531,6 +531,36 @@ func TestProviderUsageStatusForCursorReturnsPlanUsage(t *testing.T) {
 	}
 }
 
+func TestProviderUsageStatusForCursorUsesLimitRemainingForTotalBar(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"planUsage": {
+				"limit": 7000,
+				"remaining": 4192,
+				"includedSpend": 2808,
+				"autoPercentUsed": 2.34,
+				"apiPercentUsed": 0,
+				"totalPercentUsed": 2.23
+			},
+			"displayMessage": "You've used 40% of your included usage"
+		}`))
+	}))
+	defer server.Close()
+
+	bruteServer := newCursorUsageTestServer(t)
+	t.Setenv("AAGENT_CURSOR_ACCESS_TOKEN", "test-cursor-token")
+	t.Setenv("AAGENT_CURSOR_USAGE_URL", server.URL+"/aiserver.v1.DashboardService/GetCurrentPeriodUsage")
+
+	usage := bruteServer.providerUsageStatus(context.Background(), config.ProviderCursor)
+	if usage.Status != providerUsageStatusAvailable {
+		t.Fatalf("status = %q, want %q: %+v", usage.Status, providerUsageStatusAvailable, usage)
+	}
+	if usage.UsageBars[0].UsedPercent != 40 || usage.UsageBars[0].LeftPercent != 60 {
+		t.Fatalf("unexpected total usage bar: %+v", usage.UsageBars[0])
+	}
+}
+
 func TestProviderUsageStatusForCursorReturnsUnavailableWithoutToken(t *testing.T) {
 	bruteServer := newCursorUsageTestServer(t)
 	t.Setenv("AAGENT_CURSOR_ACCESS_TOKEN", "")

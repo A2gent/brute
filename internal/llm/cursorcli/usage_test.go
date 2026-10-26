@@ -125,6 +125,17 @@ func TestResolveAccessTokenPrefersEnvOverride(t *testing.T) {
 	}
 }
 
+func TestEffectiveTotalPercentUsedPrefersLimitRemaining(t *testing.T) {
+	used := EffectiveTotalPercentUsed(PlanUsage{
+		Limit:            7000,
+		Remaining:        4192,
+		TotalPercentUsed: 2.23,
+	})
+	if used < 39.9 || used > 40.2 {
+		t.Fatalf("EffectiveTotalPercentUsed = %v, want ~40", used)
+	}
+}
+
 func TestFormatPeriodUsageSummary(t *testing.T) {
 	text := FormatPeriodUsageSummary(PeriodUsage{
 		DisplayMessage: "You've used 20% of your included usage",

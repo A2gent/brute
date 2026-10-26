@@ -18,6 +18,7 @@ type fakeChildAgent struct {
 	mu        sync.Mutex
 	status    string
 	pending   bool
+	source    string
 	decisions []string
 }
 
@@ -27,7 +28,7 @@ func (f *fakeChildAgent) handler() http.Handler {
 		defer f.mu.Unlock()
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/sessions/child-1":
-			metadata := map[string]interface{}{}
+			metadata := map[string]interface{}{"source": f.source}
 			if f.pending {
 				metadata[session.TransitionMetadataKey] = []map[string]interface{}{{"id": "tr-1", "confirmation": "pending", "phase": "awaiting_confirmation"}}
 			}
@@ -50,12 +51,14 @@ func TestReusableDirectAgentChild(t *testing.T) {
 		name          string
 		status        string
 		pending       bool
+		source        string
 		agentName     string
 		storedChild   string
 		want          string
 		wantDecisions []string
 	}{
 		{name: "reuses previous child keeping its route", status: "completed", agentName: "qa", storedChild: "child-1", want: "child-1"},
+		{name: "delegated child is not reused", status: "completed", source: "delegate_to_agent", agentName: "qa", storedChild: "child-1", want: ""},
 		{name: "new message rejects pending switch", status: "input_required", pending: true, agentName: "qa", storedChild: "child-1", want: "child-1", wantDecisions: []string{"reject"}},
 		{name: "running child is not reused", status: "running", agentName: "qa", storedChild: "child-1", want: ""},
 		{name: "other agent is not reused", status: "completed", agentName: "other", storedChild: "child-1", want: ""},
@@ -63,7 +66,11 @@ func TestReusableDirectAgentChild(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			fake := &fakeChildAgent{status: tc.status, pending: tc.pending}
+			source := tc.source
+			if source == "" {
+				source = "direct_agent_session"
+			}
+			fake := &fakeChildAgent{status: tc.status, pending: tc.pending, source: source}
 			child := httptest.NewServer(fake.handler())
 			defer child.Close()
 			sess := &session.Session{ID: "parent"}

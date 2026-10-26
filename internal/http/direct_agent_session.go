@@ -187,6 +187,12 @@ func (s *Server) reusableDirectAgentChild(ctx context.Context, sess *session.Ses
 		logging.Warn("Direct agent: not reusing child %s of %s (status=%q): %v", childID, sess.ID, child.Status, err)
 		return ""
 	}
+	// WHY: docker_child_sessions also lists children made by delegate_to_agent.
+	// Those are flagged as delegated, so the child rejects parent agent tools
+	// ("require a direct host session") on a follow-up. Start a fresh direct child.
+	if src, _ := child.Metadata["source"].(string); src != "direct_agent_session" {
+		return ""
+	}
 	if t := session.CurrentProviderTransition(&session.Session{Metadata: child.Metadata}); t != nil && t.Confirmation == "pending" {
 		url := strings.TrimRight(agent.APIURL, "/") + "/sessions/" + childID + "/provider-transitions/" + t.ID + "/decision"
 		if err := postLocalDockerAgentJSON(lookupCtx, client, url, map[string]string{"decision": "reject"}, nil); err != nil {

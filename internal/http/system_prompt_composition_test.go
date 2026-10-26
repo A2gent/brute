@@ -256,8 +256,8 @@ workspace:
 	if !strings.Contains(subAgentsSection, "- youtube-transcriber-gemini - YouTube Transcriber (Gemini) (cost=30, speed=90, intelligence=75)") {
 		t.Fatalf("expected running stored YAML agent with metrics in compact prompt, got: %q", systemPrompt)
 	}
-	if strings.Contains(subAgentsSection, "stopped-agent") || strings.Contains(subAgentsSection, "Uncreated Agent") {
-		t.Fatalf("expected only running agents in prompt, got: %q", systemPrompt)
+	if !strings.Contains(subAgentsSection, "stopped-agent") || !strings.Contains(subAgentsSection, "Uncreated Agent") {
+		t.Fatalf("expected stopped and uncreated agents available on demand, got: %q", systemPrompt)
 	}
 	if strings.Contains(subAgentsSection, "Status:") || strings.Contains(subAgentsSection, "Provider:") || strings.Contains(subAgentsSection, "Model:") || strings.Contains(subAgentsSection, "Tools:") {
 		t.Fatalf("expected compact ID/name-only agent metadata in prompt, got: %q", systemPrompt)
@@ -411,8 +411,8 @@ func TestBuildSystemPromptForSession_IncludesAvailableSavedSubAgents(t *testing.
 	if !strings.Contains(subAgentsSection, "- current-project-reviewer - Current Project Reviewer") {
 		t.Fatalf("expected current-project saved sub-agent in compact prompt, got: %q", systemPrompt)
 	}
-	if strings.Contains(subAgentsSection, "stopped-reviewer") || strings.Contains(subAgentsSection, "Stopped Reviewer") {
-		t.Fatalf("expected stopped saved sub-agent to be omitted from prompt, got: %q", systemPrompt)
+	if !strings.Contains(subAgentsSection, "- stopped-reviewer - Stopped Reviewer") {
+		t.Fatalf("expected stopped saved sub-agent available on demand, got: %q", systemPrompt)
 	}
 	if strings.Contains(subAgentsSection, "wrong-project-reviewer") || strings.Contains(subAgentsSection, "Wrong Project Reviewer") {
 		t.Fatalf("expected other-project saved sub-agent to be omitted from prompt, got: %q", systemPrompt)

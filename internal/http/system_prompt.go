@@ -20,11 +20,12 @@ import (
 const sessionSystemPromptSnapshotMetadataKey = storage.SystemPromptSnapshotMetadataKey
 
 type systemPromptSnapshot struct {
-	BasePrompt        string                      `json:"base_prompt"`
-	CombinedPrompt    string                      `json:"combined_prompt"`
-	BaseEstimated     int                         `json:"base_estimated_tokens"`
-	CombinedEstimated int                         `json:"combined_estimated_tokens"`
-	Blocks            []systemPromptBlockSnapshot `json:"blocks"`
+	ConfiguredAgentsVersion int                         `json:"configured_agents_version,omitempty"`
+	BasePrompt              string                      `json:"base_prompt"`
+	CombinedPrompt          string                      `json:"combined_prompt"`
+	BaseEstimated           int                         `json:"base_estimated_tokens"`
+	CombinedEstimated       int                         `json:"combined_estimated_tokens"`
+	Blocks                  []systemPromptBlockSnapshot `json:"blocks"`
 }
 
 type systemPromptBlockSnapshot struct {
@@ -115,6 +116,13 @@ func (s *Server) ensureSystemPromptSnapshot(sess *session.Session) (*systemPromp
 			}
 		} else {
 			cachedPromptStillCurrent := !snapshotHasOutdatedConfiguredAgentsBlock(snapshot)
+			if cachedPromptStillCurrent && snapshot.ConfiguredAgentsVersion == 0 && snapshotHasEnvironmentContextBlock(snapshot) {
+				// Old snapshots omitted the entire catalog when nothing was running.
+				// Migrate once if agents are now configured, without changing unrelated
+				// legacy prefixes or rebuilding current empty catalogs every turn.
+				entries, err := s.configuredDelegationAgents(sessionProjectIDForPrompt(sess))
+				cachedPromptStillCurrent = err != nil || len(entries) == 0
+			}
 			if cachedPromptStillCurrent {
 				return snapshot, nil
 			}
@@ -129,6 +137,9 @@ func (s *Server) ensureSystemPromptSnapshot(sess *session.Session) (*systemPromp
 	}
 	if snapshot == nil {
 		return nil, nil
+	}
+	if resolvedSubAgent == nil {
+		snapshot.ConfiguredAgentsVersion = 1
 	}
 	if snapshots, ok := s.store.(storage.SystemPromptSnapshotStore); ok {
 		raw, err := json.Marshal(snapshot)
@@ -513,7 +524,8 @@ func snapshotHasOutdatedConfiguredAgentsBlock(snapshot *systemPromptSnapshot) bo
 func configuredAgentsPromptBlockNeedsRefresh(content string) bool {
 	return strings.Contains(content, legacyConfiguredAgentsPromptHeader) ||
 		strings.Contains(content, legacySavedConfiguredAgentsPromptHeader) ||
-		strings.Contains(content, runningConfiguredAgentsPromptHeader)
+		strings.Contains(content, runningConfiguredAgentsPromptHeader) ||
+		strings.Contains(content, legacyRunningAgentsPromptHeader)
 }
 
 func snapshotHasEnvironmentContext(snapshot *systemPromptSnapshot) bool {
@@ -541,4 +553,15 @@ func resolveMainAgentBasePrompt(settings map[string]string) string {
 		return configured
 	}
 	return agent.DefaultSystemPromptWithoutBuiltInTools()
+}
+
+// Custom/legacy prefixes can mention environment context as plain text. Only
+// standard composed snapshots carry this block and need empty-catalog migration.
+func snapshotHasEnvironmentContextBlock(snapshot *systemPromptSnapshot) bool {
+	for _, block := range snapshot.Blocks {
+		if strings.TrimSpace(block.Type) == "environment_context" {
+			return true
+		}
+	}
+	return false
 }

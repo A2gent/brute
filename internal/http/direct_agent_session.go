@@ -94,7 +94,8 @@ func (s *Server) runDirectAgentSession(ctx context.Context, sess *session.Sessio
 	if agent.HostPort == 0 || strings.TrimSpace(agent.APIURL) == "" {
 		return ChatResponse{}, fmt.Errorf("docker agent does not expose Brute API")
 	}
-	client := &nethttp.Client{}
+	// A redirect must not forward the internal per-turn capability elsewhere.
+	client := &nethttp.Client{CheckRedirect: func(*nethttp.Request, []*nethttp.Request) error { return nethttp.ErrUseLastResponse }}
 	healthCtx, healthCancel := context.WithTimeout(ctx, dockerDelegationStartTimeout)
 	err = waitForLocalDockerAgentHTTP(healthCtx, client, agent.APIURL)
 	healthCancel()
@@ -124,7 +125,12 @@ func (s *Server) runDirectAgentSession(ctx context.Context, sess *session.Sessio
 	if workspace != nil {
 		prompt = s.rewriteDockerDelegationTask(task, *workspace)
 	}
-	return postLocalDockerAgentChatStream(ctx, client, baseURL+"/sessions/"+childID+"/chat/stream", ChatRequest{Message: prompt}, onEvent)
+	headers, revoke, err := s.directAgentToolsHeaders(ctx, sess, agent.Runtime)
+	if err != nil {
+		return ChatResponse{}, err
+	}
+	defer revoke()
+	return postLocalDockerAgentChatStreamWithHeaders(ctx, client, baseURL+"/sessions/"+childID+"/chat/stream", ChatRequest{Message: prompt}, headers, onEvent)
 }
 
 // directAgentReplyMetadata links the parent's copy of the agent reply to the

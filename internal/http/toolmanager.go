@@ -179,7 +179,7 @@ func (s *Server) toolManagerForSession(sess *session.Session) *tools.Manager {
 		if sess != nil {
 			s.registerBrowserSessionTool(sess.ID, s.toolManager)
 		}
-		return s.toolManager
+		return s.withParentAgentTools(s.toolManager, sess)
 	}
 
 	var manager *tools.Manager
@@ -220,7 +220,7 @@ func (s *Server) toolManagerForSession(sess *session.Session) *tools.Manager {
 		}
 	}
 
-	return manager
+	return s.withParentAgentTools(manager, sess)
 }
 
 func (s *Server) registerServerBackedTools(manager *tools.Manager) {

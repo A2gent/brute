@@ -115,28 +115,6 @@ func TestProbeLocalDockerAgentHealthCapturesOfflineUsage(t *testing.T) {
 	}
 }
 
-func TestConfiguredAgentPromptSkipsUnhealthyRunningContainer(t *testing.T) {
-	binding := dockerWorkspaceBinding{}
-	containers := map[string][]LocalDockerAgent{
-		"reviewer": {{
-			Running: true,
-			Health: &LocalDockerAgentHealth{
-				Status:  "offline",
-				Healthy: false,
-				Reason:  "anthropic_usage_limit_reached",
-			},
-		}},
-	}
-	if configuredAgentPromptHasRunningContainer([]string{"reviewer"}, binding, containers) {
-		t.Fatal("unhealthy running container should not be listed as available")
-	}
-
-	containers["reviewer"][0].Health = &LocalDockerAgentHealth{Status: "ok", Healthy: true}
-	if !configuredAgentPromptHasRunningContainer([]string{"reviewer"}, binding, containers) {
-		t.Fatal("healthy running container should be listed as available")
-	}
-}
-
 func TestApplyUnifiedAgentContainerStatusMarksUnhealthyRunningContainer(t *testing.T) {
 	entry := UnifiedAgentResponse{}
 	applyUnifiedAgentContainerStatus(&entry, []LocalDockerAgent{{

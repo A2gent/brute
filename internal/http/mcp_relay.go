@@ -351,6 +351,9 @@ func (s *Server) configureParentMCPRelay(client *lmstudio.Client, parentURL stri
 // CLI-native equivalents are relayed only for Docker invocations. The normal
 // loopback bridge continues to exclude them in favor of local CLI tools.
 func mcpBridgeToolExposedContext(ctx context.Context, name string) bool {
+	if restricted, _ := ctx.Value(parentAgentToolsScopeKey{}).(bool); restricted {
+		return parentAgentToolAllowed(name)
+	}
 	if mcpBridgeToolExposed(name) {
 		return true
 	}

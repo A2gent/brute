@@ -122,6 +122,13 @@ func TestHostRuntimeSpawnsReusesAndStopsProcess(t *testing.T) {
 	if _, err := nethttp.Get(fmt.Sprintf("%s/health", agent.APIURL)); err == nil {
 		t.Fatal("process should be gone after stop")
 	}
+	if listed := server.hostRuntime.list(); len(listed) != 0 {
+		t.Fatalf("stopped host process must not be reused as live: %+v", listed)
+	}
+	restarted, err := server.dockerRuntime.ensureAgentContainerForWorkspace(t.Context(), def, workspace)
+	if err != nil || restarted.Runtime != agentdef.RuntimeHost || !restarted.Running {
+		t.Fatalf("next delegation must restart the stopped host process: %+v %v", restarted, err)
+	}
 }
 
 func TestHostRuntimeRejectsMultiProjectScope(t *testing.T) {

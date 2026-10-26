@@ -91,6 +91,9 @@ type Server struct {
 	approvalResolvePayload   map[string]approvalResolvePayload
 	mcpBridge                *mcpBridgeState
 	parentMCPKey             string
+	parentAgentToolsURL      string
+	parentAgentToolsMu       sync.Mutex
+	parentAgentTools         map[string]*parentAgentToolsCapability
 	writeTaskSource          func(string, []byte, os.FileMode) error
 	removeTaskSource         func(string) error
 
@@ -143,6 +146,7 @@ func NewServer(
 		approvalResolvePayload: make(map[string]approvalResolvePayload),
 		mcpBridge:              newMCPBridgeState(),
 		parentMCPKey:           consumeParentMCPKey(),
+		parentAgentToolsURL:    trustedParentAgentToolsURL(os.Getenv(parentAgentToolsURLEnv)),
 		writeTaskSource:        os.WriteFile,
 		removeTaskSource:       os.Remove,
 	}

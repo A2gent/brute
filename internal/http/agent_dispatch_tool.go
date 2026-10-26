@@ -1,6 +1,6 @@
 // agent_dispatch_tool.go implements the unified delegate_to_agent tool. Local
-// configured agents run through Docker with warm-container reuse; remote agents
-// stay on the A2A flow.
+// configured agents start on demand as host processes or Docker containers;
+// remote agents stay on the A2A flow.
 package http
 
 import (
@@ -63,7 +63,7 @@ func (t *delegateToAgentTool) Name() string {
 }
 
 func (t *delegateToAgentTool) Description() string {
-	return `Delegate a task to a configured agent. Local configured agents run in isolated Docker containers with warm reuse; remote agents run through external A2A. The dispatcher resolves the agent by ID and routes the task to the right runtime.
+	return `Delegate a task to a configured agent. Local configured agents start automatically on demand as host processes or isolated Docker containers, according to their runtime configuration, and are reused while running. Remote agents run through external A2A. The dispatcher resolves the agent by ID and routes the task to the right runtime.
 
 Use this to offload well-scoped tasks and reduce context usage in your main session. Returns the agent's response and the child session ID.`
 }
@@ -104,7 +104,7 @@ func (t *delegateToAgentTool) Execute(ctx context.Context, params json.RawMessag
 	}
 
 	// Legacy sub-agent rows, stored definitions, and project-folder discoveries
-	// all resolve through definitionForUnifiedAgent before Docker delegation.
+	// all resolve through definitionForUnifiedAgent before local delegation.
 	currentProjectID := delegationParentProjectID(ctx, t.server)
 	if def, discoveredProjectID, err := t.server.definitionForUnifiedAgent(agentID, currentProjectID); err == nil {
 		// WHY: listing and dispatch must share the same project scope so a session
@@ -133,6 +133,9 @@ func (t *delegateToAgentTool) Execute(ctx context.Context, params json.RawMessag
 
 	// Docker runtime: local Brute containers addressed by name or container ID.
 	if dockerAgent, err := findLocalBruteContainer(ctx, agentID); err == nil {
+		if err := t.server.authorizeDockerDelegationTarget(dockerAgent, currentProjectID); err != nil {
+			return &tools.Result{Success: false, Error: err.Error()}, nil
+		}
 		return t.server.runDockerAgentDelegation(ctx, dockerAgent, task)
 	}
 
@@ -532,6 +535,10 @@ func dockerWorkspaceMetadata(workspace dockerWorkspaceBinding) map[string]interf
 }
 
 func postLocalDockerAgentChatStream(ctx context.Context, client *nethttp.Client, url string, payload ChatRequest, onEvent func(ChatStreamEvent)) (ChatResponse, error) {
+	return postLocalDockerAgentChatStreamWithHeaders(ctx, client, url, payload, nil, onEvent)
+}
+
+func postLocalDockerAgentChatStreamWithHeaders(ctx context.Context, client *nethttp.Client, url string, payload ChatRequest, headers nethttp.Header, onEvent func(ChatStreamEvent)) (ChatResponse, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return ChatResponse{}, err
@@ -539,6 +546,9 @@ func postLocalDockerAgentChatStream(ctx context.Context, client *nethttp.Client,
 	req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return ChatResponse{}, err
+	}
+	for name, values := range headers {
+		req.Header[name] = append([]string(nil), values...)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)

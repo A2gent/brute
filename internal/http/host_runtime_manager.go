@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -198,6 +199,14 @@ func (m *hostRuntimeManager) ensure(ctx context.Context, def *agentdef.Definitio
 	m.mu.Lock()
 	existing := m.procs[name]
 	m.mu.Unlock()
+	// Warm children started before the parent-tools bootstrap (or on another
+	// parent port) must respawn from the current executable before accepting turns.
+	parentToolsEnv := fmt.Sprintf("%s=http://127.0.0.1:%d", parentAgentToolsURLEnv, m.server.Port())
+	if existing != nil && existing.alive() && !slices.Contains(existing.cmd.Env, parentToolsEnv) {
+		logging.Info("Host runtime: agent %s has outdated parent tools bootstrap; restarting", name)
+		existing.stop()
+		existing = nil
+	}
 	if existing != nil && existing.alive() && llmConfigStale(existing.labels, def) {
 		logging.Info("Host runtime: agent %s runs an outdated LLM config; restarting", name)
 		existing.stop()
@@ -272,6 +281,8 @@ func (m *hostRuntimeManager) spawn(ctx context.Context, def *agentdef.Definition
 		args = append(args, s.parentProxyEnvArgs(localDockerAgentRuntimeProvider(req.LLM.Provider), fmt.Sprintf("http://127.0.0.1:%d/v1", s.Port()))...)
 	}
 	env := hostEnvFromDockerArgs(args)
+	// Origin only: turn credentials travel in an internal stream header, never env.
+	env[parentAgentToolsURLEnv] = fmt.Sprintf("http://127.0.0.1:%d", s.Port())
 	env["AAGENT_DATA_PATH"] = dataDir
 	env["AAGENT_CONFIG_PATH"] = filepath.Join(dataDir, "config.json")
 	if prompt != "" {

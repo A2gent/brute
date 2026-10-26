@@ -2,6 +2,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -56,6 +57,19 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, 409, "Resolve the pending provider transition first")
 		return
 	}
+	runCtx, cancelRun := s.chatStreamRunContextWithParent(r.Context(), leaseCtx, sess)
+	defer cancelRun()
+	removeParentTools, err := s.acquireParentAgentTools(runCtx, r, sess)
+	if err != nil {
+		s.errorResponse(w, http.StatusForbidden, err.Error())
+		return
+	}
+	defer removeParentTools()
+	if r.Header.Get(parentAgentToolsHeader) != "" {
+		// This host turn belongs to a waiting parent, not a reconnectable UI.
+		stop := context.AfterFunc(r.Context(), cancelRun)
+		defer stop()
+	}
 	defer s.queueTelegramSessionMessageSync(sess.ID)
 	defer s.closeBrowserPageIfTerminal(sess)
 	if sess.Status == session.StatusQueued && sessionIsSerialQueuedAutoRun(sess) {
@@ -80,7 +94,6 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runCtx, cancelRun := s.chatStreamRunContextWithParent(r.Context(), leaseCtx, sess)
 	runID := s.registerActiveSessionRun(sessionID, cancelRun)
 	defer func() {
 		cancelRun()

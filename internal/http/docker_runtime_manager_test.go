@@ -306,3 +306,19 @@ func TestIsDockerPortAllocationError(t *testing.T) {
 		t.Fatal("unrelated docker errors should not be treated as port allocation errors")
 	}
 }
+
+func TestLLMConfigStale(t *testing.T) {
+	def := &agentdef.Definition{}
+	def.LLM.Provider = "openai_codex"
+	def.LLM.Model = "gpt-6.1-sol"
+	fresh := map[string]string{dockerRuntimeLLMFingerprintLabelKey: llmFingerprint(def)}
+	if llmConfigStale(fresh, def) {
+		t.Fatal("matching fingerprint must not be stale")
+	}
+	if !llmConfigStale(map[string]string{dockerRuntimeLLMFingerprintLabelKey: "cursor|auto"}, def) {
+		t.Fatal("different provider must be stale")
+	}
+	if llmConfigStale(nil, def) {
+		t.Fatal("legacy runtime without label must be left alone")
+	}
+}

@@ -6,6 +6,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	nethttp "net/http"
 	"os"
@@ -24,10 +25,13 @@ const (
 	dockerRuntimeAgentDefLabelKey    = "a2gent.agent_def_id"
 	dockerRuntimeLLMProviderLabelKey = "a2gent.llm_provider"
 	dockerRuntimeLLMModelLabelKey    = "a2gent.llm_model"
-	dockerAgentIdleTimeoutEnvVar     = "A2GENT_DOCKER_AGENT_IDLE_TIMEOUT"
-	dockerRuntimeReaperInterval      = 1 * time.Minute
-	dockerRuntimeCreateTimeout       = 60 * time.Second
-	dockerRuntimeHealthTimeout       = 30 * time.Second
+	// Definition-derived provider|model. Unlike the labels above it is never
+	// rewritten for proxy routing, so it can be compared with the current definition.
+	dockerRuntimeLLMFingerprintLabelKey = "a2gent.llm_fingerprint"
+	dockerAgentIdleTimeoutEnvVar        = "A2GENT_DOCKER_AGENT_IDLE_TIMEOUT"
+	dockerRuntimeReaperInterval         = 1 * time.Minute
+	dockerRuntimeCreateTimeout          = 60 * time.Second
+	dockerRuntimeHealthTimeout          = 30 * time.Second
 )
 
 type dockerRuntimeManager struct {
@@ -362,6 +366,14 @@ func (m *dockerRuntimeManager) ensureAgentContainerForWorkspace(ctx context.Cont
 
 	agent, findErr := findLocalBruteContainer(ctx, containerName)
 	var err error
+	// WHY: the definition may have been edited (e.g. provider switched from cursor
+	// to codex) without going through import, leaving a container that still runs
+	// the old LLM config. Recreate it instead of reusing it warm.
+	if findErr == nil && llmConfigStale(agent.Labels, def) {
+		logging.Info("Docker runtime: container %s runs an outdated LLM config; recreating", containerName)
+		removeDockerContainerByName(ctx, containerName)
+		findErr = errors.New("recreate: stale llm config")
+	}
 	switch {
 	case findErr == nil && agent.Running:
 		// Warm reuse.
@@ -465,6 +477,7 @@ func (m *dockerRuntimeManager) createAgentContainer(ctx context.Context, def *ag
 	}
 	req.Labels[dockerRuntimeManagedLabelKey] = "true"
 	req.Labels[dockerRuntimeAgentDefLabelKey] = def.Agent.ID
+	req.Labels[dockerRuntimeLLMFingerprintLabelKey] = llmFingerprint(def)
 	if len(workspace.ProjectMounts) > 0 {
 		req.Labels["a2gent.workspace_scope"] = workspace.Scope
 	}
@@ -673,4 +686,17 @@ func (m *dockerRuntimeManager) reapIdleContainers(ctx context.Context) {
 		}
 		logging.Info("Docker runtime: stopped idle container %s (idle for %s)", agent.Name, now.Sub(last).Round(time.Second))
 	}
+}
+
+func llmFingerprint(def *agentdef.Definition) string {
+	provider, model := dockerDelegationLLMMetadataFromDefinition(def)
+	return provider + "|" + model
+}
+
+// llmConfigStale reports whether a warm runtime was created with a different
+// provider/model than the definition has now. Runtimes without the label predate
+// it and are left alone.
+func llmConfigStale(labels map[string]string, def *agentdef.Definition) bool {
+	got, ok := labels[dockerRuntimeLLMFingerprintLabelKey]
+	return ok && got != llmFingerprint(def)
 }

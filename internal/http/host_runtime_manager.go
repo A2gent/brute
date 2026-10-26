@@ -198,6 +198,11 @@ func (m *hostRuntimeManager) ensure(ctx context.Context, def *agentdef.Definitio
 	m.mu.Lock()
 	existing := m.procs[name]
 	m.mu.Unlock()
+	if existing != nil && existing.alive() && llmConfigStale(existing.labels, def) {
+		logging.Info("Host runtime: agent %s runs an outdated LLM config; restarting", name)
+		existing.stop()
+		existing = nil
+	}
 	if existing != nil && existing.alive() {
 		healthCtx, cancel := context.WithTimeout(ctx, dockerRuntimeHealthTimeout)
 		err := waitForLocalDockerAgentHTTP(healthCtx, &nethttp.Client{Timeout: dockerRuntimeHealthTimeout}, existing.asAgent().APIURL)
@@ -306,8 +311,9 @@ func (m *hostRuntimeManager) spawn(ctx context.Context, def *agentdef.Definition
 	}
 
 	labels := map[string]string{
-		dockerRuntimeManagedLabelKey:  "true",
-		dockerRuntimeAgentDefLabelKey: def.Agent.ID,
+		dockerRuntimeManagedLabelKey:        "true",
+		dockerRuntimeAgentDefLabelKey:       def.Agent.ID,
+		dockerRuntimeLLMFingerprintLabelKey: llmFingerprint(def),
 	}
 	if workspace.ProjectID != "" {
 		labels["a2gent.project_id"] = workspace.ProjectID

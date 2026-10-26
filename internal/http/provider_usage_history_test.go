@@ -98,10 +98,11 @@ func TestProviderUsageHistoryEndpointReturnsSamples(t *testing.T) {
 }
 
 func TestClaudeRateLimitUsageBarsIncludeWindow(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	bars := claudeRateLimitUsageBars(claudeRateLimitCache{RateLimits: claudeRateLimitWindows{
 		FiveHour: &claudeRateLimitWindow{UsedPercentage: 40, ResetsAt: 1792152000},
 		SevenDay: &claudeRateLimitWindow{UsedPercentage: 10},
-	}})
+	}}, now)
 	if len(bars) != 2 {
 		t.Fatalf("bars = %+v", bars)
 	}

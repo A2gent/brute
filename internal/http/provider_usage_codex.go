@@ -174,11 +174,16 @@ func openAICodexUsageBars(payload codexUsageRateLimitResponse) []ProviderUsageBa
 		if details.LimitReached || !details.Allowed {
 			status = "limit_reached"
 		}
-		if details.PrimaryWindow != nil {
-			bars = append(bars, codexWindowUsageBar(label+" 5h", details.PrimaryWindow, status))
-		}
-		if details.SecondaryWindow != nil {
-			bars = append(bars, codexWindowUsageBar(label+" weekly", details.SecondaryWindow, status))
+		// Label by actual window length: plans without a 5h limit report only a weekly primary window.
+		for _, w := range []*codexUsageWindow{details.PrimaryWindow, details.SecondaryWindow} {
+			if w == nil {
+				continue
+			}
+			suffix := " 5h"
+			if w.LimitWindowSeconds >= 24*3600 {
+				suffix = " weekly"
+			}
+			bars = append(bars, codexWindowUsageBar(label+suffix, w, status))
 		}
 	}
 
@@ -196,9 +201,10 @@ func codexWindowUsageBar(label string, window *codexUsageWindow, status string) 
 		Label:         label,
 		UsedPercent:   used,
 		LeftPercent:   left,
-		ResetText:     codexUsageWindowResetText(window),
+		ResetText:     codexUsageWindowResetText(window, time.Now()),
 		Status:        status,
 		WindowSeconds: window.LimitWindowSeconds,
+		LongTerm:      window.LimitWindowSeconds >= 24*3600,
 	}
 	if window.ResetAt > 0 {
 		bar.ResetsAt = time.Unix(window.ResetAt, 0).UTC().Format(time.RFC3339)
@@ -210,15 +216,15 @@ func codexWindowUsageBar(label string, window *codexUsageWindow, status string) 
 	return bar
 }
 
-func codexUsageWindowResetText(window *codexUsageWindow) string {
+func codexUsageWindowResetText(window *codexUsageWindow, now time.Time) string {
 	if window == nil {
 		return ""
 	}
 	if window.ResetAt > 0 {
-		return "resets " + time.Unix(window.ResetAt, 0).UTC().Format(time.RFC3339)
+		return providerUsageResetInText(time.Unix(window.ResetAt, 0).UTC(), now)
 	}
 	if window.ResetAfterSeconds > 0 {
-		return fmt.Sprintf("resets in %s", formatDurationApprox(time.Duration(window.ResetAfterSeconds)*time.Second))
+		return "resets in " + formatProviderUsageCountdown(time.Duration(window.ResetAfterSeconds)*time.Second)
 	}
 	return ""
 }
@@ -252,11 +258,12 @@ func formatCodexUsageLimit(label string, details *codexUsageRateLimitDetails) st
 		return label + ": no rate-limit data"
 	}
 	windows := make([]string, 0, 2)
+	now := time.Now()
 	if details.PrimaryWindow != nil {
-		windows = append(windows, "5h "+formatCodexUsageWindow(details.PrimaryWindow))
+		windows = append(windows, "5h "+formatCodexUsageWindow(details.PrimaryWindow, now))
 	}
 	if details.SecondaryWindow != nil {
-		windows = append(windows, "weekly "+formatCodexUsageWindow(details.SecondaryWindow))
+		windows = append(windows, "weekly "+formatCodexUsageWindow(details.SecondaryWindow, now))
 	}
 	state := "allowed"
 	if details.LimitReached || !details.Allowed {
@@ -268,14 +275,16 @@ func formatCodexUsageLimit(label string, details *codexUsageRateLimitDetails) st
 	return fmt.Sprintf("%s: %s (%s)", label, state, strings.Join(windows, ", "))
 }
 
-func formatCodexUsageWindow(window *codexUsageWindow) string {
+func formatCodexUsageWindow(window *codexUsageWindow, now time.Time) string {
 	used := clampPercent(window.UsedPercent)
 	left := int(math.Max(0, math.Round(100-used)))
 	parts := []string{fmt.Sprintf("%d%% left", left)}
 	if window.ResetAt > 0 {
-		parts = append(parts, "resets "+time.Unix(window.ResetAt, 0).UTC().Format(time.RFC3339))
+		if reset := providerUsageResetInText(time.Unix(window.ResetAt, 0).UTC(), now); reset != "" {
+			parts = append(parts, reset)
+		}
 	} else if window.ResetAfterSeconds > 0 {
-		parts = append(parts, fmt.Sprintf("resets in %s", formatDurationApprox(time.Duration(window.ResetAfterSeconds)*time.Second)))
+		parts = append(parts, "resets in "+formatProviderUsageCountdown(time.Duration(window.ResetAfterSeconds)*time.Second))
 	}
 	return strings.Join(parts, ", ")
 }

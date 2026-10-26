@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -309,16 +310,30 @@ func TestProviderUsageLimitReachedIgnoresElapsedReset(t *testing.T) {
 			Label:       "Claude 5h",
 			LeftPercent: 0,
 			Status:      "limit_reached",
-			ResetText:   "resets " + now.Add(-time.Minute).Format(time.RFC3339),
+			ResetsAt:    now.Add(-time.Minute).Format(time.RFC3339),
+			ResetText:   "resets in less than 1min",
 		}},
 	}
 	if reached, detail := providerUsageLimitReached(usage, now); reached {
 		t.Fatalf("expected elapsed reset to be non-fatal, got reached with detail %q", detail)
 	}
 
-	usage.UsageBars[0].ResetText = "resets " + now.Add(time.Minute).Format(time.RFC3339)
+	usage.UsageBars[0].ResetsAt = now.Add(time.Minute).Format(time.RFC3339)
+	usage.UsageBars[0].ResetText = "resets in 1min"
 	if reached, detail := providerUsageLimitReached(usage, now); !reached || !strings.Contains(detail, "Claude 5h") {
 		t.Fatalf("expected future reset to be fatal, got reached=%v detail=%q", reached, detail)
+	}
+}
+
+func TestFormatProviderUsageCountdown(t *testing.T) {
+	if got := formatProviderUsageCountdown(3*24*time.Hour + 4*time.Hour + 50*time.Minute); got != "3 days 4h 50min" {
+		t.Fatalf("countdown = %q, want %q", got, "3 days 4h 50min")
+	}
+	if got := formatProviderUsageCountdown(24 * time.Hour); got != "1 day" {
+		t.Fatalf("countdown = %q, want %q", got, "1 day")
+	}
+	if got := formatProviderUsageCountdown(90 * time.Minute); got != "1h 30min" {
+		t.Fatalf("countdown = %q, want %q", got, "1h 30min")
 	}
 }
 
@@ -483,20 +498,21 @@ func TestAppendClaudeRateLimitCacheDockerArgsMountsExistingCache(t *testing.T) {
 }
 
 func TestProviderUsageStatusForCursorReturnsPlanUsage(t *testing.T) {
+	billingCycleEnd := time.Now().Add(7 * 24 * time.Hour).UnixMilli()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/aiserver.v1.DashboardService/GetCurrentPeriodUsage" {
 			t.Fatalf("path = %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"billingCycleEnd": "1786097901000",
+		_, _ = fmt.Fprintf(w, `{
+			"billingCycleEnd": "%d",
 			"planUsage": {
 				"autoPercentUsed": 26.32,
 				"apiPercentUsed": 13.5,
 				"totalPercentUsed": 20.25
 			},
-			"displayMessage": "You've used 20% of your included usage"
-		}`))
+			"displayMessage": "You've used 20%% of your included usage"
+		}`, billingCycleEnd)
 	}))
 	defer server.Close()
 
@@ -517,8 +533,8 @@ func TestProviderUsageStatusForCursorReturnsPlanUsage(t *testing.T) {
 	if usage.UsageBars[0].Label != "Included usage" || usage.UsageBars[0].UsedPercent != 20 || usage.UsageBars[0].LeftPercent != 80 {
 		t.Fatalf("unexpected included usage bar: %+v", usage.UsageBars[0])
 	}
-	if usage.UsageBars[0].ResetText == "" {
-		t.Fatalf("expected reset text on usage bars: %+v", usage.UsageBars)
+	if !strings.HasPrefix(usage.UsageBars[0].ResetText, "resets in ") {
+		t.Fatalf("expected human-readable reset text on usage bars: %+v", usage.UsageBars)
 	}
 	if usage.UsageLeftText != "20% of included usage used" {
 		t.Fatalf("expected usage summary %q, got %q", "20% of included usage used", usage.UsageLeftText)

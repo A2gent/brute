@@ -122,7 +122,7 @@ func (s *Server) fetchParentProviderUsage(ctx context.Context, providerType conf
 }
 
 func cursorUsageBars(usage cursorcli.PeriodUsage) []ProviderUsageBar {
-	resetText := cursorBillingCycleResetText(usage.BillingCycleEnd)
+	resetText := cursorBillingCycleResetText(usage.BillingCycleEnd, time.Now())
 	bar := cursorUsageBar("Included usage", cursorcli.EffectiveTotalPercentUsed(usage))
 	bar.LongTerm = true
 	bar.ResetText = resetText
@@ -154,7 +154,7 @@ func cursorUsageBar(label string, usedPercent float64) ProviderUsageBar {
 	}
 }
 
-func cursorBillingCycleResetText(billingCycleEnd int64) string {
+func cursorBillingCycleResetText(billingCycleEnd int64, now time.Time) string {
 	if billingCycleEnd <= 0 {
 		return ""
 	}
@@ -163,5 +163,5 @@ func cursorBillingCycleResetText(billingCycleEnd int64) string {
 	if resetAt.IsZero() {
 		return ""
 	}
-	return "resets " + resetAt.Format(time.RFC3339)
+	return providerUsageResetInText(resetAt, now)
 }

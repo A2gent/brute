@@ -510,6 +510,13 @@ func sessionA2AOutboundMeta(sess *session.Session) (isOutbound bool, targetAgent
 	return
 }
 
+// Square stamps these sources on the internal events it originates and strips
+// internal_event from agent-to-agent payloads (square proxy_service.go).
+const (
+	squareOwnerProxySource = "square_owner_proxy"
+	squareWebhookSource    = "square_webhook"
+)
+
 func (s *Server) handleA2AInternalEvent(ctx context.Context, payload json.RawMessage) (*a2atunnel.InternalEventResult, error) {
 	var envelope struct {
 		Metadata map[string]interface{} `json:"metadata"`
@@ -523,6 +530,19 @@ func (s *Server) handleA2AInternalEvent(ctx context.Context, payload json.RawMes
 		if raw, ok := envelope.Metadata["internal_event"].(string); ok {
 			eventType = strings.TrimSpace(raw)
 		}
+	}
+
+	source := ""
+	if raw, ok := envelope.Metadata["source"].(string); ok {
+		source = strings.TrimSpace(raw)
+	}
+	// Defense in depth: a forged event also has to name the matching sender.
+	expectedSource := map[string]string{
+		bruteHTTPInternalEvent:      squareOwnerProxySource,
+		webhookInboundInternalEvent: squareWebhookSource,
+	}[eventType]
+	if expectedSource != "" && source != expectedSource {
+		return nil, fmt.Errorf("internal event %s rejected: not from Square", eventType)
 	}
 
 	switch eventType {

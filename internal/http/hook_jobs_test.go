@@ -47,7 +47,7 @@ func newHookTestServer(t *testing.T) (*Server, *storage.SQLiteStore) {
 
 func webhookEnvelope(endpointID, eventKey, body string) json.RawMessage {
 	raw, _ := json.Marshal(map[string]any{
-		"metadata": map[string]any{"internal_event": webhookInboundInternalEvent, "webhook_endpoint_id": endpointID},
+		"metadata": map[string]any{"internal_event": webhookInboundInternalEvent, "source": squareWebhookSource, "webhook_endpoint_id": endpointID},
 		"http": map[string]any{
 			"headers":     map[string][]string{"X-Event-Key": {eventKey}},
 			"body_base64": base64.StdEncoding.EncodeToString([]byte(body)),

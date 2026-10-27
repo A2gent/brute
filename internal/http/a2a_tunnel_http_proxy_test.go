@@ -217,3 +217,47 @@ func TestHandleBruteHTTPInternalEvent_PreservesBlobResponse(t *testing.T) {
 		t.Fatalf("expected raw pdf body %q, got %q", string(pdfBody), string(decoded))
 	}
 }
+
+func TestA2AInternalEventsRequireSquareOrigin(t *testing.T) {
+	t.Parallel()
+
+	server, _ := newBruteHTTPProxyTestServer(t)
+	envelope := func(event, source string) json.RawMessage {
+		payload, _ := json.Marshal(bruteHTTPProxyEnvelope{
+			Metadata: map[string]interface{}{"internal_event": event, "source": source},
+			HTTP:     bruteHTTPProxyRequest{Method: http.MethodGet, Path: "/health"},
+		})
+		return payload
+	}
+	// A peer agent can put any metadata in its A2A payload; only Square's own
+	// senders stamp the matching source.
+	for _, tc := range []struct{ event, source string }{
+		{bruteHTTPInternalEvent, ""},
+		{bruteHTTPInternalEvent, "peer_agent"},
+		{bruteHTTPInternalEvent, squareWebhookSource},
+		{webhookInboundInternalEvent, squareOwnerProxySource},
+	} {
+		if _, err := server.handleA2AInternalEvent(t.Context(), envelope(tc.event, tc.source)); err == nil {
+			t.Fatalf("accepted %s with source %q", tc.event, tc.source)
+		}
+	}
+	result, err := server.handleA2AInternalEvent(t.Context(), envelope(bruteHTTPInternalEvent, squareOwnerProxySource))
+	if err != nil || result == nil || len(result.Payload) == 0 {
+		t.Fatalf("owner proxy event rejected: %+v %v", result, err)
+	}
+}
+
+func TestA2AHTTPMessageIgnoresInternalEvents(t *testing.T) {
+	t.Parallel()
+
+	server, _ := newBruteHTTPProxyTestServer(t)
+	// Square relays internal events only over the tunnel; the public /a2a
+	// endpoint is reachable by anyone and must never dispatch them.
+	body, _ := json.Marshal(map[string]interface{}{
+		"metadata": map[string]interface{}{"internal_event": bruteHTTPInternalEvent, "source": squareOwnerProxySource},
+		"http":     map[string]interface{}{"method": http.MethodGet, "path": "/health"},
+	})
+	if _, err := server.processA2AMessageRequest(t.Context(), body); err == nil {
+		t.Fatal("HTTP A2A endpoint dispatched an internal event")
+	}
+}

@@ -93,8 +93,9 @@ func TestParentAgentToolsIsolatedCatalogAndDispatch(t *testing.T) {
 	}
 	for _, name := range []string{"parallel", "pipeline"} {
 		result, err = manager.Execute(ctx, name, json.RawMessage(`{"steps":[{"tool":"delegate_to_agent","args":{"agent_id":"global-reviewer","task":"review"}}]}`))
-		if err != nil || !result.Success || !strings.Contains(result.Output, "parent-delegated") {
-			t.Fatalf("%s did not see wrapper: %+v %v", name, result, err)
+		// Long-running delegation must be called directly, never batched.
+		if err != nil || result.Success || !strings.Contains(result.Error, "sub-agent delegation is not allowed") {
+			t.Fatalf("%s should reject delegation: %+v %v", name, result, err)
 		}
 	}
 	// A CLI's local MCP bridge builds a fresh manager and must see the same wrapper.

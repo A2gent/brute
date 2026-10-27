@@ -273,7 +273,7 @@ Guidelines:
 - Make minimal, targeted changes
 - When tasks are independent, always issue multiple tool calls in one response so they run in parallel
 - During codebase exploration, batch independent reads/searches early: prefer 3-6 parallel grep/read/find_files/bash calls before reasoning again
-- If your model or provider emits only one tool call at a time, use the parallel tool to run independent exploration or delegation steps concurrently
+- If your model or provider emits only one tool call at a time, use the parallel tool to run independent exploration steps concurrently; never put sub-agent delegation inside parallel
 - Explain your reasoning before making changes
 - If a task is unclear, ask for clarification
 - If you encounter errors, try to understand and fix them
@@ -316,7 +316,7 @@ Guidelines:
 - Make minimal, targeted changes
 - When tasks are independent, always issue multiple tool calls in one response so they run in parallel
 - During codebase exploration, batch independent reads/searches early: prefer 3-6 parallel grep/read/find_files/bash calls before reasoning again
-- If your model or provider emits only one tool call at a time, use the parallel tool to run independent exploration or delegation steps concurrently
+- If your model or provider emits only one tool call at a time, use the parallel tool to run independent exploration steps concurrently; never put sub-agent delegation inside parallel
 - Explain your reasoning before making changes
 - If a task is unclear, ask for clarification
 - If you encounter errors, try to understand and fix them

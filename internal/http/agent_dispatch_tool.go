@@ -285,7 +285,7 @@ func (s *Server) runDockerAgentDelegationWithWorkspace(ctx context.Context, agen
 	err := waitForLocalDockerAgentHTTP(healthCtx, client, agent.APIURL)
 	healthCancel()
 	if err != nil {
-		return daErrorResult("docker agent is not healthy: " + err.Error()), nil
+		return daErrorResult(runtimeName + " agent is not healthy: " + err.Error()), nil
 	}
 
 	baseURL := strings.TrimRight(agent.APIURL, "/")
@@ -306,7 +306,7 @@ func (s *Server) runDockerAgentDelegationWithWorkspace(ctx context.Context, agen
 	}
 	var created CreateSessionResponse
 	if err := postLocalDockerAgentJSON(taskCtx, client, baseURL+"/sessions", createPayload, &created); err != nil {
-		return daErrorResult("failed to create session on docker agent: " + err.Error()), nil
+		return daErrorResult("failed to create session on " + runtimeName + " agent: " + err.Error()), nil
 	}
 
 	// Child runs outlive HTTP disconnects. Cancel the session, not the shared
@@ -320,7 +320,7 @@ func (s *Server) runDockerAgentDelegationWithWorkspace(ctx context.Context, agen
 	logging.Info("Docker agent delegation started: parent=%s container=%s child=%s task=%s",
 		parentSessionID, agent.Name, created.ID, truncateForLog(task, 100))
 	s.recordDockerDelegationChildSession(parentSessionID, agent, created.ID, workspace)
-	s.reportDockerDelegationToolProgress(ctx, agent, created.ID, workspace, "child_session_created", "Docker sub-agent session created. Waiting for output stream.", map[string]interface{}{
+	s.reportDockerDelegationToolProgress(ctx, agent, created.ID, workspace, "child_session_created", "Sub-agent session created. Waiting for output stream.", map[string]interface{}{
 		"agent_api_url": agent.APIURL,
 	})
 
@@ -331,7 +331,7 @@ func (s *Server) runDockerAgentDelegationWithWorkspace(ctx context.Context, agen
 		s.reportDockerDelegationStreamProgress(ctx, agent, created.ID, workspace, event)
 	})
 	if err != nil {
-		return daErrorResult(fmt.Sprintf("docker agent '%s' failed (child session %s): %s", agent.Name, created.ID, err.Error()), map[string]interface{}{
+		return daErrorResult(fmt.Sprintf("%s agent '%s' failed (child session %s): %s", runtimeName, agent.Name, created.ID, err.Error()), map[string]interface{}{
 			"child_session_id":  created.ID,
 			"parent_session_id": parentSessionID,
 			"agent_api_url":     agent.APIURL,
@@ -588,7 +588,7 @@ func postLocalDockerAgentChatStreamWithHeaders(ctx context.Context, client *neth
 			case "error":
 				message := strings.TrimSpace(event.Error)
 				if message == "" {
-					message = "docker agent stream failed"
+					message = "sub-agent stream failed"
 				}
 				return chatResp, errors.New(message)
 			}
@@ -608,7 +608,7 @@ func postLocalDockerAgentChatStreamWithHeaders(ctx context.Context, client *neth
 				if strings.TrimSpace(recovered.Status) == string(session.StatusFailed) {
 					message := strings.TrimSpace(recovered.Content)
 					if message == "" {
-						message = "docker agent failed before the stream sent a terminal event"
+						message = "sub-agent failed before the stream sent a terminal event"
 					}
 					return recovered, errors.New(message)
 				}

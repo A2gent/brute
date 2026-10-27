@@ -143,6 +143,9 @@ func (t *PipelineTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 		if toolName == t.Name() {
 			return &Result{Success: false, Error: fmt.Sprintf("step %d: recursive pipeline call is not allowed", i+1)}, nil
 		}
+		if parallelUnsupportedTools[toolName] == parallelDelegationRejection {
+			return &Result{Success: false, Error: fmt.Sprintf("step %d: sub-agent delegation is not allowed inside pipeline; call the delegation tool directly", i+1)}, nil
+		}
 
 		if err := validatePipelineItems(stage, i); err != nil {
 			return &Result{Success: false, Error: fmt.Sprintf("step %d: %v", i+1, err)}, nil

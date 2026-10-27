@@ -4,26 +4,30 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	parallelMaxSteps              = 12
-	parallelDefaultOutputChars    = 12000
-	parallelMaxOutputChars        = 200000
-	parallelStepTimeout           = 90 * time.Second
-	parallelDelegationStepTimeout = 12 * time.Hour
-	parallelDelegationTimeoutEnv  = "A2GENT_DOCKER_DELEGATION_TIMEOUT"
+	parallelMaxSteps           = 12
+	parallelDefaultOutputChars = 12000
+	parallelMaxOutputChars     = 200000
+	parallelStepTimeout        = 90 * time.Second
 )
 
 type parallelContextKey struct{}
 
 var parallelUnsupportedTools = map[string]string{
 	"parallel": "recursive parallel calls are not allowed",
+	// Sub-agent runs take minutes to hours; inside a batch they hold the whole
+	// parallel call open and get canceled together with it. Call them directly.
+	"delegate_to_agent":          parallelDelegationRejection,
+	"delegate_to_subagent":       parallelDelegationRejection,
+	"delegate_to_external_agent": parallelDelegationRejection,
 }
+
+const parallelDelegationRejection = "sub-agent delegation is not allowed inside parallel; call the delegation tool directly"
 
 // Stateful tools are not rejected inside a batch; they run one at a time so
 // a single misplaced step does not discard the whole batch.
@@ -68,7 +72,7 @@ func (t *ParallelTool) Name() string {
 }
 
 func (t *ParallelTool) Description() string {
-	return "Run multiple independent tool calls concurrently in one call. Use this for parallel codebase exploration, such as several grep/read/find_files/bash searches that do not depend on each other, and for fan-out delegation to multiple independent agents. Do not use this for recursive parallel calls. browser_chrome, suggest_session and suggest_git_commit are allowed but run sequentially within the batch."
+	return "Run multiple independent tool calls concurrently in one call. Use this for parallel codebase exploration, such as several grep/read/find_files/bash searches that do not depend on each other. Do not use this for recursive parallel calls or sub-agent delegation (delegate_to_* tools must be called directly). browser_chrome, suggest_session and suggest_git_commit are allowed but run sequentially within the batch."
 }
 
 func (t *ParallelTool) Schema() map[string]interface{} {
@@ -164,7 +168,7 @@ func (t *ParallelTool) execute(ctx context.Context, params json.RawMessage, trun
 			return nil, fmt.Errorf("step %d: failed to serialize step args: %w", i+1, err)
 		}
 
-		stepTimeout := parallelTimeoutForTool(toolName)
+		stepTimeout := parallelStepTimeout
 		resultCh := make(chan parallelStepOutput, 1)
 		resultChans = append(resultChans, resultCh)
 		stepTimeouts = append(stepTimeouts, stepTimeout)
@@ -328,27 +332,6 @@ func (t *ParallelTool) execute(ctx context.Context, params json.RawMessage, trun
 			"output_truncated_by":   "per_step",
 		},
 	}, nil
-}
-
-func parallelTimeoutForTool(toolName string) time.Duration {
-	switch normalizeToolName(toolName) {
-	case "delegate_to_agent", "delegate_to_subagent", "delegate_to_external_agent":
-		return parallelDelegationTimeout()
-	default:
-		return parallelStepTimeout
-	}
-}
-
-func parallelDelegationTimeout() time.Duration {
-	raw := strings.TrimSpace(os.Getenv(parallelDelegationTimeoutEnv))
-	if raw == "" {
-		return parallelDelegationStepTimeout
-	}
-	parsed, err := time.ParseDuration(raw)
-	if err != nil || parsed <= 0 {
-		return parallelDelegationStepTimeout
-	}
-	return parsed
 }
 
 func (s *ParallelStep) UnmarshalJSON(data []byte) error {

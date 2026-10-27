@@ -18,7 +18,7 @@ type sessionRunResult struct {
 	Content      string
 	Usage        llm.TokenUsage
 	DirectAgent  bool
-	ReplyMeta    map[string]interface{}
+	DirectReply  ChatResponse
 	Status       string
 	ProviderType config.ProviderType
 }
@@ -61,7 +61,7 @@ func (s *Server) runSessionWithoutStreaming(ctx context.Context, sess *session.S
 			}
 		})
 		result.Content = chatResp.Content
-		result.ReplyMeta = directAgentReplyMetadata(chatResp)
+		result.DirectReply = chatResp
 		result.Usage = llm.TokenUsage{InputTokens: chatResp.Usage.InputTokens, OutputTokens: chatResp.Usage.OutputTokens}
 		result.Status = chatResp.Status
 		return result, err
@@ -153,7 +153,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 	}
 
 	if result.DirectAgent {
-		sess.AddAssistantMessageWithMetadata(result.Content, nil, result.ReplyMeta)
+		appendDirectAgentReply(sess, result.DirectReply)
 		sess.SetStatus(session.StatusCompleted)
 		if result.Status == string(session.StatusInputRequired) || result.Status == string(session.StatusPaused) || result.Status == string(session.StatusWaitingExternal) {
 			sess.SetStatus(session.Status(result.Status))

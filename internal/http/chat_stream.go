@@ -166,7 +166,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			_ = writeEvent(ChatStreamEvent{Type: "error", Error: "Agent error: " + runErr.Error(), Status: string(sess.Status), Messages: s.messagesToResponse(sess.Messages)})
 			return
 		}
-		sess.AddAssistantMessageWithMetadata(chatResp.Content, nil, directAgentReplyMetadata(chatResp))
+		appendDirectAgentReply(sess, chatResp)
 		sess.SetStatus(session.StatusCompleted)
 		if chatResp.Status == string(session.StatusInputRequired) || chatResp.Status == string(session.StatusPaused) || chatResp.Status == string(session.StatusWaitingExternal) {
 			sess.SetStatus(session.Status(chatResp.Status))

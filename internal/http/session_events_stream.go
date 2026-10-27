@@ -63,6 +63,10 @@ func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
 	// handshake and replay, but omit duplicate history only for an exact version.
 	if r.URL.Query().Get("after_updated_at") == sess.UpdatedAt.Format(time.RFC3339Nano) {
 		snapshot.Messages = nil
+	} else {
+		// Same read-time recovery as GET /sessions/{id}: a snapshot without it would
+		// replace the hydrated transcript with the activity-less saved one.
+		snapshot.Messages = s.hydrateDirectAgentActivity(r.Context(), sess, snapshot.Messages)
 	}
 	if !writeSSE(snapshot) {
 		return

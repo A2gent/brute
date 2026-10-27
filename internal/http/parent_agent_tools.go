@@ -30,7 +30,9 @@ type parentAgentToolsWorkDirKey struct{}
 
 func parentAgentToolAllowed(name string) bool {
 	switch name {
-	case "list_agents", "delegate_to_agent", "delegate_to_subagent":
+	// website_credentials reads the parent's vault: host children have their
+	// own DataPath, so the local tool would only see an empty child vault.
+	case "list_agents", "delegate_to_agent", "delegate_to_subagent", "website_credentials":
 		return true
 	}
 	return integrationtools.IsIntegrationBackedTool(name)

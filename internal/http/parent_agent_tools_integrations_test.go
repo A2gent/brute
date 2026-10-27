@@ -16,6 +16,7 @@ import (
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/storage"
 	"github.com/A2gent/brute/internal/tools"
+	"github.com/A2gent/brute/internal/websitecredentials"
 )
 
 func TestParentAgentToolsAppSignalUsesParentIntegration(t *testing.T) {
@@ -232,4 +233,90 @@ func TestParentAgentToolsIntegrationAllowlistAndDirectScope(t *testing.T) {
 		t.Fatalf("direct Docker received host integration capability: %v %v", headers, err)
 	}
 	revoke()
+}
+
+func TestParentAgentToolsWebsiteCredentialsUseParentVault(t *testing.T) {
+	parent, parentSess, child, sess, ctx, remove := parentAgentToolsTestPair(t)
+	// Distinct vault roots, mirroring host children with their own DataPath.
+	parentVault, childVault := websitecredentials.New(t.TempDir()), websitecredentials.New(t.TempDir())
+	parent.toolManager.Register(&websiteCredentialsTool{store: parentVault})
+	child.toolManager.Register(&websiteCredentialsTool{store: childVault})
+	parentRecord, err := parentVault.Create("https://parent.example", "parent-user", "parent-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	childRecord, err := childVault.Create("https://child.example", "child-user", "child-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	getArgs, _ := json.Marshal(map[string]string{"operation": "get", "id": parentRecord.ID})
+	if local, err := child.toolManager.Execute(ctx, "website_credentials", getArgs); err != nil || local.Success {
+		t.Fatalf("child-local vault should not contain parent record: %+v %v", local, err)
+	}
+	manager := child.toolManagerForSession(sess)
+	result, err := manager.Execute(ctx, "website_credentials", json.RawMessage(`{"operation":"list"}`))
+	if err != nil || !result.Success || !strings.Contains(result.Output, parentRecord.ID) || strings.Contains(result.Output, childRecord.ID) {
+		t.Fatalf("list did not use parent vault: %+v %v", result, err)
+	}
+	result, err = manager.Execute(ctx, "website_credentials", getArgs)
+	if err != nil || !result.Success || !strings.Contains(result.Output, "parent-secret") {
+		t.Fatalf("get did not use parent vault: %+v %v", result, err)
+	}
+	text, failed, rpcErr := child.mcpBridgeCallTool(ctx, sess, json.RawMessage(`{"name":"website_credentials","arguments":`+string(getArgs)+`}`))
+	if failed || rpcErr != nil || !strings.Contains(text, "parent-secret") {
+		t.Fatalf("CLI credential forwarding: %s %v %v", text, failed, rpcErr)
+	}
+	if original, _ := child.toolManager.Get("website_credentials"); original == nil {
+		t.Fatal("shared registration lost")
+	} else if _, wrapped := original.(*parentAgentTool); wrapped {
+		t.Fatal("shared credential tool wrapped")
+	}
+	if list, err := childVault.List(); err != nil || len(list) != 1 || list[0].ID != childRecord.ID {
+		t.Fatalf("child vault changed: %+v %v", list, err)
+	}
+
+	settings, _ := parent.store.GetSettings()
+	settings[disabledToolsSettingKey] = `["website_credentials"]`
+	if err := parent.store.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := manager.Execute(ctx, "website_credentials", getArgs); err != nil || result.Success || !strings.Contains(result.Error, "tool not found") {
+		t.Fatalf("parent-disabled credential tool bypassed: %+v %v", result, err)
+	}
+	settings[disabledToolsSettingKey] = `[]`
+	if err := parent.store.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	headers, revoke, err := parent.directAgentToolsHeaders(t.Context(), parentSess, agentdef.RuntimeHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer revoke()
+	remove()
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.RemoteAddr = "127.0.0.1:50000"
+	req.Header = headers
+	cleanup, err := child.acquireParentAgentTools(t.Context(), req, sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	manager = child.toolManagerForSession(sess)
+	if result, err := manager.Execute(ctx, "website_credentials", getArgs); err != nil || !result.Success {
+		t.Fatalf("fresh parent token failed: %+v %v", result, err)
+	}
+	revoke()
+	if result, err := manager.Execute(ctx, "website_credentials", getArgs); err == nil || (result != nil && strings.Contains(result.Output, "parent-secret")) {
+		t.Fatalf("revoked parent token accepted: %+v %v", result, err)
+	}
+
+	settings, _ = child.store.GetSettings()
+	settings[disabledToolsSettingKey] = `["website_credentials"]`
+	if err := child.store.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := child.toolManagerForSession(sess).Get("website_credentials"); ok {
+		t.Fatal("child-disabled credential tool reintroduced")
+	}
 }

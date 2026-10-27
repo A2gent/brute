@@ -55,6 +55,7 @@ func (s *Server) setupRoutes() {
 	s.registerSystemRoutes(r)
 	s.registerA2ARoutes(r)
 	s.registerSettingsRoutes(r)
+	s.registerWebsiteCredentialRoutes(r)
 	s.registerLLMProxyRoutes(r)
 	s.registerProviderRoutes(r)
 	s.registerIntegrationRoutes(r)

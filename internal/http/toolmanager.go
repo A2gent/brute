@@ -250,6 +250,7 @@ func (s *Server) registerServerBackedTools(manager *tools.Manager) {
 	manager.Register(newChromeExtensionTool(s))
 	manager.Register(newImportAgentDefinitionYAMLTool(s))
 	manager.Register(newTasksTool(s))
+	manager.Register(&websiteCredentialsTool{store: s.websiteCredentials})
 	manager.Register(newTTSTool(s))
 	manager.Register(newCreateLocalDockerAgentsBulkTool(s))
 	manager.Register(newCreateLocalDockerAgentsFromYAMLTool(s))

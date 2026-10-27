@@ -28,11 +28,13 @@ import (
 	"github.com/A2gent/brute/internal/storage"
 	"github.com/A2gent/brute/internal/tools"
 	"github.com/A2gent/brute/internal/tools/integrationtools"
+	"github.com/A2gent/brute/internal/websitecredentials"
 	"github.com/go-chi/chi/v5"
 )
 
 // Server represents the HTTP API server
 type Server struct {
+	websiteCredentials       *websitecredentials.Store
 	telegramUserLogins       telegramUserLoginRegistry
 	speechRuntimeMu          sync.Mutex
 	speechRuntimeInstaller   speechRuntimeInstaller
@@ -126,7 +128,12 @@ func NewServer(
 			speechClips = speechcache.New(0)
 		}
 	}
+	dataDir := ""
+	if cfg != nil {
+		dataDir = cfg.DataPath
+	}
 	s := &Server{
+		websiteCredentials:     websitecredentials.New(dataDir),
 		config:                 cfg,
 		llmClient:              llmClient,
 		toolManager:            toolManager,

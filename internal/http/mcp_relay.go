@@ -352,7 +352,8 @@ func (s *Server) configureParentMCPRelay(client *lmstudio.Client, parentURL stri
 // loopback bridge continues to exclude them in favor of local CLI tools.
 func mcpBridgeToolExposedContext(ctx context.Context, name string) bool {
 	if restricted, _ := ctx.Value(parentAgentToolsScopeKey{}).(bool); restricted {
-		return parentAgentToolAllowed(name)
+		docker, _ := ctx.Value(parentAgentToolsDockerKey{}).(bool)
+		return parentAgentToolAllowedFor(name, docker)
 	}
 	if mcpBridgeToolExposed(name) {
 		return true

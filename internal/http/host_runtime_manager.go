@@ -20,6 +20,7 @@ import (
 
 	"github.com/A2gent/brute/internal/agentdef"
 	"github.com/A2gent/brute/internal/logging"
+	"github.com/A2gent/brute/internal/storage"
 )
 
 const hostRuntimeStopTimeout = 5 * time.Second
@@ -285,6 +286,7 @@ func (m *hostRuntimeManager) spawn(ctx context.Context, def *agentdef.Definition
 	env[parentAgentToolsURLEnv] = fmt.Sprintf("http://127.0.0.1:%d", s.Port())
 	env["AAGENT_DATA_PATH"] = dataDir
 	env["AAGENT_CONFIG_PATH"] = filepath.Join(dataDir, "config.json")
+	env[storage.ChildRuntimeEnv] = "1"
 	if prompt != "" {
 		env["AAGENT_SYSTEM_PROMPT"] = prompt
 	}

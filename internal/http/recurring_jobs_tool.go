@@ -121,6 +121,11 @@ func (t *recurringJobsTool) Execute(ctx context.Context, params json.RawMessage)
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid parameters: %w", err)
 	}
+	// Reached only when the call was not routed to the parent. Children run no
+	// scheduler, so a job stored here would silently never run.
+	if storage.IsChildRuntime() {
+		return &tools.Result{Success: false, Error: "recurring jobs are managed by the parent agent and are not available in this session; ask the parent to create the job"}, nil
+	}
 
 	switch strings.ToLower(strings.TrimSpace(p.Action)) {
 	case "list":
@@ -239,6 +244,7 @@ func (t *recurringJobsTool) handleCreate(ctx context.Context, p recurringJobsPar
 		LLMProvider:        p.LLMProvider,
 		LLMModel:           p.LLMModel,
 	})
+	t.applyParentScopeAgentDefault(ctx, job)
 
 	if nextRun, err := t.server.calculateNextRun(cronExpr, now); err == nil {
 		job.NextRunAt = &nextRun
@@ -295,6 +301,24 @@ func (t *recurringJobsTool) handleRunNow(ctx context.Context, p recurringJobsPar
 		"job_status": t.server.jobToResponse(job),
 	}
 	return jsonToolOutput(payload)
+}
+
+// applyParentScopeAgentDefault keeps a child's job running as that child:
+// proxied calls execute on the parent, whose default agent would otherwise run it.
+// The token-bound parent session records which agent the child was launched as.
+func (t *recurringJobsTool) applyParentScopeAgentDefault(ctx context.Context, job *storage.RecurringJob) {
+	if scoped, _ := ctx.Value(parentAgentToolsScopeKey{}).(bool); !scoped {
+		return
+	}
+	if job.UnifiedAgentID != "" || job.LaunchAgentID != "" || job.DockerAgentID != "" {
+		return
+	}
+	sessionID, _ := ctx.Value("session_id").(string)
+	sess, err := t.server.sessionManager.Get(strings.TrimSpace(sessionID))
+	if err != nil || sess == nil {
+		return
+	}
+	job.UnifiedAgentID = strings.TrimSpace(metadataString(sess.Metadata["unified_agent_id"]))
 }
 
 func (t *recurringJobsTool) resolveProjectID(ctx context.Context, explicit string) string {

@@ -334,17 +334,20 @@ func runServer(cmd *cobra.Command, args []string) error {
 		cancel()
 	}()
 
-	// Start scheduler for recurring jobs
-	jobScheduler := scheduler.NewScheduler(store, sessionManager, llmClient, toolManager, cfg)
-	jobScheduler.SetToolManagerForSessionResolver(server.ToolManagerForSession)
-	jobScheduler.SetJobChangeListener(server.NotifyJobChanged)
-	jobScheduler.SetJobExecutor(func(ctx context.Context, job *storage.RecurringJob) {
-		if _, err := server.ExecuteJob(ctx, job); err != nil {
-			logging.Error("Scheduled job %s failed: %v", job.ID, err)
-		}
-	})
-	jobScheduler.Start(ctx)
-	defer jobScheduler.Stop()
+	// Child runtimes keep jobs in the parent, which schedules them; a scheduler
+	// here would run loops that Caesar cannot see.
+	if !storage.IsChildRuntime() {
+		jobScheduler := scheduler.NewScheduler(store, sessionManager, llmClient, toolManager, cfg)
+		jobScheduler.SetToolManagerForSessionResolver(server.ToolManagerForSession)
+		jobScheduler.SetJobChangeListener(server.NotifyJobChanged)
+		jobScheduler.SetJobExecutor(func(ctx context.Context, job *storage.RecurringJob) {
+			if _, err := server.ExecuteJob(ctx, job); err != nil {
+				logging.Error("Scheduled job %s failed: %v", job.ID, err)
+			}
+		})
+		jobScheduler.Start(ctx)
+		defer jobScheduler.Stop()
+	}
 
 	// Run server
 	if err := server.Run(ctx); err != nil && err.Error() != "http: Server closed" {

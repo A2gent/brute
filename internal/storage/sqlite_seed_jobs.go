@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -13,6 +14,16 @@ import (
 const BuiltInArchivedSessionsReviewJobID = "builtin-archived-sessions-review"
 
 const archivedSessionsReviewCron = "0 3 * * *"
+
+// ChildRuntimeEnv is set by the parent for host and Docker children. Their own DB is
+// invisible in Caesar, so they neither seed built-in loops nor run a scheduler;
+// jobs live in the parent, which runs them as the child agent.
+const ChildRuntimeEnv = "A2GENT_CHILD_RUNTIME"
+
+// IsChildRuntime reports whether this process was spawned as a child runtime.
+func IsChildRuntime() bool {
+	return os.Getenv(ChildRuntimeEnv) == "1"
+}
 
 const archivedSessionsReviewPrompt = `Review archived (completed) sessions to improve the agent and the projects it works on.
 
@@ -30,6 +41,10 @@ Be concise and skip sessions with nothing to learn. Never modify project source 
 // seedBuiltInRecurringJobs creates default loops once. A builtin_seeds row is
 // written alongside, so a user who deletes or edits the job keeps that choice.
 func (s *SQLiteStore) seedBuiltInRecurringJobs() error {
+	if IsChildRuntime() {
+		// Only the stable built-in ID: jobs a child created itself are kept.
+		return s.DeleteJob(BuiltInArchivedSessionsReviewJobID)
+	}
 	var seededAt time.Time
 	err := s.db.QueryRow(`SELECT seeded_at FROM builtin_seeds WHERE id = ?`, BuiltInArchivedSessionsReviewJobID).Scan(&seededAt)
 	if err == nil {

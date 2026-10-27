@@ -28,17 +28,85 @@ const (
 type parentAgentToolsScopeKey struct{}
 type parentAgentToolsWorkDirKey struct{}
 
-func parentAgentToolAllowed(name string) bool {
-	switch name {
-	// website_credentials reads the parent's vault: host children have their
-	// own DataPath, so the local tool would only see an empty child vault.
-	case "list_agents", "delegate_to_agent", "delegate_to_subagent", "website_credentials":
-		return true
-	}
-	return integrationtools.IsIntegrationBackedTool(name)
+// parentAgentToolsDockerKey marks a capability minted for a Docker child: it may
+// arrive from the Docker network and is limited to tools without host paths.
+type parentAgentToolsDockerKey struct{}
+
+// dockerParentHost is how Docker children reach the parent; the parent sets it
+// at spawn, so it is trusted like a loopback origin.
+const dockerParentHost = "host.docker.internal"
+
+type toolPlacement int
+
+const (
+	// placementChild runs in the child against its own workspace and session.
+	placementChild toolPlacement = iota + 1
+	// placementParent runs on the parent: the state is shown in Caesar or the
+	// connection only reaches the parent (extension, vault, scheduler).
+	placementParent
+)
+
+// toolPlacements classifies every built-in tool for host children; a test fails
+// when a registered tool is missing. Integration tools are parent-placed via
+// integrationtools.IsIntegrationBackedTool. Unknown runtime tools stay local.
+var toolPlacements = map[string]toolPlacement{
+	// Shared, user-visible state lives in the parent store.
+	"list_agents":          placementParent,
+	"delegate_to_agent":    placementParent,
+	"delegate_to_subagent": placementParent,
+	"website_credentials":  placementParent, // host children have their own empty vault
+	"chrome_extension":     placementParent, // the extension connects only to the parent port
+	"recurring_jobs":       placementParent, // Caesar reads jobs from the parent store
+	"tasks":                placementParent, // Caesar reads tasks from the parent store
+
+	// Child-local by design: workspace, session, media and agent-internal tools.
+	// Agent creation and external A2A stay local until children get a parent-scoped
+	// Square identity; moving them would let a child create agents in the parent.
+	"archived_sessions": placementChild, "bash": placementChild, "browser_chrome": placementChild,
+	"code_execution": placementChild, "content_search": placementChild, "context_retrieve": placementChild,
+	"create_local_docker_agents_bulk": placementChild, "create_local_docker_agents_from_yaml": placementChild,
+	"current_time": placementChild, "delegate_to_external_agent": placementChild,
+	"discover_external_agents": placementChild, "edit": placementChild, "fetch_url": placementChild,
+	"file_search": placementChild, "filter": placementChild, "find_files": placementChild, "glob": placementChild,
+	"grep": placementChild, "import_agent_definition_yaml": placementChild, "insert_lines": placementChild,
+	"man": placementChild, "mcp_call": placementChild, "mcp_list_tools": placementChild, "mcp_manage": placementChild,
+	"notify_webapp": placementChild, "parallel": placementChild, "pipeline": placementChild,
+	"project_session_history": placementChild, "question": placementChild, "random_number": placementChild,
+	"read": placementChild, "relevance_gate": placementChild, "replace_lines": placementChild,
+	"session_task_progress": placementChild, "sql_query": placementChild, "stt": placementChild,
+	"suggest_git_commit": placementChild, "suggest_session": placementChild, "take_camera_photo_tool": placementChild,
+	"take_screenshot_tool": placementChild, "tts": placementChild, "write": placementChild,
+	"youtube_transcript": placementChild,
 }
 
-// Only a spawn-provisioned loopback origin is trusted; requests cannot supply a
+func toolPlacementFor(name string) (toolPlacement, bool) {
+	if integrationtools.IsIntegrationBackedTool(name) {
+		return placementParent, true
+	}
+	placement, ok := toolPlacements[name]
+	return placement, ok
+}
+
+// hostPathTools are parent-placed tools that read or write files by host path.
+// A Docker child sees its project as /workspace, so these stay in the container.
+var hostPathTools = map[string]bool{
+	"bitbucket_create_pull_request": true, // reads the local git checkout
+	"blender_render":                true, "blender_run_script": true,
+	"comfyui_generate_image": true, "comfyui_run_workflow": true,
+	"leonardo_generate_image": true, "openai_generate_image": true,
+	"meshy_generate_3d": true, "tripo_generate_3d": true,
+}
+
+func parentAgentToolAllowed(name string) bool {
+	return parentAgentToolAllowedFor(name, false)
+}
+
+func parentAgentToolAllowedFor(name string, docker bool) bool {
+	placement, _ := toolPlacementFor(name)
+	return placement == placementParent && !(docker && hostPathTools[name])
+}
+
+// Only a spawn-provisioned loopback (or Docker host) origin is trusted; requests cannot supply a
 // callback URL or credentials in it. Do not resolve DNS or follow redirects.
 func trustedParentAgentToolsURL(raw string) string {
 	u, err := url.Parse(raw)
@@ -46,7 +114,7 @@ func trustedParentAgentToolsURL(raw string) string {
 		return ""
 	}
 	ip := net.ParseIP(u.Hostname())
-	if ip == nil || !ip.IsLoopback() || u.Port() == "" {
+	if u.Port() == "" || (u.Hostname() != dockerParentHost && (ip == nil || !ip.IsLoopback())) {
 		return ""
 	}
 	return strings.TrimRight(u.String(), "/")
@@ -59,9 +127,10 @@ type parentAgentToolsCapability struct {
 }
 
 func (s *Server) directAgentToolsHeaders(ctx context.Context, sess *session.Session, runtime string) (http.Header, func(), error) {
-	if runtime != agentdef.RuntimeHost || isDelegatedSession(sess) {
+	if (runtime != agentdef.RuntimeHost && runtime != agentdef.RuntimeDocker) || isDelegatedSession(sess) {
 		return nil, func() {}, nil
 	}
+	docker := runtime == agentdef.RuntimeDocker
 	// Resolve from the parent's stored definition, never a child header, RPC
 	// argument or docker_workspace metadata supplied by a caller. Match the
 	// host spawn path: configured project root, or inherited process cwd.
@@ -69,7 +138,8 @@ func (s *Server) directAgentToolsHeaders(ctx context.Context, sess *session.Sess
 	if err != nil {
 		return nil, nil, err
 	}
-	if strings.TrimSpace(metadataString(sess.Metadata["unified_agent_id"])) != "" {
+	// Docker capabilities exclude host-path tools, so no workspace binding is needed.
+	if !docker && strings.TrimSpace(metadataString(sess.Metadata["unified_agent_id"])) != "" {
 		def, err := s.unifiedAgentDefinitionForSession(sess)
 		if err != nil {
 			return nil, nil, err
@@ -105,6 +175,9 @@ func (s *Server) directAgentToolsHeaders(ctx context.Context, sess *session.Sess
 	}
 	scoped := context.WithValue(ctx, parentAgentToolsScopeKey{}, true)
 	scoped = context.WithValue(scoped, parentAgentToolsWorkDirKey{}, workDir)
+	if docker {
+		scoped = context.WithValue(scoped, parentAgentToolsDockerKey{}, true)
+	}
 	token, revoke, err := s.mcpBridge.mintWithContext(scoped, sess.ID)
 	if err != nil {
 		return nil, nil, err
@@ -122,7 +195,9 @@ func (s *Server) acquireParentAgentTools(ctx context.Context, r *http.Request, s
 		return func() {}, nil
 	}
 	parentID, _ := sess.Metadata["parent_session_id"].(string)
-	if s.parentAgentToolsURL == "" || !isLoopbackRemoteAddr(r.RemoteAddr) || sess.Metadata["source"] != "direct_agent_session" || isDelegatedSession(sess) || strings.TrimSpace(parentID) == "" {
+	// A Docker child receives the parent's turn through its published port, so
+	// the request is not loopback; the token only lets it call the spawn-set URL.
+	if s.parentAgentToolsURL == "" || (!isLoopbackRemoteAddr(r.RemoteAddr) && !s.parentAgentToolsViaDocker()) || sess.Metadata["source"] != "direct_agent_session" || isDelegatedSession(sess) || strings.TrimSpace(parentID) == "" {
 		return nil, fmt.Errorf("parent agent tools require a direct host session")
 	}
 	turnCtx, cancel := context.WithCancel(ctx)
@@ -144,6 +219,11 @@ func (s *Server) acquireParentAgentTools(ctx context.Context, r *http.Request, s
 		delete(s.parentAgentTools, sess.ID)
 		s.parentAgentToolsMu.Unlock()
 	}, nil
+}
+
+func (s *Server) parentAgentToolsViaDocker() bool {
+	u, err := url.Parse(s.parentAgentToolsURL)
+	return err == nil && u.Hostname() == dockerParentHost
 }
 
 func (s *Server) parentAgentToolsForSession(sess *session.Session) *parentAgentToolsCapability {
@@ -168,7 +248,7 @@ func (s *Server) withParentAgentTools(manager *tools.Manager, sess *session.Sess
 	manager = manager.Clone()
 	// Wrap only surviving registrations so child-side tool filters remain in force.
 	for _, def := range manager.GetDefinitions() {
-		if parentAgentToolAllowed(def.Name) {
+		if parentAgentToolAllowedFor(def.Name, s.parentAgentToolsViaDocker()) {
 			tool, _ := manager.Get(def.Name)
 			manager.Register(&parentAgentTool{Tool: tool, server: s, sessionID: sess.ID, capability: capability})
 		}

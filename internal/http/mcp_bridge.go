@@ -217,13 +217,19 @@ func (s *Server) handleMCPBridge(w http.ResponseWriter, r *http.Request) {
 	}
 	// WHY: brute binds 0.0.0.0 without authentication, and this endpoint can
 	// execute the session's full tool surface; loopback-only keeps it local.
-	if !isLoopbackRemoteAddr(r.RemoteAddr) {
-		s.errorResponse(w, http.StatusForbidden, "MCP bridge is only reachable from loopback")
-		return
-	}
 	sessionID := chi.URLParam(r, "sessionID")
 	token := mcpBridgeBearerToken(r)
 	boundSessionID, tokenCtx, ok := s.mcpBridge.resolve(token)
+	// Docker children call from the Docker network on Linux; only their
+	// path-free parent-tools capability is accepted from outside loopback.
+	docker := false
+	if ok {
+		docker, _ = tokenCtx.Value(parentAgentToolsDockerKey{}).(bool)
+	}
+	if !isLoopbackRemoteAddr(r.RemoteAddr) && !docker {
+		s.errorResponse(w, http.StatusForbidden, "MCP bridge is only reachable from loopback")
+		return
+	}
 	if !ok {
 		s.errorResponse(w, http.StatusUnauthorized, "invalid or revoked MCP bridge token")
 		return

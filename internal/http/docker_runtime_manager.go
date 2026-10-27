@@ -18,6 +18,7 @@ import (
 	"github.com/A2gent/brute/internal/agentdef"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
+	"github.com/A2gent/brute/internal/storage"
 )
 
 const (
@@ -374,6 +375,11 @@ func (m *dockerRuntimeManager) ensureAgentContainerForWorkspace(ctx context.Cont
 		removeDockerContainerByName(ctx, containerName)
 		findErr = errors.New("recreate: stale llm config")
 	}
+	if findErr == nil && dockerChildRuntimeStale(agent.Labels, m.server.Port()) {
+		logging.Info("Docker runtime: container %s predates parent tools for this parent; recreating", containerName)
+		removeDockerContainerByName(ctx, containerName)
+		findErr = errors.New("recreate: stale parent tools bootstrap")
+	}
 	switch {
 	case findErr == nil && agent.Running:
 		// Warm reuse.
@@ -478,6 +484,7 @@ func (m *dockerRuntimeManager) createAgentContainer(ctx context.Context, def *ag
 	req.Labels[dockerRuntimeManagedLabelKey] = "true"
 	req.Labels[dockerRuntimeAgentDefLabelKey] = def.Agent.ID
 	req.Labels[dockerRuntimeLLMFingerprintLabelKey] = llmFingerprint(def)
+	applyDockerChildRuntime(req.Labels, &req.Environment, m.server.Port())
 	if len(workspace.ProjectMounts) > 0 {
 		req.Labels["a2gent.workspace_scope"] = workspace.Scope
 	}
@@ -691,6 +698,26 @@ func (m *dockerRuntimeManager) reapIdleContainers(ctx context.Context) {
 func llmFingerprint(def *agentdef.Definition) string {
 	provider, model := dockerDelegationLLMMetadataFromDefinition(def)
 	return provider + "|" + model
+}
+
+// dockerRuntimeParentToolsLabelKey records the parent tools origin a container
+// was created with, so containers from before (or another parent port) are recreated.
+const dockerRuntimeParentToolsLabelKey = "a2gent.parent_tools_url"
+
+// applyDockerChildRuntime makes a runtime-managed container a child: it reaches
+// the parent's path-free tools and, like host children, runs no scheduler.
+func applyDockerChildRuntime(labels map[string]string, env *map[string]string, parentPort int) {
+	parentURL := fmt.Sprintf("http://%s:%d", dockerParentHost, parentPort)
+	if *env == nil {
+		*env = map[string]string{}
+	}
+	(*env)[parentAgentToolsURLEnv] = parentURL
+	(*env)[storage.ChildRuntimeEnv] = "1"
+	labels[dockerRuntimeParentToolsLabelKey] = parentURL
+}
+
+func dockerChildRuntimeStale(labels map[string]string, parentPort int) bool {
+	return labels[dockerRuntimeParentToolsLabelKey] != fmt.Sprintf("http://%s:%d", dockerParentHost, parentPort)
 }
 
 // llmConfigStale reports whether a warm runtime was created with a different

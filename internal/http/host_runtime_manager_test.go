@@ -32,10 +32,11 @@ func runHostAgentHelperIfRequested() {
 	mux.HandleFunc("/env", func(w nethttp.ResponseWriter, _ *nethttp.Request) {
 		cwd, _ := os.Getwd()
 		_ = json.NewEncoder(w).Encode(map[string]string{
-			"prompt": os.Getenv("AAGENT_SYSTEM_PROMPT"),
-			"data":   os.Getenv("AAGENT_DATA_PATH"),
-			"home":   os.Getenv("HOME"),
-			"cwd":    cwd,
+			"prompt":       os.Getenv("AAGENT_SYSTEM_PROMPT"),
+			"data":         os.Getenv("AAGENT_DATA_PATH"),
+			"home":         os.Getenv("HOME"),
+			"cwd":          cwd,
+			"childRuntime": os.Getenv(storage.ChildRuntimeEnv),
 		})
 	})
 	_ = nethttp.ListenAndServe("127.0.0.1:"+port, mux)
@@ -103,6 +104,9 @@ func TestHostRuntimeSpawnsReusesAndStopsProcess(t *testing.T) {
 	}
 	if !strings.Contains(got["data"], "local-agents") || got["home"] == got["data"] {
 		t.Fatalf("agent needs its own data dir but the host HOME: %#v", got)
+	}
+	if got["childRuntime"] != "1" {
+		t.Fatalf("child must run as a child runtime (no scheduler or built-in jobs), got %q", got["childRuntime"])
 	}
 	if strings.Contains(got["prompt"], "/workspace") || !strings.Contains(got["prompt"], projectRoot) {
 		t.Fatalf("host prompt must keep real paths:\n%s", got["prompt"])

@@ -9,6 +9,26 @@ import (
 	"github.com/A2gent/brute/internal/tools"
 )
 
+// IsIntegrationBackedTool identifies tools whose integration access must execute
+// where the integration store lives. Keep this explicit: local browser, file,
+// speech, notification and unauthenticated web tools must not gain parent access.
+// Names match Register below and the server-registered OpenAI image tool.
+func IsIntegrationBackedTool(name string) bool {
+	switch name {
+	case "google_calendar_query", "google_calendar_create_event",
+		"gmail_query", "gmail_create_draft", "jira_query", "circleci_query",
+		"code_review", "bitbucket_create_pull_request", "appsignal_query",
+		"sentry_query", "cloudflare_query", "brave_search_query",
+		"telegram_send_message", "telegram_user_list_chats", "telegram_user_read_messages",
+		"discord_send_message", "exa_search", "tavily_search", "perplexity_search",
+		"leonardo_generate_image", "comfyui_generate_image", "comfyui_run_workflow",
+		"blender_render", "blender_run_script", "meshy_generate_3d", "tripo_generate_3d",
+		"openai_generate_image":
+		return true
+	}
+	return false
+}
+
 // Register wires integration-backed tools into the tool manager.
 func Register(manager *tools.Manager, store storage.Store, clipStore *speechcache.Store, sessionManager *session.Manager) {
 	if manager == nil || store == nil {

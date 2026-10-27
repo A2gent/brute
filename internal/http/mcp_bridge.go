@@ -344,15 +344,21 @@ func (s *Server) dispatchMCPBridgeMessage(tokenCtx context.Context, sess *sessio
 	case "tools/list":
 		resp.Result = map[string]interface{}{"tools": s.mcpBridgeToolListContext(tokenCtx, sess)}
 	case "tools/call":
-		text, isError, rpcErr := s.mcpBridgeCallTool(tokenCtx, sess, msg.Params)
+		text, isError, result, rpcErr := s.mcpBridgeCallToolResult(tokenCtx, sess, msg.Params)
 		if rpcErr != nil {
 			resp.Error = rpcErr
 			break
 		}
-		resp.Result = map[string]interface{}{
+		payload := map[string]interface{}{
 			"content": []map[string]interface{}{{"type": "text", "text": text}},
 			"isError": isError,
 		}
+		// Only the internal, allow-listed parent capability receives native tool
+		// results. Normal MCP clients keep the existing text-only contract.
+		if scoped, _ := tokenCtx.Value(parentAgentToolsScopeKey{}).(bool); scoped && result != nil {
+			payload["structuredContent"] = map[string]interface{}{"a2gentToolResult": result}
+		}
+		resp.Result = payload
 	default:
 		resp.Error = &mcpBridgeRPCError{Code: -32601, Message: "method not found: " + msg.Method}
 	}
@@ -388,38 +394,49 @@ func (s *Server) mcpBridgeToolListContext(ctx context.Context, sess *session.Ses
 }
 
 func (s *Server) mcpBridgeCallTool(tokenCtx context.Context, sess *session.Session, params json.RawMessage) (string, bool, *mcpBridgeRPCError) {
+	text, failed, _, rpcErr := s.mcpBridgeCallToolResult(tokenCtx, sess, params)
+	return text, failed, rpcErr
+}
+
+func (s *Server) mcpBridgeCallToolResult(tokenCtx context.Context, sess *session.Session, params json.RawMessage) (string, bool, *tools.Result, *mcpBridgeRPCError) {
 	if err := tokenCtx.Err(); err != nil {
-		return err.Error(), true, nil
+		return err.Error(), true, nil, nil
 	}
 	var call struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
 	}
 	if err := json.Unmarshal(params, &call); err != nil {
-		return "", false, &mcpBridgeRPCError{Code: -32602, Message: "invalid tools/call params: " + err.Error()}
+		return "", false, nil, &mcpBridgeRPCError{Code: -32602, Message: "invalid tools/call params: " + err.Error()}
 	}
 	name := strings.TrimSpace(call.Name)
 	if name == "" {
-		return "", false, &mcpBridgeRPCError{Code: -32602, Message: "tool name is required"}
+		return "", false, nil, &mcpBridgeRPCError{Code: -32602, Message: "tool name is required"}
 	}
 	if !mcpBridgeToolExposedContext(tokenCtx, name) {
-		return fmt.Sprintf("tool %q is not exposed over the MCP bridge", name), true, nil
+		return fmt.Sprintf("tool %q is not exposed over the MCP bridge", name), true, nil, nil
 	}
 	if len(call.Arguments) == 0 {
 		call.Arguments = json.RawMessage("{}")
 	}
 
-	manager := s.toolManagerForSession(sess)
+	workDir := s.resolveSessionWorkDir(sess)
+	if scoped, _ := tokenCtx.Value(parentAgentToolsScopeKey{}).(bool); scoped {
+		if boundDir, ok := tokenCtx.Value(parentAgentToolsWorkDirKey{}).(string); ok {
+			workDir = boundDir
+		}
+	}
+	manager := s.toolManagerForSessionWorkDir(sess, workDir)
 	if manager == nil {
-		return "tool manager unavailable", true, nil
+		return "tool manager unavailable", true, nil, nil
 	}
 	if _, ok := manager.Get(name); !ok {
-		return fmt.Sprintf("tool not found: %s", name), true, nil
+		return fmt.Sprintf("tool not found: %s", name), true, nil, nil
 	}
 
 	if name == "question" {
 		text, isError := s.mcpBridgeAskQuestion(tokenCtx, sess.ID, call.Arguments)
-		return text, isError, nil
+		return text, isError, nil, nil
 	}
 
 	ctx := context.WithValue(tokenCtx, "session_id", sess.ID)
@@ -445,14 +462,14 @@ func (s *Server) mcpBridgeCallTool(tokenCtx context.Context, sess *session.Sessi
 	})
 
 	if err := ctx.Err(); err != nil {
-		return err.Error(), true, nil
+		return err.Error(), true, nil, nil
 	}
 	result, err := manager.Execute(ctx, name, call.Arguments)
 	if err != nil {
-		return fmt.Sprintf("Error: %v", err), true, nil
+		return fmt.Sprintf("Error: %v", err), true, nil, nil
 	}
 	if result == nil {
-		return "tool returned no result", true, nil
+		return "tool returned no result", true, result, nil
 	}
 	if !result.Success {
 		message := strings.TrimSpace(result.Error)
@@ -472,12 +489,12 @@ func (s *Server) mcpBridgeCallTool(tokenCtx context.Context, sess *session.Sessi
 			payload["success"] = false
 			payload["error"] = message
 			if encoded, err := json.Marshal(payload); err == nil {
-				return string(encoded), true, nil
+				return string(encoded), true, result, nil
 			}
 		}
-		return "Error: " + message, true, nil
+		return "Error: " + message, true, result, nil
 	}
-	return result.Output, false, nil
+	return result.Output, false, result, nil
 }
 
 // mcpBridgeAskQuestion intercepts the question tool before tools.Manager so the

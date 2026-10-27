@@ -9,11 +9,14 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/A2gent/brute/internal/agentdef"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/tools"
+	"github.com/A2gent/brute/internal/tools/integrationtools"
 )
 
 const (
@@ -23,13 +26,14 @@ const (
 
 // This marker lives only in the parent's token context, never in RPC arguments.
 type parentAgentToolsScopeKey struct{}
+type parentAgentToolsWorkDirKey struct{}
 
 func parentAgentToolAllowed(name string) bool {
 	switch name {
 	case "list_agents", "delegate_to_agent", "delegate_to_subagent":
 		return true
 	}
-	return false
+	return integrationtools.IsIntegrationBackedTool(name)
 }
 
 // Only a spawn-provisioned loopback origin is trusted; requests cannot supply a
@@ -56,7 +60,49 @@ func (s *Server) directAgentToolsHeaders(ctx context.Context, sess *session.Sess
 	if runtime != agentdef.RuntimeHost || isDelegatedSession(sess) {
 		return nil, func() {}, nil
 	}
+	// Resolve from the parent's stored definition, never a child header, RPC
+	// argument or docker_workspace metadata supplied by a caller. Match the
+	// host spawn path: configured project root, or inherited process cwd.
+	workDir, err := os.Getwd()
+	if err != nil {
+		return nil, nil, err
+	}
+	if strings.TrimSpace(metadataString(sess.Metadata["unified_agent_id"])) != "" {
+		def, err := s.unifiedAgentDefinitionForSession(sess)
+		if err != nil {
+			return nil, nil, err
+		}
+		if def.Runtime.Type != agentdef.RuntimeHost {
+			return nil, nil, fmt.Errorf("parent agent tools require a host definition")
+		}
+		projectID := ""
+		if sess.ProjectID != nil {
+			projectID = strings.TrimSpace(*sess.ProjectID)
+		}
+		workspace, err := s.resolveDockerWorkspaceBinding(def, projectID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(workspace.ProjectMounts) > 0 {
+			return nil, nil, fmt.Errorf("parent agent tools require a single host workspace")
+		}
+		if workspace.ProjectID != "" {
+			workDir, err = s.resolveProjectRootFolder(workspace.ProjectID)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	workDir, err = filepath.Abs(workDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := os.Stat(workDir)
+	if err != nil || !info.IsDir() {
+		return nil, nil, fmt.Errorf("parent agent tools workspace is unavailable")
+	}
 	scoped := context.WithValue(ctx, parentAgentToolsScopeKey{}, true)
+	scoped = context.WithValue(scoped, parentAgentToolsWorkDirKey{}, workDir)
 	token, revoke, err := s.mcpBridge.mintWithContext(scoped, sess.ID)
 	if err != nil {
 		return nil, nil, err
@@ -118,13 +164,15 @@ func (s *Server) withParentAgentTools(manager *tools.Manager, sess *session.Sess
 	}
 	// Never mutate the shared manager, including when its fast path was used.
 	manager = manager.Clone()
-	for _, name := range []string{"list_agents", "delegate_to_agent", "delegate_to_subagent"} {
-		if tool, ok := manager.Get(name); ok {
+	// Wrap only surviving registrations so child-side tool filters remain in force.
+	for _, def := range manager.GetDefinitions() {
+		if parentAgentToolAllowed(def.Name) {
+			tool, _ := manager.Get(def.Name)
 			manager.Register(&parentAgentTool{Tool: tool, server: s, sessionID: sess.ID, capability: capability})
 		}
 	}
 	// Clone preserves tool instances; compound tools must use this manager, not
-	// the original manager which still has the child-local delegation handlers.
+	// the original manager which still has the child-local handlers.
 	if _, ok := manager.Get("parallel"); ok {
 		manager.Register(tools.NewParallelTool(manager))
 	}
@@ -182,7 +230,10 @@ func (t *parentAgentTool) Execute(ctx context.Context, params json.RawMessage) (
 			Content []struct {
 				Text string `json:"text"`
 			} `json:"content"`
-			IsError bool `json:"isError"`
+			IsError           bool `json:"isError"`
+			StructuredContent *struct {
+				ToolResult *tools.Result `json:"a2gentToolResult"`
+			} `json:"structuredContent"`
 		} `json:"result"`
 		Error *mcpBridgeRPCError `json:"error"`
 	}
@@ -198,6 +249,12 @@ func (t *parentAgentTool) Execute(ctx context.Context, params json.RawMessage) (
 	}
 	if rpc.Error != nil {
 		return nil, fmt.Errorf("parent agent tools: %s", rpc.Error.Message)
+	}
+	if structured := rpc.Result.StructuredContent; structured != nil && structured.ToolResult != nil {
+		if structured.ToolResult.Success == rpc.Result.IsError {
+			return nil, fmt.Errorf("inconsistent parent agent tools result")
+		}
+		return structured.ToolResult, nil
 	}
 	var texts []string
 	for _, content := range rpc.Result.Content {

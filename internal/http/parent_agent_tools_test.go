@@ -164,7 +164,7 @@ func TestParentAgentToolsCapabilityScopeAndRevocation(t *testing.T) {
 	}
 	// The existing relay marker must not widen the new capability.
 	tokenCtx = context.WithValue(tokenCtx, mcpRelayChildKey{}, true)
-	for _, name := range []string{"list_agents", "delegate_to_agent", "delegate_to_subagent", "read", "question", "delegate_to_external_agent", "functions.delegate_to_agent", "parallel", "pipeline", "mcp_call", "arbitrary"} {
+	for _, name := range []string{"list_agents", "delegate_to_agent", "delegate_to_subagent", "appsignal_query", "gmail_query", "read", "question", "delegate_to_external_agent", "functions.delegate_to_agent", "parallel", "pipeline", "mcp_call", "arbitrary"} {
 		if mcpBridgeToolExposedContext(tokenCtx, name) != parentAgentToolAllowed(name) {
 			t.Fatalf("scope mismatch: %s", name)
 		}

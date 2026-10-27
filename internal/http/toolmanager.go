@@ -134,12 +134,17 @@ func (s *Server) ToolManagerForSession(sess *session.Session) *tools.Manager {
 }
 
 func (s *Server) toolManagerForSession(sess *session.Session) *tools.Manager {
+	return s.toolManagerForSessionWorkDir(sess, s.resolveSessionWorkDir(sess))
+}
+
+// Keep session authorization and filtering unchanged when an internal host
+// capability binds execution to the child's workspace instead of the parent's.
+func (s *Server) toolManagerForSessionWorkDir(sess *session.Session, workDir string) *tools.Manager {
 	// Credentials can be added, rotated or removed after server startup.
 	s.registerClassifyTool(s.toolManager)
 	s.registerRelevanceGateTool(s.toolManager)
 	s.registerWebRelevanceTools(s.toolManager)
 	s.registerBrowserActTool(s.toolManager)
-	workDir := s.resolveSessionWorkDir(sess)
 	settings, err := s.store.GetSettings()
 	if err != nil {
 		settings = map[string]string{}

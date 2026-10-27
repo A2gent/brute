@@ -40,6 +40,7 @@ func isManagedAppSettingKey(key string) bool {
 		"AAGENT_SESSION_SUMMARY_PROMPT_TEMPLATE":              {},
 		"AAGENT_SYSTEM_PROMPT_APPEND":                         {},
 		"A2GENT_AGENT_BASE_SYSTEM_PROMPT":                     {},
+		"A2GENT_GLOBAL_SYSTEM_PROMPT":                         {},
 		"A2GENT_AGENT_INSTRUCTION_BLOCKS":                     {},
 		"A2GENT_DISABLED_TOOLS":                               {},
 		"A2GENT_DISABLE_TOOLS_BY_DEFAULT":                     {},

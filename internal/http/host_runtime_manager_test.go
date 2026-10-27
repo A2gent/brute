@@ -38,6 +38,7 @@ func runHostAgentHelperIfRequested() {
 			"cwd":          cwd,
 			"parent":       os.Getenv(hostParentPIDEnv),
 			"childRuntime": os.Getenv(storage.ChildRuntimeEnv),
+			"globalPrompt": os.Getenv(globalSystemPromptSettingKey),
 		})
 	})
 	_ = nethttp.ListenAndServe("127.0.0.1:"+port, mux)

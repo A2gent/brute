@@ -215,6 +215,11 @@ func (m *hostRuntimeManager) ensure(ctx context.Context, def *agentdef.Definitio
 		existing.stop()
 		existing = nil
 	}
+	if existing != nil && existing.alive() && globalSystemPromptStale(existing.labels, m.server.currentGlobalSystemPrompt()) {
+		logging.Info("Host runtime: agent %s runs an outdated global system prompt; restarting", name)
+		existing.stop()
+		existing = nil
+	}
 	if existing != nil && existing.alive() && llmConfigStale(existing.labels, def) {
 		logging.Info("Host runtime: agent %s runs an outdated LLM config; restarting", name)
 		existing.stop()
@@ -296,6 +301,9 @@ func (m *hostRuntimeManager) spawn(ctx context.Context, def *agentdef.Definition
 	env["AAGENT_DATA_PATH"] = dataDir
 	env["AAGENT_CONFIG_PATH"] = filepath.Join(dataDir, "config.json")
 	env[storage.ChildRuntimeEnv] = "1"
+	// Applied before start; the fingerprint label is added once labels exist.
+	globalLabels := map[string]string{}
+	applyChildGlobalSystemPrompt(globalLabels, env, s.currentGlobalSystemPrompt())
 	if prompt != "" {
 		env["AAGENT_SYSTEM_PROMPT"] = prompt
 	}
@@ -338,6 +346,9 @@ func (m *hostRuntimeManager) spawn(ctx context.Context, def *agentdef.Definition
 		dockerRuntimeManagedLabelKey:        "true",
 		dockerRuntimeAgentDefLabelKey:       def.Agent.ID,
 		dockerRuntimeLLMFingerprintLabelKey: llmFingerprint(def),
+	}
+	for key, value := range globalLabels {
+		labels[key] = value
 	}
 	if workspace.ProjectID != "" {
 		labels["a2gent.project_id"] = workspace.ProjectID

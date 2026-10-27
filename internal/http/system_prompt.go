@@ -457,6 +457,18 @@ func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, 
 		}}, resolvedBlocks...)
 	}
 
+	if globalPrompt := resolveGlobalSystemPrompt(settings); globalPrompt != "" {
+		section := "Global instructions (apply to every agent):\n" + globalPrompt
+		appendSections = append([]string{section}, appendSections...)
+		resolvedBlocks = append([]systemPromptBlockSnapshot{{
+			Type:            globalSystemPromptBlockType,
+			Value:           "",
+			Enabled:         true,
+			ResolvedContent: globalPrompt,
+			EstimatedTokens: estimateTokensApprox(section),
+		}}, resolvedBlocks...)
+	}
+
 	subAgentsSection, subAgentsTokens := s.resolveSubAgentsSection(sess)
 	if subAgentsSection != "" {
 		appendSections = append(appendSections, subAgentsSection)

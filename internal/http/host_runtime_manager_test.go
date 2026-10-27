@@ -36,6 +36,7 @@ func runHostAgentHelperIfRequested() {
 			"data":         os.Getenv("AAGENT_DATA_PATH"),
 			"home":         os.Getenv("HOME"),
 			"cwd":          cwd,
+			"parent":       os.Getenv(hostParentPIDEnv),
 			"childRuntime": os.Getenv(storage.ChildRuntimeEnv),
 		})
 	})
@@ -104,6 +105,9 @@ func TestHostRuntimeSpawnsReusesAndStopsProcess(t *testing.T) {
 	}
 	if !strings.Contains(got["data"], "local-agents") || got["home"] == got["data"] {
 		t.Fatalf("agent needs its own data dir but the host HOME: %#v", got)
+	}
+	if got["parent"] != fmt.Sprint(os.Getpid()) {
+		t.Fatalf("agent must know its parent pid to exit when orphaned, got %q", got["parent"])
 	}
 	if got["childRuntime"] != "1" {
 		t.Fatalf("child must run as a child runtime (no scheduler or built-in jobs), got %q", got["childRuntime"])

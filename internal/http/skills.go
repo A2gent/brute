@@ -22,7 +22,7 @@ import (
 var integrationToolsByProvider = map[string][]string{
 	"google_calendar": {"google_calendar_query", "google_calendar_create_event"},
 	"gmail":           {"gmail_query", "gmail_create_draft"},
-	"jira":            {"jira_query"},
+	"jira":            {"jira_query", "jira_create_issue"},
 	"circleci":        {"circleci_query"},
 	"bitbucket":       {"code_review", "bitbucket_create_pull_request"},
 	"appsignal":       {"appsignal_query"},

@@ -162,9 +162,16 @@ func (m *hostRuntimeManager) stopAll() {
 		delete(m.procs, name)
 	}
 	m.mu.Unlock()
+	// In parallel: the parent is exiting and each stop may wait out its timeout.
+	var wg sync.WaitGroup
 	for _, p := range victims {
-		p.stop()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p.stop()
+		}()
 	}
+	wg.Wait()
 }
 
 func (p *hostAgentProc) stop() {
@@ -250,6 +257,7 @@ func (m *hostRuntimeManager) spawn(ctx context.Context, def *agentdef.Definition
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to prepare agent data directory: %w", err)
 	}
+	reapHostAgentPIDFile(dataDir) // a previous parent's instance would clash on data and Telegram polling
 
 	workDir := ""
 	if workspace.ProjectID != "" {
@@ -284,6 +292,7 @@ func (m *hostRuntimeManager) spawn(ctx context.Context, def *agentdef.Definition
 	env := hostEnvFromDockerArgs(args)
 	// Origin only: turn credentials travel in an internal stream header, never env.
 	env[parentAgentToolsURLEnv] = fmt.Sprintf("http://127.0.0.1:%d", s.Port())
+	env[hostParentPIDEnv] = fmt.Sprint(os.Getpid())
 	env["AAGENT_DATA_PATH"] = dataDir
 	env["AAGENT_CONFIG_PATH"] = filepath.Join(dataDir, "config.json")
 	env[storage.ChildRuntimeEnv] = "1"
@@ -322,6 +331,8 @@ func (m *hostRuntimeManager) spawn(ctx context.Context, def *agentdef.Definition
 		logFile.Close()
 		return nil, fmt.Errorf("failed to start host agent %s: %w", name, err)
 	}
+	pid := cmd.Process.Pid
+	writeHostAgentPIDFile(dataDir, hostAgentPIDRecord{PID: pid, Port: port, Exe: exe})
 
 	labels := map[string]string{
 		dockerRuntimeManagedLabelKey:        "true",
@@ -347,6 +358,7 @@ func (m *hostRuntimeManager) spawn(ctx context.Context, def *agentdef.Definition
 	go func() {
 		_ = cmd.Wait()
 		logFile.Close()
+		removeHostAgentPIDFile(dataDir, pid)
 		close(p.done)
 		logging.Info("Host runtime: agent %s exited", name)
 	}()

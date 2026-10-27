@@ -199,6 +199,21 @@ func (t *AppSignalQueryTool) Execute(ctx context.Context, params json.RawMessage
 	}
 }
 
+// TestConnection verifies the supplied integration credentials directly. Unlike Execute,
+// it accepts an unsaved form value so the editor can check access before saving.
+func (t *AppSignalQueryTool) TestConnection(ctx context.Context, integration *storage.Integration) error {
+	creds, err := appSignalCredentialsFromIntegration(integration)
+	if err != nil {
+		return err
+	}
+	mcp := &appSignalMCPClient{client: t.client, creds: creds}
+	if err := mcp.initialize(ctx); err != nil {
+		return err
+	}
+	_, err = mcp.call(ctx, "tools/list", 2, map[string]interface{}{})
+	return err
+}
+
 func (t *AppSignalQueryTool) resolveCredentials(integrationID string, integrationName string) (appSignalCredentials, error) {
 	if t.store == nil {
 		return appSignalCredentials{}, fmt.Errorf("appsignal integration is required; configure one in Integrations")

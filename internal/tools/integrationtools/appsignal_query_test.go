@@ -54,6 +54,48 @@ func TestAppSignalQueryToolListToolsFiltersReadOnlyTools(t *testing.T) {
 	}
 }
 
+func TestAppSignalQueryToolTestConnectionUsesDraftCredentials(t *testing.T) {
+	var gotAuth string
+	var methods []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("failed to decode request: %v", err)
+		}
+		method, _ := payload["method"].(string)
+		methods = append(methods, method)
+		switch method {
+		case "initialize":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"appsignal"}}}`))
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}`))
+		default:
+			t.Fatalf("unexpected method: %s", method)
+		}
+	}))
+	defer server.Close()
+
+	tool := NewAppSignalQueryTool(nil)
+	err := tool.TestConnection(context.Background(), &storage.Integration{
+		Provider: "appsignal",
+		Name:     "AppSignal draft",
+		Config:   map[string]string{"api_key": "draft-token", "mcp_url": server.URL},
+	})
+	if err != nil {
+		t.Fatalf("TestConnection returned error: %v", err)
+	}
+	if gotAuth != "Bearer draft-token" {
+		t.Fatalf("expected draft bearer token, got %q", gotAuth)
+	}
+	if strings.Join(methods, ",") != "initialize,notifications/initialized,tools/list" {
+		t.Fatalf("unexpected MCP methods: %v", methods)
+	}
+}
+
 func TestAppSignalQueryToolRejectsWriteTool(t *testing.T) {
 	store := newAppSignalTestStore(t, "https://appsignal.example.test/api/mcp")
 	tool := NewAppSignalQueryTool(store)

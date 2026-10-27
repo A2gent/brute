@@ -234,10 +234,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.runTelegramDuplexLoop(ctx)
 	go s.runA2ATunnelIfConfigured()
 	go s.dockerRuntime.runIdleReaper(ctx)
-	go func() {
-		<-ctx.Done()
-		s.hostRuntime.stopAll() // host agents are child processes; do not orphan them
-	}()
+	go reapOrphanedHostAgents()
 	go s.resumeSerialSessionQueues()
 	go s.refreshCodexContextWindows(ctx)
 	go s.refreshAnthropicContextWindows(ctx)
@@ -259,7 +256,11 @@ func (s *Server) Run(ctx context.Context) error {
 		server.Shutdown(shutdownCtx)
 	}()
 
-	return server.Serve(listener)
+	err = server.Serve(listener)
+	// Synchronous: Serve returns as soon as Shutdown starts, and a goroutine
+	// would lose the race with process exit and orphan the host agents.
+	s.hostRuntime.stopAll()
+	return err
 }
 
 func (s *Server) sessionRunParentContext() context.Context {

@@ -16,7 +16,7 @@ import (
 func IsIntegrationBackedTool(name string) bool {
 	switch name {
 	case "google_calendar_query", "google_calendar_create_event",
-		"gmail_query", "gmail_create_draft", "jira_query", "circleci_query",
+		"gmail_query", "gmail_create_draft", "jira_query", "jira_create_issue", "circleci_query",
 		"code_review", "bitbucket_create_pull_request", "appsignal_query",
 		"sentry_query", "cloudflare_query", "brave_search_query",
 		"telegram_send_message", "telegram_user_list_chats", "telegram_user_read_messages",
@@ -39,6 +39,7 @@ func Register(manager *tools.Manager, store storage.Store, clipStore *speechcach
 	manager.Register(NewGmailQueryTool(store))
 	manager.Register(NewGmailDraftTool(store))
 	manager.Register(NewJiraQueryTool(store))
+	manager.Register(NewJiraCreateIssueTool(store))
 	manager.Register(NewCircleCIQueryTool(store))
 	manager.Register(NewCodeReviewTool(store))
 	manager.Register(NewBitbucketCreatePullRequestTool(store, manager.WorkDir()))

@@ -28,3 +28,19 @@ func TestOptionsCommandEnvRaisesMCPToolTimeout(t *testing.T) {
 		}
 	})
 }
+
+// Claude CLI also aborts MCP calls that send no progress for 5 min, which cut
+// off delegations whose child agent was still working.
+func TestOptionsCommandEnvRaisesMCPToolIdleTimeout(t *testing.T) {
+	env := optionsCommandEnv(Options{Environment: []string{"FOO=bar"}})
+	if v, ok := envValue(env, "CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT"); !ok || v != defaultMCPToolTimeoutMS {
+		t.Fatalf("CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT = %q, %v", v, ok)
+	}
+	env = optionsCommandEnv(Options{Environment: []string{"CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT=0", "MCP_TOOL_TIMEOUT=1234"}})
+	if v, _ := envValue(env, "CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT"); v != "0" {
+		t.Fatalf("explicit idle timeout overridden: %q", v)
+	}
+	if v, _ := envValue(env, "MCP_TOOL_TIMEOUT"); v != "1234" {
+		t.Fatalf("explicit tool timeout overridden: %q", v)
+	}
+}

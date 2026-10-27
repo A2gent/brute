@@ -507,19 +507,34 @@ func (c *Client) commandEnv() []string {
 // "The operation timed out." while the provider task keeps running.
 const defaultMCPToolTimeoutMS = "600000"
 
+// mcpTimeoutEnvKeys default to defaultMCPToolTimeoutMS. The CLI also aborts a
+// call that sends no progress for 5 min (CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT);
+// brute's bridge streams none, so delegations to a still-working child agent
+// were cut at 300s. Matching it to the total timeout keeps one 10 min bound.
+var mcpTimeoutEnvKeys = []string{"MCP_TOOL_TIMEOUT", "CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT"}
+
 func optionsCommandEnv(opts Options) []string {
 	base := opts.Environment
 	if len(base) == 0 {
 		base = os.Environ()
 	}
-	for _, kv := range base {
-		if strings.HasPrefix(kv, "MCP_TOOL_TIMEOUT=") {
-			return base
+	env := make([]string, 0, len(base)+len(mcpTimeoutEnvKeys))
+	env = append(env, base...)
+	for _, key := range mcpTimeoutEnvKeys {
+		if !envHasKey(base, key) {
+			env = append(env, key+"="+defaultMCPToolTimeoutMS)
 		}
 	}
-	env := make([]string, 0, len(base)+1)
-	env = append(env, base...)
-	return append(env, "MCP_TOOL_TIMEOUT="+defaultMCPToolTimeoutMS)
+	return env
+}
+
+func envHasKey(env []string, key string) bool {
+	for _, kv := range env {
+		if strings.HasPrefix(kv, key+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 var _ llm.Client = (*Client)(nil)

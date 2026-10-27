@@ -71,7 +71,7 @@ func (t *JiraQueryTool) Name() string {
 }
 
 func (t *JiraQueryTool) Description() string {
-	return "Query Atlassian Jira using configured Jira integrations or JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN env vars. Read-only operations only."
+	return "Query Atlassian Jira using configured Jira integrations or JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN env vars. Read-only operations only; use jira_create_issue to create issues."
 }
 
 func (t *JiraQueryTool) Schema() map[string]interface{} {
@@ -80,8 +80,8 @@ func (t *JiraQueryTool) Schema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"operation": map[string]interface{}{
 				"type":        "string",
-				"description": "Read-only operation to run: myself, search_issues, get_issue, get_projects, get_project, get_boards, or get_sprints",
-				"enum":        []string{"myself", "search_issues", "get_issue", "get_projects", "get_project", "get_boards", "get_sprints"},
+				"description": "Read-only operation to run: myself, search_issues, get_issue, get_projects, get_project, get_issue_types, get_boards, or get_sprints",
+				"enum":        []string{"myself", "search_issues", "get_issue", "get_projects", "get_project", "get_issue_types", "get_boards", "get_sprints"},
 			},
 			"integration_id": map[string]interface{}{
 				"type":        "string",
@@ -101,7 +101,7 @@ func (t *JiraQueryTool) Schema() map[string]interface{} {
 			},
 			"project_key": map[string]interface{}{
 				"type":        "string",
-				"description": "Project key for get_project, for example PROJ",
+				"description": "Project key for get_project and get_issue_types, for example PROJ",
 			},
 			"project_key_or_id": map[string]interface{}{
 				"type":        "string",
@@ -216,6 +216,15 @@ func (t *JiraQueryTool) executeRead(ctx context.Context, creds jiraCredentials, 
 			return "", fmt.Errorf("project_key is required for get_project")
 		}
 		return t.doJiraGet(ctx, creds, "/rest/api/3/project/"+url.PathEscape(projectKey), nil)
+	case "get_issue_types":
+		projectKey := strings.TrimSpace(p.ProjectKey)
+		if projectKey == "" {
+			return "", fmt.Errorf("project_key is required for get_issue_types")
+		}
+		query := url.Values{}
+		query.Set("startAt", strconv.Itoa(nonNegative(p.StartAt)))
+		query.Set("maxResults", strconv.Itoa(clampJiraMaxResults(p.MaxResults)))
+		return t.doJiraGet(ctx, creds, "/rest/api/3/issue/createmeta/"+url.PathEscape(projectKey)+"/issuetypes", query)
 	case "get_boards":
 		query := url.Values{}
 		query.Set("startAt", strconv.Itoa(nonNegative(p.StartAt)))
@@ -392,13 +401,25 @@ func (t *JiraQueryTool) doJiraGet(ctx context.Context, creds jiraCredentials, pa
 }
 
 func (t *JiraQueryTool) doJiraPost(ctx context.Context, creds jiraCredentials, path string, payload interface{}) (string, error) {
+	responseBody, err := t.doJiraPostRaw(ctx, creds, path, payload)
+	if err != nil {
+		return "", err
+	}
+	pretty, err := prettyJSON(responseBody)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Jira %s response from %s\n%s", path, creds.Source, pretty), nil
+}
+
+func (t *JiraQueryTool) doJiraPostRaw(ctx context.Context, creds jiraCredentials, path string, payload interface{}) ([]byte, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("failed to encode Jira request: %w", err)
+		return nil, fmt.Errorf("failed to encode Jira request: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, creds.BaseURL+path, bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("failed to create Jira request: %w", err)
+		return nil, fmt.Errorf("failed to create Jira request: %w", err)
 	}
 	req.SetBasicAuth(creds.Email, creds.Token)
 	req.Header.Set("Accept", "application/json")
@@ -406,27 +427,22 @@ func (t *JiraQueryTool) doJiraPost(ctx context.Context, creds jiraCredentials, p
 
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("Jira request failed: %w", err)
+		return nil, fmt.Errorf("Jira request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, jiraResponseLimit))
 	if err != nil {
-		return "", fmt.Errorf("failed to read Jira response: %w", err)
+		return nil, fmt.Errorf("failed to read Jira response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg := strings.TrimSpace(string(responseBody))
 		if msg == "" {
 			msg = resp.Status
 		}
-		return "", fmt.Errorf("Jira API error (status %d): %s", resp.StatusCode, msg)
+		return nil, fmt.Errorf("Jira API error (status %d): %s", resp.StatusCode, msg)
 	}
-
-	pretty, err := prettyJSON(responseBody)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("Jira %s response from %s\n%s", path, creds.Source, pretty), nil
+	return responseBody, nil
 }
 
 func prettyJSON(body []byte) (string, error) {

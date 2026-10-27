@@ -119,8 +119,8 @@ func TestHandleListIntegrationBackedSkills_IncludesTavilyPerplexityJiraCircleCIA
 
 	if got, ok := found["jira"]; !ok {
 		t.Fatalf("expected jira integration-backed skill in response: %#v", resp.Skills)
-	} else if len(got.Tools) != 1 || got.Tools[0].Name != "jira_query" {
-		t.Fatalf("expected jira_query tool, got %#v", got.Tools)
+	} else if len(got.Tools) != 2 || got.Tools[0].Name != "jira_create_issue" || got.Tools[1].Name != "jira_query" {
+		t.Fatalf("expected jira_create_issue and jira_query tools, got %#v", got.Tools)
 	}
 
 	if got, ok := found["circleci"]; !ok {

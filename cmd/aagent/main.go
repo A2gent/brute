@@ -333,6 +333,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 		logging.Info("Received shutdown signal")
 		cancel()
 	}()
+	httpserver.WatchHostParent(ctx, cancel)
 
 	// Child runtimes keep jobs in the parent, which schedules them; a scheduler
 	// here would run loops that Caesar cannot see.

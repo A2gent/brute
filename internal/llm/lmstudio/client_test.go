@@ -14,4 +14,8 @@ func TestEffectiveMaxTokensOpenRouterUnlimited(t *testing.T) {
 	if got := lm.effectiveMaxTokens(0); got != defaultMaxTokens {
 		t.Fatalf("lmstudio default = %d", got)
 	}
+	proxy := &Client{baseURL: "http://host.docker.internal:5445/providers/openrouter/v1", ErrorLabel: "openrouter (via parent proxy)"}
+	if got := proxy.effectiveMaxTokens(0); got != 0 {
+		t.Fatalf("parent proxy default = %d, want 0", got)
+	}
 }

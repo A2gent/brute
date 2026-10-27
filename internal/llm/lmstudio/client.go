@@ -40,8 +40,11 @@ type Client struct {
 // unset cap stays 0 (omitted from the request): reasoning models count hidden
 // reasoning tokens against it, and the 4096 default made them fail with
 // finish_reason=length before producing any visible output.
+// Parent-proxy clients (ErrorLabel set) also keep 0: their localhost URL looks
+// like LM Studio, but the real upstream (often OpenRouter) is chosen by the
+// parent, which applies its own default when the cap is omitted.
 func (c *Client) effectiveMaxTokens(requested int) int {
-	if requested == 0 && c.providerName() != "OpenRouter" {
+	if requested == 0 && c.providerName() != "OpenRouter" && strings.TrimSpace(c.ErrorLabel) == "" {
 		return defaultMaxTokens
 	}
 	return requested

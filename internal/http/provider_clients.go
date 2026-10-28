@@ -451,18 +451,22 @@ func (s *Server) fallbackNodeUsageSkipper() fallback.NodeSkipFunc {
 	if s == nil {
 		return nil
 	}
-	return func(ctx context.Context, node fallback.Node) (bool, string) {
-		provider := config.NormalizeProviderRef(node.Name)
-		if provider == "" {
-			return false, ""
-		}
-		usage := s.providerUsageStatus(ctx, config.ProviderType(provider))
-		now := time.Now()
-		if reached, detail := providerUsageLimitReached(usage, now); reached {
-			return true, detail
-		}
-		return providerUsageBelowMinBalance(usage, s.config.Providers[provider].EffectiveMinBalancePercent(), now)
+	return s.fallbackNodeUsageSkip
+}
+
+// fallbackNodeUsageSkip reports why a single node cannot serve a request right now.
+// Shared by the in-request skipper and the run preflight so both agree on the policy.
+func (s *Server) fallbackNodeUsageSkip(ctx context.Context, node fallback.Node) (bool, string) {
+	provider := config.NormalizeProviderRef(node.Name)
+	if provider == "" {
+		return false, ""
 	}
+	usage := s.providerUsageStatus(ctx, config.ProviderType(provider))
+	now := time.Now()
+	if reached, detail := providerUsageLimitReached(usage, now); reached {
+		return true, detail
+	}
+	return providerUsageBelowMinBalance(usage, s.config.Providers[provider].EffectiveMinBalancePercent(), now)
 }
 
 func (s *Server) createParentProxyLLMClient(providerType config.ProviderType, modelName string) (llm.Client, bool) {

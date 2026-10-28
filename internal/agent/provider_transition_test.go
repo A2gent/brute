@@ -167,6 +167,105 @@ func TestProviderFallbackRebuildsRequest(t *testing.T) {
 	}
 }
 
+// A session that never produced a response has nothing to summarize, so a fallback
+// on its first request must not pay for a compaction round-trip.
+func TestFallbackTransitionSkipsCompactionWithoutCompletedWork(t *testing.T) {
+	target := &MockLLM{Response: &llm.ChatResponse{Content: "answer"}}
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	sm := session.NewManager(store)
+	sess, err := sm.Create("test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.AddUserMessage("first task")
+	sess.Metadata = map[string]interface{}{"provider": "fallback_chain"}
+	if err := sm.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+	a := New(Config{Provider: "source", Model: "old", MaxSteps: 20, SystemPrompt: "system", TransitionMode: "compact_auto"}, nil, tools.NewManager(t.TempDir()), sm)
+	a.llmClient = fallback.NewClient([]fallback.Node{
+		{Name: "source", Model: "old", Client: &MockLLM{Err: errors.New("insufficient_quota")}},
+		{Name: "target", Model: "new", Client: target},
+	}, fallback.WithMaxRetries(0))
+	a.config.ResolveTransitionTarget = func(*session.Session, session.ProviderEndpoint) (llm.Client, int, error) {
+		return target, 65536, nil
+	}
+
+	if _, _, err := a.Run(context.Background(), sess, ""); err != nil {
+		t.Fatal(err)
+	}
+	tr := session.CurrentProviderTransition(sess)
+	if tr == nil || tr.ContextStrategy != "current" || tr.Compaction.Outcome != "skipped" {
+		t.Fatalf("empty history must not compact: %+v", tr)
+	}
+	// One request for the real answer only; no summarization request.
+	if len(target.CapturedRequests) != 1 || target.CapturedRequests[0].Messages[0].Content != "first task" {
+		t.Fatalf("unexpected target requests: %+v", target.CapturedRequests)
+	}
+}
+
+// Approval in confirm mode compacts by default, but an empty history still has
+// nothing to summarize, so the approved switch must skip it as well.
+func TestFallbackTransitionConfirmModeSkipsCompactionWithoutWork(t *testing.T) {
+	target := &MockLLM{Response: &llm.ChatResponse{Content: "answer"}}
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	sm := session.NewManager(store)
+	sess, err := sm.Create("test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.AddUserMessage("first task")
+	sess.Metadata = map[string]interface{}{"provider": "fallback_chain"}
+	if err := sm.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+	a := New(Config{Provider: "source", Model: "old", MaxSteps: 20, SystemPrompt: "system", TransitionMode: "confirm"}, nil, tools.NewManager(t.TempDir()), sm)
+	a.config.ResolveTransitionTarget = func(*session.Session, session.ProviderEndpoint) (llm.Client, int, error) {
+		return target, 65536, nil
+	}
+	a.llmClient = fallback.NewClient([]fallback.Node{
+		{Name: "source", Model: "old", Client: &MockLLM{Err: errors.New("insufficient_quota")}},
+		{Name: "target", Model: "new", Client: target},
+	}, fallback.WithMaxRetries(0))
+
+	_, _, err = a.Run(context.Background(), sess, "")
+	if !errors.Is(err, ErrTransitionPaused) {
+		t.Fatalf("expected pause for confirmation, got %v", err)
+	}
+	tr := session.CurrentProviderTransition(sess)
+	if tr.ContextStrategy != "current" || tr.Compaction.Outcome != "skipped" {
+		t.Fatalf("confirm mode must skip compaction on empty history: %+v", tr)
+	}
+}
+
+// With real work in the transcript compaction stays the default strategy.
+func TestFallbackTransitionCompactsWhenWorkExists(t *testing.T) {
+	target := &MockLLM{Responses: []*llm.ChatResponse{{Content: "summary"}, {Content: "answer"}}}
+	a, sess, sm := transitionAgent(t, "compact_auto", target)
+	delete(sess.Metadata, session.TransitionMetadataKey)
+	_ = sm.Save(sess)
+	a.llmClient = fallback.NewClient([]fallback.Node{
+		{Name: "source", Model: "old", Client: &MockLLM{Err: errors.New("503 unavailable")}},
+		{Name: "target", Model: "new", Client: target},
+	}, fallback.WithMaxRetries(0))
+
+	if _, _, err := a.Run(context.Background(), sess, ""); err != nil {
+		t.Fatal(err)
+	}
+	tr := session.CurrentProviderTransition(sess)
+	if tr == nil || tr.ContextStrategy != "compact" || tr.Compaction.Outcome != "succeeded" {
+		t.Fatalf("history with work must compact: %+v", tr)
+	}
+}
+
 // fakeRelevanceJev scores a candidate 4 when it contains "RELEVANT", else 0.
 func fakeRelevanceJev(t *testing.T, status int) *jev.Client {
 	t.Helper()

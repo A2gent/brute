@@ -69,7 +69,27 @@ func (a *Agent) requestFallbackTransition(sess *session.Session, next *fallback.
 	if chain, _ := sess.Metadata["provider"].(string); chain != "" {
 		t.ChainProvider = chain
 	}
+	// A session that failed on its very first request has no completed work to
+	// summarize. Compacting then only adds a summary message and a rewrite of the
+	// pending prompt, so keep the context as-is and just rebuild the request.
+	// `confirm` mode approves into the same compaction, so it needs this too.
+	// linked_session keeps its strategy: that mode deliberately forks a new session.
+	if (t.Mode == "compact_auto" || t.Mode == "confirm") && !hasCompletedWork(a.getActiveConversationMessages(sess)) {
+		t.ContextStrategy = "current"
+		t.Compaction.Outcome = "skipped"
+	}
 	return a.saveTransition(sess, t, onEvent)
+}
+
+// hasCompletedWork reports whether the active context holds anything besides the
+// pending user prompts a new run appends.
+func hasCompletedWork(messages []session.Message) bool {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != "user" {
+			return true
+		}
+	}
+	return false
 }
 
 // transitionBoundary runs only between complete tool batches, never in a provider

@@ -164,6 +164,10 @@ func (s *Server) resolveExecutionTargetBase(ctx context.Context, providerType co
 		if requestedModel == "" {
 			requestedModel = s.resolveModelForProvider(providerType)
 		}
+		// Start past nodes whose usage is already exhausted. Otherwise the first
+		// request fails, and the run pays for a provider transition (and compaction)
+		// before it produces anything.
+		s.preflightFallbackStart(ctx, providerType, sess)
 		client, err := s.createLLMClient(providerType, requestedModel, sess)
 		if err != nil {
 			return nil, err
@@ -207,6 +211,8 @@ func (s *Server) resolveExecutionTargetBase(ctx context.Context, providerType co
 	if targetModel == "" {
 		targetModel = s.resolveModelForProvider(targetProvider)
 	}
+	// A routing rule may point at a fallback chain, so it needs the same preflight.
+	s.preflightFallbackStart(ctx, targetProvider, sess)
 	client, err := s.createLLMClient(targetProvider, targetModel, sess)
 	if err != nil {
 		return nil, fmt.Errorf("automatic router target %s/%s is unavailable: %w", targetProvider, targetModel, err)

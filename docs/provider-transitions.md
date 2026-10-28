@@ -40,6 +40,14 @@ All history stays archived. Summary activation, cursor invalidation, provider se
 
 Run ownership is session-scoped. Cancellation and unsafe-retry errors never trigger a new target request. On restart, requested/approved/ready work can be explicitly resumed. An interrupted compacting phase pauses and can be explicitly retried; an interrupted continuing phase pauses for human inspection, not automatic replay. Durable exactly-once external tool execution cannot be inferred after a process crash; fail closed rather than promise it. Duplicate approval never starts another run.
 
+## Usage-aware chain start (preflight)
+
+A fallback chain skips known-exhausted nodes before the first request, not after it. On every run start for a chain or aggregate ref, Brute evaluates each node from the persisted `fallback_progress` index with the same policy the in-request skipper uses (hard limit from usage bars, plus the `min_balance_percent` reserve on long windows) and persists the first usable index. Elapsed reset windows do not block a node. When every node is exhausted the index is left unchanged so the chain still reports its own aggregate error.
+
+Rationale: discovering an exhausted head node inside the request used to surface as a fallback transition with `compact_auto`, so a brand-new session paid for summarization before producing anything. The preflight makes the chain client, the resolved `context_window` and the UI active node agree on the node the run actually starts on.
+
+A fallback transition on a session whose active context holds no completed work (only pending user prompts) is created with `context_strategy: current` and `compaction.outcome: skipped`, for both `compact_auto` and `confirm`. There is nothing to summarize, so a summary round-trip and a rewritten prompt would be pure overhead. `linked_session` keeps its own strategy because forking is the point of that mode.
+
 ## Durable Caesar timeline extension (v1, additive)
 
 New records include `timeline: { after_message_id, message_count, sequence }`, captured by the first persistence and immutable on later revisions. The anchor is the last original transcript message at intent creation, before a summary/continuation/target response. Multiple transitions at the same boundary use increasing `sequence`. Metadata notices are never conversation messages and must not be added to LLM requests. Old records without anchors can only use best-effort creation-time placement; do not invent anchors from current provider selection.

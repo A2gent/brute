@@ -17,7 +17,7 @@ import (
 
 const (
 	defaultBaseURL   = "http://localhost:1234/v1"
-	defaultMaxTokens = 4096
+	defaultMaxTokens = 100000
 )
 
 // Client implements the LLM client for LM Studio (OpenAI-compatible API)

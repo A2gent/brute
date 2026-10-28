@@ -246,7 +246,14 @@ func (s *Server) changeProviderTransition(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	sess.SetStatus(session.StatusPaused)
+	// WHY: an approved/resumed transition immediately compacts and continues the run;
+	// "paused" here kept the session orange for the whole continuation.
+	startsRun := resume || decision == "approve"
+	if startsRun {
+		sess.SetStatus(session.StatusRunning)
+	} else {
+		sess.SetStatus(session.StatusPaused)
+	}
 	session.PutProviderTransition(sess, t)
 	if err := s.sessionManager.Save(sess); err != nil {
 		s.errorResponse(w, 500, err.Error())
@@ -254,7 +261,7 @@ func (s *Server) changeProviderTransition(w http.ResponseWriter, r *http.Request
 	}
 	s.publishTransition(sess, t)
 	s.jsonResponse(w, 200, t)
-	if resume || decision == "approve" {
+	if startsRun {
 		transferred = true
 		s.startTransitionRun(ctx, release, sess)
 	}
@@ -272,6 +279,7 @@ func (s *Server) startTransitionRun(ctx context.Context, release func(), sess *s
 			if err != nil {
 				t.Phase = "paused"
 				t.Error = err.Error()
+				sess.SetStatus(session.StatusPaused)
 				session.PutProviderTransition(sess, t)
 				_ = s.sessionManager.Save(sess)
 				s.publishTransition(sess, t)
@@ -280,6 +288,7 @@ func (s *Server) startTransitionRun(ctx context.Context, release func(), sess *s
 			systemPrompt, err := s.buildSystemPromptForSession(sess)
 			if err != nil {
 				t.Phase, t.Error = "paused", err.Error()
+				sess.SetStatus(session.StatusPaused)
 				session.PutProviderTransition(sess, t)
 				_ = s.sessionManager.Save(sess)
 				s.publishTransition(sess, t)

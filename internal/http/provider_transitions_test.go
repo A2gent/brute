@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/A2gent/brute/internal/session"
 )
@@ -92,5 +93,33 @@ func TestRecoverInterruptedRunsPausesRunningSessions(t *testing.T) {
 	fresh, _ := s.sessionManager.Get(sess.ID)
 	if fresh.Status != session.StatusPaused {
 		t.Fatalf("status %s", fresh.Status)
+	}
+}
+
+// An approved transition starts a run, so it must not leave the session "running"
+// after that run stops (e.g. the target cannot be resolved).
+func TestApprovedProviderTransitionDoesNotStayRunning(t *testing.T) {
+	s, _ := newBruteHTTPProxyTestServer(t)
+	sess, _ := s.sessionManager.Create("test")
+	sess.Metadata = map[string]interface{}{"provider": "lmstudio", "model": "source"}
+	_ = s.sessionManager.Save(sess)
+	path := "/sessions/" + sess.ID + "/provider-transitions"
+	rec := httptest.NewRecorder()
+	s.router.ServeHTTP(rec, httptest.NewRequest("POST", path, strings.NewReader(`{"id":"tr","provider":"lmstudio","model":"target","mode":"confirm"}`)))
+	if rec.Code != 202 {
+		t.Fatalf("create %d %s", rec.Code, rec.Body)
+	}
+	rec = httptest.NewRecorder()
+	s.router.ServeHTTP(rec, httptest.NewRequest("POST", path+"/tr/decision", strings.NewReader(`{"decision":"approve"}`)))
+	if rec.Code != 200 {
+		t.Fatalf("approve %d %s", rec.Code, rec.Body)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for s.activeSessionRunCount(sess.ID) > 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	fresh, _ := s.sessionManager.Get(sess.ID)
+	if fresh.Status == session.StatusRunning {
+		t.Fatalf("status still running, transition %+v", session.CurrentProviderTransition(fresh))
 	}
 }

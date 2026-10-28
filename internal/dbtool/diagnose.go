@@ -89,7 +89,12 @@ func parseDiagnoseTarget(engine, dsn string) (string, string, DiagnosticStep) {
 	}
 
 	switch engine {
-	case "postgres", "redis":
+	case "postgres", "redis", "elasticsearch":
+		if engine == "elasticsearch" && !strings.Contains(dsn, "://") {
+			// A bare host:port is a valid Elasticsearch DSN; normalise it before parsing
+			// ("localhost:9200" would otherwise parse as scheme "localhost").
+			dsn = "http://" + strings.TrimSpace(dsn)
+		}
 		u, err := url.Parse(dsn)
 		if err != nil || u.Host == "" {
 			if err == nil {
@@ -99,10 +104,13 @@ func parseDiagnoseTarget(engine, dsn string) (string, string, DiagnosticStep) {
 		}
 		port := u.Port()
 		if port == "" {
-			port = map[string]string{"postgres": "5432", "redis": "6379"}[engine]
+			port = map[string]string{"postgres": "5432", "redis": "6379", "elasticsearch": "9200"}[engine]
 		}
 		mode := u.Query().Get("sslmode")
 		if engine == "redis" && u.Scheme == "rediss" {
+			mode = "require"
+		}
+		if engine == "elasticsearch" && u.Scheme == "https" {
 			mode = "require"
 		}
 		step.Detail = fmt.Sprintf("host=%s port=%s", u.Hostname(), port)
@@ -234,6 +242,15 @@ func diagnoseLogin(ctx context.Context, cfg Config) DiagnosticStep {
 		if err == nil {
 			client.close()
 		}
+	} else if cfg.Engine == "elasticsearch" {
+		var detail string
+		_, detail, err = connectElasticsearch(cctx, cfg.DSN)
+		if err == nil {
+			// WHY: keep the caveat ("no cluster monitor permission") instead of a flat
+			// "authenticated", so the user knows listing is what will actually work.
+			step.Detail = detail
+			return step
+		}
 	} else {
 		var db *sql.DB
 		db, err = connectContext(cctx, cfg)
@@ -253,12 +270,16 @@ func diagnoseLogin(ctx context.Context, cfg Config) DiagnosticStep {
 func loginHint(msg string) string {
 	lower := strings.ToLower(msg)
 	switch {
-	case strings.Contains(lower, "password authentication failed"), strings.Contains(lower, "access denied"), strings.Contains(lower, "wrongpass"):
+	case strings.Contains(lower, "password authentication failed"), strings.Contains(lower, "access denied"), strings.Contains(lower, "wrongpass"), strings.Contains(lower, "unauthorized"):
 		return "Wrong user or password."
 	case strings.Contains(lower, "does not exist"):
 		return "The database or user does not exist; check the database name."
-	case strings.Contains(lower, "ssl"), strings.Contains(lower, "tls"), strings.Contains(lower, "certificate"):
-		return "SSL problem: try sslmode=require (encrypted, no CA check) or sslmode=disable if the server has no SSL. verify-full needs a trusted CA."
+	case strings.Contains(lower, "certificate"), strings.Contains(lower, "x509"), strings.Contains(lower, "self signed"), strings.Contains(lower, "self-signed"):
+		// WHY: Elasticsearch clusters commonly use self-signed certs; for them the fix is
+		// ?insecure=true, not a Postgres sslmode. Mention both so either engine is helped.
+		return "SSL problem: verify the CA/certificate. Postgres: try sslmode=require, or sslmode=disable if the server has no SSL. Elasticsearch: add ?insecure=true for a self-signed cluster."
+	case strings.Contains(lower, "ssl"), strings.Contains(lower, "tls"):
+		return "SSL problem: try sslmode=require (encrypted, no CA check) or sslmode=disable if the server has no SSL. verify-full needs a trusted CA. Elasticsearch: use https:// and ?insecure=true for a self-signed cluster."
 	case strings.Contains(lower, "pg_hba.conf"):
 		return "The server rejected this client address or SSL setting (pg_hba.conf)."
 	}

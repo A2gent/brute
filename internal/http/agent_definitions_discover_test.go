@@ -62,8 +62,9 @@ func TestDiscoverAgentDefinitionsInDirectoryMissingRoot(t *testing.T) {
 	if len(discovered) != 0 {
 		t.Fatalf("expected no discovered definitions, got %#v", discovered)
 	}
-	if len(warnings) != 1 {
-		t.Fatalf("warnings = %#v, want one missing-directory warning", warnings)
+	// A missing folder is a normal "nothing defined yet" state, not a warning.
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %#v, want none for a missing directory", warnings)
 	}
 }
 

@@ -23,8 +23,9 @@ func (t *SQLQueryTool) Name() string {
 }
 
 func (t *SQLQueryTool) Description() string {
-	return `Execute a SQL query against a configured project database.
+	return `Execute a query against a configured project database.
 Use connection_name to reference a pre-configured database from the project context, OR provide a raw dsn.
+SQL engines take SQL. redis takes a command (e.g. GET key). elasticsearch takes a REST request, for example: POST logs/_search {"query":{"match_all":{}}}.
 You must use limit and offset parameters to paginate results safely to avoid context overflow.
 Output can be in csv or json format (default csv).`
 }
@@ -47,8 +48,8 @@ func (t *SQLQueryTool) Schema() map[string]interface{} {
 			},
 			"engine": map[string]interface{}{
 				"type":        "string",
-				"description": "Database engine (postgres, mysql, sqlite, redis). Required if using raw dsn.",
-				"enum":        []string{"postgres", "mysql", "sqlite", "redis"},
+				"description": "Database engine (postgres, mysql, sqlite, redis, elasticsearch). Required if using raw dsn.",
+				"enum":        []string{"postgres", "mysql", "sqlite", "redis", "elasticsearch"},
 			},
 			"query": map[string]interface{}{
 				"type":        "string",
@@ -166,8 +167,8 @@ func (t *SQLQueryTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 		if engine == "" {
 			return &Result{Success: false, Error: "engine is required when using raw dsn"}, nil
 		}
-		if engine != "postgres" && engine != "mysql" && engine != "sqlite" && engine != "redis" {
-			return &Result{Success: false, Error: "engine must be one of: postgres, mysql, sqlite, redis"}, nil
+		if !dbtool.IsSupportedEngine(engine) {
+			return &Result{Success: false, Error: "engine must be one of: " + strings.Join(dbtool.SupportedEngines(), ", ")}, nil
 		}
 		cfg = dbtool.Config{
 			Engine:     engine,

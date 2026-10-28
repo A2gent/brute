@@ -15,12 +15,26 @@ type TableColumn struct {
 	ForeignKeys  []ColumnAnalyticsForeignKey `json:"foreign_keys,omitempty"`
 }
 
+// SupportsTableSchema reports whether the engine exposes SQL column metadata.
+// Key/value engines (Redis) and document stores (Elasticsearch) do not.
+func SupportsTableSchema(engine string) bool {
+	switch strings.ToLower(strings.TrimSpace(engine)) {
+	case "postgres", "mysql", "sqlite":
+		return true
+	default:
+		return false
+	}
+}
+
 // GetTableColumns returns column metadata for a SQL table. Postgres is required for
 // cell editing in the explorer, but the metadata query is shared for all SQL engines.
 func GetTableColumns(ctx context.Context, cfg Config, tableName string) ([]TableColumn, error) {
 	engine := strings.ToLower(strings.TrimSpace(cfg.Engine))
 	if engine == "redis" {
 		return nil, fmt.Errorf("table schema is not available for Redis connections")
+	}
+	if engine == "elasticsearch" {
+		return nil, fmt.Errorf("table schema is not available for Elasticsearch connections")
 	}
 	if engine != "postgres" && engine != "mysql" && engine != "sqlite" {
 		return nil, fmt.Errorf("unsupported database engine: %s", cfg.Engine)

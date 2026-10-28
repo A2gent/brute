@@ -22,6 +22,25 @@ type Config struct {
 	IsReadOnly bool
 }
 
+// supportedEngines lists every engine the explorer, HTTP API, and sql_query tool accept.
+var supportedEngines = []string{"postgres", "mysql", "sqlite", "redis", "elasticsearch"}
+
+// SupportedEngines returns the engine names in a stable order for validation messages.
+func SupportedEngines() []string {
+	return append([]string(nil), supportedEngines...)
+}
+
+// IsSupportedEngine reports whether the engine has a client implementation in this package.
+func IsSupportedEngine(engine string) bool {
+	engine = strings.ToLower(strings.TrimSpace(engine))
+	for _, supported := range supportedEngines {
+		if engine == supported {
+			return true
+		}
+	}
+	return false
+}
+
 // Connect opens a SQL database connection based on engine type.
 func Connect(cfg Config) (*sql.DB, error) {
 	// WHY: db.Ping() without a deadline hangs ~75s on filtered ports; bound it.
@@ -175,13 +194,17 @@ func isSQLStatementKeyword(keyword string) bool {
 	}
 }
 
-// ExecuteQuery runs a SQL query or Redis command and returns results in a specified format (csv or json).
+// ExecuteQuery runs a SQL query, Redis command, or Elasticsearch REST request and returns
+// results in a specified format (csv or json).
 // It also enforces read-only safety by inspecting the query/command.
 func ExecuteQuery(ctx context.Context, cfg Config, query string, limit, offset int, format string) (string, error) {
 	engine := strings.ToLower(strings.TrimSpace(cfg.Engine))
 	cfg.Engine = engine
 	if engine == "redis" {
 		return executeRedisQuery(ctx, cfg, query, limit, offset, format)
+	}
+	if engine == "elasticsearch" {
+		return executeElasticsearchQuery(ctx, cfg, query, limit, offset, format)
 	}
 
 	// Security check for read-only SQL connections.
@@ -312,7 +335,7 @@ func ExecuteQuery(ctx context.Context, cfg Config, query string, limit, offset i
 	return buf.String(), nil
 }
 
-// GetTables returns a list of SQL tables or Redis keys for a given database connection.
+// GetTables returns a list of SQL tables, Redis keys, or Elasticsearch indices for a connection.
 func GetTables(ctx context.Context, cfg Config) ([]string, error) {
 	cfg.Engine = strings.ToLower(strings.TrimSpace(cfg.Engine))
 	if cfg.Engine == "redis" {
@@ -322,6 +345,16 @@ func GetTables(ctx context.Context, cfg Config) ([]string, error) {
 		}
 		defer client.close()
 		return scanRedisKeys(ctx, client, "*", redisMaxExplorerKeys)
+	}
+	if cfg.Engine == "elasticsearch" {
+		// WHY: no root ping here. GET / needs cluster monitor privileges that index-scoped
+		// API keys lack, and listing indices already fails with a clear error when the
+		// cluster is unreachable.
+		conn, err := parseElasticsearchDSN(cfg.DSN)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect: %w", err)
+		}
+		return listElasticsearchCollections(ctx, conn)
 	}
 
 	db, err := Connect(cfg)

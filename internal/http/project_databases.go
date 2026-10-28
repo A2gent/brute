@@ -191,8 +191,8 @@ func (s *Server) handleProjectDatabaseTableSchema(w http.ResponseWriter, r *http
 		s.errorResponse(w, http.StatusNotFound, "Project database not found")
 		return
 	}
-	if dbRecord.Engine == "redis" {
-		s.errorResponse(w, http.StatusBadRequest, "Table schema is not available for Redis connections")
+	if !dbtool.SupportsTableSchema(dbRecord.Engine) {
+		s.errorResponse(w, http.StatusBadRequest, "Table schema is not available for "+dbRecord.Engine+" connections")
 		return
 	}
 
@@ -285,8 +285,8 @@ func (s *Server) handleProjectDatabaseColumnAnalytics(w http.ResponseWriter, r *
 		s.errorResponse(w, http.StatusNotFound, "Project database not found")
 		return
 	}
-	if dbRecord.Engine == "redis" {
-		s.errorResponse(w, http.StatusBadRequest, "Column analytics is not available for Redis connections")
+	if !dbtool.SupportsTableSchema(dbRecord.Engine) {
+		s.errorResponse(w, http.StatusBadRequest, "Column analytics is not available for "+dbRecord.Engine+" connections")
 		return
 	}
 

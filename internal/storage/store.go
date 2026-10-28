@@ -226,7 +226,7 @@ type ProjectDatabase struct {
 	ID          string
 	ProjectID   string
 	Name        string
-	Engine      string // postgres, mysql, sqlite
+	Engine      string // postgres, mysql, sqlite, redis, elasticsearch
 	DSN         string
 	Environment string
 	IsReadOnly  bool

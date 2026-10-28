@@ -137,7 +137,8 @@ func discoverAgentDefinitionsInDirectory(rootDir string) ([]discoveredAgentDefin
 	info, err := os.Stat(rootDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, []string{fmt.Sprintf("agent definitions directory %s does not exist", rootDir)}
+			// WHY: a not-yet-created folder just means no agents; the UI offers to configure it instead of showing an error.
+			return nil, nil
 		}
 		return nil, []string{"agent definitions directory unavailable: " + err.Error()}
 	}

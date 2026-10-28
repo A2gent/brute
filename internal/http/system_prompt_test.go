@@ -60,6 +60,50 @@ func TestEnvironmentContextWithoutSessionOmitsTime(t *testing.T) {
 	}
 }
 
+func TestEnvironmentContextListsConfiguredProjectDatabases(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	now := time.Now()
+	projectID := "project-db"
+	if err := store.SaveProject(&storage.Project{ID: projectID, Name: "DB Project", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(config.DefaultConfig(), nil, tools.NewManager("."), session.NewManager(store), store, speechcache.New(0), 0)
+	sess := &session.Session{ProjectID: &projectID, CreatedAt: now}
+
+	empty, _ := server.resolveEnvironmentContextSection(sess)
+	if strings.Contains(empty, "Configured Project Databases:") {
+		t.Fatalf("project without databases must not list a database section:\n%s", empty)
+	}
+
+	secret := "postgres://user:super-secret@localhost/app"
+	if err := store.SaveProjectDatabase(&storage.ProjectDatabase{
+		ID: "db-1", ProjectID: projectID, Name: "orders", Engine: "postgres",
+		DSN: secret, Environment: "staging", IsReadOnly: true,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	content, tokens := server.resolveEnvironmentContextSection(sess)
+	for _, want := range []string{"Configured Project Databases:", "Name: orders", "Environment: staging", "Engine: postgres", "(Read-only)"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("environment context missing %q:\n%s", want, content)
+		}
+	}
+	if strings.Contains(content, secret) || strings.Contains(content, "super-secret") {
+		t.Fatal("environment context must not include the database DSN")
+	}
+	prefix := content[:strings.Index(content, "Configured Project Databases:")]
+	if tokens != estimateTokensApprox(content) || tokens <= estimateTokensApprox(prefix) {
+		t.Fatalf("token estimate %d ignored the database list (prefix %d)", tokens, estimateTokensApprox(prefix))
+	}
+}
+
 func TestEnvironmentContextPointsToAutoRouterRules(t *testing.T) {
 	cfg := config.DefaultConfig()
 	server := &Server{config: cfg}

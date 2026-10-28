@@ -248,8 +248,10 @@ func (s *Server) resolveEnvironmentContextSection(sess *session.Session) (string
 		api := fmt.Sprintf("http://127.0.0.1:%d/providers", s.Port())
 		sb.WriteString(fmt.Sprintf("\n\nAutomatic router rules are stored in %s under providers.automatic_router.router_rules as [{match, provider, model, reasoning_effort}]; the router model picks the rule whose plain-text `match` best fits the request (the first rule is the default). `provider` may be a fallback-chain ref, which then must omit `model`. To change them, read the current list with GET %s, then PUT %s/automatic_router with {\"router_rules\": [...]} (the full list; it replaces the old one and is validated and saved). Do not edit the file directly: the running server would overwrite it.", config.GetConfigPath(), api, api))
 	}
-	content := strings.TrimSpace(sb.String())
-	if projectID != "" {
+	// sql_query looks up connection_name in this list. Write it before the snapshot below:
+	// content and the token estimate are taken from that snapshot, so a later append never reaches the agent.
+	// DSN stays out: it can hold a password, and the agent only needs the name to connect.
+	if projectID != "" && s.store != nil {
 		dbs, err := s.store.ListProjectDatabases(projectID)
 		if err == nil && len(dbs) > 0 {
 			sb.WriteString("\nConfigured Project Databases:\n")
@@ -262,6 +264,7 @@ func (s *Server) resolveEnvironmentContextSection(sess *session.Session) (string
 			}
 		}
 	}
+	content := strings.TrimSpace(sb.String())
 	return content, estimateTokensApprox(content)
 }
 

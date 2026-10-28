@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/agentdef"
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/session"
@@ -68,20 +69,48 @@ func TestEmptyGlobalSystemPromptAddsNothing(t *testing.T) {
 }
 
 func TestChildGlobalPromptEnvAndStaleness(t *testing.T) {
+	english := map[string]string{globalSystemPromptSettingKey: "Always answer in English."}
 	labels, env := map[string]string{}, map[string]string{}
-	applyChildGlobalSystemPrompt(labels, env, "Always answer in English.")
+	applyChildGlobalSystemPrompt(labels, env, english)
 	if env[globalSystemPromptSettingKey] != "Always answer in English." {
 		t.Fatalf("child env: %#v", env)
 	}
-	if globalSystemPromptStale(labels, "Always answer in English.") {
+	if globalSystemPromptStale(labels, english) {
 		t.Fatal("fresh child reported stale")
 	}
 	// Editing the prompt, or a child spawned before this setting, restarts it.
-	if !globalSystemPromptStale(labels, "Answer in Estonian.") || !globalSystemPromptStale(map[string]string{}, "Always answer in English.") {
+	if !globalSystemPromptStale(labels, map[string]string{globalSystemPromptSettingKey: "Answer in Estonian."}) || !globalSystemPromptStale(map[string]string{}, english) {
 		t.Fatal("changed or missing global prompt not detected")
 	}
-	if globalSystemPromptStale(map[string]string{}, "") {
+	// Editing an agent identity prompt in Caesar must restart warm children too.
+	withIdentity := map[string]string{globalSystemPromptSettingKey: "Always answer in English.", subAgentIdentityPromptSettingKey: "You are {{name}}."}
+	if !globalSystemPromptStale(labels, withIdentity) {
+		t.Fatal("changed agent identity prompt not detected")
+	}
+	if globalSystemPromptStale(map[string]string{}, map[string]string{}) {
 		t.Fatal("children without a global prompt must not restart")
+	}
+}
+
+func TestSubAgentPromptPrefixUsesConfiguredTemplates(t *testing.T) {
+	defaults := subAgentPromptPrefix(map[string]string{}, "Reviewer", true)
+	if !strings.HasPrefix(defaults, `You are a sub-agent named "Reviewer".`) || !strings.Contains(defaults, agent.DefaultSystemPrompt()) {
+		t.Fatalf("default prefix: %q", defaults)
+	}
+	settings := map[string]string{
+		subAgentIdentityPromptSettingKey:   "Ты {{name}}. Отвечай по-русски.",
+		subAgentBaseSystemPromptSettingKey: "Custom base.",
+	}
+	if got := subAgentPromptPrefix(settings, "Reviewer", true); got != "Ты Reviewer. Отвечай по-русски.\n\nCustom base." {
+		t.Fatalf("configured prefix: %q", got)
+	}
+	if got := subAgentPromptPrefix(settings, "Reviewer", false); got != "Ты Reviewer. Отвечай по-русски." {
+		t.Fatalf("prefix without built-in tools: %q", got)
+	}
+	// Children read the parent's value from the environment.
+	t.Setenv(subAgentIdentityPromptSettingKey, "Inherited {{name}}")
+	if got := subAgentPromptPrefix(map[string]string{}, "Reviewer", false); got != "Inherited Reviewer" {
+		t.Fatalf("inherited prefix: %q", got)
 	}
 }
 

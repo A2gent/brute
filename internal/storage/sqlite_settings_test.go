@@ -114,3 +114,13 @@ func TestMigrateLegacyCustomEnvFromAppSettings(t *testing.T) {
 		t.Fatalf("custom env not migrated: %#v", customEnv)
 	}
 }
+
+// Agent prompts must stay settings: the HTTP layer reads them from GetSettings
+// to compose child prompts and their restart fingerprint.
+func TestAgentPromptTemplatesAreManagedSettings(t *testing.T) {
+	for _, key := range []string{"AAGENT_SUBAGENT_IDENTITY_PROMPT_TEMPLATE", "AAGENT_SUBAGENT_BASE_SYSTEM_PROMPT"} {
+		if !isManagedAppSettingKey(key) {
+			t.Fatalf("%s is not a managed setting", key)
+		}
+	}
+}

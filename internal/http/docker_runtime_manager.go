@@ -375,8 +375,8 @@ func (m *dockerRuntimeManager) ensureAgentContainerForWorkspace(ctx context.Cont
 		removeDockerContainerByName(ctx, containerName)
 		findErr = errors.New("recreate: stale llm config")
 	}
-	if findErr == nil && globalSystemPromptStale(agent.Labels, m.server.currentGlobalSystemPrompt()) {
-		logging.Info("Docker runtime: container %s runs an outdated global system prompt; recreating", containerName)
+	if findErr == nil && globalSystemPromptStale(agent.Labels, m.server.currentInheritedPrompts()) {
+		logging.Info("Docker runtime: container %s runs an outdated global or agent prompt settings; recreating", containerName)
 		removeDockerContainerByName(ctx, containerName)
 		findErr = errors.New("recreate: stale global system prompt")
 	}
@@ -490,7 +490,7 @@ func (m *dockerRuntimeManager) createAgentContainer(ctx context.Context, def *ag
 	req.Labels[dockerRuntimeAgentDefLabelKey] = def.Agent.ID
 	req.Labels[dockerRuntimeLLMFingerprintLabelKey] = llmFingerprint(def)
 	applyDockerChildRuntime(req.Labels, &req.Environment, m.server.Port())
-	applyChildGlobalSystemPrompt(req.Labels, req.Environment, m.server.currentGlobalSystemPrompt())
+	applyChildGlobalSystemPrompt(req.Labels, req.Environment, m.server.currentInheritedPrompts())
 	if len(workspace.ProjectMounts) > 0 {
 		req.Labels["a2gent.workspace_scope"] = workspace.Scope
 	}

@@ -38,6 +38,8 @@ func isManagedAppSettingKey(key string) bool {
 		"AAGENT_SESSIONS_RETENTION_MAX_FILES":                 {},
 		"AAGENT_SKILLS_FOLDER":                                {},
 		"AAGENT_SESSION_SUMMARY_PROMPT_TEMPLATE":              {},
+		"AAGENT_SUBAGENT_IDENTITY_PROMPT_TEMPLATE":            {},
+		"AAGENT_SUBAGENT_BASE_SYSTEM_PROMPT":                  {},
 		"AAGENT_SYSTEM_PROMPT_APPEND":                         {},
 		"A2GENT_AGENT_BASE_SYSTEM_PROMPT":                     {},
 		"A2GENT_GLOBAL_SYSTEM_PROMPT":                         {},

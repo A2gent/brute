@@ -126,21 +126,11 @@ func (s *Server) composeSubAgentSystemPromptSnapshot(sa *storage.SubAgent, sess 
 		break
 	}
 
-	identityPrompt := fmt.Sprintf(`You are a sub-agent named "%s". You have been delegated a specific task by the main agent.
-
-Guidelines:
-- Focus exclusively on completing the delegated task
-- Be concise and efficient — your output will be returned to the main agent
-- Use available tools to accomplish the task
-- If the task is unclear, do your best to complete it based on context
-- When done, provide a clear summary of what you accomplished`, sa.Name)
-
-	var basePrompt string
-	if builtInToolsEnabled {
-		basePrompt = identityPrompt + "\n\n" + agent.DefaultSystemPrompt()
-	} else {
-		basePrompt = identityPrompt
+	settings, _ := s.store.GetSettings()
+	if settings == nil {
+		settings = map[string]string{}
 	}
+	basePrompt := subAgentPromptPrefix(settings, sa.Name, builtInToolsEnabled)
 
 	resolvedBlocks := make([]systemPromptBlockSnapshot, 0, len(blocks))
 	resolvedBlocks = append(resolvedBlocks, systemPromptBlockSnapshot{
@@ -152,11 +142,6 @@ Guidelines:
 	})
 	appendSections := make([]string, 0, len(blocks))
 	sectionNumber := 0
-
-	settings, _ := s.store.GetSettings()
-	if settings == nil {
-		settings = map[string]string{}
-	}
 
 	environmentContext, environmentContextTokens := s.resolveEnvironmentContextSection(sess)
 	if environmentContext != "" {

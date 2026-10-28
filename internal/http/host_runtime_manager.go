@@ -215,8 +215,8 @@ func (m *hostRuntimeManager) ensure(ctx context.Context, def *agentdef.Definitio
 		existing.stop()
 		existing = nil
 	}
-	if existing != nil && existing.alive() && globalSystemPromptStale(existing.labels, m.server.currentGlobalSystemPrompt()) {
-		logging.Info("Host runtime: agent %s runs an outdated global system prompt; restarting", name)
+	if existing != nil && existing.alive() && globalSystemPromptStale(existing.labels, m.server.currentInheritedPrompts()) {
+		logging.Info("Host runtime: agent %s runs an outdated global or agent prompt settings; restarting", name)
 		existing.stop()
 		existing = nil
 	}
@@ -303,7 +303,7 @@ func (m *hostRuntimeManager) spawn(ctx context.Context, def *agentdef.Definition
 	env[storage.ChildRuntimeEnv] = "1"
 	// Applied before start; the fingerprint label is added once labels exist.
 	globalLabels := map[string]string{}
-	applyChildGlobalSystemPrompt(globalLabels, env, s.currentGlobalSystemPrompt())
+	applyChildGlobalSystemPrompt(globalLabels, env, s.currentInheritedPrompts())
 	if prompt != "" {
 		env["AAGENT_SYSTEM_PROMPT"] = prompt
 	}

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -17,44 +18,74 @@ const (
 	globalPromptFingerprintLabelKey = "a2gent.global_prompt_fingerprint"
 )
 
-func resolveGlobalSystemPrompt(settings map[string]string) string {
-	if configured := strings.TrimSpace(settings[globalSystemPromptSettingKey]); configured != "" {
-		return configured
-	}
-	return strings.TrimSpace(os.Getenv(globalSystemPromptSettingKey))
+// inheritedPromptSettingKeys are Caesar-edited prompt settings that children
+// compose their own prompts from, so they travel to children like the global prompt.
+var inheritedPromptSettingKeys = []string{
+	globalSystemPromptSettingKey,
+	subAgentIdentityPromptSettingKey,
+	subAgentBaseSystemPromptSettingKey,
 }
 
-// currentGlobalSystemPrompt is what children spawned now should receive. A
-// child that spawns its own children passes on the prompt it inherited.
-func (s *Server) currentGlobalSystemPrompt() string {
+// inheritedPromptSetting reads a prompt from local settings, then from the
+// environment a parent passed at spawn.
+func inheritedPromptSetting(settings map[string]string, key string) string {
+	if configured := strings.TrimSpace(settings[key]); configured != "" {
+		return configured
+	}
+	return strings.TrimSpace(os.Getenv(key))
+}
+
+func resolveGlobalSystemPrompt(settings map[string]string) string {
+	return inheritedPromptSetting(settings, globalSystemPromptSettingKey)
+}
+
+// currentInheritedPrompts is what children spawned now should receive. A
+// child that spawns its own children passes on the prompts it inherited.
+func (s *Server) currentInheritedPrompts() map[string]string {
 	settings := map[string]string{}
 	if s != nil && s.store != nil {
 		if loaded, err := s.store.GetSettings(); err == nil && loaded != nil {
 			settings = loaded
 		}
 	}
-	return resolveGlobalSystemPrompt(settings)
+	prompts := map[string]string{}
+	for _, key := range inheritedPromptSettingKeys {
+		if value := inheritedPromptSetting(settings, key); value != "" {
+			prompts[key] = value
+		}
+	}
+	return prompts
 }
 
-func globalSystemPromptFingerprint(prompt string) string {
-	prompt = strings.TrimSpace(prompt)
-	if prompt == "" {
+func inheritedPromptsFingerprint(prompts map[string]string) string {
+	keys := make([]string, 0, len(prompts))
+	for key, value := range prompts {
+		if strings.TrimSpace(value) != "" {
+			keys = append(keys, key)
+		}
+	}
+	if len(keys) == 0 {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(prompt))
-	return hex.EncodeToString(sum[:8])
-}
-
-func applyChildGlobalSystemPrompt(labels, env map[string]string, prompt string) {
-	prompt = strings.TrimSpace(prompt)
-	if prompt != "" {
-		env[globalSystemPromptSettingKey] = prompt
+	sort.Strings(keys)
+	hash := sha256.New()
+	for _, key := range keys {
+		hash.Write([]byte(key + "=" + strings.TrimSpace(prompts[key]) + "\x00"))
 	}
-	labels[globalPromptFingerprintLabelKey] = globalSystemPromptFingerprint(prompt)
+	return hex.EncodeToString(hash.Sum(nil)[:8])
 }
 
-// globalSystemPromptStale reports whether a warm child was spawned with a
-// different global prompt; it must restart to pick up the edited setting.
-func globalSystemPromptStale(labels map[string]string, current string) bool {
-	return labels[globalPromptFingerprintLabelKey] != globalSystemPromptFingerprint(current)
+func applyChildGlobalSystemPrompt(labels, env map[string]string, prompts map[string]string) {
+	for key, value := range prompts {
+		if value = strings.TrimSpace(value); value != "" {
+			env[key] = value
+		}
+	}
+	labels[globalPromptFingerprintLabelKey] = inheritedPromptsFingerprint(prompts)
+}
+
+// globalSystemPromptStale reports whether a warm child was spawned with
+// different inherited prompts; it must restart to pick up the edited settings.
+func globalSystemPromptStale(labels map[string]string, current map[string]string) bool {
+	return labels[globalPromptFingerprintLabelKey] != inheritedPromptsFingerprint(current)
 }

@@ -3,6 +3,7 @@ package http
 import (
 	"strings"
 
+	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/logging"
 )
 
@@ -12,6 +13,21 @@ const scheduleToCronSystemPromptSettingKey = "AAGENT_SCHEDULE_TO_CRON_SYSTEM_PRO
 const sessionSummaryPromptTemplateSettingKey = "AAGENT_SESSION_SUMMARY_PROMPT_TEMPLATE"
 const meetingSummaryPromptTemplateSettingKey = "AAGENT_MEETING_SUMMARY_PROMPT_TEMPLATE"
 const pronunciationSystemPromptSettingKey = "AAGENT_PRONUNCIATION_SYSTEM_PROMPT"
+
+// Configured (child) agents start their system prompt with this identity and,
+// when built-in tools are enabled, the base prompt. Children inherit both from
+// the parent through inheritedPromptSettingKeys.
+const subAgentIdentityPromptSettingKey = "AAGENT_SUBAGENT_IDENTITY_PROMPT_TEMPLATE"
+const subAgentBaseSystemPromptSettingKey = "AAGENT_SUBAGENT_BASE_SYSTEM_PROMPT"
+
+const defaultSubAgentIdentityPromptTemplate = `You are a sub-agent named "{{name}}". You have been delegated a specific task by the main agent.
+
+Guidelines:
+- Focus exclusively on completing the delegated task
+- Be concise and efficient — your output will be returned to the main agent
+- Use available tools to accomplish the task
+- If the task is unclear, do your best to complete it based on context
+- When done, provide a clear summary of what you accomplished`
 
 type serverPromptTemplates struct {
 	PronunciationSystemPrompt      string
@@ -79,7 +95,27 @@ func defaultPromptTemplateSettings() map[string]string {
 		scheduleToCronSystemPromptSettingKey:     defaults.ScheduleToCronSystemPrompt,
 		sessionSummaryPromptTemplateSettingKey:   defaults.SessionSummaryPromptTemplate,
 		meetingSummaryPromptTemplateSettingKey:   defaults.MeetingSummaryPromptTemplate,
+		subAgentIdentityPromptSettingKey:         defaultSubAgentIdentityPromptTemplate,
+		subAgentBaseSystemPromptSettingKey:       agent.DefaultSystemPrompt(),
 	}
+}
+
+// subAgentPromptPrefix renders the configurable identity and base prompt that
+// open every configured agent's system prompt.
+func subAgentPromptPrefix(settings map[string]string, name string, builtInToolsEnabled bool) string {
+	identity := inheritedPromptSetting(settings, subAgentIdentityPromptSettingKey)
+	if identity == "" {
+		identity = defaultSubAgentIdentityPromptTemplate
+	}
+	identity = renderPromptTemplate(identity, map[string]string{"name": name})
+	if !builtInToolsEnabled {
+		return identity
+	}
+	base := inheritedPromptSetting(settings, subAgentBaseSystemPromptSettingKey)
+	if base == "" {
+		base = agent.DefaultSystemPrompt()
+	}
+	return identity + "\n\n" + base
 }
 
 func renderPromptTemplate(template string, values map[string]string) string {

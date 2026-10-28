@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/A2gent/brute/internal/agent"
+	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/storage"
@@ -240,6 +241,12 @@ func (s *Server) resolveEnvironmentContextSection(sess *session.Session) (string
 		}
 	} else {
 		sb.WriteString("\nNo project root is associated with this session. Use the server working directory as the default file scope.")
+	}
+	// Lets the user ask any agent to retune the automatic router. Points at the API, not
+	// only the file: the server keeps config in memory and its next save would undo direct edits.
+	if router, ok := s.config.Providers[string(config.ProviderAutoRouter)]; ok && router.RouterProvider != "" {
+		api := fmt.Sprintf("http://127.0.0.1:%d/providers", s.Port())
+		sb.WriteString(fmt.Sprintf("\n\nAutomatic router rules are stored in %s under providers.automatic_router.router_rules as [{match, provider, model, reasoning_effort}]; the router model picks the rule whose plain-text `match` best fits the request (the first rule is the default). `provider` may be a fallback-chain ref, which then must omit `model`. To change them, read the current list with GET %s, then PUT %s/automatic_router with {\"router_rules\": [...]} (the full list; it replaces the old one and is validated and saved). Do not edit the file directly: the running server would overwrite it.", config.GetConfigPath(), api, api))
 	}
 	content := strings.TrimSpace(sb.String())
 	if projectID != "" {

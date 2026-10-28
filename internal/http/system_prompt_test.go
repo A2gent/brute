@@ -60,6 +60,21 @@ func TestEnvironmentContextWithoutSessionOmitsTime(t *testing.T) {
 	}
 }
 
+func TestEnvironmentContextPointsToAutoRouterRules(t *testing.T) {
+	cfg := config.DefaultConfig()
+	server := &Server{config: cfg}
+	if content, _ := server.resolveEnvironmentContextSection(nil); strings.Contains(content, "router_rules") {
+		t.Fatal("hint must be omitted while the router is not configured")
+	}
+	cfg.Providers[string(config.ProviderAutoRouter)] = config.Provider{RouterProvider: "lmstudio"}
+	content, _ := server.resolveEnvironmentContextSection(nil)
+	for _, want := range []string{config.GetConfigPath(), "providers.automatic_router.router_rules", "/providers/automatic_router"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("environment context missing %q:\n%s", want, content)
+		}
+	}
+}
+
 func TestPromptFieldsLessDeterministicTies(t *testing.T) {
 	cases := []struct{ left, right []string }{
 		{[]string{"A", "x"}, []string{"a", "x"}},

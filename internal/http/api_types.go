@@ -503,18 +503,18 @@ type JobResponse struct {
 }
 
 type SessionTemplateRequest struct {
-	Name         string `json:"name"`
-	Content      string `json:"content"`
-	SlashCommand string `json:"slash_command"`
+	Name    string `json:"name"`
+	Content string `json:"content"`
+	AgentID string `json:"agent_id"`
 }
 
 type SessionTemplateResponse struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Content      string    `json:"content"`
-	SlashCommand string    `json:"slash_command"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Content   string    `json:"content"`
+	AgentID   string    `json:"agent_id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // JobExecutionResponse represents a job execution response

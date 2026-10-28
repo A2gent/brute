@@ -3,20 +3,24 @@ package http
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/A2gent/brute/internal/storage"
 )
 
-// Built-in identities are fixed so prompt edits cannot hijack reserved commands.
+// Built-in names are fixed; their prompt text and agent can be overridden.
 // Default prompt text stays in Caesar; SQLite stores only user overrides.
-var builtInSessionTemplateIdentities = map[string]struct{ name, slashCommand string }{
-	"built-in:branch-review:architecture":         {"Architecture review", "architecture-review"},
-	"built-in:branch-review:quality":              {"Quality review", "quality-review"},
-	"built-in:branch-review:security-performance": {"Security and performance review", "security-performance-review"},
-	"built-in:branch-review:simplicity":           {"Simplicity review", "simplicity-review"},
-	"built-in:branch-review:documentation":        {"Documentation review", "documentation-review"},
+var builtInSessionTemplateIdentities = map[string]string{
+	"built-in:branch-review:architecture":         "Architecture review",
+	"built-in:branch-review:quality":              "Quality review",
+	"built-in:branch-review:security-performance": "Security and performance review",
+	"built-in:branch-review:simplicity":           "Simplicity review",
+	"built-in:branch-review:documentation":        "Documentation review",
+	"built-in:project-audit:dependencies":         "Dependency security audit",
+	"built-in:project-audit:secrets":              "Secret exposure audit",
+	"built-in:project-audit:access-control":       "Access control audit",
+	"built-in:project-audit:test-coverage":        "Test coverage audit",
+	"built-in:project-audit:ci":                   "CI health audit",
 }
 
 func (s *Server) handleUpdateBuiltInSessionTemplate(w http.ResponseWriter, r *http.Request, id string) {
@@ -25,14 +29,12 @@ func (s *Server) handleUpdateBuiltInSessionTemplate(w http.ResponseWriter, r *ht
 		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
 		return
 	}
-	identity := builtInSessionTemplateIdentities[id]
-	content := strings.TrimSpace(req.Content)
-	if content == "" {
-		s.errorResponse(w, http.StatusBadRequest, "Content is required")
+	name, content, agentID, ok := s.validateSessionTemplateRequest(w, req)
+	if !ok {
 		return
 	}
-	if strings.TrimSpace(req.Name) != identity.name || strings.TrimLeft(strings.ToLower(strings.TrimSpace(req.SlashCommand)), "/") != identity.slashCommand {
-		s.errorResponse(w, http.StatusBadRequest, "Built-in template name and slash command cannot be changed")
+	if name != builtInSessionTemplateIdentities[id] {
+		s.errorResponse(w, http.StatusBadRequest, "Built-in template name cannot be changed")
 		return
 	}
 
@@ -45,7 +47,7 @@ func (s *Server) handleUpdateBuiltInSessionTemplate(w http.ResponseWriter, r *ht
 	}
 	now := time.Now()
 	template := &storage.SessionTemplate{
-		ID: id, Name: identity.name, SlashCommand: identity.slashCommand,
+		ID: id, Name: name, AgentID: agentID,
 		Content: content, CreatedAt: now, UpdatedAt: now,
 	}
 	for _, existing := range templates {

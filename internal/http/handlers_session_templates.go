@@ -1,4 +1,3 @@
-// handlers_session_templates.go keeps session-template handlers focused without changing behavior.
 package http
 
 import (
@@ -8,41 +7,9 @@ import (
 	"github.com/google/uuid"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 )
-
-var sessionTemplateSlashCommandPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
-
-var reservedSessionTemplateSlashCommands = map[string]struct{}{
-	// WHY: templates now become first-class composer slash commands. Rejecting
-	// reserved names prevents a saved template from shadowing existing behavior.
-	"template":                    {},
-	"tpl":                         {},
-	"queue":                       {},
-	"run":                         {},
-	"provider":                    {},
-	"model":                       {},
-	"help":                        {},
-	"h":                           {},
-	"?":                           {},
-	"fill":                        {},
-	"f":                           {},
-	"continue":                    {},
-	"linked-continue":             {},
-	"lc":                          {},
-	"linked":                      {},
-	"link":                        {},
-	"new":                         {},
-	"continuation":                {},
-	"cont":                        {},
-	"architecture-review":         {},
-	"quality-review":              {},
-	"security-performance-review": {},
-	"simplicity-review":           {},
-	"documentation-review":        {},
-}
 
 func (s *Server) handleListSessionTemplates(w http.ResponseWriter, r *http.Request) {
 	templates, err := s.store.ListSessionTemplates()
@@ -65,19 +32,19 @@ func (s *Server) handleCreateSessionTemplate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	name, content, slashCommand, ok := s.validateSessionTemplateRequest(w, req, "")
+	name, content, agentID, ok := s.validateSessionTemplateRequest(w, req)
 	if !ok {
 		return
 	}
 
 	now := time.Now()
 	template := &storage.SessionTemplate{
-		ID:           uuid.New().String(),
-		Name:         name,
-		Content:      content,
-		SlashCommand: slashCommand,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:        uuid.New().String(),
+		Name:      name,
+		Content:   content,
+		AgentID:   agentID,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 	if err := s.store.SaveSessionTemplate(template); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to create session template: "+err.Error())
@@ -120,14 +87,14 @@ func (s *Server) handleUpdateSessionTemplate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	name, content, slashCommand, ok := s.validateSessionTemplateRequest(w, req, templateID)
+	name, content, agentID, ok := s.validateSessionTemplateRequest(w, req)
 	if !ok {
 		return
 	}
 
 	template.Name = name
 	template.Content = content
-	template.SlashCommand = slashCommand
+	template.AgentID = agentID
 	template.UpdatedAt = time.Now()
 	if err := s.store.SaveSessionTemplate(template); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to update session template: "+err.Error())
@@ -148,10 +115,10 @@ func (s *Server) handleDeleteSessionTemplate(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) validateSessionTemplateRequest(w http.ResponseWriter, req SessionTemplateRequest, currentTemplateID string) (string, string, string, bool) {
+func (s *Server) validateSessionTemplateRequest(w http.ResponseWriter, req SessionTemplateRequest) (string, string, string, bool) {
 	name := strings.TrimSpace(req.Name)
 	content := strings.TrimSpace(req.Content)
-	slashCommand := strings.TrimLeft(strings.ToLower(strings.TrimSpace(req.SlashCommand)), "/")
+	agentID := strings.TrimSpace(req.AgentID)
 	if name == "" {
 		s.errorResponse(w, http.StatusBadRequest, "Name is required")
 		return "", "", "", false
@@ -160,44 +127,22 @@ func (s *Server) validateSessionTemplateRequest(w http.ResponseWriter, req Sessi
 		s.errorResponse(w, http.StatusBadRequest, "Content is required")
 		return "", "", "", false
 	}
-	if slashCommand == "" {
-		s.errorResponse(w, http.StatusBadRequest, "Slash command is required")
+	if agentID == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Agent ID is required")
 		return "", "", "", false
 	}
-	if !sessionTemplateSlashCommandPattern.MatchString(slashCommand) {
-		s.errorResponse(w, http.StatusBadRequest, "Slash command can use only lowercase letters, numbers, and hyphens")
-		return "", "", "", false
-	}
-	if _, reserved := reservedSessionTemplateSlashCommands[slashCommand]; reserved {
-		s.errorResponse(w, http.StatusBadRequest, "Slash command is reserved")
-		return "", "", "", false
-	}
-
-	templates, err := s.store.ListSessionTemplates()
-	if err != nil {
-		s.errorResponse(w, http.StatusInternalServerError, "Failed to validate session template: "+err.Error())
-		return "", "", "", false
-	}
-	for _, template := range templates {
-		if template.ID == currentTemplateID {
-			continue
-		}
-		if strings.EqualFold(template.SlashCommand, slashCommand) {
-			s.errorResponse(w, http.StatusBadRequest, "Slash command is already used by another template")
-			return "", "", "", false
-		}
-	}
-	return name, content, slashCommand, true
+	// Agent IDs are portable: an unavailable catalogue entry must not prevent saving.
+	return name, content, agentID, true
 }
 
 func (s *Server) sessionTemplateToResponse(template *storage.SessionTemplate) SessionTemplateResponse {
 	return SessionTemplateResponse{
-		ID:           template.ID,
-		Name:         template.Name,
-		Content:      template.Content,
-		SlashCommand: template.SlashCommand,
-		CreatedAt:    template.CreatedAt,
-		UpdatedAt:    template.UpdatedAt,
+		ID:        template.ID,
+		Name:      template.Name,
+		Content:   template.Content,
+		AgentID:   template.AgentID,
+		CreatedAt: template.CreatedAt,
+		UpdatedAt: template.UpdatedAt,
 	}
 }
 

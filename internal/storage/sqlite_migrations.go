@@ -187,7 +187,9 @@ func (s *SQLiteStore) migrate() error {
 					updated_at TIMESTAMP NOT NULL
 				)`,
 		`ALTER TABLE session_templates ADD COLUMN slash_command TEXT NOT NULL DEFAULT ''`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_session_templates_slash_command ON session_templates(slash_command COLLATE NOCASE) WHERE slash_command <> ''`,
+		// Keep the legacy slash_command column, but templates now bind one portable agent ID.
+		`ALTER TABLE session_templates ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''`,
+		`DROP INDEX IF EXISTS idx_session_templates_slash_command`,
 		`CREATE INDEX IF NOT EXISTS idx_session_templates_name ON session_templates(name COLLATE NOCASE)`,
 		// Messages the user queued while a run was active. Kept out of the
 		// transcript/sessions row so a running agent's whole-session Save cannot

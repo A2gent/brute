@@ -46,7 +46,12 @@ func TestPreflightFallbackStartSkipsExhaustedHeadNode(t *testing.T) {
 	server, _ := preflightTestServer(t, 100, time.Now().Add(3*time.Hour))
 	sess := sessionForPreflight(t, server)
 
-	server.preflightFallbackStart(context.Background(), config.ProviderFallback, sess)
+	ctx, release, err := server.sessionManager.AcquireRun(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	server.preflightFallbackStart(ctx, config.ProviderFallback, sess)
 
 	if got := sessionFallbackStartIndex(sess, config.ProviderFallback); got != 1 {
 		t.Fatalf("fallback start = %d, want 1 (advanced past exhausted node)", got)
@@ -57,6 +62,49 @@ func TestPreflightFallbackStartSkipsExhaustedHeadNode(t *testing.T) {
 	}
 	if got := sessionFallbackStartIndex(persisted, config.ProviderFallback); got != 1 {
 		t.Fatalf("persisted fallback start = %d, want 1", got)
+	}
+}
+
+// Auxiliary callers (session summary, manual compaction) work on a detached
+// snapshot without a run lease. Saving there overwrites the row and deletes
+// messages a live run appended after the copy, so the index must stay in memory.
+func TestPreflightFallbackStartDoesNotPersistWithoutRunLease(t *testing.T) {
+	server, _ := preflightTestServer(t, 100, time.Now().Add(3*time.Hour))
+	sess := sessionForPreflight(t, server)
+
+	server.preflightFallbackStart(context.Background(), config.ProviderFallback, sess)
+
+	if got := sessionFallbackStartIndex(sess, config.ProviderFallback); got != 1 {
+		t.Fatalf("in-memory fallback start = %d, want 1 for the chain client", got)
+	}
+	persisted, err := server.sessionManager.Get(sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sessionFallbackStartIndex(persisted, config.ProviderFallback); got != 0 {
+		t.Fatalf("persisted fallback start = %d, want 0 without a run lease", got)
+	}
+}
+
+// A chain shortened after the session advanced leaves the index past the end;
+// the preflight has to clamp it or the session stays permanently exhausted.
+func TestPreflightFallbackStartClampsStaleIndexPastChainEnd(t *testing.T) {
+	server, _ := preflightTestServer(t, 37, time.Now().Add(3*time.Hour))
+	sess := sessionForPreflight(t, server)
+	setSessionFallbackStartIndex(sess, config.ProviderFallback, 7)
+	if err := server.sessionManager.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, release, err := server.sessionManager.AcquireRun(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	server.preflightFallbackStart(ctx, config.ProviderFallback, sess)
+
+	if got := sessionFallbackStartIndex(sess, config.ProviderFallback); got != 0 {
+		t.Fatalf("fallback start = %d, want 0 after clamping a stale index", got)
 	}
 }
 
@@ -150,4 +198,31 @@ func TestResolveExecutionTargetAppliesFallbackPreflight(t *testing.T) {
 	if target.Client == nil {
 		t.Fatal("target client is missing")
 	}
+}
+
+// Aggregates resolve chains through a different config branch and metadata key.
+func TestPreflightFallbackStartSkipsExhaustedNodeInAggregate(t *testing.T) {
+	server, cfg := preflightTestServer(t, 100, time.Now().Add(3*time.Hour))
+	aggRef := config.FallbackAggregateRefFromID("coding")
+	cfg.FallbackAggregates = []config.FallbackAggregate{{
+		ID: "coding",
+		Chain: []config.FallbackChainNode{
+			{Provider: string(config.ProviderAnthropic), Model: "claude-opus-4-8"},
+			{Provider: string(config.ProviderOpenAI), Model: "gpt-5.5"},
+		},
+	}}
+	sess := sessionForPreflight(t, server)
+	sess.Metadata["provider"] = aggRef
+
+	server.preflightFallbackStart(context.Background(), config.ProviderType(aggRef), sess)
+
+	if got := sessionFallbackStartIndex(sess, config.ProviderType(aggRef)); got != 1 {
+		t.Fatalf("aggregate fallback start = %d, want 1", got)
+	}
+}
+
+// Several callers pass a nil session (auxiliary prompts); the preflight must not panic.
+func TestPreflightFallbackStartHandlesNilSession(t *testing.T) {
+	server, _ := preflightTestServer(t, 100, time.Now().Add(3*time.Hour))
+	server.preflightFallbackStart(context.Background(), config.ProviderFallback, nil)
 }

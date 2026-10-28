@@ -246,6 +246,52 @@ func TestFallbackTransitionConfirmModeSkipsCompactionWithoutWork(t *testing.T) {
 	}
 }
 
+// An assistant message that only carries runtime metadata is not completed work;
+// summarizing it would be the same waste as summarizing an empty session.
+func TestHasCompletedWorkIgnoresMetadataOnlyMessages(t *testing.T) {
+	onlyUser := []session.Message{{Role: "user", Content: "task"}}
+	if hasCompletedWork(onlyUser) {
+		t.Fatal("pending user prompt alone is not completed work")
+	}
+	withRuntimeOnly := append(append([]session.Message(nil), onlyUser...), session.Message{
+		Role:     "assistant",
+		Content:  "",
+		Metadata: map[string]interface{}{"llm_timing": true},
+	})
+	if hasCompletedWork(withRuntimeOnly) {
+		t.Fatal("metadata-only assistant message is not completed work")
+	}
+	for name, extra := range map[string]session.Message{
+		"assistant text":  {Role: "assistant", Content: "done"},
+		"tool call":       {Role: "assistant", ToolCalls: []session.ToolCall{{ID: "c1", Name: "read"}}},
+		"tool result":     {Role: "tool", ToolResults: []session.ToolResult{{ToolCallID: "c1"}}},
+		"assistant image": {Role: "assistant", Images: []session.ImageAttachment{{URL: "https://example.com/a.png"}}},
+	} {
+		if !hasCompletedWork(append(append([]session.Message(nil), onlyUser...), extra)) {
+			t.Fatalf("%s must count as completed work", name)
+		}
+	}
+}
+
+// linked_session deliberately forks a new session, so it keeps compaction.
+func TestFallbackTransitionLinkedSessionKeepsCompaction(t *testing.T) {
+	target := &MockLLM{Responses: []*llm.ChatResponse{{Content: "summary"}, {Content: "answer"}}}
+	a, sess, _ := transitionAgent(t, "linked_session", target)
+	a.llmClient = fallback.NewClient([]fallback.Node{
+		{Name: "source", Model: "old", Client: &MockLLM{Err: errors.New("insufficient_quota")}},
+		{Name: "target", Model: "new", Client: target},
+	}, fallback.WithMaxRetries(0))
+
+	_, _, err := a.Run(context.Background(), sess, "")
+	if !errors.Is(err, ErrTransitionPaused) {
+		t.Fatalf("expected pause for linked continuation, got %v", err)
+	}
+	tr := session.CurrentProviderTransition(sess)
+	if tr.ContextStrategy != "compact" {
+		t.Fatalf("linked_session must keep compact strategy, got %q", tr.ContextStrategy)
+	}
+}
+
 // With real work in the transcript compaction stays the default strategy.
 func TestFallbackTransitionCompactsWhenWorkExists(t *testing.T) {
 	target := &MockLLM{Responses: []*llm.ChatResponse{{Content: "summary"}, {Content: "answer"}}}

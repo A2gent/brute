@@ -36,11 +36,22 @@ func (s *Server) preflightFallbackStart(ctx context.Context, providerRef config.
 	ctx, cancel := context.WithTimeout(ctx, fallbackPreflightTimeout)
 	defer cancel()
 
-	start := sessionFallbackStartIndex(sess, providerRef)
-	advanced := start
+	previous := sessionFallbackStartIndex(sess, providerRef)
+	// A chain shortened after this session advanced leaves the index past the end,
+	// and the client reports "exhausted" before any skip callback can repair it.
+	// Clamp so the session can run on the remaining nodes again.
+	if previous >= len(chain) {
+		setSessionFallbackStartIndex(sess, providerRef, 0)
+		s.persistPreflightStart(ctx, sess)
+		return
+	}
+
+	advanced := previous
 	for advanced < len(chain) {
+		// Keep a partial advance: nodes already known to be exhausted stay skipped
+		// even if a later usage probe runs out of the preflight budget.
 		if ctx.Err() != nil {
-			return
+			break
 		}
 		node := fallback.Node{Name: chain[advanced].Provider, Model: chain[advanced].Model}
 		skip, reason := s.fallbackNodeUsageSkip(ctx, node)
@@ -52,12 +63,20 @@ func (s *Server) preflightFallbackStart(ctx context.Context, providerRef config.
 	}
 	// Every node is exhausted: leave the index alone so the chain reports its own
 	// aggregate error instead of hiding that nothing can serve the session.
-	if advanced == start || advanced >= len(chain) {
+	if advanced == previous || advanced >= len(chain) {
 		return
 	}
-
 	setSessionFallbackStartIndex(sess, providerRef, advanced)
-	if s.sessionManager == nil {
+	s.persistPreflightStart(ctx, sess)
+}
+
+// persistPreflightStart writes the advanced start only for the run that owns the
+// session. Persisting writes the whole row, so an auxiliary caller working on a
+// detached snapshot (session summary, manual compaction, job prep) would delete
+// messages a live run appended after the copy. The chain client reads the index
+// from the in-memory session, so those callers still start on the right node.
+func (s *Server) persistPreflightStart(ctx context.Context, sess *session.Session) {
+	if s.sessionManager == nil || !s.sessionManager.HoldsRunLease(ctx, sess.ID) {
 		return
 	}
 	if err := s.sessionManager.Save(sess); err != nil {

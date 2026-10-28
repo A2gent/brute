@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/fallback"
 	"github.com/A2gent/brute/internal/session"
@@ -66,8 +67,10 @@ func (a *Agent) requestFallbackTransition(sess *session.Session, next *fallback.
 	t.SourceOutcome = next.SourceOutcome
 	t.RetryCount = &next.RetryCount
 	t.FallbackIndex = next.Index
+	// Normalized so fallback_progress cannot grow two keys for one chain: the index
+	// helpers key by NormalizeProviderRef, and the raw metadata string may differ.
 	if chain, _ := sess.Metadata["provider"].(string); chain != "" {
-		t.ChainProvider = chain
+		t.ChainProvider = config.NormalizeProviderRef(chain)
 	}
 	// A session that failed on its very first request has no completed work to
 	// summarize. Compacting then only adds a summary message and a rewrite of the
@@ -81,11 +84,16 @@ func (a *Agent) requestFallbackTransition(sess *session.Session, next *fallback.
 	return a.saveTransition(sess, t, onEvent)
 }
 
-// hasCompletedWork reports whether the active context holds anything besides the
-// pending user prompts a new run appends.
+// hasCompletedWork reports whether the active context holds anything worth
+// summarizing: assistant text, tool calls or tool results. Metadata-only assistant
+// messages (failure notices, empty-response retries) carry no work, and treating
+// them as such would still trigger a summarizer round-trip over nothing.
 func hasCompletedWork(messages []session.Message) bool {
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role != "user" {
+	for _, msg := range messages {
+		if msg.Role == "user" {
+			continue
+		}
+		if strings.TrimSpace(msg.Content) != "" || len(msg.ToolCalls) > 0 || len(msg.ToolResults) > 0 || len(msg.Images) > 0 {
 			return true
 		}
 	}

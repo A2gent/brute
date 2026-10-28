@@ -33,3 +33,14 @@ func (m *Manager) ActiveRunCount() int {
 	})
 	return count
 }
+
+// HoldsRunLease reports whether ctx owns the run for this session. Callers that
+// persist a whole session row must check it: an auxiliary caller using a detached
+// snapshot would otherwise delete messages a live run appended after the copy.
+func (m *Manager) HoldsRunLease(ctx context.Context, id string) bool {
+	if m == nil || ctx == nil {
+		return false
+	}
+	lease, ok := ctx.Value(runLeaseKey{}).(runLease)
+	return ok && lease.manager == m && lease.id == id
+}

@@ -446,7 +446,7 @@ func (s *Server) createFallbackChainClient(providerRef config.ProviderType, sess
 	return fallback.NewClient(nodes, opts...), nil
 }
 
-// fallbackNodeUsageSkipper skips fallback nodes when Brute already knows their usage is exhausted.
+// fallbackNodeUsageSkipper adapts the shared usage policy to the chain client.
 func (s *Server) fallbackNodeUsageSkipper() fallback.NodeSkipFunc {
 	if s == nil {
 		return nil
@@ -455,7 +455,7 @@ func (s *Server) fallbackNodeUsageSkipper() fallback.NodeSkipFunc {
 }
 
 // fallbackNodeUsageSkip reports why a single node cannot serve a request right now.
-// Shared by the in-request skipper and the run preflight so both agree on the policy.
+// Used both as the in-request skipper and by the run preflight so the two agree.
 func (s *Server) fallbackNodeUsageSkip(ctx context.Context, node fallback.Node) (bool, string) {
 	provider := config.NormalizeProviderRef(node.Name)
 	if provider == "" {

@@ -655,7 +655,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 
 	resp := s.sessionToResponse(sess)
 	if includeMessages {
-		resp.Messages = s.hydrateDirectAgentActivity(r.Context(), sess, resp.Messages)
+		resp.Messages = s.hydrateDirectAgentActivity(r.Context(), sess, resp.Messages, r.URL.Query().Get("before_message") == "")
 	}
 	if includeMessages && messageLimit > 0 {
 		resp.MessagePage = &MessagePagePayload{HasMore: hasMore}

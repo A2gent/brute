@@ -282,10 +282,17 @@ const directAgentHydrationTimeout = 2 * time.Second
 // back. Only children this session created as direct-agent children are read
 // (delegate_to_agent children share docker_child_sessions), and only over the
 // loopback API URL recorded in the mapping.
-func (s *Server) hydrateDirectAgentActivity(ctx context.Context, sess *session.Session, messages []MessageResponse) []MessageResponse {
+//
+// latestPage also enables the in-flight case: while the agent is still working
+// the parent holds only the request (activity is copied when the turn ends), so
+// reopening a running session showed no steps. The child's current-turn
+// messages are then appended after the request.
+func (s *Server) hydrateDirectAgentActivity(ctx context.Context, sess *session.Session, messages []MessageResponse, latestPage bool) []MessageResponse {
 	if !s.hasDirectAgentTarget(sess) {
 		return messages
 	}
+	inFlight := latestPage && sess.Status == session.StatusRunning && awaitsDirectAgentReply(messages)
+	var inFlightActivity []MessageResponse
 	pending := map[string]int{}
 	for i, m := range messages {
 		turnID, _ := m.Metadata["runtime_turn_id"].(string)
@@ -295,7 +302,7 @@ func (s *Server) hydrateDirectAgentActivity(ctx context.Context, sess *session.S
 			pending[turnID] = i
 		}
 	}
-	if len(pending) == 0 {
+	if len(pending) == 0 && !inFlight {
 		return messages
 	}
 	ctx, cancel := context.WithTimeout(ctx, directAgentHydrationTimeout)
@@ -304,7 +311,7 @@ func (s *Server) hydrateDirectAgentActivity(ctx context.Context, sess *session.S
 	activity := map[int][]MessageResponse{}
 	parked := map[int]bool{}
 	entries := dockerChildSessionEntries(sess.Metadata["docker_child_sessions"])
-	for i := len(entries) - 1; i >= 0 && len(pending) > 0 && ctx.Err() == nil; i-- {
+	for i := len(entries) - 1; i >= 0 && (len(pending) > 0 || inFlight) && ctx.Err() == nil; i-- {
 		entry := entries[i]
 		childID := strings.TrimSpace(metadataString(entry["child_session_id"]))
 		apiURL := strings.TrimSpace(metadataString(entry["agent_api_url"]))
@@ -319,6 +326,13 @@ func (s *Server) hydrateDirectAgentActivity(ctx context.Context, sess *session.S
 		if metadataString(child.Metadata["source"]) != "direct_agent_session" || metadataString(child.Metadata["parent_session_id"]) != sess.ID {
 			continue
 		}
+		if inFlight {
+			// Only the newest direct child runs the current turn.
+			inFlight = false
+			if child.Status == string(session.StatusRunning) {
+				inFlightActivity = directAgentInFlightActivity(child.Messages)
+			}
+		}
 		for j := len(child.Messages) - 1; j >= 0; j-- {
 			m := child.Messages[j]
 			turnID, _ := m.Metadata["runtime_turn_id"].(string)
@@ -331,15 +345,52 @@ func (s *Server) hydrateDirectAgentActivity(ctx context.Context, sess *session.S
 			parked[at] = len(m.ToolCalls) > 0 && len(activity[at]) > 0
 		}
 	}
-	if len(activity) == 0 {
+	if len(activity) == 0 && len(inFlightActivity) == 0 {
 		return messages
 	}
-	out := make([]MessageResponse, 0, len(messages))
+	out := make([]MessageResponse, 0, len(messages)+len(inFlightActivity))
 	for i, m := range messages {
 		out = append(out, activity[i]...)
 		if !parked[i] {
 			out = append(out, m)
 		}
+	}
+	return append(out, inFlightActivity...)
+}
+
+// awaitsDirectAgentReply reports whether the newest request has no reply yet.
+func awaitsDirectAgentReply(messages []MessageResponse) bool {
+	for i := len(messages) - 1; i >= 0; i-- {
+		switch {
+		case messages[i].Role == "assistant":
+			return false
+		case messages[i].Role == "user" && !injectedDuringRun(messages[i].Metadata):
+			return true
+		}
+	}
+	return false
+}
+
+// directAgentInFlightActivity returns the steps the child has persisted since
+// its newest request (same filtering as directAgentTurnActivity).
+func directAgentInFlightActivity(messages []MessageResponse) []MessageResponse {
+	start := -1
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" && !injectedDuringRun(messages[i].Metadata) {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return nil
+	}
+	var out []MessageResponse
+	for _, m := range messages[start+1:] {
+		if m.Role != "assistant" && m.Role != "tool" {
+			continue
+		}
+		m.Metadata = runtimeMetadataOnly(m.Metadata)
+		out = append(out, m)
 	}
 	return out
 }

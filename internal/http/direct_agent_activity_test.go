@@ -317,12 +317,45 @@ func TestHydrateDirectAgentParkedHistoryStaysWithinTurn(t *testing.T) {
 		{Role: "user", Content: "resume"},
 		{Role: "assistant", Content: "later answer", Metadata: runtimeTurn("done", nil)},
 	}
-	got := server.hydrateDirectAgentActivity(context.Background(), parent, legacy)
+	got := server.hydrateDirectAgentActivity(context.Background(), parent, legacy, true)
 	if len(got) != 5 || got[2].Role != "tool" || got[3].Role != "user" || got[4].Content != "later answer" {
 		t.Fatalf("parked turn leaked later activity or duplicated narration: %+v", got)
 	}
-	page := server.hydrateDirectAgentActivity(context.Background(), parent, legacy[1:2])
+	page := server.hydrateDirectAgentActivity(context.Background(), parent, legacy[1:2], false)
 	if len(page) != 2 || page[0].Content != "Waiting." || page[1].Role != "tool" {
 		t.Fatalf("old page includes later turns: %+v", page)
+	}
+}
+
+func TestHydrateDirectAgentShowsInFlightTurn(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+	parent := &session.Session{ID: "parent", Status: session.StatusRunning, Metadata: map[string]interface{}{"docker_agent_id": "direct"}}
+	childMessages := []MessageResponse{
+		{Role: "user", Content: "first"},
+		{Role: "assistant", Content: "old answer", Metadata: runtimeTurn("old", nil)},
+		{Role: "user", Content: "review"},
+		{Role: "assistant", Content: "Checking.", Metadata: runtimeTurn("now", nil), ToolCalls: []ToolCallResponse{{ID: "c1", Name: "bash", Input: json.RawMessage(`{}`)}}},
+		{Role: "tool", ToolResults: []ToolResultResponse{{ToolCallID: "c1", Content: "ok"}}},
+	}
+	child := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		_ = json.NewEncoder(w).Encode(SessionResponse{ID: "child", Status: "running", Messages: childMessages, Metadata: map[string]interface{}{"source": "direct_agent_session", "parent_session_id": parent.ID}})
+	}))
+	defer child.Close()
+	addDockerChildSessionEntry(parent, &LocalDockerAgent{APIURL: child.URL}, "child", nil)
+	stored := []MessageResponse{
+		{Role: "user", Content: "first"},
+		{Role: "assistant", Content: "old answer", Metadata: map[string]interface{}{"runtime_turn_id": "old", directAgentActivityMarker: true}},
+		{Role: "user", Content: "review"},
+	}
+	got := server.hydrateDirectAgentActivity(context.Background(), parent, stored, true)
+	if len(got) != 5 || got[3].Content != "Checking." || got[4].Role != "tool" {
+		t.Fatalf("in-flight activity missing: %+v", got)
+	}
+	if older := server.hydrateDirectAgentActivity(context.Background(), parent, stored, false); len(older) != 3 {
+		t.Fatalf("older page must not get in-flight activity: %+v", older)
+	}
+	parent.Status = session.StatusCompleted
+	if done := server.hydrateDirectAgentActivity(context.Background(), parent, stored, true); len(done) != 3 {
+		t.Fatalf("idle session must not get in-flight activity: %+v", done)
 	}
 }

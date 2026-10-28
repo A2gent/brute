@@ -66,7 +66,7 @@ func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// Same read-time recovery as GET /sessions/{id}: a snapshot without it would
 		// replace the hydrated transcript with the activity-less saved one.
-		snapshot.Messages = s.hydrateDirectAgentActivity(r.Context(), sess, snapshot.Messages)
+		snapshot.Messages = s.hydrateDirectAgentActivity(r.Context(), sess, snapshot.Messages, true)
 	}
 	if !writeSSE(snapshot) {
 		return

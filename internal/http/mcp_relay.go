@@ -353,7 +353,8 @@ func (s *Server) configureParentMCPRelay(client *lmstudio.Client, parentURL stri
 func mcpBridgeToolExposedContext(ctx context.Context, name string) bool {
 	if restricted, _ := ctx.Value(parentAgentToolsScopeKey{}).(bool); restricted {
 		docker, _ := ctx.Value(parentAgentToolsDockerKey{}).(bool)
-		return parentAgentToolAllowedFor(name, docker)
+		delegated, _ := ctx.Value(parentAgentToolsDelegatedKey{}).(bool)
+		return parentAgentToolAllowedForSession(name, docker, delegated)
 	}
 	if mcpBridgeToolExposed(name) {
 		return true

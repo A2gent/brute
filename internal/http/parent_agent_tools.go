@@ -32,6 +32,11 @@ type parentAgentToolsWorkDirKey struct{}
 // arrive from the Docker network and is limited to tools without host paths.
 type parentAgentToolsDockerKey struct{}
 
+// parentAgentToolsDelegatedKey marks a capability minted for a delegate_to_agent
+// child: delegation tools stay hidden so the one-hop limit cannot be bypassed
+// by running delegate_to_agent on the (non-delegated) parent session.
+type parentAgentToolsDelegatedKey struct{}
+
 // dockerParentHost is how Docker children reach the parent; the parent sets it
 // at spawn, so it is trusted like a loopback origin.
 const dockerParentHost = "host.docker.internal"
@@ -106,6 +111,29 @@ func parentAgentToolAllowedFor(name string, docker bool) bool {
 	return placement == placementParent && !(docker && hostPathTools[name])
 }
 
+// parentAgentToolAllowedForSession additionally keeps delegation tools local
+// for delegated children, where the child-side policy denies them. Raw vault
+// passwords also stay with user-started sessions: a delegated run is started by
+// an LLM, so prompt injection could otherwise exfiltrate them.
+func parentAgentToolAllowedForSession(name string, docker, delegated bool) bool {
+	if delegated && (isDelegationTool(name) || name == "website_credentials") {
+		return false
+	}
+	return parentAgentToolAllowedFor(name, docker)
+}
+
+// parentAgentToolsSource reports whether a child session may use a parent
+// capability: direct sessions and delegate_to_agent sessions (one hop).
+func parentAgentToolsSource(sess *session.Session) bool {
+	switch metadataString(sess.Metadata["source"]) {
+	case "direct_agent_session":
+		return !isDelegatedSession(sess)
+	case "delegate_to_agent":
+		return strings.TrimSpace(metadataString(sess.Metadata["sub_agent_id"])) == ""
+	}
+	return false
+}
+
 // Only a spawn-provisioned loopback (or Docker host) origin is trusted; requests cannot supply a
 // callback URL or credentials in it. Do not resolve DNS or follow redirects.
 func trustedParentAgentToolsURL(raw string) string {
@@ -165,7 +193,37 @@ func (s *Server) directAgentToolsHeaders(ctx context.Context, sess *session.Sess
 			}
 		}
 	}
-	workDir, err = filepath.Abs(workDir)
+	return s.mintParentAgentToolsHeaders(ctx, sess.ID, workDir, docker, false)
+}
+
+// delegatedAgentToolsHeaders gives a delegate_to_agent child the same parent
+// integrations (Jira, Sentry, ...) as a direct session. WHY: a host child has
+// its own empty store, so without this its integration tools always fail.
+// The workspace comes from the delegated agent's resolved binding.
+func (s *Server) delegatedAgentToolsHeaders(ctx context.Context, parentSessionID, runtime string, workspace *dockerWorkspaceBinding) (http.Header, func(), error) {
+	parent, err := s.sessionManager.Get(parentSessionID)
+	if err != nil || (runtime != agentdef.RuntimeHost && runtime != agentdef.RuntimeDocker) || isDelegatedSession(parent) {
+		return nil, func() {}, nil
+	}
+	docker := runtime == agentdef.RuntimeDocker
+	workDir, err := os.Getwd()
+	if err != nil {
+		return nil, nil, err
+	}
+	if !docker && workspace != nil && len(workspace.ProjectMounts) > 0 {
+		// Same rule as direct sessions: host-path tools need one workspace root.
+		return nil, nil, fmt.Errorf("parent agent tools require a single host workspace")
+	}
+	if !docker && workspace != nil && workspace.ProjectID != "" {
+		if workDir, err = s.resolveProjectRootFolder(workspace.ProjectID); err != nil {
+			return nil, nil, err
+		}
+	}
+	return s.mintParentAgentToolsHeaders(ctx, parentSessionID, workDir, docker, true)
+}
+
+func (s *Server) mintParentAgentToolsHeaders(ctx context.Context, sessionID, workDir string, docker, delegated bool) (http.Header, func(), error) {
+	workDir, err := filepath.Abs(workDir)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -178,7 +236,10 @@ func (s *Server) directAgentToolsHeaders(ctx context.Context, sess *session.Sess
 	if docker {
 		scoped = context.WithValue(scoped, parentAgentToolsDockerKey{}, true)
 	}
-	token, revoke, err := s.mcpBridge.mintWithContext(scoped, sess.ID)
+	if delegated {
+		scoped = context.WithValue(scoped, parentAgentToolsDelegatedKey{}, true)
+	}
+	token, revoke, err := s.mcpBridge.mintWithContext(scoped, sessionID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -197,7 +258,7 @@ func (s *Server) acquireParentAgentTools(ctx context.Context, r *http.Request, s
 	parentID, _ := sess.Metadata["parent_session_id"].(string)
 	// A Docker child receives the parent's turn through its published port, so
 	// the request is not loopback; the token only lets it call the spawn-set URL.
-	if s.parentAgentToolsURL == "" || (!isLoopbackRemoteAddr(r.RemoteAddr) && !s.parentAgentToolsViaDocker()) || sess.Metadata["source"] != "direct_agent_session" || isDelegatedSession(sess) || strings.TrimSpace(parentID) == "" {
+	if s.parentAgentToolsURL == "" || (!isLoopbackRemoteAddr(r.RemoteAddr) && !s.parentAgentToolsViaDocker()) || !parentAgentToolsSource(sess) || strings.TrimSpace(parentID) == "" {
 		return nil, fmt.Errorf("parent agent tools require a direct host session")
 	}
 	turnCtx, cancel := context.WithCancel(ctx)
@@ -227,7 +288,7 @@ func (s *Server) parentAgentToolsViaDocker() bool {
 }
 
 func (s *Server) parentAgentToolsForSession(sess *session.Session) *parentAgentToolsCapability {
-	if sess == nil || sess.Metadata["source"] != "direct_agent_session" || isDelegatedSession(sess) {
+	if sess == nil || !parentAgentToolsSource(sess) {
 		return nil
 	}
 	s.parentAgentToolsMu.Lock()
@@ -247,8 +308,9 @@ func (s *Server) withParentAgentTools(manager *tools.Manager, sess *session.Sess
 	// Never mutate the shared manager, including when its fast path was used.
 	manager = manager.Clone()
 	// Wrap only surviving registrations so child-side tool filters remain in force.
+	delegated := isDelegatedSession(sess)
 	for _, def := range manager.GetDefinitions() {
-		if parentAgentToolAllowedFor(def.Name, s.parentAgentToolsViaDocker()) {
+		if parentAgentToolAllowedForSession(def.Name, s.parentAgentToolsViaDocker(), delegated) {
 			tool, _ := manager.Get(def.Name)
 			manager.Register(&parentAgentTool{Tool: tool, server: s, sessionID: sess.ID, capability: capability})
 		}

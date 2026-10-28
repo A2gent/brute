@@ -324,8 +324,17 @@ func (s *Server) runDockerAgentDelegationWithWorkspace(ctx context.Context, agen
 		"agent_api_url": agent.APIURL,
 	})
 
+	headers, revoke, err := s.delegatedAgentToolsHeaders(taskCtx, parentSessionID, runtimeName, workspace)
+	if err != nil {
+		// Run without parent integrations rather than failing the whole task.
+		logging.Warn("Delegation: parent agent tools unavailable for %s: %v", created.ID, err)
+		headers, revoke = nil, func() {}
+	}
+	defer revoke()
+	// A redirect must not forward the per-turn parent capability elsewhere.
+	client.CheckRedirect = func(*nethttp.Request, []*nethttp.Request) error { return nethttp.ErrUseLastResponse }
 	var chatResp ChatResponse
-	chatResp, err = postLocalDockerAgentChatStream(taskCtx, client, baseURL+"/sessions/"+created.ID+"/chat/stream", ChatRequest{Message: task}, func(event ChatStreamEvent) {
+	chatResp, err = postLocalDockerAgentChatStreamWithHeaders(taskCtx, client, baseURL+"/sessions/"+created.ID+"/chat/stream", ChatRequest{Message: task}, headers, func(event ChatStreamEvent) {
 		s.dockerRuntime.touch(agent.Name)
 		s.logDockerDelegationStreamEvent(agent.Name, created.ID, event)
 		s.reportDockerDelegationStreamProgress(ctx, agent, created.ID, workspace, event)

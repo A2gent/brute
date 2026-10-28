@@ -217,7 +217,8 @@ func TestParentAgentToolsIntegrationAllowlistAndDirectScope(t *testing.T) {
 	}
 	for _, metadata := range []map[string]interface{}{
 		nil,
-		{"source": "delegate_to_agent", "parent_session_id": "parent"},
+		{"source": "delegate_to_subagent", "parent_session_id": "parent"},
+		{"source": "delegate_to_agent", "sub_agent_id": "delegated"},
 		{"source": "direct_agent_session", "sub_agent_id": "delegated"},
 	} {
 		other := &session.Session{ID: sess.ID, Metadata: metadata}
@@ -233,6 +234,63 @@ func TestParentAgentToolsIntegrationAllowlistAndDirectScope(t *testing.T) {
 		t.Fatalf("non-child runtime received parent tools capability: %v %v", headers, err)
 	}
 	revoke()
+}
+
+// delegate_to_agent children have their own empty store, so integrations such
+// as Jira must route to the parent - without reopening nested delegation.
+func TestDelegatedChildUsesParentIntegrationsButNotDelegation(t *testing.T) {
+	parent := newMCPBridgeTestServer(t)
+	parentSess, _ := parent.sessionManager.Create("build")
+	parentHTTP := httptest.NewServer(parent.router)
+	t.Cleanup(parentHTTP.Close)
+	parent.toolManager.Register(&bridgeDelegationProbe{name: "jira_query", execute: func(context.Context, json.RawMessage) (*tools.Result, error) {
+		return &tools.Result{Success: true, Output: "parent-jira"}, nil
+	}})
+	child := newMCPBridgeTestServer(t)
+	child.parentAgentToolsURL = trustedParentAgentToolsURL(parentHTTP.URL)
+	sess, _ := child.sessionManager.Create("build")
+	sess.Metadata = map[string]interface{}{"source": "delegate_to_agent", "parent_session_id": parentSess.ID}
+	if err := child.sessionManager.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+	headers, revoke, err := parent.delegatedAgentToolsHeaders(t.Context(), parentSess.ID, agentdef.RuntimeHost, nil)
+	if err != nil || headers.Get(parentAgentToolsHeader) == "" {
+		t.Fatalf("delegated child got no capability: %v %v", headers, err)
+	}
+	defer revoke()
+	_, tokenCtx, _ := parent.mcpBridge.resolve(headers.Get(parentAgentToolsHeader))
+	if !mcpBridgeToolExposedContext(tokenCtx, "jira_query") || mcpBridgeToolExposedContext(tokenCtx, "delegate_to_agent") || mcpBridgeToolExposedContext(tokenCtx, "delegate_to_subagent") || mcpBridgeToolExposedContext(tokenCtx, "website_credentials") {
+		t.Fatal("delegated capability must expose integrations but not delegation or vault")
+	}
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.RemoteAddr = "127.0.0.1:50000"
+	req.Header = headers
+	cleanup, err := child.acquireParentAgentTools(t.Context(), req, sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	manager := child.toolManagerForSession(sess)
+	ctx := context.WithValue(t.Context(), "session_id", sess.ID)
+	if result, err := manager.Execute(ctx, "jira_query", json.RawMessage(`{}`)); err != nil || !result.Success || result.Output != "parent-jira" {
+		t.Fatalf("jira_query did not use parent integration: %+v %v", result, err)
+	}
+	if tool, ok := manager.Get("delegate_to_agent"); ok {
+		if _, wrapped := tool.(*parentAgentTool); wrapped {
+			t.Fatal("delegated child routes delegate_to_agent to the parent")
+		}
+	}
+	// A child that itself was delegated cannot pass a capability one hop further.
+	nested, _ := parent.sessionManager.Create("build")
+	nested.Metadata = map[string]interface{}{"source": "delegate_to_agent", "parent_session_id": "x"}
+	if err := parent.sessionManager.Save(nested); err != nil {
+		t.Fatal(err)
+	}
+	if headers, revoke, err := parent.delegatedAgentToolsHeaders(t.Context(), nested.ID, agentdef.RuntimeHost, nil); err != nil || len(headers) != 0 {
+		t.Fatalf("delegated parent minted a capability: %v %v", headers, err)
+	} else {
+		revoke()
+	}
 }
 
 func TestParentAgentToolsWebsiteCredentialsUseParentVault(t *testing.T) {

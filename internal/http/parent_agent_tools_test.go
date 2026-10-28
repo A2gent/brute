@@ -222,7 +222,8 @@ func TestParentAgentToolsRejectDelegatedAndUntrusted(t *testing.T) {
 	req.RemoteAddr = "127.0.0.1:50000"
 	req.Header.Set(parentAgentToolsHeader, "secret")
 	for _, metadata := range []map[string]interface{}{
-		{"source": "delegate_to_agent", "parent_session_id": "parent"},
+		{"source": "delegate_to_subagent", "parent_session_id": "parent"},
+		{"source": "delegate_to_agent"},
 		{"source": "direct_agent_session", "parent_session_id": "parent", "sub_agent_id": "delegated"},
 		{"source": "direct_agent_session"},
 	} {

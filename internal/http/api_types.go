@@ -394,19 +394,22 @@ type SubAgentRequest struct {
 	Model             string   `json:"model,omitempty"`
 	EnabledTools      []string `json:"enabled_tools,omitempty"`
 	InstructionBlocks string   `json:"instruction_blocks,omitempty"`
+	// ProjectIntegrationsOnly limits the agent to its project's integrations.
+	ProjectIntegrationsOnly bool `json:"project_integrations_only"`
 }
 
 // SubAgentResponse represents a sub-agent in API responses.
 type SubAgentResponse struct {
-	ID                string   `json:"id"`
-	Name              string   `json:"name"`
-	ProjectID         string   `json:"project_id,omitempty"`
-	Provider          string   `json:"provider"`
-	Model             string   `json:"model"`
-	EnabledTools      []string `json:"enabled_tools"`
-	InstructionBlocks string   `json:"instruction_blocks"`
-	CreatedAt         string   `json:"created_at"`
-	UpdatedAt         string   `json:"updated_at"`
+	ID                      string   `json:"id"`
+	Name                    string   `json:"name"`
+	ProjectID               string   `json:"project_id,omitempty"`
+	Provider                string   `json:"provider"`
+	Model                   string   `json:"model"`
+	EnabledTools            []string `json:"enabled_tools"`
+	InstructionBlocks       string   `json:"instruction_blocks"`
+	ProjectIntegrationsOnly bool     `json:"project_integrations_only"`
+	CreatedAt               string   `json:"created_at"`
+	UpdatedAt               string   `json:"updated_at"`
 }
 
 // ToolDefinitionResponse is a minimal tool info for UI.

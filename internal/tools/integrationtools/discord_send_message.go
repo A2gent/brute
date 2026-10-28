@@ -89,7 +89,7 @@ func (d *DiscordSendMessageTool) Execute(ctx context.Context, params json.RawMes
 		return &tools.Result{Success: false, Error: "content is required"}, nil
 	}
 
-	integration, err := d.selectDiscordIntegration(p.IntegrationID, p.IntegrationName)
+	integration, err := d.selectDiscordIntegration(ctx, p.IntegrationID, p.IntegrationName)
 	if err != nil {
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}
@@ -189,8 +189,8 @@ func (d *DiscordSendMessageTool) sendMessage(ctx context.Context, botToken, chan
 	return result.ID, nil
 }
 
-func (d *DiscordSendMessageTool) selectDiscordIntegration(integrationID, integrationName string) (*storage.Integration, error) {
-	all, err := d.store.ListIntegrations()
+func (d *DiscordSendMessageTool) selectDiscordIntegration(ctx context.Context, integrationID, integrationName string) (*storage.Integration, error) {
+	all, err := listIntegrations(ctx, d.store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load integrations: %w", err)
 	}

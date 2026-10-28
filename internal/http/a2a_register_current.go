@@ -305,6 +305,7 @@ func (s *Server) upsertA2ARegistryIntegration(config map[string]string, enabled 
 			integration.Name = "A2 Registry"
 		}
 		integration.CreatedAt = existing.CreatedAt
+		integration.ProjectID = existing.ProjectID
 		break
 	}
 	if err := validateIntegration(*integration); err != nil {

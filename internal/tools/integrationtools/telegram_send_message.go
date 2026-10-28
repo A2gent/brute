@@ -83,7 +83,7 @@ func (t *TelegramSendMessageTool) Execute(ctx context.Context, params json.RawMe
 		return &tools.Result{Success: false, Error: "text is required"}, nil
 	}
 
-	integration, err := t.selectIntegration(p.IntegrationID, p.IntegrationName)
+	integration, err := t.selectIntegration(ctx, p.IntegrationID, p.IntegrationName)
 	if err != nil {
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}
@@ -123,8 +123,8 @@ func (t *TelegramSendMessageTool) Execute(ctx context.Context, params json.RawMe
 	}, nil
 }
 
-func (t *TelegramSendMessageTool) selectIntegration(integrationID string, integrationName string) (*storage.Integration, error) {
-	all, err := t.store.ListIntegrations()
+func (t *TelegramSendMessageTool) selectIntegration(ctx context.Context, integrationID string, integrationName string) (*storage.Integration, error) {
+	all, err := listIntegrations(ctx, t.store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load integrations: %w", err)
 	}

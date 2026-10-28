@@ -73,7 +73,7 @@ func (t *GmailDraftTool) Execute(ctx context.Context, params json.RawMessage) (*
 	if strings.TrimSpace(p.Body) == "" {
 		return fail("body is required")
 	}
-	integration, err := SelectGmailIntegration(t.store, p.IntegrationID, p.IntegrationName)
+	integration, err := SelectGmailIntegration(ctx, t.store, p.IntegrationID, p.IntegrationName)
 	if err != nil {
 		return fail(err.Error())
 	}

@@ -18,16 +18,17 @@ func (s *SQLiteStore) SaveIntegration(integration *Integration) error {
 	}
 
 	_, err = s.db.Exec(`
-		INSERT INTO integrations (id, provider, name, mode, enabled, config, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO integrations (id, provider, name, mode, enabled, config, project_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			provider = excluded.provider,
 			name = excluded.name,
 			mode = excluded.mode,
 			enabled = excluded.enabled,
 			config = excluded.config,
+			project_id = excluded.project_id,
 			updated_at = excluded.updated_at
-	`, integration.ID, integration.Provider, integration.Name, integration.Mode, integration.Enabled, string(configJSON), integration.CreatedAt, integration.UpdatedAt)
+	`, integration.ID, integration.Provider, integration.Name, integration.Mode, integration.Enabled, string(configJSON), integration.ProjectID, integration.CreatedAt, integration.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to save integration: %w", err)
 	}
@@ -42,7 +43,7 @@ func (s *SQLiteStore) GetIntegration(id string) (*Integration, error) {
 	var configJSON string
 
 	err := s.db.QueryRow(`
-		SELECT id, provider, name, mode, enabled, config, created_at, updated_at
+		SELECT id, provider, name, mode, enabled, config, project_id, created_at, updated_at
 		FROM integrations
 		WHERE id = ?
 	`, id).Scan(
@@ -52,6 +53,7 @@ func (s *SQLiteStore) GetIntegration(id string) (*Integration, error) {
 		&integration.Mode,
 		&enabled,
 		&configJSON,
+		&integration.ProjectID,
 		&integration.CreatedAt,
 		&integration.UpdatedAt,
 	)
@@ -78,7 +80,7 @@ func (s *SQLiteStore) GetIntegration(id string) (*Integration, error) {
 // ListIntegrations returns all integrations ordered by creation date.
 func (s *SQLiteStore) ListIntegrations() ([]*Integration, error) {
 	rows, err := s.db.Query(`
-		SELECT id, provider, name, mode, enabled, config, created_at, updated_at
+		SELECT id, provider, name, mode, enabled, config, project_id, created_at, updated_at
 		FROM integrations
 		ORDER BY created_at DESC
 	`)
@@ -99,6 +101,7 @@ func (s *SQLiteStore) ListIntegrations() ([]*Integration, error) {
 			&integration.Mode,
 			&enabled,
 			&configJSON,
+			&integration.ProjectID,
 			&integration.CreatedAt,
 			&integration.UpdatedAt,
 		); err != nil {

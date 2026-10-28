@@ -48,6 +48,7 @@ func FromSubAgent(sa *storage.SubAgent) (*Definition, error) {
 	} else {
 		def.Tools = Tools{Mode: ToolsModeAll}
 	}
+	def.Tools.ProjectIntegrationsOnly = sa.ProjectIntegrationsOnly
 
 	if sa.ProjectID != nil && strings.TrimSpace(*sa.ProjectID) != "" {
 		def.Workspace.Scope = WorkspaceScopeConfiguredProject
@@ -96,6 +97,8 @@ func ToSubAgentConfig(def *Definition) (*storage.SubAgent, error) {
 		Model:             def.LLM.Model,
 		EnabledTools:      []string{},
 		InstructionBlocks: blocksJSON,
+
+		ProjectIntegrationsOnly: def.Tools.ProjectIntegrationsOnly,
 	}
 	if def.Tools.Mode == ToolsModeAllow {
 		sa.EnabledTools = append([]string(nil), def.Tools.Enabled...)

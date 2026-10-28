@@ -68,7 +68,7 @@ func (t *CodeReviewTool) Execute(ctx context.Context, raw json.RawMessage) (*too
 		return &tools.Result{Success: false, Error: "Invalid parameters: " + err.Error()}, nil
 	}
 	repository := codehostreview.Repository{Provider: params.Provider, Owner: params.Owner, Name: params.Repository}
-	service := codehostreview.NewService(t.store, t.client)
+	service := codehostreview.NewService(withScopedStore(ctx, t.store), t.client)
 	var output interface{}
 	var err error
 	switch strings.ToLower(strings.TrimSpace(params.Operation)) {

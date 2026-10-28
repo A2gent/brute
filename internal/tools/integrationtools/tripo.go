@@ -129,7 +129,7 @@ func (t *TripoGenerate3DTool) Execute(ctx context.Context, params json.RawMessag
 	if p.Prompt == "" && p.Image == "" {
 		return &tools.Result{Success: false, Error: "either prompt or image is required"}, nil
 	}
-	integration, err := findModel3DIntegration(t.store, "tripo")
+	integration, err := findModel3DIntegration(ctx, t.store, "tripo")
 	if err != nil {
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}

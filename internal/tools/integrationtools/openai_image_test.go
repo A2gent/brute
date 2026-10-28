@@ -345,12 +345,12 @@ func TestOpenAIResolveCredentialsPrefersIntegration(t *testing.T) {
 		Config: map[string]string{"api_key": "sk-int", "model": "dall-e-3"},
 	}}}
 	tool := NewOpenAIGenerateImageTool(newTestOpenAIConfig("sk-provider", ""), "").WithStore(store)
-	key, base, model := tool.resolveCredentials()
+	key, base, model := tool.resolveCredentials(context.Background())
 	if key != "sk-int" || model != "dall-e-3" || base != openAIDefaultBaseURL {
 		t.Errorf("got %q %q %q", key, base, model)
 	}
 	store.items[0].Enabled = false
-	if key, _, _ := tool.resolveCredentials(); key != "sk-provider" {
+	if key, _, _ := tool.resolveCredentials(context.Background()); key != "sk-provider" {
 		t.Errorf("expected provider fallback, got %q", key)
 	}
 }

@@ -131,7 +131,7 @@ func (t *OpenAIGenerateImageTool) Execute(ctx context.Context, params json.RawMe
 		return &tools.Result{Success: false, Error: "prompt is required"}, nil
 	}
 
-	apiKey, baseURL, defaultModel := t.resolveCredentials()
+	apiKey, baseURL, defaultModel := t.resolveCredentials(ctx)
 	if apiKey == "" {
 		return &tools.Result{Success: false, Error: "openai provider is not configured: set api_key in the openai provider settings"}, nil
 	}
@@ -221,11 +221,11 @@ func (t *OpenAIGenerateImageTool) Execute(ctx context.Context, params json.RawMe
 	}, nil
 }
 
-func (t *OpenAIGenerateImageTool) resolveCredentials() (apiKey, baseURL, model string) {
+func (t *OpenAIGenerateImageTool) resolveCredentials(ctx context.Context) (apiKey, baseURL, model string) {
 	model = openAIDefaultImageModel
 	// An enabled integration wins so image generation can use a dedicated key.
 	if t.store != nil {
-		if all, err := t.store.ListIntegrations(); err == nil {
+		if all, err := listIntegrations(ctx, t.store); err == nil {
 			for _, item := range all {
 				if item.Provider != "openai_images" || !item.Enabled {
 					continue

@@ -38,11 +38,11 @@ type model3DIntegration struct {
 	Config map[string]string
 }
 
-func findModel3DIntegration(store storage.Store, provider string) (*model3DIntegration, error) {
+func findModel3DIntegration(ctx context.Context, store storage.Store, provider string) (*model3DIntegration, error) {
 	if store == nil {
 		return nil, fmt.Errorf("%s integration is not configured", provider)
 	}
-	all, err := store.ListIntegrations()
+	all, err := listIntegrations(ctx, store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load integrations: %w", err)
 	}

@@ -103,7 +103,7 @@ func (t *JiraCreateIssueTool) Execute(ctx context.Context, params json.RawMessag
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}
 
-	creds, err := t.query.resolveCredentials(p.IntegrationID, p.IntegrationName)
+	creds, err := t.query.resolveCredentials(ctx, p.IntegrationID, p.IntegrationName)
 	if err != nil {
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}

@@ -121,7 +121,7 @@ func (t *ComfyUIRunWorkflowTool) Execute(ctx context.Context, params json.RawMes
 		return &tools.Result{Success: false, Error: "comfyui integration store is unavailable"}, nil
 	}
 
-	integration, err := t.runner.selectIntegration(p.IntegrationID, p.IntegrationName)
+	integration, err := t.runner.selectIntegration(ctx, p.IntegrationID, p.IntegrationName)
 	if err != nil {
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}

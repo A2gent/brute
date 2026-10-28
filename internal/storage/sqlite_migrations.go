@@ -382,6 +382,9 @@ func (s *SQLiteStore) migrate() error {
 		`ALTER TABLE tasks ADD COLUMN image TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE tasks ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE tasks ADD COLUMN hours INTEGER NOT NULL DEFAULT 0`,
+		// Project-scoped integrations: "" keeps an integration global.
+		`ALTER TABLE integrations ADD COLUMN project_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sub_agents ADD COLUMN project_integrations_only INTEGER NOT NULL DEFAULT 0`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_session ON tasks(session_id) WHERE session_id <> ''`,
 		`CREATE TABLE IF NOT EXISTS task_dependencies (
 				task_id TEXT NOT NULL,

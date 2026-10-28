@@ -84,7 +84,7 @@ func (t *GoogleCalendarCreateEventTool) Execute(ctx context.Context, params json
 		return fail(err.Error())
 	}
 
-	integration, err := selectIntegrationByProvider(t.store, GoogleCalendarProvider, p.IntegrationID, p.IntegrationName)
+	integration, err := selectIntegrationByProvider(ctx, t.store, GoogleCalendarProvider, p.IntegrationID, p.IntegrationName)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -192,8 +192,8 @@ func buildEventTimes(p GoogleCalendarCreateEventParams) (map[string]string, map[
 }
 
 // selectIntegrationByProvider mirrors SelectGmailIntegration for other providers.
-func selectIntegrationByProvider(store storage.Store, provider, id, name string) (*storage.Integration, error) {
-	all, err := store.ListIntegrations()
+func selectIntegrationByProvider(ctx context.Context, store storage.Store, provider, id, name string) (*storage.Integration, error) {
+	all, err := listIntegrations(ctx, store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load integrations: %w", err)
 	}

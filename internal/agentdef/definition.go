@@ -157,6 +157,9 @@ type Tools struct {
 	Mode     string   `yaml:"mode,omitempty" json:"mode,omitempty"`
 	Enabled  []string `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Disabled []string `yaml:"disabled,omitempty" json:"disabled,omitempty"`
+	// ProjectIntegrationsOnly hides global integrations from integration tools,
+	// leaving only integrations bound to the agent's project.
+	ProjectIntegrationsOnly bool `yaml:"project_integrations_only,omitempty" json:"project_integrations_only,omitempty"`
 }
 
 // Skills lists required skills by name.

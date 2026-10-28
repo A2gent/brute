@@ -43,6 +43,9 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 	if sess.ProjectID != nil && strings.TrimSpace(*sess.ProjectID) != "" {
 		ctx = context.WithValue(ctx, "projectID", strings.TrimSpace(*sess.ProjectID))
 	}
+	if a.config.PrepareContext != nil {
+		ctx = a.config.PrepareContext(ctx, sess)
+	}
 
 	if err := a.pauseIfLowDiskSpace(sess); err != nil {
 		return "", totalUsage, err

@@ -363,7 +363,7 @@ func (s *Server) composeSystemPromptSnapshotWithSettings(sess *session.Session, 
 		value := blockSnapshot.Value
 		switch blockType {
 		case integrationSkillsInstructionBlockType:
-			section, resolveErr := s.resolveIntegrationSkillsSection(sectionNumber)
+			section, resolveErr := s.resolveIntegrationSkillsSection(sess, sectionNumber)
 			blockSnapshot.ResolvedContent = section
 			blockSnapshot.Error = resolveErr
 			if section == "" {

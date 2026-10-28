@@ -198,7 +198,7 @@ func (t *GmailQueryTool) Execute(ctx context.Context, params json.RawMessage) (*
 		return fail("unsupported operation; use search, read_message, read_thread or list_labels")
 	}
 
-	integration, err := SelectGmailIntegration(t.store, p.IntegrationID, p.IntegrationName)
+	integration, err := SelectGmailIntegration(ctx, t.store, p.IntegrationID, p.IntegrationName)
 	if err != nil {
 		return fail(err.Error())
 	}

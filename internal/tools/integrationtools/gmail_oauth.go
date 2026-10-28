@@ -225,8 +225,8 @@ func GoogleAccessToken(ctx context.Context, store storage.Store, client *http.Cl
 }
 
 // SelectGmailIntegration picks one enabled gmail integration by id/name, or the only one.
-func SelectGmailIntegration(store storage.Store, id, name string) (*storage.Integration, error) {
-	all, err := store.ListIntegrations()
+func SelectGmailIntegration(ctx context.Context, store storage.Store, id, name string) (*storage.Integration, error) {
+	all, err := listIntegrations(ctx, store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load integrations: %w", err)
 	}

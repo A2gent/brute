@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"context"
+
 	"github.com/A2gent/brute/internal/contextcompress"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/session"
@@ -8,8 +10,11 @@ import (
 
 // Config holds agent configuration
 type Config struct {
-	TransitionMode           string
-	ResolveTransitionTarget  func(*session.Session, session.ProviderEndpoint) (llm.Client, int, error)
+	TransitionMode          string
+	ResolveTransitionTarget func(*session.Session, session.ProviderEndpoint) (llm.Client, int, error)
+	// PrepareContext lets the host attach per-session values (e.g. the
+	// integration scope) to the context every tool call receives.
+	PrepareContext           func(context.Context, *session.Session) context.Context
 	Name                     string
 	Description              string
 	Provider                 string

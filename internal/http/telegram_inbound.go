@@ -292,7 +292,14 @@ func (s *Server) handleTelegramInboundMessage(
 			logging.Info("Successfully saved session metadata for session %s", sess.ID)
 		}
 	}
-	if err := s.assignTelegramSessionToProject(sess, chat.Title); err != nil {
+	if projectID := strings.TrimSpace(integration.ProjectID); projectID != "" {
+		// A project-scoped bot always works in its own project, so it gets
+		// that project's integrations instead of a chat-title guess.
+		sess.ProjectID = &projectID
+		if err := s.sessionManager.Save(sess); err != nil {
+			logging.Warn("Failed to assign project for Telegram session %s: %v", sess.ID, err)
+		}
+	} else if err := s.assignTelegramSessionToProject(sess, chat.Title); err != nil {
 		logging.Warn("Failed to assign project for Telegram session %s: %v", sess.ID, err)
 	}
 

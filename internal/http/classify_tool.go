@@ -46,7 +46,9 @@ func (s *Server) resolveClassifyCredentials() (apiKey, model, baseURL string) {
 			return "", "", ""
 		}
 		for _, integration := range integrations {
-			if integration == nil || !integration.Enabled || integration.Provider != "jev" {
+			// WHY: this client is shared by every run (classify, browser_act,
+			// gates), so a project-scoped Jev key would leak across projects.
+			if integration == nil || !integration.Enabled || integration.Provider != "jev" || strings.TrimSpace(integration.ProjectID) != "" {
 				continue
 			}
 			key := strings.TrimSpace(integration.Config["api_key"])

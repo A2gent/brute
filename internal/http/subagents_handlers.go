@@ -26,15 +26,16 @@ func (s *Server) subAgentToResponse(sa *storage.SubAgent) SubAgentResponse {
 		projectID = strings.TrimSpace(*sa.ProjectID)
 	}
 	return SubAgentResponse{
-		ID:                sa.ID,
-		Name:              sa.Name,
-		ProjectID:         projectID,
-		Provider:          sa.Provider,
-		Model:             sa.Model,
-		EnabledTools:      tools,
-		InstructionBlocks: instrBlocks,
-		CreatedAt:         sa.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:         sa.UpdatedAt.Format(time.RFC3339),
+		ID:                      sa.ID,
+		Name:                    sa.Name,
+		ProjectID:               projectID,
+		Provider:                sa.Provider,
+		Model:                   sa.Model,
+		EnabledTools:            tools,
+		InstructionBlocks:       instrBlocks,
+		ProjectIntegrationsOnly: sa.ProjectIntegrationsOnly,
+		CreatedAt:               sa.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:               sa.UpdatedAt.Format(time.RFC3339),
 	}
 }
 
@@ -90,15 +91,16 @@ func (s *Server) handleCreateSubAgent(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	sa := &storage.SubAgent{
-		ID:                uuid.New().String(),
-		Name:              strings.TrimSpace(req.Name),
-		ProjectID:         projectID,
-		Provider:          strings.TrimSpace(req.Provider),
-		Model:             strings.TrimSpace(req.Model),
-		EnabledTools:      req.EnabledTools,
-		InstructionBlocks: req.InstructionBlocks,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		ID:                      uuid.New().String(),
+		Name:                    strings.TrimSpace(req.Name),
+		ProjectID:               projectID,
+		Provider:                strings.TrimSpace(req.Provider),
+		Model:                   strings.TrimSpace(req.Model),
+		EnabledTools:            req.EnabledTools,
+		InstructionBlocks:       req.InstructionBlocks,
+		ProjectIntegrationsOnly: req.ProjectIntegrationsOnly,
+		CreatedAt:               now,
+		UpdatedAt:               now,
 	}
 	if sa.EnabledTools == nil {
 		sa.EnabledTools = []string{}
@@ -157,6 +159,7 @@ func (s *Server) handleUpdateSubAgent(w http.ResponseWriter, r *http.Request) {
 		sa.EnabledTools = []string{}
 	}
 	sa.InstructionBlocks = req.InstructionBlocks
+	sa.ProjectIntegrationsOnly = req.ProjectIntegrationsOnly
 	sa.UpdatedAt = time.Now()
 
 	if err := s.store.SaveSubAgent(sa); err != nil {

@@ -69,8 +69,8 @@ func telegramUserCursors(integration *storage.Integration) map[string]int {
 	return cursors
 }
 
-func selectTelegramUserIntegration(store storage.Store, id string) (*storage.Integration, error) {
-	all, err := store.ListIntegrations()
+func selectTelegramUserIntegration(ctx context.Context, store storage.Store, id string) (*storage.Integration, error) {
+	all, err := listIntegrations(ctx, store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load integrations: %w", err)
 	}
@@ -156,7 +156,7 @@ func (t *TelegramUserListChatsTool) Execute(ctx context.Context, params json.Raw
 			return nil, fmt.Errorf("invalid parameters: %w", err)
 		}
 	}
-	integration, err := selectTelegramUserIntegration(t.store, strings.TrimSpace(p.IntegrationID))
+	integration, err := selectTelegramUserIntegration(ctx, t.store, strings.TrimSpace(p.IntegrationID))
 	if err != nil {
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}
@@ -231,7 +231,7 @@ func (t *TelegramUserReadMessagesTool) Execute(ctx context.Context, params json.
 	if chatID == "" {
 		return &tools.Result{Success: false, Error: "chat_id is required"}, nil
 	}
-	integration, err := selectTelegramUserIntegration(t.store, strings.TrimSpace(p.IntegrationID))
+	integration, err := selectTelegramUserIntegration(ctx, t.store, strings.TrimSpace(p.IntegrationID))
 	if err != nil {
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}

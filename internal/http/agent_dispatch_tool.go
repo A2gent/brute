@@ -224,6 +224,7 @@ func (s *Server) runDockerDefinitionDelegation(ctx context.Context, agentID stri
 			},
 		}, nil
 	}
+	workspace.ProjectIntegrationsOnly = def.Tools.ProjectIntegrationsOnly
 	return s.runDockerAgentDelegationWithWorkspace(ctx, agent, s.rewriteDockerDelegationTask(task, workspace), &workspace)
 }
 

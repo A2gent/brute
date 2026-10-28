@@ -100,7 +100,7 @@ func (t *BlenderRunScriptTool) Execute(ctx context.Context, params json.RawMessa
 		return &tools.Result{Success: false, Error: "script exceeds the 1MB limit; use script_path instead"}, nil
 	}
 
-	integration, err := t.runner.selectIntegration(p.IntegrationID, p.IntegrationName)
+	integration, err := t.runner.selectIntegration(ctx, p.IntegrationID, p.IntegrationName)
 	if err != nil {
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}

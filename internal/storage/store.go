@@ -98,12 +98,14 @@ type JobExecution struct {
 
 // Integration represents an external channel integration configuration.
 type Integration struct {
-	ID        string
-	Provider  string
-	Name      string
-	Mode      string // "notify_only" | "duplex"
-	Enabled   bool
-	Config    map[string]string
+	ID       string
+	Provider string
+	Name     string
+	Mode     string // "notify_only" | "duplex"
+	Enabled  bool
+	Config   map[string]string
+	// ProjectID binds the integration to one project; "" means global.
+	ProjectID string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -177,8 +179,11 @@ type SubAgent struct {
 	Model             string   // Optional model override
 	EnabledTools      []string // Tool names to enable (empty = all tools)
 	InstructionBlocks string   // JSON-encoded instruction blocks array
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	// ProjectIntegrationsOnly limits integration tools to the agent's project
+	// integrations, hiding global ones.
+	ProjectIntegrationsOnly bool
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
 }
 
 // Project represents a session grouping container optionally tied to a folder.

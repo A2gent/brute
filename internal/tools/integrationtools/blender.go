@@ -34,11 +34,11 @@ type blenderRunner struct {
 	store storage.Store
 }
 
-func (r *blenderRunner) selectIntegration(integrationID, integrationName string) (*storage.Integration, error) {
+func (r *blenderRunner) selectIntegration(ctx context.Context, integrationID, integrationName string) (*storage.Integration, error) {
 	if r.store == nil {
 		return nil, fmt.Errorf("blender integration store is unavailable")
 	}
-	all, err := r.store.ListIntegrations()
+	all, err := listIntegrations(ctx, r.store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load integrations: %w", err)
 	}
@@ -336,7 +336,7 @@ func (t *BlenderRenderTool) Execute(ctx context.Context, params json.RawMessage)
 		return &tools.Result{Success: false, Error: "frame_end must be greater than or equal to frame_start"}, nil
 	}
 
-	integration, err := t.runner.selectIntegration(p.IntegrationID, p.IntegrationName)
+	integration, err := t.runner.selectIntegration(ctx, p.IntegrationID, p.IntegrationName)
 	if err != nil {
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}

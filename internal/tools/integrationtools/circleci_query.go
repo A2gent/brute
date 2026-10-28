@@ -157,7 +157,7 @@ func (t *CircleCIQueryTool) Execute(ctx context.Context, params json.RawMessage)
 		return &tools.Result{Success: false, Error: "operation is required"}, nil
 	}
 
-	creds, err := t.resolveCredentials(p.IntegrationID, p.IntegrationName)
+	creds, err := t.resolveCredentials(ctx, p.IntegrationID, p.IntegrationName)
 	if err != nil {
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}
@@ -363,19 +363,19 @@ func (t *CircleCIQueryTool) circleCIGetBytes(ctx context.Context, creds circleCI
 	return body, nil
 }
 
-func (t *CircleCIQueryTool) resolveCredentials(integrationID string, integrationName string) (circleCICredentials, error) {
+func (t *CircleCIQueryTool) resolveCredentials(ctx context.Context, integrationID string, integrationName string) (circleCICredentials, error) {
 	if t.store == nil {
 		return circleCICredentials{}, fmt.Errorf("circleci integration is required; configure one in Integrations")
 	}
-	integration, err := t.selectIntegration(integrationID, integrationName)
+	integration, err := t.selectIntegration(ctx, integrationID, integrationName)
 	if err != nil {
 		return circleCICredentials{}, err
 	}
 	return circleCICredentialsFromIntegration(integration)
 }
 
-func (t *CircleCIQueryTool) selectIntegration(integrationID string, integrationName string) (*storage.Integration, error) {
-	all, err := t.store.ListIntegrations()
+func (t *CircleCIQueryTool) selectIntegration(ctx context.Context, integrationID string, integrationName string) (*storage.Integration, error) {
+	all, err := listIntegrations(ctx, t.store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load integrations: %w", err)
 	}

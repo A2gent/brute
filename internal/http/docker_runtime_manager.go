@@ -157,6 +157,9 @@ type dockerWorkspaceBinding struct {
 	// Host marks a host-runtime agent: it works in the real project folder, so
 	// there is no /workspace path rewriting.
 	Host bool
+	// ProjectIntegrationsOnly mirrors the agent's tools.project_integrations_only
+	// so delegated parent-tool tokens get the child's integration scope.
+	ProjectIntegrationsOnly bool
 }
 
 type dockerWorkspaceProjectMount struct {
@@ -563,6 +566,9 @@ func (s *Server) composeAgentSystemPrompt(def *agentdef.Definition, projectID st
 		return strings.TrimSpace(def.Instructions.System), nil
 	}
 	promptSession := session.New("docker-agent")
+	// Lets integrationScopeForSession apply the agent's project_integrations_only
+	// flag, so the prompt does not list integrations the bridge will refuse.
+	promptSession.Metadata["unified_agent_id"] = def.Agent.ID
 	projectID = strings.TrimSpace(projectID)
 	if projectID != "" {
 		promptSession.ProjectID = &projectID

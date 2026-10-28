@@ -449,6 +449,7 @@ func (s *Server) mcpBridgeCallToolResult(tokenCtx context.Context, sess *session
 	if sess.ProjectID != nil && strings.TrimSpace(*sess.ProjectID) != "" {
 		ctx = context.WithValue(ctx, "projectID", strings.TrimSpace(*sess.ProjectID))
 	}
+	ctx = s.withIntegrationScope(ctx, sess)
 	ctx = tools.WithProgressCallback(ctx, func(ev tools.ProgressEvent) {
 		toolCallID, turnID := strings.TrimSpace(ev.ToolCallID), ""
 		if toolCallID == "" {

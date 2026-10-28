@@ -11,8 +11,10 @@ import (
 
 	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/llm"
+	"github.com/A2gent/brute/internal/session"
 	skillsLoader "github.com/A2gent/brute/internal/skills"
 	"github.com/A2gent/brute/internal/storage"
+	"github.com/A2gent/brute/internal/tools/integrationtools"
 )
 
 func (s *Server) resolveBuiltInToolsGuidance(settings map[string]string) (string, bool) {
@@ -92,10 +94,15 @@ func builtInToolsEstimatedTokens(enabled bool, usingBuiltInDefault bool, rendere
 	return 0
 }
 
-func (s *Server) resolveIntegrationSkillsSection(blockNumber int) (string, string) {
+func (s *Server) resolveIntegrationSkillsSection(sess *session.Session, blockNumber int) (string, string) {
 	integrations, err := s.store.ListIntegrations()
 	if err != nil {
 		return "", "Failed to list integrations: " + err.Error()
+	}
+	// List only integrations the session's tools can actually use. Without a
+	// session (draft estimates) there is no scope, matching the tools.
+	if sess != nil {
+		integrations = integrationtools.FilterIntegrations(integrations, s.integrationScopeForSession(sess))
 	}
 
 	type skillEntry struct {

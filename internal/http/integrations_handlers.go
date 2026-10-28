@@ -4,6 +4,7 @@ package http
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -46,6 +47,15 @@ func (s *Server) handleCreateIntegration(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	if req.ProjectID != nil {
+		projectID, err := s.validateIntegrationProjectID(*req.ProjectID)
+		if err != nil {
+			s.errorResponse(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		integration.ProjectID = projectID
 	}
 
 	now := time.Now()
@@ -130,6 +140,16 @@ func (s *Server) handleUpdateIntegration(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	next.ProjectID = existing.ProjectID
+	if req.ProjectID != nil {
+		projectID, err := s.validateIntegrationProjectID(*req.ProjectID)
+		if err != nil {
+			s.errorResponse(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		next.ProjectID = projectID
 	}
 
 	next.ID = existing.ID
@@ -325,4 +345,17 @@ func (s *Server) respondIntegrationTest(w http.ResponseWriter, r *http.Request, 
 	}
 
 	s.jsonResponse(w, http.StatusOK, IntegrationTestResponse{Success: true, Message: "Configuration is valid. Live provider connectivity checks are not yet implemented."})
+}
+
+// validateIntegrationProjectID normalizes a requested integration project
+// binding: "" means global, anything else must be an existing project.
+func (s *Server) validateIntegrationProjectID(raw string) (string, error) {
+	projectID := strings.TrimSpace(raw)
+	if projectID == "" {
+		return "", nil
+	}
+	if project, err := s.store.GetProject(projectID); err != nil || project == nil {
+		return "", fmt.Errorf("project not found: %s", projectID)
+	}
+	return projectID, nil
 }

@@ -139,6 +139,7 @@ func integrationToResponse(integration *storage.Integration) IntegrationResponse
 		Mode:      integration.Mode,
 		Enabled:   integration.Enabled,
 		Config:    configCopy,
+		ProjectID: integration.ProjectID,
 		CreatedAt: integration.CreatedAt,
 		UpdatedAt: integration.UpdatedAt,
 	}

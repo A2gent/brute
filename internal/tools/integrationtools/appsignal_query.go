@@ -138,7 +138,7 @@ func (t *AppSignalQueryTool) Execute(ctx context.Context, params json.RawMessage
 		}
 	}
 
-	creds, err := t.resolveCredentials(p.IntegrationID, p.IntegrationName)
+	creds, err := t.resolveCredentials(ctx, p.IntegrationID, p.IntegrationName)
 	if err != nil {
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}
@@ -214,19 +214,19 @@ func (t *AppSignalQueryTool) TestConnection(ctx context.Context, integration *st
 	return err
 }
 
-func (t *AppSignalQueryTool) resolveCredentials(integrationID string, integrationName string) (appSignalCredentials, error) {
+func (t *AppSignalQueryTool) resolveCredentials(ctx context.Context, integrationID string, integrationName string) (appSignalCredentials, error) {
 	if t.store == nil {
 		return appSignalCredentials{}, fmt.Errorf("appsignal integration is required; configure one in Integrations")
 	}
-	integration, err := t.selectIntegration(integrationID, integrationName)
+	integration, err := t.selectIntegration(ctx, integrationID, integrationName)
 	if err != nil {
 		return appSignalCredentials{}, err
 	}
 	return appSignalCredentialsFromIntegration(integration)
 }
 
-func (t *AppSignalQueryTool) selectIntegration(integrationID string, integrationName string) (*storage.Integration, error) {
-	all, err := t.store.ListIntegrations()
+func (t *AppSignalQueryTool) selectIntegration(ctx context.Context, integrationID string, integrationName string) (*storage.Integration, error) {
+	all, err := listIntegrations(ctx, t.store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load integrations: %w", err)
 	}

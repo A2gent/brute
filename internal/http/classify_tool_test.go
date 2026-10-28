@@ -51,6 +51,7 @@ func TestClassifyRegistrationRequiresCredentials(t *testing.T) {
 		{name: "enabled integration", integrations: []*storage.Integration{{ID: "jev", Provider: "jev", Enabled: true, Config: map[string]string{"api_key": " integration-key "}}}, want: true},
 		{name: "disabled integration", integrations: []*storage.Integration{{ID: "jev", Provider: "jev", Enabled: false, Config: map[string]string{"api_key": "integration-key"}}}},
 		{name: "blank integration key", integrations: []*storage.Integration{{ID: "jev", Provider: "jev", Enabled: true, Config: map[string]string{"api_key": " \t"}}}},
+		{name: "project-scoped integration", integrations: []*storage.Integration{{ID: "jev", Provider: "jev", ProjectID: "p1", Enabled: true, Config: map[string]string{"api_key": "project-key"}}}},
 		{name: "unrelated integration", integrations: []*storage.Integration{{ID: "other", Provider: "openai", Enabled: true, Config: map[string]string{"api_key": "other-key"}}}},
 		{name: "skip disabled and blank integrations", integrations: []*storage.Integration{
 			{ID: "disabled", Provider: "jev", Config: map[string]string{"api_key": "disabled-key"}},

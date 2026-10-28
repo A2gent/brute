@@ -81,6 +81,9 @@ type IntegrationRequest struct {
 	Mode     string            `json:"mode"`
 	Enabled  *bool             `json:"enabled,omitempty"`
 	Config   map[string]string `json:"config"`
+	// ProjectID binds the integration to a project: nil keeps the stored value
+	// on update (global on create), "" makes it global.
+	ProjectID *string `json:"project_id,omitempty"`
 }
 
 type IntegrationResponse struct {
@@ -90,6 +93,7 @@ type IntegrationResponse struct {
 	Mode      string            `json:"mode"`
 	Enabled   bool              `json:"enabled"`
 	Config    map[string]string `json:"config"`
+	ProjectID string            `json:"project_id"` // "" = global
 	CreatedAt time.Time         `json:"created_at"`
 	UpdatedAt time.Time         `json:"updated_at"`
 }

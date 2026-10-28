@@ -193,7 +193,7 @@ func (s *Server) directAgentToolsHeaders(ctx context.Context, sess *session.Sess
 			}
 		}
 	}
-	return s.mintParentAgentToolsHeaders(ctx, sess.ID, workDir, docker, false)
+	return s.mintParentAgentToolsHeaders(ctx, sess.ID, workDir, docker, false, nil)
 }
 
 // delegatedAgentToolsHeaders gives a delegate_to_agent child the same parent
@@ -219,10 +219,13 @@ func (s *Server) delegatedAgentToolsHeaders(ctx context.Context, parentSessionID
 			return nil, nil, err
 		}
 	}
-	return s.mintParentAgentToolsHeaders(ctx, parentSessionID, workDir, docker, true)
+	scope := delegatedIntegrationScope(parent, workspace)
+	return s.mintParentAgentToolsHeaders(ctx, parentSessionID, workDir, docker, true, &scope)
 }
 
-func (s *Server) mintParentAgentToolsHeaders(ctx context.Context, sessionID, workDir string, docker, delegated bool) (http.Header, func(), error) {
+// integrationScope, when set, overrides the bound session's integration scope
+// for tool calls made with this token.
+func (s *Server) mintParentAgentToolsHeaders(ctx context.Context, sessionID, workDir string, docker, delegated bool, integrationScope *integrationtools.Scope) (http.Header, func(), error) {
 	workDir, err := filepath.Abs(workDir)
 	if err != nil {
 		return nil, nil, err
@@ -238,6 +241,9 @@ func (s *Server) mintParentAgentToolsHeaders(ctx context.Context, sessionID, wor
 	}
 	if delegated {
 		scoped = context.WithValue(scoped, parentAgentToolsDelegatedKey{}, true)
+	}
+	if integrationScope != nil {
+		scoped = context.WithValue(scoped, parentAgentToolsIntegrationScopeKey{}, *integrationScope)
 	}
 	token, revoke, err := s.mcpBridge.mintWithContext(scoped, sessionID)
 	if err != nil {

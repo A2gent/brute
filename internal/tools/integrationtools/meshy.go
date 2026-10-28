@@ -151,7 +151,7 @@ func (t *MeshyGenerate3DTool) Execute(ctx context.Context, params json.RawMessag
 	if _, ok := meshySupportedFormats[format]; !ok {
 		return &tools.Result{Success: false, Error: "unsupported format: " + format}, nil
 	}
-	integration, err := findModel3DIntegration(t.store, "meshy")
+	integration, err := findModel3DIntegration(ctx, t.store, "meshy")
 	if err != nil {
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}

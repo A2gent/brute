@@ -132,7 +132,7 @@ func (t *CloudflareQueryTool) Execute(ctx context.Context, params json.RawMessag
 		return &tools.Result{Success: false, Error: "operation is required"}, nil
 	}
 
-	creds, err := t.resolveCredentials(p.IntegrationID, p.IntegrationName)
+	creds, err := t.resolveCredentials(ctx, p.IntegrationID, p.IntegrationName)
 	if err != nil {
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}
@@ -465,19 +465,19 @@ func cloudflarePaginationQuery(p CloudflareQueryParams) url.Values {
 	return query
 }
 
-func (t *CloudflareQueryTool) resolveCredentials(integrationID string, integrationName string) (cloudflareCredentials, error) {
+func (t *CloudflareQueryTool) resolveCredentials(ctx context.Context, integrationID string, integrationName string) (cloudflareCredentials, error) {
 	if t.store == nil {
 		return cloudflareCredentials{}, fmt.Errorf("cloudflare integration is required; configure one in Integrations")
 	}
-	integration, err := t.selectIntegration(integrationID, integrationName)
+	integration, err := t.selectIntegration(ctx, integrationID, integrationName)
 	if err != nil {
 		return cloudflareCredentials{}, err
 	}
 	return cloudflareCredentialsFromIntegration(integration)
 }
 
-func (t *CloudflareQueryTool) selectIntegration(integrationID string, integrationName string) (*storage.Integration, error) {
-	all, err := t.store.ListIntegrations()
+func (t *CloudflareQueryTool) selectIntegration(ctx context.Context, integrationID string, integrationName string) (*storage.Integration, error) {
+	all, err := listIntegrations(ctx, t.store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load integrations: %w", err)
 	}

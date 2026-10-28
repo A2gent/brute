@@ -161,7 +161,7 @@ func (t *JiraQueryTool) Execute(ctx context.Context, params json.RawMessage) (*t
 		return &tools.Result{Success: false, Error: "operation is required"}, nil
 	}
 
-	creds, err := t.resolveCredentials(p.IntegrationID, p.IntegrationName)
+	creds, err := t.resolveCredentials(ctx, p.IntegrationID, p.IntegrationName)
 	if err != nil {
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}
@@ -261,9 +261,9 @@ func (t *JiraQueryTool) executeRead(ctx context.Context, creds jiraCredentials, 
 	}
 }
 
-func (t *JiraQueryTool) resolveCredentials(integrationID string, integrationName string) (jiraCredentials, error) {
+func (t *JiraQueryTool) resolveCredentials(ctx context.Context, integrationID string, integrationName string) (jiraCredentials, error) {
 	if t.store != nil {
-		integration, err := t.selectIntegration(integrationID, integrationName)
+		integration, err := t.selectIntegration(ctx, integrationID, integrationName)
 		if err != nil {
 			if strings.TrimSpace(integrationID) != "" || strings.TrimSpace(integrationName) != "" {
 				return jiraCredentials{}, err
@@ -275,8 +275,8 @@ func (t *JiraQueryTool) resolveCredentials(integrationID string, integrationName
 	return credentialsFromEnv()
 }
 
-func (t *JiraQueryTool) selectIntegration(integrationID string, integrationName string) (*storage.Integration, error) {
-	all, err := t.store.ListIntegrations()
+func (t *JiraQueryTool) selectIntegration(ctx context.Context, integrationID string, integrationName string) (*storage.Integration, error) {
+	all, err := listIntegrations(ctx, t.store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load integrations: %w", err)
 	}

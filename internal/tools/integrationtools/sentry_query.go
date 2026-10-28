@@ -127,7 +127,7 @@ func (t *SentryQueryTool) Execute(ctx context.Context, params json.RawMessage) (
 		return &tools.Result{Success: false, Error: "operation is required"}, nil
 	}
 
-	creds, err := t.resolveCredentials(p.IntegrationID, p.IntegrationName)
+	creds, err := t.resolveCredentials(ctx, p.IntegrationID, p.IntegrationName)
 	if err != nil {
 		return &tools.Result{Success: false, Error: err.Error()}, nil
 	}
@@ -242,19 +242,19 @@ func sentryGet(ctx context.Context, client *http.Client, baseURL, token, path st
 	return body, nil
 }
 
-func (t *SentryQueryTool) resolveCredentials(integrationID string, integrationName string) (sentryCredentials, error) {
+func (t *SentryQueryTool) resolveCredentials(ctx context.Context, integrationID string, integrationName string) (sentryCredentials, error) {
 	if t.store == nil {
 		return sentryCredentials{}, fmt.Errorf("sentry integration is required; configure one in Integrations")
 	}
-	integration, err := t.selectIntegration(integrationID, integrationName)
+	integration, err := t.selectIntegration(ctx, integrationID, integrationName)
 	if err != nil {
 		return sentryCredentials{}, err
 	}
 	return sentryCredentialsFromIntegration(integration)
 }
 
-func (t *SentryQueryTool) selectIntegration(integrationID string, integrationName string) (*storage.Integration, error) {
-	all, err := t.store.ListIntegrations()
+func (t *SentryQueryTool) selectIntegration(ctx context.Context, integrationID string, integrationName string) (*storage.Integration, error) {
+	all, err := listIntegrations(ctx, t.store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load integrations: %w", err)
 	}

@@ -86,7 +86,7 @@ func (t *BitbucketCreatePullRequestTool) Execute(ctx context.Context, raw json.R
 		}
 	}
 
-	pullRequest, err := codehostreview.NewService(t.store, t.client).CreatePullRequest(ctx, codehostreview.CreatePullRequestRequest{
+	pullRequest, err := codehostreview.NewService(withScopedStore(ctx, t.store), t.client).CreatePullRequest(ctx, codehostreview.CreatePullRequestRequest{
 		Repository: repository, SourceBranch: params.SourceBranch, Title: params.Title, Description: params.Description,
 		DestinationBranch: params.DestinationBranch, IntegrationID: params.IntegrationID, IntegrationName: params.IntegrationName,
 	})

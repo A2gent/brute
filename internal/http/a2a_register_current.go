@@ -273,7 +273,7 @@ func (s *Server) registerCurrentA2AAgent(ctx context.Context, req registerCurren
 		OwnerEmail:            ownerEmail,
 		IntegrationID:         integrationID,
 		TunnelState:           tunnelState,
-		TunnelNote:            "If the agent is pending owner approval, approve it in Square admin panel before expecting the tunnel to stay connected.",
+		TunnelNote:            "If the agent is pending owner approval, approve it in Matrix admin panel before expecting the tunnel to stay connected.",
 		ApprovalStatus:        approvalStatus,
 		Message:               message,
 	}, http.StatusOK, nil

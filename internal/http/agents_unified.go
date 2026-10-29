@@ -271,7 +271,7 @@ func (s *Server) importAgentYAMLDefinition(ctx context.Context, req importAgentY
 	case agentdef.RuntimeHost, agentdef.RuntimeDocker:
 		return s.importDockerAgentDefinition(ctx, def)
 	default:
-		return nil, http.StatusNotImplemented, fmt.Errorf("Importing remote runtime agents is not supported yet; register them through Square/A2A instead")
+		return nil, http.StatusNotImplemented, fmt.Errorf("Importing remote runtime agents is not supported yet; register them through Matrix/A2A instead")
 	}
 }
 

@@ -542,7 +542,7 @@ func (s *Server) handleA2AInternalEvent(ctx context.Context, payload json.RawMes
 		webhookInboundInternalEvent: squareWebhookSource,
 	}[eventType]
 	if expectedSource != "" && source != expectedSource {
-		return nil, fmt.Errorf("internal event %s rejected: not from Square", eventType)
+		return nil, fmt.Errorf("internal event %s rejected: not from Matrix", eventType)
 	}
 
 	switch eventType {

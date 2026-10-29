@@ -385,7 +385,7 @@ Supported model aliases include `tiny`, `base`, `small`, `medium`, `large-v3-tur
 Brute supports A2A communication in two modes:
 
 - Protocol-style HTTP endpoint for inbound A2A messages
-- Tunnel-backed outbound messaging to remote agents via Square
+- Tunnel-backed outbound messaging to remote agents via Matrix
 
 ### Agent Card
 

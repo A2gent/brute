@@ -587,6 +587,9 @@ type ProviderUsageResponse struct {
 	CheckedAt     string             `json:"checked_at,omitempty"`
 	Refreshable   bool               `json:"refreshable"`
 	Error         string             `json:"error,omitempty"`
+	// MinBalancePercent is the effective weekly reserve (percent left, 0..100) that
+	// the fallback skipper enforces on long-term bars. Clients draw it as a stop line.
+	MinBalancePercent int `json:"min_balance_percent"`
 }
 
 type ProviderUsageBar struct {

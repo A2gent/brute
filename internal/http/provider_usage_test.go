@@ -650,3 +650,27 @@ func TestProviderUsageBelowMinBalance(t *testing.T) {
 		t.Fatal("8% left must not block at 5% minimum")
 	}
 }
+
+func TestProviderUsageStatusReportsEffectiveMinBalance(t *testing.T) {
+	server := newAnthropicUsageTestServer(t)
+	cachePath := filepath.Join(t.TempDir(), "rate-limits.json")
+	writeAnthropicRateLimitCache(t, cachePath, `{
+		"rate_limits": {
+			"five_hour": {"used_percentage": 37, "resets_at": 4102444800},
+			"seven_day": {"used_percentage": 12, "resets_at": 4103049600}
+		}
+	}`, time.Now())
+	t.Setenv(claudeRateLimitsCachePathEnv, cachePath)
+
+	reserve := 25
+	server.config.Providers[string(config.ProviderAnthropic)] = config.Provider{MinBalancePercent: &reserve}
+
+	if got := server.providerUsageStatus(context.Background(), config.ProviderAnthropic).MinBalancePercent; got != reserve {
+		t.Fatalf("min_balance_percent = %d, want %d", got, reserve)
+	}
+	// Unset config falls back to the default reserve so clients always have a stop line.
+	delete(server.config.Providers, string(config.ProviderAnthropic))
+	if got := server.providerUsageStatus(context.Background(), config.ProviderAnthropic).MinBalancePercent; got != config.DefaultMinBalancePercent {
+		t.Fatalf("default min_balance_percent = %d, want %d", got, config.DefaultMinBalancePercent)
+	}
+}

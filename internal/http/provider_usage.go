@@ -57,7 +57,20 @@ func (s *Server) handleProviderUsage(w http.ResponseWriter, r *http.Request) {
 	s.jsonResponse(w, http.StatusOK, usage)
 }
 
+// providerUsageStatus wraps the per-provider probe with the effective weekly
+// reserve so every caller (usage UI, fallback skipper) sees the same threshold
+// the skipper enforces.
 func (s *Server) providerUsageStatus(ctx context.Context, providerType config.ProviderType) ProviderUsageResponse {
+	usage := s.providerUsageStatusForProvider(ctx, providerType)
+	// Docker children proxy usage to the parent, which reports its own reserve;
+	// overwriting it with the child's defaults would draw a wrong stop line.
+	if s != nil && s.config != nil && !s.parentProxyAvailable() {
+		usage.MinBalancePercent = s.config.Providers[config.NormalizeProviderRef(string(providerType))].EffectiveMinBalancePercent()
+	}
+	return usage
+}
+
+func (s *Server) providerUsageStatusForProvider(ctx context.Context, providerType config.ProviderType) ProviderUsageResponse {
 	response := ProviderUsageResponse{
 		Provider:    string(providerType),
 		CheckedAt:   time.Now().UTC().Format(time.RFC3339),

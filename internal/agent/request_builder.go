@@ -281,6 +281,7 @@ Guidelines:
 Available built-in tools:
 - man
 - bash
+- wait_until
 - code_execution
 - pipeline
 - parallel
@@ -299,6 +300,7 @@ Available built-in tools:
 - suggest_git_commit
 
 Use man with a tool name to read detailed usage and input schema only when needed.
+Do not poll state manually with repeated checks or sleep loops; use wait_until (or wait_for_agent for delegated agents).
 
 Output/widget conventions:
 - Reference project files as plain text paths with optional line ranges, e.g. src/app.ts:42 or src/app.ts:42-48. Avoid wrapping file references in code when they should be clickable in UI.
@@ -326,6 +328,7 @@ Be concise but thorough. Complete the user's task step by step.`
 const defaultBuiltInToolsGuidance = `Available built-in tools:
 - man
 - bash
+- wait_until
 - code_execution
 - pipeline
 - parallel
@@ -344,6 +347,7 @@ const defaultBuiltInToolsGuidance = `Available built-in tools:
 - suggest_git_commit
 
 Use man with a tool name to read detailed usage and input schema only when needed.
+Do not poll state manually with repeated checks or sleep loops; use wait_until (or wait_for_agent for delegated agents).
 
 Output/widget conventions:
 - Reference project files as plain text paths with optional line ranges, e.g. src/app.ts:42 or src/app.ts:42-48. Avoid wrapping file references in code when they should be clickable in UI.

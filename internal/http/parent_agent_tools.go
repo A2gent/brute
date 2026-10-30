@@ -83,7 +83,7 @@ var toolPlacements = map[string]toolPlacement{
 	"read": placementChild, "relevance_gate": placementChild, "replace_lines": placementChild,
 	"session_task_progress": placementChild, "sql_query": placementChild, "stt": placementChild,
 	"suggest_git_commit": placementChild, "suggest_session": placementChild, "take_camera_photo_tool": placementChild,
-	"take_screenshot_tool": placementChild, "tts": placementChild, "write": placementChild,
+	"take_screenshot_tool": placementChild, "tts": placementChild, "wait_until": placementChild, "write": placementChild,
 	"youtube_transcript": placementChild,
 }
 

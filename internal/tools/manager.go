@@ -129,6 +129,7 @@ func NewManagerWithOptions(workDir string, opts *ManagerOptions) *Manager {
 	// Register built-in tools
 	m.Register(NewManTool(m))
 	m.Register(NewBashTool(workDir))
+	m.Register(NewWaitUntilTool(workDir))
 	m.Register(NewCodeExecutionTool(workDir))
 	m.Register(NewReadTool(workDir))
 	m.Register(NewWriteTool(workDir))

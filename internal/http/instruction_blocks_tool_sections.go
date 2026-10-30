@@ -17,6 +17,8 @@ import (
 	"github.com/A2gent/brute/internal/tools/integrationtools"
 )
 
+const waitToolsGuidance = "Do not poll state manually with repeated checks or sleep loops; use wait_until (or wait_for_agent for delegated agents)."
+
 func (s *Server) resolveBuiltInToolsGuidance(settings map[string]string) (string, bool) {
 	definitions := s.resolveEnabledToolDefinitions(settings)
 	if len(definitions) == 0 {
@@ -35,7 +37,7 @@ func (s *Server) resolveBuiltInToolsGuidance(settings map[string]string) (string
 	if len(lines) <= 1 {
 		return "", true
 	}
-	lines = append(lines, "", "Use `man` with a tool name to read detailed usage and input schema only when needed.")
+	lines = append(lines, "", "Use `man` with a tool name to read detailed usage and input schema only when needed.", waitToolsGuidance)
 	return strings.Join(lines, "\n"), true
 }
 

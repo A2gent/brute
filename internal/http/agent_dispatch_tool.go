@@ -735,30 +735,30 @@ func (s *Server) reportDockerDelegationStreamProgress(ctx context.Context, agent
 	case "status":
 		status = "child_status"
 		extra["child_status"] = strings.TrimSpace(event.Status)
-		content = fmt.Sprintf("Docker sub-agent status: %s", firstNonEmptyLocalAgentString(strings.TrimSpace(event.Status), "unknown"))
+		content = fmt.Sprintf("Sub-agent status: %s", firstNonEmptyLocalAgentString(strings.TrimSpace(event.Status), "unknown"))
 	case "tool_executing":
 		status = "child_tool_executing"
 		toolNames := streamToolCallNames(event.ToolCalls)
 		extra["child_step"] = event.Step
 		extra["child_tool_calls"] = toolNames
-		content = fmt.Sprintf("Docker sub-agent running tool: %s", toolNames)
+		content = fmt.Sprintf("Sub-agent running tool: %s", toolNames)
 	case "tool_completed":
 		status = "child_tool_completed"
 		extra["child_step"] = event.Step
 		extra["child_status"] = strings.TrimSpace(event.Status)
-		content = "Docker sub-agent tool completed."
+		content = "Sub-agent tool completed."
 	case "input_required":
 		status = "child_input_required"
 		extra["child_status"] = strings.TrimSpace(event.Status)
-		content = "Docker sub-agent is waiting for input."
+		content = "Sub-agent is waiting for input."
 	case "error":
 		status = "child_error"
 		extra["child_error"] = strings.TrimSpace(event.Error)
-		content = "Docker sub-agent stream failed: " + truncateForLog(event.Error, 300)
+		content = "Sub-agent stream failed: " + truncateForLog(event.Error, 300)
 	case "done":
 		status = "child_done"
 		extra["child_status"] = strings.TrimSpace(event.Status)
-		content = "Docker sub-agent completed. Preparing final response."
+		content = "Sub-agent completed. Preparing final response."
 	default:
 		return
 	}

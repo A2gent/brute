@@ -460,7 +460,7 @@ func TestRecordPendingToolProgressMetadata(t *testing.T) {
 		ToolCallID: "call-parallel",
 		ToolName:   "delegate_to_agent",
 		Status:     "child_session_created",
-		Content:    "Docker sub-agent session created. Waiting for output stream.",
+		Content:    "Sub-agent session created. Waiting for output stream.",
 		Metadata: map[string]interface{}{
 			"child_session_id": "child-reviewer",
 			"agent_name":       "reviewer",

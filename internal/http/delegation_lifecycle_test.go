@@ -194,3 +194,25 @@ func TestMCPBridgeDelegationRunsAsync(t *testing.T) {
 		t.Fatal("native calls must stay synchronous")
 	}
 }
+
+func TestParentAgentToolsForwardDelegationAsync(t *testing.T) {
+	parent, _, child, childSess, ctx, _ := parentAgentToolsTestPair(t)
+	async := make(chan bool, 1)
+	parent.toolManager.Register(&bridgeDelegationProbe{name: "delegate_to_agent", execute: func(ctx context.Context, _ json.RawMessage) (*tools.Result, error) {
+		async <- delegationAsync(ctx)
+		return &tools.Result{Success: true, Output: "ok"}, nil
+	}})
+	manager := child.toolManagerForSession(childSess)
+	for _, want := range []bool{false, true} {
+		callCtx := ctx
+		if want {
+			callCtx = withDelegationAsync(ctx)
+		}
+		if _, err := manager.Execute(callCtx, "delegate_to_agent", json.RawMessage(`{}`)); err != nil {
+			t.Fatal(err)
+		}
+		if got := <-async; got != want {
+			t.Fatalf("parent async = %v, want %v", got, want)
+		}
+	}
+}

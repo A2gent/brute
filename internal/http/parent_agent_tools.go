@@ -22,6 +22,7 @@ import (
 const (
 	parentAgentToolsURLEnv = "A2GENT_HOST_PARENT_MCP_URL"
 	parentAgentToolsHeader = "X-A2gent-Parent-Agent-Tools"
+	delegationAsyncHeader  = "X-A2gent-Delegation-Async"
 )
 
 // This marker lives only in the parent's token context, never in RPC arguments.
@@ -367,6 +368,9 @@ func (t *parentAgentTool) Execute(ctx context.Context, params json.RawMessage) (
 	}
 	req.Header.Set("Authorization", "Bearer "+t.capability.token)
 	req.Header.Set("Content-Type", "application/json")
+	if delegationAsync(ctx) {
+		req.Header.Set(delegationAsyncHeader, "1")
+	}
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)
 	if err != nil {

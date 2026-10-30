@@ -251,6 +251,11 @@ func (s *Server) handleMCPBridge(w http.ResponseWriter, r *http.Request) {
 	}
 	callCtx, cancel := context.WithCancel(tokenCtx)
 	defer cancel()
+	// A host or Docker child forwards its own CLI bridge call here, so the CLI
+	// MCP timeout still applies and delegation must return a job ID.
+	if r.Header.Get(delegationAsyncHeader) == "1" {
+		callCtx = withDelegationAsync(callCtx)
+	}
 	stop := context.AfterFunc(r.Context(), cancel)
 	defer stop()
 	var sess *session.Session

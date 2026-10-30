@@ -84,6 +84,7 @@ type Server struct {
 	httpAccessLogSeq         uint64
 	dockerRuntime            *dockerRuntimeManager
 	hostRuntime              *hostRuntimeManager
+	dockerChildOwners        sync.Map
 	contextCompressor        *contextcompress.Compressor
 	claudeHealthCache        *claudeHealthCache
 	usageHistory             *providerUsageHistory

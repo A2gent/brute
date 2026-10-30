@@ -33,6 +33,15 @@ func (s *Server) recordDockerDelegationChildSession(parentSessionID string, agen
 		return
 	}
 
+	// The parent session metadata can be overwritten by the running parent's own
+	// save, so keep the owner in memory too.
+	s.dockerChildOwners.Store(childSessionID, dockerSessionCandidate{
+		APIURL:          agent.APIURL,
+		AgentName:       agent.Name,
+		Runtime:         agentRuntimeName(agent),
+		ParentSessionID: parentSessionID,
+	})
+
 	sess, err := s.sessionManager.Get(parentSessionID)
 	if err != nil {
 		logging.Warn("Docker delegation: failed to load parent session %s for child mapping: %v", parentSessionID, err)
@@ -193,6 +202,10 @@ func (s *Server) dockerSessionCandidates(ctx context.Context, childSessionID str
 		}
 		seen[key] = struct{}{}
 		candidates = append(candidates, candidate)
+	}
+
+	if owner, ok := s.dockerChildOwners.Load(childSessionID); ok {
+		addCandidate(owner.(dockerSessionCandidate))
 	}
 
 	if sessions, err := s.sessionManager.List(); err == nil {

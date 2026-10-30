@@ -190,3 +190,39 @@ func TestDockerChildSessionRemainsOpenableAfterParentSave(t *testing.T) {
 		t.Fatalf("expected docker child session, got %q", resp.ID)
 	}
 }
+
+func TestHandleGetSessionFindsChildWithoutParentMetadata(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	child := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":         "lost-mapping-child",
+			"agent_id":   "build",
+			"status":     "running",
+			"created_at": now,
+			"updated_at": now,
+			"messages":   []interface{}{},
+		})
+	}))
+	defer child.Close()
+
+	parent, err := server.sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("failed to create parent session: %v", err)
+	}
+	agent := &LocalDockerAgent{ID: "reviewer", Name: "reviewer", Runtime: "host", APIURL: child.URL}
+	server.recordDockerDelegationChildSession(parent.ID, agent, "lost-mapping-child", nil)
+
+	parent.Metadata = nil
+	if err := server.sessionManager.Save(parent); err != nil {
+		t.Fatalf("failed to save parent session: %v", err)
+	}
+
+	req := httptest.NewRequest(stdhttp.MethodGet, "/sessions/lost-mapping-child", nil)
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+	if rec.Code != stdhttp.StatusOK {
+		t.Fatalf("expected child session to be found via in-memory owner, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

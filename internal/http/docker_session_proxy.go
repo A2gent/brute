@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	nethttp "net/http"
+	"net/http/httputil"
 	neturl "net/url"
 	"strconv"
 	"strings"
@@ -120,6 +121,64 @@ func (s *Server) getDockerDelegatedSession(ctx context.Context, sessionID string
 		return SessionResponse{}, false, fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
 	return SessionResponse{}, false, nil
+}
+
+// findDockerSessionOwner returns the agent that hosts a delegated child session.
+func (s *Server) findDockerSessionOwner(ctx context.Context, sessionID string) (dockerSessionCandidate, bool) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return dockerSessionCandidate{}, false
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, dockerSessionProxyLookupTimeout)
+	defer cancel()
+
+	client := &nethttp.Client{Timeout: dockerSessionProxyRequestTimeout}
+	for candidate := range s.dockerSessionCandidateStages(lookupCtx, sessionID) {
+		if _, err := fetchDockerSession(lookupCtx, client, candidate, sessionID, false); err != nil {
+			continue
+		}
+		s.rememberDockerChildOwner(sessionID, candidate)
+		return candidate, true
+	}
+	return dockerSessionCandidate{}, false
+}
+
+// proxyDockerDelegatedGET forwards a read-only session sub-resource (events, queue, approval)
+// to the agent that owns the child session. It reports false when no agent owns the session.
+func (s *Server) proxyDockerDelegatedGET(w nethttp.ResponseWriter, r *nethttp.Request, sessionID, suffix string) bool {
+	owner, ok := s.findDockerSessionOwner(r.Context(), sessionID)
+	if !ok {
+		return false
+	}
+	target, err := neturl.Parse(owner.APIURL)
+	if err != nil {
+		return false
+	}
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL.Scheme = target.Scheme
+			pr.Out.URL.Host = target.Host
+			pr.Out.URL.Path = strings.TrimRight(target.Path, "/") + "/sessions/" + sessionID + suffix
+			pr.Out.URL.RawPath = ""
+			pr.Out.Host = target.Host
+		},
+		// The upstream agent adds its own CORS headers; duplicates would make browsers reject the response.
+		ModifyResponse: func(resp *nethttp.Response) error {
+			for name := range resp.Header {
+				if strings.HasPrefix(strings.ToLower(name), "access-control-") {
+					resp.Header.Del(name)
+				}
+			}
+			return nil
+		},
+		FlushInterval: -1,
+		ErrorHandler: func(w nethttp.ResponseWriter, _ *nethttp.Request, err error) {
+			logging.Debug("Docker session proxy %s failed for %s: %v", suffix, sessionID, err)
+			s.errorResponse(w, nethttp.StatusBadGateway, "Failed to reach delegated agent")
+		},
+	}
+	proxy.ServeHTTP(w, r)
+	return true
 }
 
 func (s *Server) getDockerDelegatedProviderTransitions(ctx context.Context, sessionID string) ([]session.ProviderTransition, bool, error) {

@@ -49,6 +49,9 @@ func (s *Server) ApprovalBrokerForSession(sessionID string) (*approval.Broker, e
 func (s *Server) handleGetSessionApproval(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionID")
 	if _, err := s.sessionManager.Get(sessionID); err != nil {
+		if s.proxyDockerDelegatedGET(w, r, sessionID, "/approval") {
+			return
+		}
 		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
 		return
 	}

@@ -226,3 +226,54 @@ func TestHandleGetSessionFindsChildWithoutParentMetadata(t *testing.T) {
 		t.Fatalf("expected child session to be found via in-memory owner, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestDockerChildSessionSubResourcesAreProxied(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	child := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		switch r.URL.Path {
+		case "/sessions/docker-child":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"id": "docker-child", "agent_id": "build", "status": "running",
+				"created_at": now, "updated_at": now,
+			})
+		case "/sessions/docker-child/queue":
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			_, _ = w.Write([]byte(`{"messages":[]}`))
+		case "/sessions/docker-child/approval":
+			_, _ = w.Write([]byte(`{"approval":null}`))
+		case "/sessions/docker-child/events":
+			if r.URL.Query().Get("after_updated_at") != "x" {
+				t.Fatalf("query not forwarded: %q", r.URL.RawQuery)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("event: done\ndata: {\"type\":\"done\"}\n\n"))
+		default:
+			stdhttp.NotFound(w, r)
+		}
+	}))
+	defer child.Close()
+	stubDockerPS(t, child.URL, "agent-dev-architecture-planner")
+
+	for suffix, want := range map[string]string{
+		"/queue":                     `"messages"`,
+		"/approval":                  `"approval"`,
+		"/events?after_updated_at=x": "event: done",
+	} {
+		rec := httptest.NewRecorder()
+		server.router.ServeHTTP(rec, httptest.NewRequest(stdhttp.MethodGet, "/sessions/docker-child"+suffix, nil))
+		if rec.Code != stdhttp.StatusOK || !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("%s: got %d %q", suffix, rec.Code, rec.Body.String())
+		}
+		if vals := rec.Header().Values("Access-Control-Allow-Origin"); len(vals) > 1 {
+			t.Fatalf("%s: duplicated CORS header %v", suffix, vals)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, httptest.NewRequest(stdhttp.MethodGet, "/sessions/unknown-session/queue", nil))
+	if rec.Code != stdhttp.StatusNotFound {
+		t.Fatalf("expected 404 for unknown session, got %d", rec.Code)
+	}
+}

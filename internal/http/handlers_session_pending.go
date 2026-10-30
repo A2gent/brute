@@ -45,6 +45,9 @@ func (s *Server) publishPendingMessages(sessionID string) []PendingMessageRespon
 func (s *Server) handleListPendingMessages(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionID")
 	if _, err := s.sessionManager.Get(sessionID); err != nil {
+		if s.proxyDockerDelegatedGET(w, r, sessionID, "/queue") {
+			return
+		}
 		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
 		return
 	}

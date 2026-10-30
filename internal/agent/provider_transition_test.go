@@ -208,8 +208,8 @@ func TestFallbackTransitionSkipsCompactionWithoutCompletedWork(t *testing.T) {
 	}
 }
 
-// Approval in confirm mode compacts by default, but an empty history still has
-// nothing to summarize, so the approved switch must skip it as well.
+// Fallback never waits for confirmation, and an empty history has nothing to
+// summarize, so the automatic switch must skip compaction.
 func TestFallbackTransitionConfirmModeSkipsCompactionWithoutWork(t *testing.T) {
 	target := &MockLLM{Response: &llm.ChatResponse{Content: "answer"}}
 	store, err := storage.NewSQLiteStore(t.TempDir())
@@ -237,12 +237,12 @@ func TestFallbackTransitionConfirmModeSkipsCompactionWithoutWork(t *testing.T) {
 	}, fallback.WithMaxRetries(0))
 
 	_, _, err = a.Run(context.Background(), sess, "")
-	if !errors.Is(err, ErrTransitionPaused) {
-		t.Fatalf("expected pause for confirmation, got %v", err)
+	if err != nil {
+		t.Fatalf("fallback must not pause for confirmation: %v", err)
 	}
 	tr := session.CurrentProviderTransition(sess)
-	if tr.ContextStrategy != "current" || tr.Compaction.Outcome != "skipped" {
-		t.Fatalf("confirm mode must skip compaction on empty history: %+v", tr)
+	if tr.Confirmation != "not_required" || tr.ContextStrategy != "current" || tr.Compaction.Outcome != "skipped" {
+		t.Fatalf("fallback must skip confirmation and compaction on empty history: %+v", tr)
 	}
 }
 

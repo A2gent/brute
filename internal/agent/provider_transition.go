@@ -59,11 +59,11 @@ func (a *Agent) requestFallbackTransition(sess *session.Session, next *fallback.
 			return err
 		}
 	}
-	t, err := session.NewProviderTransition(uuid.NewString(), session.ProviderEndpoint{Provider: next.Source.Name, Model: next.Source.Model}, session.ProviderEndpoint{Provider: next.Target.Name, Model: next.Target.Model}, "fallback", a.config.TransitionMode)
+	t, err := session.NewProviderTransition(uuid.NewString(), session.ProviderEndpoint{Provider: next.Source.Name, Model: next.Source.Model}, session.ProviderEndpoint{Provider: next.Target.Name, Model: next.Target.Model}, "fallback", fallbackTransitionMode(a.config.TransitionMode))
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrTransitionPaused, err)
 	}
-	t.Reason = next.Reason
+	t.Reason = shortTransitionReason(next.Reason)
 	t.SourceOutcome = next.SourceOutcome
 	t.RetryCount = &next.RetryCount
 	t.FallbackIndex = next.Index
@@ -82,6 +82,30 @@ func (a *Agent) requestFallbackTransition(sess *session.Session, next *fallback.
 		t.Compaction.Outcome = "skipped"
 	}
 	return a.saveTransition(sess, t, onEvent)
+}
+
+// A failed provider cannot wait for a human: confirm would stall the chain, so
+// fallback hops compact and continue automatically. Manual switches keep confirm.
+func fallbackTransitionMode(mode string) string {
+	if mode == "" || mode == "confirm" {
+		return "compact_auto"
+	}
+	return mode
+}
+
+const maxTransitionReasonLen = 300
+
+// CLI providers echo the whole system prompt inside their error text; the card
+// only needs the error itself.
+func shortTransitionReason(reason string) string {
+	if i := strings.Index(reason, "You are running through"); i > 0 {
+		reason = reason[:i]
+	}
+	reason = strings.Join(strings.Fields(reason), " ")
+	if len(reason) > maxTransitionReasonLen {
+		reason = reason[:maxTransitionReasonLen] + "..."
+	}
+	return reason
 }
 
 // hasCompletedWork reports whether the active context holds anything worth

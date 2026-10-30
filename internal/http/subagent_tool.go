@@ -121,6 +121,8 @@ func (s *Server) buildSubAgentToolManager(sess *session.Session, enabledTools []
 	// Sub-agents should not be able to delegate to other agents (prevent recursion)
 	manager.Unregister("delegate_to_subagent")
 	manager.Unregister("delegate_to_agent")
+	manager.Unregister("wait_for_agent")
+	manager.Unregister("cancel_agent")
 
 	return manager
 }

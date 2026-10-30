@@ -92,6 +92,7 @@ type Server struct {
 	approvalResolvePayloadMu sync.Mutex
 	approvalResolvePayload   map[string]approvalResolvePayload
 	mcpBridge                *mcpBridgeState
+	delegationJobs           delegationJobRegistry
 	parentMCPKey             string
 	parentAgentToolsURL      string
 	parentAgentToolsMu       sync.Mutex

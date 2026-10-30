@@ -52,6 +52,7 @@ func (s *Server) unregisterActiveSessionRun(sessionID, runID string) {
 }
 
 func (s *Server) cancelActiveSessionRuns(sessionID string) int {
+	s.delegationJobs.cancelParent(sessionID)
 	s.activeRunsMu.Lock()
 	runs, ok := s.activeRuns[sessionID]
 	if !ok || len(runs) == 0 {

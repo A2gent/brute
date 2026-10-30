@@ -83,3 +83,114 @@ func TestDelegatedRunCancellationBeforeRegistration(t *testing.T) {
 		cancel()
 	}
 }
+
+func delegationJobTestContext(t *testing.T, s *Server) (context.Context, string) {
+	t.Helper()
+	sess, err := s.sessionManager.Create("build")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return context.WithValue(context.Background(), "session_id", sess.ID), sess.ID
+}
+
+func decodeJobOutput(t *testing.T, result *tools.Result) map[string]interface{} {
+	t.Helper()
+	var payload map[string]interface{}
+	if result == nil || json.Unmarshal([]byte(result.Output), &payload) != nil {
+		t.Fatalf("unexpected job output: %+v", result)
+	}
+	return payload
+}
+
+func TestDelegationJobLifecycleSurvivesAbortedMCPCall(t *testing.T) {
+	s := newMCPBridgeTestServer(t)
+	parentCtx, _ := delegationJobTestContext(t, s)
+	callCtx, abortCall := context.WithCancel(parentCtx)
+	release := make(chan struct{})
+	runCtx := make(chan context.Context, 1)
+	result, err := s.startDelegationJob(callCtx, "reviewer", func(ctx context.Context) (*tools.Result, error) {
+		runCtx <- ctx
+		tools.ReportProgress(ctx, tools.ProgressEvent{Content: "child created", Metadata: map[string]interface{}{"child_session_id": "child-1"}})
+		tools.ReportProgress(ctx, tools.ProgressEvent{Content: "running bash"})
+		<-release
+		return &tools.Result{Success: true, Output: `{"response":"done"}`}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := decodeJobOutput(t, result)
+	jobID, _ := started["job_id"].(string)
+	if started["status"] != "running" || started["child_session_id"] != "child-1" || jobID == "" {
+		t.Fatalf("unexpected start payload: %v", started)
+	}
+	abortCall()
+	if (<-runCtx).Err() != nil {
+		t.Fatal("aborting the MCP call must not cancel the child run")
+	}
+
+	wait := &waitForAgentTool{server: s}
+	pending, _ := wait.Execute(parentCtx, json.RawMessage(`{"job_id":"`+jobID+`","max_wait_seconds":1}`))
+	progress := decodeJobOutput(t, pending)
+	if progress["status"] != "running" || len(progress["recent_progress"].([]interface{})) != 2 {
+		t.Fatalf("expected running status with progress, got %v", progress)
+	}
+
+	close(release)
+	final, _ := wait.Execute(parentCtx, json.RawMessage(`{"job_id":"`+jobID+`","max_wait_seconds":5}`))
+	if final == nil || !final.Success || final.Output != `{"response":"done"}` || final.Metadata["job_id"] != jobID {
+		t.Fatalf("unexpected final result: %+v", final)
+	}
+	if gone, _ := wait.Execute(parentCtx, json.RawMessage(`{"job_id":"`+jobID+`"}`)); gone.Success {
+		t.Fatal("delivered job must be removed")
+	}
+}
+
+func TestDelegationJobFastFailureReturnsDirectly(t *testing.T) {
+	s := newMCPBridgeTestServer(t)
+	ctx, _ := delegationJobTestContext(t, s)
+	result, _ := s.startDelegationJob(ctx, "missing", func(context.Context) (*tools.Result, error) {
+		return &tools.Result{Success: false, Error: "agent not found"}, nil
+	})
+	if result == nil || result.Success || result.Error != "agent not found" {
+		t.Fatalf("expected direct failure, got %+v", result)
+	}
+}
+
+func TestDelegationJobCancelAndSessionScope(t *testing.T) {
+	s := newMCPBridgeTestServer(t)
+	ctx, _ := delegationJobTestContext(t, s)
+	otherCtx, _ := delegationJobTestContext(t, s)
+	result, _ := s.startDelegationJob(ctx, "reviewer", func(ctx context.Context) (*tools.Result, error) {
+		tools.ReportProgress(ctx, tools.ProgressEvent{Metadata: map[string]interface{}{"child_session_id": "child-2"}})
+		<-ctx.Done()
+		return &tools.Result{Success: false, Error: ctx.Err().Error()}, nil
+	})
+	jobID, _ := decodeJobOutput(t, result)["job_id"].(string)
+	args := json.RawMessage(`{"job_id":"` + jobID + `"}`)
+	if foreign, _ := (&waitForAgentTool{server: s}).Execute(otherCtx, args); foreign.Success {
+		t.Fatal("another session must not see the job")
+	}
+	canceled, _ := (&cancelAgentTool{server: s}).Execute(ctx, args)
+	if decodeJobOutput(t, canceled)["status"] != "canceled" {
+		t.Fatalf("unexpected cancel result: %+v", canceled)
+	}
+}
+
+func TestMCPBridgeDelegationRunsAsync(t *testing.T) {
+	s := newMCPBridgeTestServer(t)
+	sess, _ := s.sessionManager.Create("build")
+	async := make(chan bool, 1)
+	s.toolManager.Register(&bridgeDelegationProbe{name: "delegate_to_agent", execute: func(ctx context.Context, _ json.RawMessage) (*tools.Result, error) {
+		async <- delegationAsync(ctx)
+		return &tools.Result{Success: true, Output: "ok"}, nil
+	}})
+	if _, failed, rpcErr := s.mcpBridgeCallTool(context.Background(), sess, json.RawMessage(`{"name":"delegate_to_agent"}`)); failed || rpcErr != nil {
+		t.Fatal("bridge call failed")
+	}
+	if !<-async {
+		t.Fatal("bridge delegation must run in async mode")
+	}
+	if delegationAsync(context.Background()) {
+		t.Fatal("native calls must stay synchronous")
+	}
+}

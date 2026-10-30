@@ -58,6 +58,8 @@ var toolPlacements = map[string]toolPlacement{
 	// Shared, user-visible state lives in the parent store.
 	"list_agents":          placementParent,
 	"delegate_to_agent":    placementParent,
+	"wait_for_agent":       placementParent,
+	"cancel_agent":         placementParent,
 	"delegate_to_subagent": placementParent,
 	"website_credentials":  placementParent, // host children have their own empty vault
 	"chrome_extension":     placementParent, // the extension connects only to the parent port

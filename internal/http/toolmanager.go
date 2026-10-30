@@ -244,6 +244,8 @@ func (s *Server) registerServerBackedTools(manager *tools.Manager) {
 	manager.Register(newMCPCallTool(s))
 	manager.Register(newDelegateToSubAgentTool(s))
 	manager.Register(newDelegateToAgentTool(s))
+	manager.Register(&waitForAgentTool{server: s})
+	manager.Register(&cancelAgentTool{server: s})
 	manager.Register(&listAgentsTool{server: s})
 	manager.Register(newDelegateToExternalAgentTool(s))
 	manager.Register(newDiscoverExternalAgentsTool(s))

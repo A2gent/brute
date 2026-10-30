@@ -446,6 +446,9 @@ func (s *Server) mcpBridgeCallToolResult(tokenCtx context.Context, sess *session
 	}
 
 	ctx := context.WithValue(tokenCtx, "session_id", sess.ID)
+	if scoped, _ := tokenCtx.Value(parentAgentToolsScopeKey{}).(bool); !scoped {
+		ctx = withDelegationAsync(ctx)
+	}
 	if sess.ProjectID != nil && strings.TrimSpace(*sess.ProjectID) != "" {
 		ctx = context.WithValue(ctx, "projectID", strings.TrimSpace(*sess.ProjectID))
 	}

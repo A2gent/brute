@@ -8,7 +8,7 @@ import (
 	"github.com/A2gent/brute/internal/tools"
 )
 
-var delegationToolNames = []string{"delegate_to_agent", "delegate_to_subagent", "delegate_to_external_agent"}
+var delegationToolNames = []string{"delegate_to_agent", "delegate_to_subagent", "delegate_to_external_agent", "wait_for_agent", "cancel_agent"}
 
 func isDelegatedSession(sess *session.Session) bool {
 	if sess == nil {

@@ -65,7 +65,7 @@ func (t *delegateToAgentTool) Name() string {
 func (t *delegateToAgentTool) Description() string {
 	return `Delegate a task to a configured agent. Local configured agents start automatically on demand as host processes or isolated Docker containers, according to their runtime configuration, and are reused while running. Remote agents run through external A2A. The dispatcher resolves the agent by ID and routes the task to the right runtime.
 
-Use this to offload well-scoped tasks and reduce context usage in your main session. Returns the agent's response and the child session ID.`
+Use this to offload well-scoped tasks and reduce context usage in your main session. Returns the agent's response and the child session ID. When the result has status "running" and a job_id, the agent works in the background: call wait_for_agent with that job_id until it returns the response.`
 }
 
 func (t *delegateToAgentTool) Schema() map[string]interface{} {
@@ -102,7 +102,15 @@ func (t *delegateToAgentTool) Execute(ctx context.Context, params json.RawMessag
 	if task == "" {
 		return &tools.Result{Success: false, Error: "task is required"}, nil
 	}
+	if delegationAsync(ctx) {
+		return t.server.startDelegationJob(ctx, agentID, func(jobCtx context.Context) (*tools.Result, error) {
+			return t.dispatch(jobCtx, agentID, task)
+		})
+	}
+	return t.dispatch(ctx, agentID, task)
+}
 
+func (t *delegateToAgentTool) dispatch(ctx context.Context, agentID, task string) (*tools.Result, error) {
 	// Legacy sub-agent rows, stored definitions, and project-folder discoveries
 	// all resolve through definitionForUnifiedAgent before local delegation.
 	currentProjectID := delegationParentProjectID(ctx, t.server)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"iter"
 	nethttp "net/http"
 	neturl "net/url"
 	"strconv"
@@ -94,19 +95,15 @@ func (s *Server) getDockerDelegatedSession(ctx context.Context, sessionID string
 	lookupCtx, cancel := context.WithTimeout(ctx, dockerSessionProxyLookupTimeout)
 	defer cancel()
 
-	candidates := s.dockerSessionCandidates(lookupCtx, sessionID)
-	if len(candidates) == 0 {
-		return SessionResponse{}, false, nil
-	}
-
 	client := &nethttp.Client{Timeout: dockerSessionProxyRequestTimeout}
 	failures := make([]string, 0)
-	for _, candidate := range candidates {
+	for candidate := range s.dockerSessionCandidateStages(lookupCtx, sessionID) {
 		resp, err := fetchDockerSession(lookupCtx, client, candidate, sessionID, includeMessages)
 		if err != nil {
 			failures = append(failures, err.Error())
 			continue
 		}
+		s.rememberDockerChildOwner(sessionID, candidate)
 
 		decorateDockerSessionResponse(&resp, candidate)
 		if !includeMessages {
@@ -134,14 +131,9 @@ func (s *Server) getDockerDelegatedProviderTransitions(ctx context.Context, sess
 	lookupCtx, cancel := context.WithTimeout(ctx, dockerSessionProxyLookupTimeout)
 	defer cancel()
 
-	candidates := s.dockerSessionCandidates(lookupCtx, sessionID)
-	if len(candidates) == 0 {
-		return nil, false, nil
-	}
-
 	client := &nethttp.Client{Timeout: dockerSessionProxyRequestTimeout}
 	failures := make([]string, 0)
-	for _, candidate := range candidates {
+	for candidate := range s.dockerSessionCandidateStages(lookupCtx, sessionID) {
 		endpoint := strings.TrimRight(candidate.APIURL, "/") + "/sessions/" + neturl.PathEscape(sessionID) + "/provider-transitions"
 		req, err := nethttp.NewRequestWithContext(lookupCtx, nethttp.MethodGet, endpoint, nil)
 		if err != nil {
@@ -177,12 +169,43 @@ func (s *Server) getDockerDelegatedProviderTransitions(ctx context.Context, sess
 			failures = append(failures, fmt.Sprintf("%s returned unsupported provider transition version %d", candidate.APIURL, result.Version))
 			continue
 		}
+		s.rememberDockerChildOwner(sessionID, candidate)
 		return result.Transitions, true, nil
 	}
 	if len(failures) > 0 {
 		return nil, false, fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
 	return nil, false, nil
+}
+
+func (s *Server) rememberDockerChildOwner(childSessionID string, candidate dockerSessionCandidate) {
+	s.dockerChildOwners.Store(childSessionID, candidate)
+}
+
+// dockerSessionCandidateStages yields the remembered owner first, so a slow
+// session scan or docker ps cannot use up the lookup budget before it is tried.
+func (s *Server) dockerSessionCandidateStages(ctx context.Context, childSessionID string) iter.Seq[dockerSessionCandidate] {
+	return func(yield func(dockerSessionCandidate) bool) {
+		var first string
+		if owner, ok := s.dockerChildOwners.Load(childSessionID); ok {
+			candidate := owner.(dockerSessionCandidate)
+			candidate.APIURL = strings.TrimRight(strings.TrimSpace(candidate.APIURL), "/")
+			if candidate.APIURL != "" && !s.isSelfAPIURL(candidate.APIURL) {
+				first = candidate.APIURL
+				if !yield(candidate) {
+					return
+				}
+			}
+		}
+		for _, candidate := range s.dockerSessionCandidates(ctx, childSessionID) {
+			if candidate.APIURL == first {
+				continue
+			}
+			if !yield(candidate) {
+				return
+			}
+		}
+	}
 }
 
 func (s *Server) dockerSessionCandidates(ctx context.Context, childSessionID string) []dockerSessionCandidate {

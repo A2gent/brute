@@ -160,40 +160,9 @@ To display Cursor usage in Caesar, Brute calls Cursor's `GetCurrentPeriodUsage` 
 - Context window tracking and management
 - Structured logging and practical failure handling
 
-## Team Definition YAML Standard
-
-Team files are stored under `teams/*.yaml` in a project folder (or the soul project for global teams).
-Caesar edits them through `/teams`, and session launch accepts `team_id`.
-
-Minimal structure:
-
-```yaml
-id: squad-product
-name: Product squad
-description: Design, build and review product changes.
-policy:
-  lead: architect
-  termination: lead_done   # lead_done | idle | max_messages
-  max_messages: 60
-  max_minutes: 60
-  broadcast_allowed: true
-members:
-  - role: architect
-    agent_id: agent-def-123
-    charter: Owns design decisions and the final answer to the user.
-  - role: developer
-    agent_id: agent-def-456
-    charter: Implements changes in the repository.
-```
-
-HTTP API:
-- `GET/POST /teams`, `GET/PUT/DELETE /teams/{id}`, `GET /teams/{id}/yaml`, `POST /teams/import-yaml`
-- `GET /team-runs/{id}`, `GET /team-runs/{id}/messages`, `GET /sessions/{id}/team-run`
-- `POST /sessions` with `team_id` creates a parent session and a `team_run` header
-
 ## Workflow Definition YAML Standard (removed)
 
-Graph workflows were deleted in favor of agent teams. Leftover `workflow_*` session metadata is inert.
+Graph workflows were deleted. Leftover `workflow_*` session metadata is inert.
 
 ## 4. Run Modes
 

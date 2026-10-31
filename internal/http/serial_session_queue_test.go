@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -214,12 +215,93 @@ func runQueuedProjectSessionsWithHook(t *testing.T, settings map[string]string, 
 	return maxActiveRequests
 }
 
+type heldResponsesProvider struct {
+	mu       sync.Mutex
+	requests int
+	release  chan struct{}
+	once     sync.Once
+}
+
+func (p *heldResponsesProvider) Requests() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.requests
+}
+
+func (p *heldResponsesProvider) Release() {
+	p.once.Do(func() { close(p.release) })
+}
+
+func useHeldResponsesProvider(t *testing.T, cfg *config.Config) *heldResponsesProvider {
+	t.Helper()
+	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("A2GENT_PARENT_PROXY_URL", "")
+	held := &heldResponsesProvider{release: make(chan struct{})}
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		held.mu.Lock()
+		held.requests++
+		held.mu.Unlock()
+		<-held.release
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"started by server\"}]}],\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	t.Cleanup(provider.Close)
+	t.Cleanup(held.Release)
+	cfg.ActiveProvider = string(config.ProviderOpenAI)
+	cfg.DefaultModel = "test-model"
+	cfg.LLMRetries = 1
+	cfg.Providers[string(config.ProviderOpenAI)] = config.Provider{
+		APIKey:  "test-key",
+		BaseURL: provider.URL + "/v1",
+		Model:   "test-model",
+	}
+	return held
+}
+
+func waitForSessionStatus(t *testing.T, manager *session.Manager, sessionID string, want session.Status) *session.Session {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		sess, err := manager.Get(sessionID)
+		if err == nil && sess.Status == want {
+			return sess
+		}
+		if time.Now().After(deadline) {
+			got := session.Status("")
+			if sess != nil {
+				got = sess.Status
+			}
+			t.Fatalf("session status = %s, want %s", got, want)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func waitForBackgroundRunDone(t *testing.T, server *Server, sessionID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if server.activeSessionRunCount(sessionID) == 0 {
+			if _, release, err := server.sessionManager.AcquireRun(context.Background(), sessionID); err == nil {
+				release()
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("background run of session %s did not finish", sessionID)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	server.sessionSummaryWG.Wait()
+}
+
 func TestStartSessionManuallyOverridesSerialQueueAutoStart(t *testing.T) {
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create sqlite store: %v", err)
 	}
-	defer store.Close()
+	t.Cleanup(func() { _ = store.Close() })
 
 	project := &storage.Project{
 		ID:        "project-manual-start",
@@ -234,6 +316,7 @@ func TestStartSessionManuallyOverridesSerialQueueAutoStart(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.DataPath = t.TempDir()
 	cfg.WorkDir = t.TempDir()
+	provider := useHeldResponsesProvider(t, cfg)
 
 	sessionManager := session.NewManager(store)
 	server := NewServer(cfg, nil, tools.NewManager(cfg.WorkDir), sessionManager, store, speechcache.New(0), 0)
@@ -274,6 +357,25 @@ func TestStartSessionManuallyOverridesSerialQueueAutoStart(t *testing.T) {
 	if sessionQueueMode(fresh) != "" {
 		t.Fatalf("manual start should clear serial queue mode, got %q", sessionQueueMode(fresh))
 	}
+
+	var started SessionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &started); err != nil {
+		t.Fatalf("decode start response: %v", err)
+	}
+	if started.ActiveRuns != 1 {
+		t.Fatalf("start response active_runs = %d, want 1 so clients do not resend the first message", started.ActiveRuns)
+	}
+
+	provider.Release()
+	completed := waitForSessionStatus(t, sessionManager, sess.ID, session.StatusCompleted)
+	if got := provider.Requests(); got != 1 {
+		t.Fatalf("provider requests = %d, want 1 run started by the server without a client stream", got)
+	}
+	last := completed.Messages[len(completed.Messages)-1]
+	if last.Role != "assistant" || last.Content != "started by server" {
+		t.Fatalf("last message = %s %q, want assistant reply from the server-started run", last.Role, last.Content)
+	}
+	waitForBackgroundRunDone(t, server, sess.ID)
 }
 
 func TestStartSerialQueuedSessionCreatesWorktreeBeforeRunning(t *testing.T) {
@@ -282,6 +384,7 @@ func TestStartSerialQueuedSessionCreatesWorktreeBeforeRunning(t *testing.T) {
 	}
 	server, projectID, repoDir := newProjectFileTestServer(t)
 	initMindGitTestRepo(t, repoDir)
+	provider := useHeldResponsesProvider(t, server.config)
 
 	project, err := server.store.GetProject(projectID)
 	if err != nil {
@@ -333,6 +436,9 @@ func TestStartSerialQueuedSessionCreatesWorktreeBeforeRunning(t *testing.T) {
 	if worktree.Branch != "feature/queued" {
 		t.Fatalf("deferred worktree branch = %q, want the branch requested at creation", worktree.Branch)
 	}
+	provider.Release()
+	waitForSessionStatus(t, server.sessionManager, sess.ID, session.StatusCompleted)
+	waitForBackgroundRunDone(t, server, sess.ID)
 }
 
 func TestSerialQueueSkipsPausedQueuedSessions(t *testing.T) {

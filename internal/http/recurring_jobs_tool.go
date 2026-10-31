@@ -38,6 +38,7 @@ type recurringJobsParams struct {
 	LaunchAgentRuntime string `json:"launch_agent_runtime,omitempty"`
 	UnifiedAgentID     string `json:"unified_agent_id,omitempty"`
 	DockerAgentID      string `json:"docker_agent_id,omitempty"`
+	QueueName          string `json:"queue_name,omitempty"`
 	Enabled            *bool  `json:"enabled,omitempty"`
 
 	// delete, run_now
@@ -102,6 +103,10 @@ func (t *recurringJobsTool) Schema() map[string]interface{} {
 			"llm_provider": map[string]interface{}{
 				"type":        "string",
 				"description": "Optional for action=create. Provider override for this job.",
+			},
+			"queue_name": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional for action=create. Named project queue (pipeline) the runs wait in; must be declared in the project session_queues setting. Empty uses the project default queue.",
 			},
 			"enabled": map[string]interface{}{
 				"type":        "boolean",
@@ -210,6 +215,11 @@ func (t *recurringJobsTool) handleCreate(ctx context.Context, p recurringJobsPar
 		}
 	}
 
+	queueName, queueErr := t.server.validateJobQueueName(projectID, p.QueueName)
+	if queueErr != nil {
+		return &tools.Result{Success: false, Error: queueErr.Error()}, nil
+	}
+
 	cronExpr, err := t.server.parseScheduleToCron(ctx, scheduleText)
 	if err != nil {
 		return &tools.Result{Success: false, Error: "failed to parse schedule: " + err.Error()}, nil
@@ -243,6 +253,7 @@ func (t *recurringJobsTool) handleCreate(ctx context.Context, p recurringJobsPar
 		DockerAgentID:      p.DockerAgentID,
 		LLMProvider:        p.LLMProvider,
 		LLMModel:           p.LLMModel,
+		QueueName:          queueName,
 	})
 	t.applyParentScopeAgentDefault(ctx, job)
 

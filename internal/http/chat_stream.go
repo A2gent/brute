@@ -151,6 +151,22 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		logging.Warn("Chat stream disconnected before initial status event was delivered; continuing run without live streaming: session=%s", sess.ID)
 	}
 
+	if mention := s.resolveAgentMention(sess, req.Message); mention != nil {
+		reply, runErr := s.runAgentMention(runCtx, sess, mention)
+		if runErr != nil {
+			reply = fmt.Sprintf("@%s failed: %s", mention.AgentName, runErr.Error())
+		}
+		sess.AddAssistantMessageWithMetadata(reply, nil, mentionReplyMetadata(mention))
+		sess.SetStatus(session.StatusCompleted)
+		if saveErr := s.sessionManager.Save(sess); saveErr != nil {
+			_ = writeEvent(ChatStreamEvent{Type: "error", Error: "Failed to save agent response: " + saveErr.Error(), Status: string(sess.Status), Messages: s.messagesToResponse(sess.Messages)})
+			return
+		}
+		_ = writeEvent(ChatStreamEvent{Type: "done", Content: reply, Messages: s.messagesToResponse(sess.Messages), Status: string(sess.Status)})
+		s.triggerSerialSessionQueueIfAdvanceable(sess)
+		return
+	}
+
 	if s.hasDirectAgentTarget(sess) {
 		chatResp, runErr := s.runDirectAgentSession(runCtx, sess, req.Message, func(event ChatStreamEvent) {
 			if event.Type != "done" && event.Type != "error" {
@@ -265,15 +281,13 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	// The LLM summary pass runs in the background so `done` and queue
 	// advancement are not delayed by an extra provider round-trip.
 	s.refreshSessionSummaryAsync(sess)
+	doneUsage := usageResponseFromLLM(usage)
 	_ = writeEvent(ChatStreamEvent{
 		Type:     "done",
 		Content:  content,
 		Messages: s.messagesToResponse(sess.Messages),
 		Status:   string(sess.Status),
-		Usage: &UsageResponse{
-			InputTokens:  usage.InputTokens,
-			OutputTokens: usage.OutputTokens,
-		},
+		Usage:    &doneUsage,
 	})
 	s.triggerSerialSessionQueueIfAdvanceable(sess)
 }

@@ -65,6 +65,7 @@ type RecurringJob struct {
 	LLMProvider      string // Optional provider override for this job
 	LLMModel         string // Optional model override for host-agent runs
 	QueueSerial      bool   // Run sessions through the serial per-project queue instead of starting immediately
+	QueueName        string // Named queue (pipeline) inside the project; empty = default project queue
 	GateTool         string // Optional read-only fetch tool (e.g. gmail_query) run before the LLM; empty disables the Jev gate
 	GateParams       string // JSON params for GateTool
 	GateQuestion     string // Optional Jev noul question; defaults to the job task prompt
@@ -154,17 +155,6 @@ type AgentDefinitionRecord struct {
 	Name           string
 	Runtime        string // "docker" | "remote"
 	ProjectID      *string
-	DefinitionYAML string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-}
-
-// TeamRecord indexes a canonical team YAML definition for listing and run lookup.
-type TeamRecord struct {
-	ID             string
-	ProjectID      string
-	Name           string
-	Description    string
 	DefinitionYAML string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
@@ -280,6 +270,8 @@ type Store interface {
 	GetJob(id string) (*RecurringJob, error)
 	ListJobs() ([]*RecurringJob, error)
 	DeleteJob(id string) error
+	// DetachQueuesFromJobs clears queue bindings of a project's loops whose queue is not in keep.
+	DetachQueuesFromJobs(projectID string, keep []string) (int64, error)
 	GetDueJobs(now time.Time) ([]*RecurringJob, error)
 
 	// Job execution operations
@@ -319,24 +311,6 @@ type Store interface {
 	GetAgentDefinition(id string) (*AgentDefinitionRecord, error)
 	ListAgentDefinitions() ([]*AgentDefinitionRecord, error)
 	DeleteAgentDefinition(id string) error
-
-	// Team definition operations
-	SaveTeam(team *TeamRecord) error
-	GetTeam(id string) (*TeamRecord, error)
-	ListTeams(projectID *string) ([]*TeamRecord, error)
-	DeleteTeam(id string) error
-
-	// Team run and mailbox operations
-	SaveTeamRun(run *TeamRun) error
-	GetTeamRun(id string) (*TeamRun, error)
-	GetTeamRunBySession(sessionID string) (*TeamRun, error)
-	SaveTeamRunMember(member *TeamRunMember) error
-	ListTeamRunMembers(runID string) ([]*TeamRunMember, error)
-	AppendTeamMessage(message *TeamMessage) error
-	GetTeamMessage(runID, messageID string) (*TeamMessage, error)
-	ListTeamMessages(runID, after string, limit int) ([]*TeamMessage, error)
-	ListPendingTeamMessages(runID, role string, limit int) ([]*TeamMessage, error)
-	MarkTeamMessageDelivered(runID, messageID, role string, deliveredAt time.Time) error
 
 	// Project Database operations
 	SaveProjectDatabase(db *ProjectDatabase) error

@@ -62,11 +62,16 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now()
+	settings := normalizeProjectSettings(req.Settings)
+	if _, err := parseSessionQueues(settings[projectSessionQueuesKey]); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	project := &storage.Project{
 		ID:          uuid.New().String(),
 		Name:        name,
 		Folder:      folder,
-		Settings:    normalizeProjectSettings(req.Settings),
+		Settings:    settings,
 		URLPatterns: urlPatterns,
 		IsSystem:    false,
 		CreatedAt:   now,
@@ -162,9 +167,15 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		}
 		project.Folder = normalizeFolder(req.Folder)
 	}
+	queuesChanged := false
 	if req.Settings != nil {
 		previousSettings := copyProjectSettings(project.Settings)
 		project.Settings = normalizeProjectSettings(*req.Settings)
+		if _, err := parseSessionQueues(project.Settings[projectSessionQueuesKey]); err != nil {
+			s.errorResponse(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		queuesChanged = previousSettings[projectSessionQueuesKey] != project.Settings[projectSessionQueuesKey]
 		s.syncProjectSearchIndexAfterSettingsChange(project, previousSettings)
 	}
 	if req.URLPatterns != nil {
@@ -181,11 +192,16 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to update project: "+err.Error())
 		return
 	}
+	// Detach after the save so a loop firing in between still queues into the old scope,
+	// which the fallback limit covers, instead of a scope the project no longer lists.
+	if queuesChanged {
+		s.detachLoopsFromRemovedQueues(project)
+	}
 
 	// The parallel limit is only read when the queue is triggered; re-trigger so a raised
 	// max_parallel_sessions spawns extra workers for already queued sessions immediately.
 	if req.Settings != nil {
-		s.triggerSerialSessionQueue(project.ID)
+		s.triggerProjectSessionQueues(project)
 		// Switching worktrees off should leave the repository readable by older git again.
 		if root, err := s.resolveProjectRootFolder(project.ID); err == nil && project.Settings[projectWorktreesEnabledSettingKey] != "true" {
 			dropRelativeWorktreesExtension(root)

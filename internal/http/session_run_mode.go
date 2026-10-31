@@ -38,7 +38,7 @@ func (s *Server) applySessionRunMode(ctx context.Context, req *CreateSessionRequ
 		req.QueueMode = sessionQueueModeSerial
 		req.Queued = true
 		// Remote agents do not share this process's tool-execution guard.
-		if decision.Label == "read_only" && decision.Confidence >= .85 && req.UnifiedAgentID == "" && req.DockerAgentID == "" && req.TeamID == "" && !s.hasDirectAgentTarget(sess) {
+		if decision.Label == "read_only" && decision.Confidence >= .85 && req.UnifiedAgentID == "" && req.DockerAgentID == "" && !s.hasDirectAgentTarget(sess) {
 			req.QueueMode = sessionQueueModeNow
 			req.Queued = false
 			sess.Metadata[session.RunModeReadOnlyKey] = true

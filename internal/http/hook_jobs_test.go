@@ -156,3 +156,44 @@ func TestUpdateScheduleLoopToWebhookClearsCron(t *testing.T) {
 		t.Fatalf("switch to webhook did not clear schedule: %+v", got)
 	}
 }
+
+func TestRegisterJobCircleCIWebhook(t *testing.T) {
+	var created map[string]any
+	circle := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Circle-Token") != "tok" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v2/project/gh/acme/app":
+			_, _ = w.Write([]byte(`{"id":"proj-1","slug":"gh/acme/app"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v2/webhook":
+			_ = json.NewDecoder(r.Body).Decode(&created)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"wh-1"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer circle.Close()
+	server, store := newBruteHTTPProxyTestServer(t)
+	now := time.Now()
+	if err := store.SaveIntegration(&storage.Integration{ID: "cci", Provider: "circleci", Name: "CircleCI", Mode: "duplex", Enabled: true,
+		Config: map[string]string{"api_token": "tok", "api_base_url": circle.URL}, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	job := &storage.RecurringJob{ID: "hook-cci", Name: "CI", TaskPrompt: "x", Enabled: true, TriggerType: jobTriggerWebhook,
+		WebhookURL: "https://a2gent.net/hooks/abc", WebhookSigningSecret: "sig", CreatedAt: now, UpdatedAt: now}
+	if err := store.SaveJob(job); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/jobs/hook-cci/webhook/circleci", strings.NewReader(`{"project_slug":"gh/acme/app"}`)))
+	if rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"id":"wh-1"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	scope, _ := created["scope"].(map[string]any)
+	if created["url"] != job.WebhookURL || created["signing-secret"] != "sig" || scope["id"] != "proj-1" || created["name"] != "A2gent hook: CI" {
+		t.Fatalf("unexpected CircleCI webhook payload: %+v", created)
+	}
+}

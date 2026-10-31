@@ -18,6 +18,7 @@ import (
 	"github.com/A2gent/brute/internal/hooks"
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/storage"
+	"github.com/A2gent/brute/internal/tools/integrationtools"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -172,6 +173,17 @@ func (s *Server) handleGetJobWebhookRepository(w http.ResponseWriter, r *http.Re
 	s.jsonResponse(w, http.StatusOK, map[string]interface{}{"repository": s.jobRepository(job)})
 }
 
+func circleCIProjectSlug(repo *codehostreview.Repository) string {
+	if repo == nil {
+		return ""
+	}
+	prefix := map[string]string{hooks.SourceGitHub: "gh", hooks.SourceBitbucket: "bitbucket"}[repo.Provider]
+	if prefix == "" {
+		return ""
+	}
+	return prefix + "/" + repo.Owner + "/" + repo.Name
+}
+
 // bitbucketWebhookEvents maps normalized trigger events to Bitbucket event keys.
 func bitbucketWebhookEvents(triggerEvents string) []string {
 	mapping := map[string][]string{
@@ -237,4 +249,34 @@ func (s *Server) handleRegisterJobBitbucketWebhook(w http.ResponseWriter, r *htt
 		return
 	}
 	s.jsonResponse(w, http.StatusCreated, map[string]string{"uuid": uuid, "repository": repo.Owner + "/" + repo.Name})
+}
+
+func (s *Server) handleRegisterJobCircleCIWebhook(w http.ResponseWriter, r *http.Request) {
+	job, err := s.store.GetJob(chi.URLParam(r, "jobID"))
+	if err != nil {
+		s.errorResponse(w, http.StatusNotFound, "Job not found: "+err.Error())
+		return
+	}
+	if job.WebhookURL == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Connect the hook to a2gent.net first")
+		return
+	}
+	var req struct {
+		ProjectSlug string `json:"project_slug"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	slug := strings.Trim(strings.TrimSpace(req.ProjectSlug), "/")
+	if slug == "" {
+		slug = circleCIProjectSlug(s.jobRepository(job))
+	}
+	if slug == "" {
+		s.errorResponse(w, http.StatusBadRequest, "CircleCI project slug is required (gh/org/repo or bitbucket/workspace/repo)")
+		return
+	}
+	id, err := integrationtools.CreateCircleCIWorkflowWebhook(r.Context(), s.store, slug, "A2gent hook: "+job.Name, job.WebhookURL, job.WebhookSigningSecret)
+	if err != nil {
+		s.errorResponse(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	s.jsonResponse(w, http.StatusCreated, map[string]string{"id": id, "project_slug": slug})
 }

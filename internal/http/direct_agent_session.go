@@ -241,6 +241,7 @@ func injectedDuringRun(md map[string]interface{}) bool {
 // appendDirectAgentReply persists the child's current turn (activity, then the
 // reply) into the parent. Shared by the streaming and background run paths.
 func appendDirectAgentReply(sess *session.Session, resp ChatResponse) {
+	addDirectAgentUsage(sess, resp.Usage)
 	final := directAgentFinalReplyIndex(resp.Messages)
 	for _, m := range directAgentTurnActivity(resp.Messages, final) {
 		m.Metadata[directAgentActivityMarker] = true
@@ -257,6 +258,35 @@ func appendDirectAgentReply(sess *session.Session, resp ChatResponse) {
 	}
 	meta[directAgentActivityMarker] = true
 	sess.AddAssistantMessageWithMetadata(resp.Content, nil, meta)
+}
+
+// addDirectAgentUsage accumulates the child's turn usage into the parent's totals.
+// WHY: the child runs in another Brute process, so the parent never records tokens
+// itself and its list row (and the project's "Today" counter) stayed at 0.
+// The child's InputTokens is a sum over every LLM call of the full prompt
+// (cache reads included), so it is kept only in billed_input_tokens.
+// total_input_tokens gets the uncached part, which approximates the
+// context-growth metric native sessions record (agent/metadata.go).
+func addDirectAgentUsage(sess *session.Session, usage UsageResponse) {
+	if usage.InputTokens <= 0 && usage.OutputTokens <= 0 {
+		return
+	}
+	if sess.Metadata == nil {
+		sess.Metadata = map[string]interface{}{}
+	}
+	input := max(usage.InputTokens, 0)
+	cached := min(max(usage.CachedInputTokens, 0), input)
+	add := func(key string, value int) {
+		if value > 0 {
+			sess.Metadata[key] = metadataNumber(sess.Metadata, key) + float64(value)
+		}
+	}
+	add("total_input_tokens", input-cached)
+	add("total_output_tokens", max(usage.OutputTokens, 0))
+	add("total_cached_input_tokens", cached)
+	add("total_reasoning_tokens", max(usage.ReasoningTokens, 0))
+	add("billed_input_tokens", input)
+	add("billed_cached_input_tokens", cached)
 }
 
 // sessionMessageFromResponse converts a child message for parent storage. The

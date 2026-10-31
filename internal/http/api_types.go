@@ -26,8 +26,6 @@ type CreateSessionRequest struct {
 	// Docker agents reference an already running local Brute container.
 	UnifiedAgentID string `json:"unified_agent_id,omitempty"`
 	DockerAgentID  string `json:"docker_agent_id,omitempty"`
-	// Optional team launch target. When set, create a team_run header for the parent session.
-	TeamID string `json:"team_id,omitempty"`
 	// Optional branch for the session worktree (worktree-enabled projects); defaults to a2gent/<session-short-id>.
 	// An existing branch is continued instead of created.
 	Branch string `json:"branch,omitempty"`
@@ -344,8 +342,19 @@ type StreamRuntimeWarningPayload struct {
 
 // UsageResponse represents token usage
 type UsageResponse struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens       int `json:"input_tokens"`
+	OutputTokens      int `json:"output_tokens"`
+	CachedInputTokens int `json:"cached_input_tokens,omitempty"`
+	ReasoningTokens   int `json:"reasoning_tokens,omitempty"`
+}
+
+func usageResponseFromLLM(usage llm.TokenUsage) UsageResponse {
+	return UsageResponse{
+		InputTokens:       usage.InputTokens,
+		OutputTokens:      usage.OutputTokens,
+		CachedInputTokens: usage.CachedInputTokens,
+		ReasoningTokens:   usage.ReasoningTokens,
+	}
 }
 
 // SessionListItem represents a session in the list
@@ -368,6 +377,8 @@ type SessionListItem struct {
 	TotalTokens        int                    `json:"total_tokens"`
 	InputTokens        int                    `json:"input_tokens"`
 	OutputTokens       int                    `json:"output_tokens"`
+	CachedInputTokens  int                    `json:"cached_input_tokens,omitempty"`
+	BilledInputTokens  int                    `json:"billed_input_tokens,omitempty"`
 	RunDurationSeconds int64                  `json:"run_duration_seconds"`
 	TaskProgress       string                 `json:"task_progress,omitempty"`
 	PromptCache        *PromptCachePayload    `json:"prompt_cache,omitempty"`
@@ -440,6 +451,7 @@ type CreateJobRequest struct {
 	LLMProvider        string `json:"llm_provider,omitempty"`
 	LLMModel           string `json:"llm_model,omitempty"`
 	QueueSerial        *bool  `json:"queue_serial,omitempty"` // default true
+	QueueName          string `json:"queue_name,omitempty"`
 	GateTool           string `json:"gate_tool,omitempty"`
 	GateParams         string `json:"gate_params,omitempty"`
 	GateQuestion       string `json:"gate_question,omitempty"`
@@ -464,6 +476,7 @@ type UpdateJobRequest struct {
 	LLMProvider        *string `json:"llm_provider,omitempty"`
 	LLMModel           string  `json:"llm_model,omitempty"`
 	QueueSerial        *bool   `json:"queue_serial,omitempty"`
+	QueueName          *string `json:"queue_name,omitempty"`
 	GateTool           *string `json:"gate_tool,omitempty"`
 	GateParams         *string `json:"gate_params,omitempty"`
 	GateQuestion       *string `json:"gate_question,omitempty"`
@@ -490,6 +503,7 @@ type JobResponse struct {
 	LLMProvider        string     `json:"llm_provider,omitempty"`
 	LLMModel           string     `json:"llm_model,omitempty"`
 	QueueSerial        bool       `json:"queue_serial"`
+	QueueName          string     `json:"queue_name,omitempty"`
 	GateTool           string     `json:"gate_tool,omitempty"`
 	GateParams         string     `json:"gate_params,omitempty"`
 	GateQuestion       string     `json:"gate_question,omitempty"`

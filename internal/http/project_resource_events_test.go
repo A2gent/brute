@@ -58,7 +58,7 @@ func TestProjectResourceHTTPMutations(t *testing.T) {
 	oldRunCommand := runCommand
 	runCommand = func(context.Context, string, ...string) (string, error) { return "", nil }
 	t.Cleanup(func() { runCommand = oldRunCommand })
-	for _, resource := range []string{"databases", "mcp", "teams", "agents"} {
+	for _, resource := range []string{"databases", "mcp", "agents"} {
 		t.Run(resource, func(t *testing.T) {
 			server, store := newUnifiedAgentsTestServer(t)
 			folder := t.TempDir()
@@ -80,16 +80,12 @@ func TestProjectResourceHTTPMutations(t *testing.T) {
 				path = "/mcp/servers"
 				create = map[string]interface{}{"name": "MCP", "project_id": projectID, "transport": "http", "url": "http://localhost:8080/mcp"}
 				update = create
-			case "teams":
-				path = "/teams"
-				create = map[string]interface{}{"project_id": projectID, "yaml": teamsAPIValidYAML}
-				update = create
 			case "agents":
 				path = "/sub-agents"
 				create = map[string]interface{}{"project_id": projectID, "name": "Reviewer"}
 				update = create
 			}
-			created := requestTeamJSON(t, server, http.MethodPost, path, create)
+			created := requestProjectJSON(t, server, http.MethodPost, path, create)
 			if created.Code != http.StatusCreated {
 				t.Fatalf("POST %s = %d: %s", path, created.Code, created.Body.String())
 			}
@@ -101,12 +97,12 @@ func TestProjectResourceHTTPMutations(t *testing.T) {
 				t.Fatalf("create response = %s, error = %v", created.Body.String(), err)
 			}
 			path += "/" + record.ID
-			updated := requestTeamJSON(t, server, http.MethodPut, path, update)
+			updated := requestProjectJSON(t, server, http.MethodPut, path, update)
 			if updated.Code != http.StatusOK {
 				t.Fatalf("PUT %s = %d: %s", path, updated.Code, updated.Body.String())
 			}
 			assertResourceEvent(t, events, resource, projectID)
-			deleted := requestTeamJSON(t, server, http.MethodDelete, path, nil)
+			deleted := requestProjectJSON(t, server, http.MethodDelete, path, nil)
 			if deleted.Code != http.StatusNoContent && deleted.Code != http.StatusOK {
 				t.Fatalf("DELETE %s = %d: %s", path, deleted.Code, deleted.Body.String())
 			}
@@ -263,7 +259,7 @@ func TestDatabaseDeleteInvalidatesActualOwner(t *testing.T) {
 	}
 	events, unsubscribe := server.SubscribeSessionCatalogEvents(owner)
 	defer unsubscribe()
-	response := requestTeamJSON(t, server, http.MethodDelete, "/projects/not-the-owner/databases/database", nil)
+	response := requestProjectJSON(t, server, http.MethodDelete, "/projects/not-the-owner/databases/database", nil)
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("delete = %d: %s", response.Code, response.Body.String())
 	}

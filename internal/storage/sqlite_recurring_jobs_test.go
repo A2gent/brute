@@ -352,3 +352,58 @@ func TestListSessionsIncludesRecurringJobSessions(t *testing.T) {
 		t.Fatalf("ListSessions job_id = %v, want %q", listedJobSession.JobID, jobID)
 	}
 }
+
+func TestJobQueueNamePersistenceAndDetach(t *testing.T) {
+	store, err := NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC()
+	projectID := "project-job-queue-name"
+	if err := store.SaveProject(&Project{ID: projectID, Name: "Queues", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("SaveProject: %v", err)
+	}
+
+	keep := &RecurringJob{ID: "job-keep", ProjectID: &projectID, Name: "Keep", ScheduleHuman: "hourly", ScheduleCron: "0 * * * *",
+		TaskPrompt: "work", QueueSerial: true, QueueName: "godot", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	drop := &RecurringJob{ID: "job-drop", ProjectID: &projectID, Name: "Drop", ScheduleHuman: "hourly", ScheduleCron: "0 * * * *",
+		TaskPrompt: "work", QueueSerial: true, QueueName: "images", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	unrelated := &RecurringJob{ID: "job-unbound", ProjectID: &projectID, Name: "Unbound", ScheduleHuman: "hourly", ScheduleCron: "0 * * * *",
+		TaskPrompt: "work", QueueSerial: true, Enabled: true, CreatedAt: now, UpdatedAt: now}
+	for _, job := range []*RecurringJob{keep, drop, unrelated} {
+		if err := store.SaveJob(job); err != nil {
+			t.Fatalf("SaveJob(%s): %v", job.ID, err)
+		}
+	}
+
+	stored, err := store.GetJob(keep.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if stored.QueueName != "godot" {
+		t.Fatalf("stored queue name = %q, want godot", stored.QueueName)
+	}
+
+	cleared, err := store.DetachQueuesFromJobs(projectID, []string{"godot"})
+	if err != nil {
+		t.Fatalf("DetachQueuesFromJobs: %v", err)
+	}
+	if cleared != 1 {
+		t.Fatalf("detached rows = %d, want 1", cleared)
+	}
+
+	storedKeep, _ := store.GetJob(keep.ID)
+	if storedKeep.QueueName != "godot" {
+		t.Fatalf("kept loop queue = %q, want godot", storedKeep.QueueName)
+	}
+	storedDrop, _ := store.GetJob(drop.ID)
+	if storedDrop.QueueName != "" {
+		t.Fatalf("dropped loop queue = %q, want cleared", storedDrop.QueueName)
+	}
+	storedUnbound, _ := store.GetJob(unrelated.ID)
+	if storedUnbound.QueueName != "" {
+		t.Fatalf("unbound loop queue = %q, want empty", storedUnbound.QueueName)
+	}
+}

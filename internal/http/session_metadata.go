@@ -19,6 +19,8 @@ const (
 	sessionQueueModeMetadataKey = "queue_mode"
 	sessionQueueAutoStartKey    = "queue_auto_start"
 	sessionQueuePausedKey       = "queue_paused"
+	// Named queue of the loop that created the session; empty means the project default queue.
+	sessionQueueNameKey = "queue_name"
 	// WHY: Marks investigation/decision sessions so Caesar can pin them after completion
 	// as a feedback reminder above ordinary fix-it runs.
 	sessionNeedsFeedbackKey = "needs_feedback"
@@ -98,6 +100,32 @@ func sessionQueueAutoStart(sess *session.Session) bool {
 
 func sessionIsSerialQueuedAutoRun(sess *session.Session) bool {
 	return sessionQueueMode(sess) == sessionQueueModeSerial && sessionQueueAutoStart(sess)
+}
+
+func sessionQueueName(sess *session.Session) string {
+	if sess == nil || sess.Metadata == nil {
+		return ""
+	}
+	raw, ok := sess.Metadata[sessionQueueNameKey].(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(raw)
+}
+
+func setSessionQueueName(sess *session.Session, name string) {
+	if sess == nil {
+		return
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		delete(sess.Metadata, sessionQueueNameKey)
+		return
+	}
+	if sess.Metadata == nil {
+		sess.Metadata = map[string]interface{}{}
+	}
+	sess.Metadata[sessionQueueNameKey] = name
 }
 
 func sessionIsQueuePaused(sess *session.Session) bool {

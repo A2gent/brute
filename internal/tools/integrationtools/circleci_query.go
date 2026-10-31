@@ -332,15 +332,30 @@ func (t *CircleCIQueryTool) doCircleCIGet(ctx context.Context, creds circleCICre
 }
 
 func (t *CircleCIQueryTool) circleCIGetBytes(ctx context.Context, creds circleCICredentials, path string, query url.Values) ([]byte, error) {
+	return t.circleCIDo(ctx, creds, http.MethodGet, path, query, nil)
+}
+
+func (t *CircleCIQueryTool) circleCIDo(ctx context.Context, creds circleCICredentials, method, path string, query url.Values, payload any) ([]byte, error) {
 	reqURL := creds.BaseURL + path
 	if len(query) > 0 {
 		reqURL += "?" + query.Encode()
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	var reqBody io.Reader
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return nil, err
+		}
+		reqBody = bytes.NewReader(encoded)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CircleCI request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	req.Header.Set("Circle-Token", creds.Token)
 
 	resp, err := t.client.Do(req)

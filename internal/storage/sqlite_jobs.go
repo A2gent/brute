@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -12,7 +13,7 @@ const recurringJobSelectColumns = `
 	id, project_id, name, schedule_human, schedule_cron, task_prompt, task_prompt_source, task_prompt_file,
 	run_target,
 	launch_agent_id, launch_agent_name, launch_agent_runtime, unified_agent_id, docker_agent_id,
-	llm_provider, llm_model, queue_serial, gate_tool, gate_params, gate_question,
+	llm_provider, llm_model, queue_serial, queue_name, gate_tool, gate_params, gate_question,
 	trigger_type, trigger_source, trigger_events, trigger_branches, trigger_condition, webhook_endpoint_id, webhook_url, webhook_signing_secret,
 	enabled, last_run_at, next_run_at, created_at, updated_at
 `
@@ -29,7 +30,7 @@ func scanRecurringJob(
 		&job.ID, &projectID, &job.Name, &job.ScheduleHuman, &job.ScheduleCron, &job.TaskPrompt, &job.TaskPromptSource, &job.TaskPromptFile,
 		&job.RunTarget,
 		&job.LaunchAgentID, &job.LaunchAgentName, &job.LaunchAgentRun, &job.UnifiedAgentID, &job.DockerAgentID,
-		&job.LLMProvider, &job.LLMModel, &queueSerial, &job.GateTool, &job.GateParams, &job.GateQuestion,
+		&job.LLMProvider, &job.LLMModel, &queueSerial, &job.QueueName, &job.GateTool, &job.GateParams, &job.GateQuestion,
 		&job.TriggerType, &job.TriggerSource, &job.TriggerEvents, &job.TriggerBranches, &job.TriggerCondition, &job.WebhookEndpointID, &job.WebhookURL, &job.WebhookSigningSecret,
 		&enabled, &lastRunAt, &nextRunAt, &job.CreatedAt, &job.UpdatedAt,
 	)
@@ -53,7 +54,7 @@ func scanRecurringJob(
 func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
 	_, err := s.db.Exec(`
 		INSERT INTO recurring_jobs (`+recurringJobSelectColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			project_id = excluded.project_id,
 			name = excluded.name,
@@ -71,6 +72,7 @@ func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
 			llm_provider = excluded.llm_provider,
 			llm_model = excluded.llm_model,
 			queue_serial = excluded.queue_serial,
+			queue_name = excluded.queue_name,
 			gate_tool = excluded.gate_tool,
 			gate_params = excluded.gate_params,
 			gate_question = excluded.gate_question,
@@ -89,7 +91,7 @@ func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
 	`, job.ID, nullableString(job.ProjectID), job.Name, job.ScheduleHuman, job.ScheduleCron, job.TaskPrompt, job.TaskPromptSource, job.TaskPromptFile,
 		job.RunTarget,
 		job.LaunchAgentID, job.LaunchAgentName, job.LaunchAgentRun, job.UnifiedAgentID, job.DockerAgentID,
-		job.LLMProvider, job.LLMModel, job.QueueSerial, job.GateTool, job.GateParams, job.GateQuestion,
+		job.LLMProvider, job.LLMModel, job.QueueSerial, job.QueueName, job.GateTool, job.GateParams, job.GateQuestion,
 		normalizeTriggerType(job.TriggerType), job.TriggerSource, job.TriggerEvents, job.TriggerBranches, job.TriggerCondition, job.WebhookEndpointID, job.WebhookURL, job.WebhookSigningSecret,
 		job.Enabled, job.LastRunAt, job.NextRunAt, job.CreatedAt, job.UpdatedAt)
 	if err != nil {
@@ -168,6 +170,28 @@ func (s *SQLiteStore) ListJobs() ([]*RecurringJob, error) {
 func (s *SQLiteStore) DeleteJob(id string) error {
 	_, err := s.db.Exec("DELETE FROM recurring_jobs WHERE id = ?", id)
 	return err
+}
+
+// DetachQueuesFromJobs clears queue bindings pointing at queues a project no longer declares.
+func (s *SQLiteStore) DetachQueuesFromJobs(projectID string, keep []string) (int64, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return 0, nil
+	}
+	query := `UPDATE recurring_jobs SET queue_name = '', updated_at = ?
+		WHERE project_id = ? AND queue_name != ''`
+	args := []interface{}{time.Now(), projectID}
+	if len(keep) > 0 {
+		query += ` AND queue_name NOT IN (?` + strings.Repeat(", ?", len(keep)-1) + `)`
+		for _, name := range keep {
+			args = append(args, strings.TrimSpace(name))
+		}
+	}
+	result, err := s.db.Exec(query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("failed to detach loops from removed queues: %w", err)
+	}
+	return result.RowsAffected()
 }
 
 // GetDueJobs returns jobs that are due to run (next_run_at <= now and enabled)

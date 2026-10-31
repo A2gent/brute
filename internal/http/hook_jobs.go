@@ -40,7 +40,7 @@ func normalizeJobTriggerType(value string) string {
 
 func normalizeHookSource(value string) (string, error) {
 	switch v := strings.TrimSpace(value); v {
-	case "", hooks.SourceGitHub, hooks.SourceBitbucket, hooks.SourceGeneric:
+	case "", hooks.SourceGitHub, hooks.SourceBitbucket, hooks.SourceCircleCI, hooks.SourceGeneric:
 		return v, nil
 	default:
 		return "", fmt.Errorf("unsupported trigger source: %s", v)

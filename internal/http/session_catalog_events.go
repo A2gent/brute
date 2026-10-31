@@ -45,14 +45,13 @@ type SessionCatalogEvent struct {
 // clients can patch those lists without re-fetching them.
 var sessionCatalogMetadataKeys = map[string]struct{}{
 	"source": {}, "created_by": {}, "plan_spec": {}, "inline_review": {},
-	"queue_mode": {}, "queue_paused": {}, "needs_feedback": {}, "team_id": {},
+	"queue_mode": {}, "queue_name": {}, "queue_paused": {}, "needs_feedback": {},
 	"run_mode_override": {},
-	"team_run_id":       {}, "team_role": {}, "team_message_count": {}, "team_talking_line": {},
-	"launch_target": {}, "link_type": {},
+	"launch_target":     {}, "link_type": {},
 	"launch_agent_id": {}, "launch_agent_name": {}, "launch_agent_runtime": {},
 	"unified_agent_id": {}, "sub_agent_id": {}, "sub_agent_name": {},
 	"session_action_source_key": {},
-	"session_action_card_key": {}, "session_action_prompt_hash": {}, "title": {}, "severity": {},
+	"session_action_card_key":   {}, "session_action_prompt_hash": {}, "title": {}, "severity": {},
 	"files": {}, "continuation_reason": {}, "from_provider": {}, "from_model": {},
 }
 

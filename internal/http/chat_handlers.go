@@ -92,10 +92,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		Content:  result.Content,
 		Messages: s.messagesToResponse(sess.Messages),
 		Status:   string(sess.Status),
-		Usage: UsageResponse{
-			InputTokens:  result.Usage.InputTokens,
-			OutputTokens: result.Usage.OutputTokens,
-		},
+		Usage:    usageResponseFromLLM(result.Usage),
 	}
 
 	s.jsonResponse(w, http.StatusOK, resp)

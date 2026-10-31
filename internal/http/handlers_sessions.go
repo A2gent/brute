@@ -172,6 +172,8 @@ func (s *Server) sessionListItem(sess *session.Session) SessionListItem {
 		TotalTokens:        inputTokens + outputTokens,
 		InputTokens:        inputTokens,
 		OutputTokens:       outputTokens,
+		CachedInputTokens:  int(metadataNumber(sess.Metadata, "total_cached_input_tokens")),
+		BilledInputTokens:  int(metadataNumber(sess.Metadata, "billed_input_tokens")),
 		RunDurationSeconds: sessionRunDurationSeconds(sess.CreatedAt, sess.UpdatedAt, string(sess.Status)),
 		TaskProgress:       sess.TaskProgress,
 		PromptCache:        sessionPromptCache(sess, s.config),
@@ -306,6 +308,11 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			if k == "" {
 				continue
 			}
+			// Only loops may bind a session to a named queue; a raw metadata value would
+			// otherwise create a scope nobody declared and dodge the project limit.
+			if k == sessionQueueNameKey {
+				continue
+			}
 			sess.Metadata[k] = value
 		}
 		if err := s.sessionManager.Save(sess); err != nil {
@@ -314,6 +321,12 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if linkedContinuation != nil {
 		applyLinkedContinuationSessionMetadata(sess, *linkedContinuation)
+	}
+	if parentSession != nil && sessionQueueName(sess) == "" && req.ProjectID != "" && parentSession.ProjectID != nil &&
+		strings.TrimSpace(*parentSession.ProjectID) == req.ProjectID {
+		// Follow-up work of a queued loop run belongs to the same pipeline, but only
+		// inside the project that actually declares that queue.
+		setSessionQueueName(sess, sessionQueueName(parentSession))
 	}
 	s.applySessionRunMode(r.Context(), &req, sess)
 	if req.QueueMode != "" {
@@ -450,10 +463,6 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			logging.Warn("Failed to persist task session metadata: %v", err)
 		}
 	}
-	if err := s.attachTeamRunToCreatedSession(sess, strings.TrimSpace(req.TeamID)); err != nil {
-		s.errorResponse(w, http.StatusBadRequest, err.Error())
-		return
-	}
 	_ = s.ensureSessionSystemPromptSnapshot(sess)
 	if req.Queued && sessionIsSerialQueuedAutoRun(sess) {
 		s.triggerSerialSessionQueueForSession(sess)
@@ -488,12 +497,17 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionID")
-	_, release, err := s.sessionManager.AcquireRun(r.Context(), sessionID)
+	leaseCtx, release, err := s.sessionManager.AcquireRun(s.sessionRunParentContext(), sessionID)
 	if err != nil {
 		s.errorResponse(w, 409, "Session is busy")
 		return
 	}
-	defer release()
+	leaseHandedOff := false
+	defer func() {
+		if !leaseHandedOff {
+			release()
+		}
+	}()
 
 	sess, err := s.sessionManager.Get(sessionID)
 	if err != nil {
@@ -515,7 +529,10 @@ func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
 		setSessionQueuePaused(sess, false)
 	}
 
+	initialPrompt := ""
+	runInBackground := false
 	if sessionIsSerialQueuedAutoRun(sess) {
+		initialPrompt, _, runInBackground = firstQueuedUserMessage(sess)
 		// Serial-queued sessions defer worktree creation until execution; manual Start
 		// bypasses the queue, so provision the isolated workspace before marking running.
 		if sess.ProjectID != nil && (sess.ParentID == nil || *sess.ParentID == "") && s.sessionWorktree(sess) == nil {
@@ -531,6 +548,7 @@ func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
 		}
 		delete(sess.Metadata, sessionQueueAutoStartKey)
 		delete(sess.Metadata, sessionQueueModeMetadataKey)
+		delete(sess.Metadata, sessionQueueNameKey)
 	}
 
 	sess.SetStatus(session.StatusRunning)
@@ -541,7 +559,18 @@ func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
 
 	logging.LogSession("started", sess.ID, fmt.Sprintf("agent=%s via HTTP", sess.AgentID))
 
+	if !runInBackground {
+		s.jsonResponse(w, http.StatusOK, s.sessionToResponse(sess))
+		return
+	}
+
+	runCtx, finishRun := s.beginBackgroundSessionRun(leaseCtx, sess.ID)
 	s.jsonResponse(w, http.StatusOK, s.sessionToResponse(sess))
+	leaseHandedOff = true
+	go func() {
+		defer release()
+		s.runBackgroundSession(runCtx, finishRun, sess, initialPrompt)
+	}()
 }
 
 func (s *Server) handleUpdateSessionProject(w http.ResponseWriter, r *http.Request) {

@@ -78,6 +78,12 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, http.StatusBadRequest, projectErr.Error())
 		return
 	}
+	// Validate before the LLM schedule parse so a typo in the queue name fails instantly.
+	queueName, queueErr := s.validateJobQueueName(projectID, req.QueueName)
+	if queueErr != nil {
+		s.errorResponse(w, http.StatusBadRequest, queueErr.Error())
+		return
+	}
 
 	taskPromptSource := jobs.NormalizeTaskPromptSource(req.TaskPromptSource)
 	taskPromptFile := strings.TrimSpace(req.TaskPromptFile)
@@ -128,6 +134,7 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:        now,
 	}
 	applyCreateJobRunConfig(job, req)
+	job.QueueName = queueName
 	if err := applyJobTrigger(job, req.JobTriggerFields); err != nil {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
@@ -226,6 +233,15 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 	job.TaskPromptFile = strings.TrimSpace(taskPromptFile)
 	job.TaskPrompt = strings.TrimSpace(taskPrompt)
 	applyUpdateJobRunConfig(job, req)
+	// Also revalidate when the loop moves projects: the old queue may not exist in the new one.
+	if req.QueueName != nil || req.ProjectID != nil {
+		queueName, queueErr := s.validateJobQueueName(job.ProjectID, job.QueueName)
+		if queueErr != nil {
+			s.errorResponse(w, http.StatusBadRequest, queueErr.Error())
+			return
+		}
+		job.QueueName = queueName
+	}
 	wasWebhook := job.TriggerType == jobTriggerWebhook
 	if err := applyJobTriggerUpdate(job, req.JobTriggerUpdateFields); err != nil {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
@@ -401,6 +417,7 @@ func (s *Server) jobToResponse(job *storage.RecurringJob) JobResponse {
 		LLMProvider:        job.LLMProvider,
 		LLMModel:           strings.TrimSpace(job.LLMModel),
 		QueueSerial:        job.QueueSerial,
+		QueueName:          strings.TrimSpace(job.QueueName),
 		GateTool:           job.GateTool,
 		GateParams:         job.GateParams,
 		GateQuestion:       job.GateQuestion,

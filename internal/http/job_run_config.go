@@ -20,6 +20,7 @@ func applyCreateJobRunConfig(job *storage.RecurringJob, req CreateJobRequest) {
 	job.LLMProvider = normalizeJobLLMProvider(req.LLMProvider)
 	job.LLMModel = strings.TrimSpace(req.LLMModel)
 	job.QueueSerial = req.QueueSerial == nil || *req.QueueSerial
+	job.QueueName = strings.TrimSpace(req.QueueName)
 	job.GateTool = strings.TrimSpace(req.GateTool)
 	job.GateParams = strings.TrimSpace(req.GateParams)
 	job.GateQuestion = strings.TrimSpace(req.GateQuestion)
@@ -39,6 +40,9 @@ func applyUpdateJobRunConfig(job *storage.RecurringJob, req UpdateJobRequest) {
 	}
 	if req.QueueSerial != nil {
 		job.QueueSerial = *req.QueueSerial
+	}
+	if req.QueueName != nil {
+		job.QueueName = strings.TrimSpace(*req.QueueName)
 	}
 	if req.GateTool != nil {
 		job.GateTool = strings.TrimSpace(*req.GateTool)

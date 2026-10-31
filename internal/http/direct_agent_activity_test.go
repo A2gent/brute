@@ -359,3 +359,36 @@ func TestHydrateDirectAgentShowsInFlightTurn(t *testing.T) {
 		t.Fatalf("idle session must not get in-flight activity: %+v", done)
 	}
 }
+
+func TestAppendDirectAgentReplyAccumulatesChildUsage(t *testing.T) {
+	sess := session.New("build")
+	appendDirectAgentReply(sess, ChatResponse{Content: "one", Usage: UsageResponse{InputTokens: 100, OutputTokens: 20}})
+	appendDirectAgentReply(sess, ChatResponse{Content: "two", Usage: UsageResponse{InputTokens: 50, OutputTokens: 5}})
+
+	if got := sessionTotalTokens(sess); got != 175 {
+		t.Fatalf("total tokens = %d, want 175", got)
+	}
+}
+
+func TestAddDirectAgentUsageCountsOnlyUncachedInput(t *testing.T) {
+	sess := session.New("build")
+	addDirectAgentUsage(sess, UsageResponse{InputTokens: 1_000_000, CachedInputTokens: 990_000, OutputTokens: 500, ReasoningTokens: 40})
+	addDirectAgentUsage(sess, UsageResponse{InputTokens: 2_000_000, CachedInputTokens: 1_995_000, OutputTokens: 300})
+
+	want := map[string]float64{
+		"total_input_tokens":         15_000,
+		"total_output_tokens":        800,
+		"total_cached_input_tokens":  2_985_000,
+		"total_reasoning_tokens":     40,
+		"billed_input_tokens":        3_000_000,
+		"billed_cached_input_tokens": 2_985_000,
+	}
+	for key, value := range want {
+		if got := metadataNumber(sess.Metadata, key); got != value {
+			t.Errorf("%s = %v, want %v", key, got, value)
+		}
+	}
+	if got := sessionTotalTokens(sess); got != 15_800 {
+		t.Fatalf("total tokens = %d, want 15800", got)
+	}
+}

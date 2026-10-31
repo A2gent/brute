@@ -167,15 +167,13 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 	if event := s.inputRequiredStreamEvent(sess); event != nil {
 		s.publishSessionEvent(sess.ID, *event)
 	}
+	doneUsage := usageResponseFromLLM(result.Usage)
 	s.publishSessionEvent(sess.ID, ChatStreamEvent{
 		Type:     "done",
 		Content:  result.Content,
 		Messages: s.messagesToResponse(sess.Messages),
 		Status:   string(sess.Status),
-		Usage: &UsageResponse{
-			InputTokens:  result.Usage.InputTokens,
-			OutputTokens: result.Usage.OutputTokens,
-		},
+		Usage:    &doneUsage,
 	})
 	s.triggerSerialSessionQueueIfAdvanceable(sess)
 	return nil

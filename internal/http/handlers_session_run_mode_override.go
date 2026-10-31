@@ -68,6 +68,7 @@ func (s *Server) handleOverrideSessionRunMode(w http.ResponseWriter, r *http.Req
 		delete(sess.Metadata, sessionQueueModeMetadataKey)
 		delete(sess.Metadata, sessionQueueAutoStartKey)
 		delete(sess.Metadata, sessionQueuePausedKey)
+		delete(sess.Metadata, sessionQueueNameKey)
 		sess.Metadata["run_mode_override"] = "now"
 		sess.SetStatus(session.StatusRunning)
 	case sessionQueueModeSerial:

@@ -70,7 +70,6 @@ func (s *Server) setupRoutes() {
 	s.registerSessionRoutes(r)
 	s.registerSessionTemplateRoutes(r)
 	s.registerProjectRoutes(r)
-	s.registerTeamRoutes(r)
 	s.registerJobRoutes(r)
 	s.registerMindRoutes(r)
 	s.registerSubAgentRoutes(r)
@@ -408,6 +407,7 @@ func (s *Server) registerProjectRoutes(r chi.Router) {
 		r.Put("/file", s.handleUpsertProjectFile)
 		r.Delete("/file", s.handleDeleteProjectFile)
 		r.Post("/file/move", s.handleMoveProjectFile)
+		r.Post("/file/upload", s.handleUploadProjectFiles)
 		r.Post("/folder", s.handleCreateProjectFolder)
 		r.Post("/rename", s.handleRenameProjectEntry)
 		// Dynamic route must come last.
@@ -447,19 +447,6 @@ func (s *Server) registerProjectRoutes(r chi.Router) {
 	})
 }
 
-func (s *Server) registerTeamRoutes(r chi.Router) {
-	r.Route("/teams", func(r chi.Router) {
-		r.Get("/", s.handleListTeams)
-		r.Post("/", s.handleCreateTeam)
-		r.Post("/import-yaml", s.handleImportTeamYAML)
-		r.Get("/{teamID}", s.handleGetTeam)
-		r.Put("/{teamID}", s.handleUpdateTeam)
-		r.Delete("/{teamID}", s.handleDeleteTeam)
-		r.Get("/{teamID}/yaml", s.handleExportTeamYAML)
-	})
-	s.registerTeamRunRoutes(r)
-}
-
 func (s *Server) registerJobRoutes(r chi.Router) {
 	// Recurring jobs endpoints
 	r.Route("/jobs", func(r chi.Router) {
@@ -477,6 +464,7 @@ func (s *Server) registerJobRoutes(r chi.Router) {
 		r.Delete("/{jobID}/webhook", s.handleDisconnectJobWebhook)
 		r.Get("/{jobID}/webhook/repository", s.handleGetJobWebhookRepository)
 		r.Post("/{jobID}/webhook/bitbucket", s.handleRegisterJobBitbucketWebhook)
+		r.Post("/{jobID}/webhook/circleci", s.handleRegisterJobCircleCIWebhook)
 	})
 }
 

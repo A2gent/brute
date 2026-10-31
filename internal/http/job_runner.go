@@ -184,6 +184,7 @@ func (s *Server) prepareJobExecution(job *storage.RecurringJob, extraContext str
 	if job.QueueSerial {
 		sess.Metadata[sessionQueueModeMetadataKey] = sessionQueueModeSerial
 		sess.Metadata[sessionQueueAutoStartKey] = true
+		setSessionQueueName(sess, job.QueueName)
 		sess.SetStatus(session.StatusQueued)
 	} else {
 		sess.SetStatus(session.StatusRunning)

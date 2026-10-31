@@ -8,6 +8,7 @@ import (
 
 	"github.com/A2gent/brute/internal/logging"
 	"github.com/A2gent/brute/internal/session"
+	"github.com/A2gent/brute/internal/storage"
 )
 
 const serialQueueGlobalScope = "__global__"
@@ -20,15 +21,39 @@ const (
 
 // serialQueueLimitForScope returns the number of concurrent queue workers allowed for a scope.
 // Defaults to 1 (strictly serial) for the global scope and for projects without the setting.
+// A named queue uses its own limit and falls back to the default queue limit once deleted.
 func (s *Server) serialQueueLimitForScope(scope string) int {
 	if scope == serialQueueGlobalScope || s.store == nil {
 		return 1
 	}
-	project, err := s.store.GetProject(scope)
+	projectID, queueName := splitSerialQueueScope(scope)
+	project, err := s.store.GetProject(projectID)
 	if err != nil || project == nil {
 		return 1
 	}
+	if queueName != "" {
+		if limit, ok := sessionQueueLimit(project.Settings, queueName); ok {
+			return limit
+		}
+	}
 	return parseMaxParallelSessions(project.Settings[projectMaxParallelSessionsKey])
+}
+
+// triggerProjectSessionQueues tops up every queue of a project, including named ones.
+func (s *Server) triggerProjectSessionQueues(project *storage.Project) {
+	if project == nil {
+		return
+	}
+	s.triggerSerialSessionQueue(project.ID)
+	queues, err := parseSessionQueues(project.Settings[projectSessionQueuesKey])
+	if err != nil {
+		logging.Warn("Skipped named session queues of project %s: %v", project.ID, err)
+	}
+	for _, queue := range queues {
+		s.triggerSerialSessionQueue(serialQueueScope(project.ID, queue.Name))
+	}
+	// Always run the safety net: sessions may sit in scopes that settings no longer declare.
+	s.triggerQueuedSessionScopes(project.ID)
 }
 
 func parseMaxParallelSessions(raw string) int {
@@ -84,6 +109,34 @@ func (s *Server) triggerSerialSessionQueue(scope string) {
 	}
 }
 
+// triggerQueuedSessionScopes tops up every queue that already holds queued sessions of a
+// project, including queues removed from settings: those sessions fall back to the project
+// default limit instead of waiting forever in a scope nobody triggers.
+func (s *Server) triggerQueuedSessionScopes(projectID string) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" || s.sessionManager == nil {
+		return
+	}
+	sessions, err := s.sessionManager.List()
+	if err != nil {
+		logging.Warn("Failed to list queued session scopes for project %s: %v", projectID, err)
+		return
+	}
+	scopes := make(map[string]struct{})
+	for _, sess := range sessions {
+		if sess == nil || sess.Status != session.StatusQueued || !sessionIsSerialQueuedAutoRun(sess) || sessionArchivedAt(sess) != nil {
+			continue
+		}
+		if sess.ProjectID == nil || strings.TrimSpace(*sess.ProjectID) != projectID {
+			continue
+		}
+		scopes[serialQueueScopeForSession(sess)] = struct{}{}
+	}
+	for scope := range scopes {
+		s.triggerSerialSessionQueue(scope)
+	}
+}
+
 func (s *Server) resumeSerialSessionQueues() {
 	sessions, err := s.sessionManager.List()
 	if err != nil {
@@ -106,6 +159,11 @@ func (s *Server) runSerialSessionQueueWorker(ctx context.Context, scope string) 
 	for {
 		if ctx != nil && ctx.Err() != nil {
 			s.clearSerialSessionQueueWorker(scope)
+			return
+		}
+		// A lowered limit must take effect while the queue is still draining, so surplus
+		// workers retire before claiming more work instead of running out the old limit.
+		if s.retireSurplusSerialQueueWorker(scope) {
 			return
 		}
 
@@ -132,6 +190,26 @@ func (s *Server) runSerialSessionQueueWorker(ctx context.Context, scope string) 
 			return
 		}
 	}
+}
+
+// retireSurplusSerialQueueWorker drops this worker when the scope has more workers than its
+// current limit. Lowering a limit must apply while the queue drains, so surplus workers exit
+// instead of running out the old limit. The check and the decrement share one lock so two
+// finished workers cannot both retire and leave the scope with no worker at all.
+func (s *Server) retireSurplusSerialQueueWorker(scope string) bool {
+	limit := s.serialQueueLimitForScope(scope)
+	s.serialQueueMu.Lock()
+	defer s.serialQueueMu.Unlock()
+	workers := s.serialQueueWorkers[scope]
+	if workers <= limit {
+		return false
+	}
+	if workers <= 1 {
+		delete(s.serialQueueWorkers, scope)
+		return true
+	}
+	s.serialQueueWorkers[scope] = workers - 1
+	return true
 }
 
 func (s *Server) clearSerialSessionQueueWorker(scope string) {
@@ -224,7 +302,7 @@ func (s *Server) serialQueueCandidates(scope string) ([]*session.Session, error)
 func serialQueueScopeForSession(sess *session.Session) string {
 	if sess != nil && sess.ProjectID != nil {
 		if projectID := strings.TrimSpace(*sess.ProjectID); projectID != "" {
-			return projectID
+			return serialQueueScope(projectID, sessionQueueName(sess))
 		}
 	}
 	return serialQueueGlobalScope
@@ -283,25 +361,10 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 		logging.Warn("Serial session queue failed to mark session %s running: %v", sess.ID, err)
 		return true
 	}
-	defer s.queueTelegramSessionMessageSync(sess.ID)
 
-	runCtx, cancelRun := context.WithCancel(ctx)
-	runID := s.registerActiveSessionRun(sess.ID, cancelRun)
-	defer func() {
-		cancelRun()
-		s.unregisterActiveSessionRun(sess.ID, runID)
-	}()
-
+	runCtx, finishRun := s.beginBackgroundSessionRun(ctx, sess.ID)
 	logging.LogSession("serial_queue_started", sess.ID, "queued serial session")
-	result, runErr := s.runSessionWithoutStreaming(runCtx, sess, prompt)
-	if finalizeErr := s.finalizeSessionRunWithoutStreaming(runCtx, sess, result, runErr); finalizeErr != nil {
-		if runErr != nil {
-			_, message := s.sessionRunHTTPError(result, runErr)
-			logging.Warn("Serial session queue run failed for session %s: %s", sess.ID, message)
-		} else {
-			logging.Warn("Serial session queue finalize failed for session %s: %v", sess.ID, finalizeErr)
-		}
-	}
+	s.runBackgroundSession(runCtx, finishRun, sess, prompt)
 
 	fresh, err := s.sessionManager.Get(sess.ID)
 	if err != nil {
@@ -309,6 +372,30 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 		return true
 	}
 	return serialQueueCanAdvanceAfterStatus(fresh.Status)
+}
+
+func (s *Server) beginBackgroundSessionRun(ctx context.Context, sessionID string) (context.Context, func()) {
+	runCtx, cancelRun := context.WithCancel(ctx)
+	runID := s.registerActiveSessionRun(sessionID, cancelRun)
+	return runCtx, func() {
+		cancelRun()
+		s.unregisterActiveSessionRun(sessionID, runID)
+	}
+}
+
+func (s *Server) runBackgroundSession(runCtx context.Context, finishRun func(), sess *session.Session, prompt string) {
+	defer s.queueTelegramSessionMessageSync(sess.ID)
+	defer finishRun()
+
+	result, runErr := s.runSessionWithoutStreaming(runCtx, sess, prompt)
+	if finalizeErr := s.finalizeSessionRunWithoutStreaming(runCtx, sess, result, runErr); finalizeErr != nil {
+		if runErr != nil {
+			_, message := s.sessionRunHTTPError(result, runErr)
+			logging.Warn("Background session run failed for session %s: %s", sess.ID, message)
+		} else {
+			logging.Warn("Background session finalize failed for session %s: %v", sess.ID, finalizeErr)
+		}
+	}
 }
 
 func firstQueuedUserMessage(sess *session.Session) (string, []session.ImageAttachment, bool) {

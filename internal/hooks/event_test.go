@@ -92,3 +92,68 @@ func TestPromptContextMarksPayloadUntrusted(t *testing.T) {
 		t.Fatalf("prompt context missing guards: %s", out[:200])
 	}
 }
+
+func circleCIHeader(eventType string) http.Header {
+	h := http.Header{}
+	h.Set("Circleci-Event-Type", eventType)
+	return h
+}
+
+func TestParseEvent_CircleCIWorkflowCompleted(t *testing.T) {
+	payload := func(status string) []byte {
+		return []byte(`{"id":"d1","project":{"slug":"gh/acme/app"},"workflow":{"name":"build","status":"` + status + `","url":"https://app.circleci.com/pipelines/gh/acme/app/7/workflows/w1"},"pipeline":{"vcs":{"branch":"main","revision":"abc"},"trigger":{"actor":{"login":"dev"}}}}`)
+	}
+	ev := ParseEvent(circleCIHeader("workflow-completed"), payload("failed"))
+	if ev.Source != SourceCircleCI || ev.Type != TypeCIFailed || ev.Repository != "gh/acme/app" || ev.Branch != "main" ||
+		ev.Commit != "abc" || ev.Title != "build" || ev.Actor != "dev" || ev.DeliveryID != "d1" {
+		t.Fatalf("unexpected event %+v", ev)
+	}
+	if !strings.Contains(ev.PromptContext(), `circleci_query tool (operations job_details, job_tests, recent_failed_jobs) with project_slug "gh/acme/app"`) {
+		t.Fatalf("missing circleci_query hint: %s", ev.PromptContext())
+	}
+	if ev := ParseEvent(circleCIHeader("workflow-completed"), payload("success")); ev.Type != TypeCISucceeded {
+		t.Fatalf("success: %+v", ev)
+	}
+	if ev := ParseEvent(circleCIHeader("workflow-completed"), payload("canceled")); ev.Type != TypeOther {
+		t.Fatalf("manual cancel must not be a failure: %+v", ev)
+	}
+}
+
+func TestParseEvent_CircleCIJobCompletedDedupsWithWorkflow(t *testing.T) {
+	job := ParseEvent(circleCIHeader("job-completed"), []byte(`{"id":"d2","project":{"slug":"gh/acme/app"},"workflow":{"name":"build","status":"failing","url":"https://app.circleci.com/pipelines/gh/acme/app/7/workflows/w1"},"job":{"name":"test","status":"failed"},"pipeline":{"vcs":{"branch":"main","revision":"abc"}}}`))
+	if job.Type != TypeCIFailed || job.Title != "build / test" {
+		t.Fatalf("unexpected job event %+v", job)
+	}
+	workflow := Event{Source: SourceCircleCI, Type: TypeCIFailed, Repository: "gh/acme/app", Commit: "abc", DeliveryID: "d1"}
+	if job.DedupKey() != workflow.DedupKey() {
+		t.Fatalf("job and workflow failures for one commit must share a dedup key: %q vs %q", job.DedupKey(), workflow.DedupKey())
+	}
+}
+
+func TestBitbucketCircleCIStatusHintsJobNumber(t *testing.T) {
+	ev := Event{Source: SourceBitbucket, Type: TypeCIFailed, Repository: "ws/repo", URL: "https://app.circleci.com/pipelines/bitbucket/ws/repo/3/workflows/w/jobs/42"}
+	if out := ev.PromptContext(); !strings.Contains(out, `project_slug "bitbucket/ws/repo" and job_number 42`) {
+		t.Fatalf("missing hint: %s", out)
+	}
+	if out := (Event{Source: SourceBitbucket, URL: "https://bitbucket.org/ws/repo/pipelines/1"}).PromptContext(); strings.Contains(out, "circleci_query") {
+		t.Fatalf("non-CircleCI status must not mention circleci_query: %s", out)
+	}
+}
+
+func TestVerifySignatureCircleCI(t *testing.T) {
+	body := []byte(`{"a":1}`)
+	mac := hmac.New(sha256.New, []byte("s3cret"))
+	mac.Write(body)
+	h := http.Header{}
+	h.Set("Circleci-Signature", "v2=ignored,v1="+hex.EncodeToString(mac.Sum(nil)))
+	if err := VerifySignature(h, body, "s3cret"); err != nil {
+		t.Fatalf("valid signature rejected: %v", err)
+	}
+	if err := VerifySignature(h, body, "other"); err == nil {
+		t.Fatal("wrong secret accepted")
+	}
+	h.Set("Circleci-Signature", "v2=abc")
+	if err := VerifySignature(h, body, "s3cret"); err == nil {
+		t.Fatal("signature without v1 accepted")
+	}
+}

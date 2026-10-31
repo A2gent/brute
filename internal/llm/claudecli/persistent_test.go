@@ -36,6 +36,24 @@ done
 		Environment: append(os.Environ(), "TRACE="+filepath.Join(dir, "trace"), "INPUTS="+filepath.Join(dir, "inputs"))}, dir
 }
 
+func TestPersistentBridgeUsesContextSessionAfterProviderTransition(t *testing.T) {
+	opts, dir := persistentFixture(t)
+	var bridged string
+	opts.MCPBridge = func(ctx context.Context, sessionID string) (string, func(), error) {
+		bridged = sessionID
+		return `{"mcpServers":{}}`, func() {}, nil
+	}
+	req := &llm.ChatRequest{SessionID: dir + "-epoch", Messages: []llm.Message{{Role: "user", Content: "hello"}}}
+	ctx := context.WithValue(t.Context(), "session_id", "brute-session")
+	if _, err := NewClientWithOptions("sonnet", opts).ChatStream(ctx, req, nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { closePersistentSession(opts, req.SessionID) })
+	if bridged != "brute-session" {
+		t.Fatalf("bridge session = %q", bridged)
+	}
+}
+
 func TestPersistentReusesAcrossClientsAndKeepsBridge(t *testing.T) {
 	opts, dir := persistentFixture(t)
 	var minted, revoked atomic.Int32

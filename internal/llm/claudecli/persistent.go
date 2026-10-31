@@ -162,7 +162,11 @@ func (c *Client) startPersistent(ctx context.Context, req *llm.ChatRequest, mode
 	// The bridge belongs to the process, not the first request's deadline. Each
 	// cancelled/failed active turn closes the process and revokes its token.
 	bridgeCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	bridgeCtx = context.WithValue(bridgeCtx, "session_id", req.SessionID)
+	// WHY: after a provider transition req.SessionID is a context epoch, not the
+	// brute session the MCP bridge must resolve; the agent loop sets the real one.
+	if sessionID, _ := ctx.Value("session_id").(string); strings.TrimSpace(sessionID) == "" {
+		bridgeCtx = context.WithValue(bridgeCtx, "session_id", req.SessionID)
+	}
 	bridge := c.newMCPBridgeInvocation(bridgeCtx)
 	revoke := func() { cancel(); bridge.revoke() }
 	if bridge.err != nil {

@@ -87,6 +87,9 @@ func (m *memStore) UpdateExistingJob(*storage.RecurringJob) (bool, error) {
 func (m *memStore) GetJob(string) (*storage.RecurringJob, error) { return nil, nil }
 func (m *memStore) ListJobs() ([]*storage.RecurringJob, error)   { return nil, nil }
 func (m *memStore) DeleteJob(string) error                       { return nil }
+func (m *memStore) DetachQueuesFromJobs(string, []string) (int64, error) {
+	return 0, nil
+}
 func (m *memStore) GetDueJobs(time.Time) ([]*storage.RecurringJob, error) {
 	return nil, nil
 }

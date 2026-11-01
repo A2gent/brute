@@ -568,6 +568,14 @@ type PendingMessage struct {
 	CreatedAt time.Time
 }
 
+func (m *Manager) LLMLatencySamples(sessionID string) ([]storage.LLMLatencySample, error) {
+	store, ok := m.store.(storage.LLMLatencyStore)
+	if !ok {
+		return nil, nil
+	}
+	return store.ListLLMLatencySamples(sessionID)
+}
+
 func (m *Manager) pendingStore() (storage.PendingMessageStore, error) {
 	ps, ok := m.store.(storage.PendingMessageStore)
 	if !ok {

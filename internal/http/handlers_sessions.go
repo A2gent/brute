@@ -683,6 +683,13 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := s.sessionToResponse(sess)
+	if includeMessages || includeMetadata {
+		if samples, err := s.sessionManager.LLMLatencySamples(sessionID); err != nil {
+			logging.Debug("LLM latency lookup failed for %s: %v", sessionID, err)
+		} else {
+			resp.LLMLatency = aggregateLLMLatency(samples)
+		}
+	}
 	if includeMessages {
 		resp.Messages = s.hydrateDirectAgentActivity(r.Context(), sess, resp.Messages, r.URL.Query().Get("before_message") == "")
 	}

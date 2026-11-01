@@ -98,6 +98,7 @@ type SessionResponse struct {
 	TaskProgress           string                       `json:"task_progress,omitempty"`
 	ProviderFailures       []ProviderFailurePayload     `json:"provider_failures,omitempty"`
 	PromptCache            *PromptCachePayload          `json:"prompt_cache,omitempty"`
+	LLMLatency             *LLMLatencyPayload           `json:"llm_latency,omitempty"`
 	CreatedAt              time.Time                    `json:"created_at"`
 	UpdatedAt              time.Time                    `json:"updated_at"`
 	ArchivedAt             *time.Time                   `json:"archived_at,omitempty"`

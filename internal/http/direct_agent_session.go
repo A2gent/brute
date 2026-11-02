@@ -457,34 +457,37 @@ func isLoopbackAPIURL(raw string) bool {
 // rejected: sending a new message instead of approving keeps the current provider.
 func (s *Server) reusableDirectAgentChild(ctx context.Context, sess *session.Session, agent *LocalDockerAgent) string {
 	entries := dockerChildSessionEntries(sess.Metadata["docker_child_sessions"])
-	if len(entries) == 0 {
-		return ""
-	}
-	last := entries[len(entries)-1]
-	childID := strings.TrimSpace(metadataString(last["child_session_id"]))
-	if childID == "" || metadataString(last["agent_name"]) != agent.Name {
-		return ""
-	}
 	lookupCtx, cancel := context.WithTimeout(ctx, dockerSessionProxyLookupTimeout)
 	defer cancel()
 	client := &nethttp.Client{Timeout: dockerSessionProxyLookupTimeout}
-	child, err := fetchDockerSession(lookupCtx, client, dockerSessionCandidate{APIURL: agent.APIURL}, childID, false)
-	if err != nil || child.Status == string(session.StatusRunning) {
-		logging.Warn("Direct agent: not reusing child %s of %s (status=%q): %v", childID, sess.ID, child.Status, err)
-		return ""
-	}
-	// WHY: docker_child_sessions also lists children made by delegate_to_agent.
-	// Those are flagged as delegated, so the child rejects parent agent tools
-	// ("require a direct host session") on a follow-up. Start a fresh direct child.
-	if src, _ := child.Metadata["source"].(string); src != "direct_agent_session" {
-		return ""
-	}
-	if t := session.CurrentProviderTransition(&session.Session{Metadata: child.Metadata}); t != nil && t.Confirmation == "pending" {
-		url := strings.TrimRight(agent.APIURL, "/") + "/sessions/" + childID + "/provider-transitions/" + t.ID + "/decision"
-		if err := postLocalDockerAgentJSON(lookupCtx, client, url, map[string]string{"decision": "reject"}, nil); err != nil {
-			logging.Warn("Direct agent: failed to reject pending transition in child %s: %v", childID, err)
+	// WHY: the list also holds children of other agents the user delegated to
+	// mid-conversation. Looking only at the last entry lost the history of this
+	// agent right after such a delegation, so scan back for its own newest child.
+	for i := len(entries) - 1; i >= 0; i-- {
+		entry := entries[i]
+		childID := strings.TrimSpace(metadataString(entry["child_session_id"]))
+		if childID == "" || metadataString(entry["agent_name"]) != agent.Name {
+			continue
+		}
+		child, err := fetchDockerSession(lookupCtx, client, dockerSessionCandidate{APIURL: agent.APIURL}, childID, false)
+		if err != nil || child.Status == string(session.StatusRunning) {
+			logging.Warn("Direct agent: not reusing child %s of %s (status=%q): %v", childID, sess.ID, child.Status, err)
 			return ""
 		}
+		// WHY: docker_child_sessions also lists children made by delegate_to_agent.
+		// Those are flagged as delegated, so the child rejects parent agent tools
+		// ("require a direct host session") on a follow-up. Look for an older direct child.
+		if src, _ := child.Metadata["source"].(string); src != "direct_agent_session" {
+			continue
+		}
+		if t := session.CurrentProviderTransition(&session.Session{Metadata: child.Metadata}); t != nil && t.Confirmation == "pending" {
+			url := strings.TrimRight(agent.APIURL, "/") + "/sessions/" + childID + "/provider-transitions/" + t.ID + "/decision"
+			if err := postLocalDockerAgentJSON(lookupCtx, client, url, map[string]string{"decision": "reject"}, nil); err != nil {
+				logging.Warn("Direct agent: failed to reject pending transition in child %s: %v", childID, err)
+				return ""
+			}
+		}
+		return childID
 	}
-	return childID
+	return ""
 }

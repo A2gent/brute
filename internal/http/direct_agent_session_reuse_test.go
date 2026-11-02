@@ -45,6 +45,20 @@ func (f *fakeChildAgent) handler() http.Handler {
 	})
 }
 
+func TestReusableDirectAgentChildSkipsOtherAgentsEntries(t *testing.T) {
+	server, _ := newUnifiedAgentsTestServer(t)
+	fake := &fakeChildAgent{status: "completed", source: "direct_agent_session"}
+	child := httptest.NewServer(fake.handler())
+	defer child.Close()
+	sess := &session.Session{ID: "parent"}
+	addDockerChildSessionEntry(sess, &LocalDockerAgent{Name: "qa", APIURL: child.URL}, "child-1", nil)
+	addDockerChildSessionEntry(sess, &LocalDockerAgent{Name: "ops", APIURL: child.URL}, "ops-child", nil)
+	got := server.reusableDirectAgentChild(context.Background(), sess, &LocalDockerAgent{Name: "qa", APIURL: child.URL})
+	if got != "child-1" {
+		t.Fatalf("child = %q, want child-1", got)
+	}
+}
+
 func TestReusableDirectAgentChild(t *testing.T) {
 	server, _ := newUnifiedAgentsTestServer(t)
 	cases := []struct {

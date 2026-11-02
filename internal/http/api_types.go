@@ -26,6 +26,7 @@ type CreateSessionRequest struct {
 	// Docker agents reference an already running local Brute container.
 	UnifiedAgentID string `json:"unified_agent_id,omitempty"`
 	DockerAgentID  string `json:"docker_agent_id,omitempty"`
+	AgentAutoRoute bool   `json:"agent_auto_route,omitempty"`
 	// Optional branch for the session worktree (worktree-enabled projects); defaults to a2gent/<session-short-id>.
 	// An existing branch is continued instead of created.
 	Branch string `json:"branch,omitempty"`

@@ -177,6 +177,10 @@ func (s *Server) registerProviderRoutes(r chi.Router) {
 		r.Get("/cursor/oauth/status", s.handleCursorOAuthStatus)
 		r.Delete("/cursor/oauth", s.handleCursorOAuthDisconnect)
 	})
+	// Agent router: {router_provider, router_model, router_reasoning_effort, agents: [{id, enabled}]};
+	// GET also returns name, description and project_id per agent. Unlisted agents are enabled.
+	r.Get("/agent-router", s.handleGetAgentRouter)
+	r.Put("/agent-router", s.handleUpdateAgentRouter)
 }
 
 func (s *Server) registerIntegrationRoutes(r chi.Router) {

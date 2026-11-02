@@ -23,6 +23,7 @@ type Config struct {
 	Providers              map[string]Provider `json:"providers"`
 	FallbackAggregates     []FallbackAggregate `json:"fallback_aggregates,omitempty"`
 	Tools                  ToolsConfig         `json:"tools"`
+	AgentRouter            AgentRouter         `json:"agent_router"`
 }
 
 // Provider configuration for LLM providers

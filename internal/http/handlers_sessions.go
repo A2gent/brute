@@ -353,6 +353,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	s.applyAgentAutoRoute(r.Context(), &req, sess)
 	directUnifiedAgentID := strings.TrimSpace(req.UnifiedAgentID)
 	directDockerAgentID := strings.TrimSpace(req.DockerAgentID)
 	if directUnifiedAgentID != "" || directDockerAgentID != "" {

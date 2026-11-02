@@ -132,7 +132,35 @@ func (s *Server) runDirectAgentSession(ctx context.Context, sess *session.Sessio
 		return ChatResponse{}, err
 	}
 	defer revoke()
-	return postLocalDockerAgentChatStreamWithHeaders(ctx, client, baseURL+"/sessions/"+childID+"/chat/stream", ChatRequest{Message: prompt}, headers, onEvent)
+	return postLocalDockerAgentChatStreamWithHeaders(ctx, client, baseURL+"/sessions/"+childID+"/chat/stream", ChatRequest{Message: prompt, Images: directAgentImagePayloads(sess)}, headers, onEvent)
+}
+
+// directAgentImagePayloads returns the images of the current user request as
+// inline base64. WHY: the child may run in Docker with another filesystem, so
+// parent-local file paths are useless to it and the bytes must travel in the body.
+func directAgentImagePayloads(sess *session.Session) []MessageImagePayload {
+	var current []session.ImageAttachment
+	for i := len(sess.Messages) - 1; i >= 0; i-- {
+		if sess.Messages[i].Role == "user" && !injectedDuringRun(sess.Messages[i].Metadata) {
+			current = sess.Messages[i].Images
+			break
+		}
+	}
+	var out []MessageImagePayload
+	for _, img := range current {
+		resolved, err := img.Inline()
+		if err != nil {
+			logging.Warn("Direct agent: cannot load image %s of %s: %v", img.Path, sess.ID, err)
+			continue
+		}
+		out = append(out, MessageImagePayload{
+			Name:       strings.TrimSpace(resolved.Name),
+			MediaType:  strings.TrimSpace(resolved.MediaType),
+			DataBase64: strings.TrimSpace(resolved.DataBase64),
+			URL:        strings.TrimSpace(resolved.URL),
+		})
+	}
+	return out
 }
 
 // directAgentActivityMarker flags a parent reply whose child-turn activity was

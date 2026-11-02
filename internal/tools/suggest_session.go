@@ -41,6 +41,7 @@ Important usage:
 - Create at most one card per distinct follow-up, but call this tool multiple times when your answer contains multiple independent actionable findings that deserve separate sessions.
 - Place each returned fenced block immediately after the specific finding it belongs to; do not collect all cards at the end.
 - Do not merge unrelated findings into one broad card. Prefer a narrow, actionable title/files/prompt for each card.
+- Assign the follow-up to a specialist via agent_id (a configured agent ID) when one fits the work; the new session then runs as that agent. Leave it empty only for general work.
 - Skip the tool for tiny inline suggestions, purely informational notes, duplicates, or findings that should be fixed together with another card.
 
 The tool returns a fenced block that must be included verbatim in your assistant message near the relevant finding. The UI renders that block as a Create Session button/card. Keep the prompt self-contained with the issue summary, files to inspect, expected behavior, and verification steps.`
@@ -73,6 +74,10 @@ func (t *SuggestSessionTool) Schema() map[string]interface{} {
 			"prompt": map[string]interface{}{
 				"type":        "string",
 				"description": "Self-contained prompt for the new session. Include the summary, files to inspect, expected behavior, and verification steps.",
+			},
+			"agent_id": map[string]interface{}{
+				"type":        "string",
+				"description": "ID of the configured agent that should run the new session (from the agents list in your system prompt or list_agents), e.g. a designer or reviewer agent. Always set it when a specialist fits; do not write 'Agent: x' inside the prompt instead.",
 			},
 			"completed": map[string]interface{}{
 				"type":        "boolean",

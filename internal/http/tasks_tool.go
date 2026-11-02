@@ -44,6 +44,7 @@ type tasksToolParams struct {
 	Offset      int       `json:"offset,omitempty"`
 	Claim       bool      `json:"claim,omitempty"`
 	ProjectID   string    `json:"project_id,omitempty"`
+	AgentID     string    `json:"agent_id,omitempty"`
 }
 
 // tasksIntKeys are the numeric params that CLI-backed agents sometimes send as strings ("40").
@@ -140,6 +141,7 @@ func (t *tasksTool) Schema() map[string]interface{} {
 			"max_hours":      map[string]interface{}{"type": "integer", "description": "List/next filter: only tasks with a 1..N hour estimate."},
 			"sort":           map[string]interface{}{"type": "string", "enum": []string{"priority"}, "description": "List ordering: priority = priority, then complexity, then board order. Default is board order."},
 			"claim":          map[string]interface{}{"type": "boolean", "description": "For next: immediately move the picked task to in_progress."},
+			"agent_id":       map[string]interface{}{"type": "string", "description": "Agent assigned to the task (configured agent ID, e.g. a designer agent). On create/update it is stored as the tag agent:<id>; on list/next it filters tasks assigned to that agent. Set it instead of writing 'Agent: x' in the body."},
 			"project_id": map[string]interface{}{
 				"type": "string", "description": "Only needed when the session has no project bound.",
 			},
@@ -338,6 +340,7 @@ func (t *tasksTool) create(projectID string, p tasksToolParams) (string, error) 
 	if p.Tags != nil {
 		create.Tags = *p.Tags
 	}
+	create.Tags = withAgentTag(create.Tags, p.AgentID)
 	if p.Price != nil {
 		create.Price = *p.Price
 	}
@@ -361,6 +364,20 @@ func (t *tasksTool) update(projectID string, p tasksToolParams) (string, error) 
 	}
 	if strings.TrimSpace(p.Status) != "" {
 		update.Status = &p.Status
+	}
+	if agentID := strings.TrimSpace(p.AgentID); agentID != "" {
+		tags := []string{}
+		if p.Tags != nil {
+			tags = *p.Tags
+		} else {
+			existing, err := t.server.store.GetTask(projectID, p.Ref)
+			if err != nil {
+				return "", err
+			}
+			tags = existing.Tags
+		}
+		tags = withAgentTag(tags, agentID)
+		update.Tags = &tags
 	}
 	task, err := t.server.store.UpdateTask(projectID, p.Ref, update)
 	if err != nil {
@@ -409,6 +426,9 @@ func matchesTaskFilters(task *storage.Task, p tasksToolParams) bool {
 	if tags := parseTagList(p.Tag); len(tags) > 0 && !hasAnyTag(task.Tags, tags) {
 		return false
 	}
+	if agentID := strings.TrimSpace(p.AgentID); agentID != "" && !containsString(task.Tags, agentTagPrefix+agentID) {
+		return false
+	}
 	if hasAnyTag(task.Tags, parseTagList(p.ExcludeTag)) {
 		return false
 	}
@@ -428,6 +448,24 @@ func matchesTaskFilters(task *storage.Task, p tasksToolParams) bool {
 		return false
 	}
 	return matchesTaskText(task, p)
+}
+
+const agentTagPrefix = "agent:"
+
+// withAgentTag stores the assignee as an agent:<id> tag (the board has no assignee field and
+// Caesar uses the same convention), replacing any previous assignee tag.
+func withAgentTag(tags []string, agentID string) []string {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return tags
+	}
+	out := make([]string, 0, len(tags)+1)
+	for _, tag := range tags {
+		if !strings.HasPrefix(strings.ToLower(tag), agentTagPrefix) {
+			out = append(out, tag)
+		}
+	}
+	return append(out, agentTagPrefix+agentID)
 }
 
 func taskLess(a, b *storage.Task) bool {

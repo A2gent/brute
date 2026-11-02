@@ -266,3 +266,22 @@ func TestTasksToolStringifiedIntsAndComplexityFilter(t *testing.T) {
 		t.Fatalf("offset \"2\" list = %q", out)
 	}
 }
+
+func TestTasksToolAgentAssignment(t *testing.T) {
+	tool, ctx, _, _ := newTasksToolFixture(t)
+
+	runTasksTool(t, tool, ctx, map[string]any{"action": "create", "title": "Model spear", "status": "todo", "tags": []string{"art"}, "agent_id": "rebel-designer"})
+	runTasksTool(t, tool, ctx, map[string]any{"action": "create", "title": "Fix login", "status": "todo"})
+
+	output := runTasksTool(t, tool, ctx, map[string]any{"action": "list", "agent_id": "rebel-designer"})
+	if !strings.Contains(output, "Model spear") || strings.Contains(output, "Fix login") || !strings.Contains(output, "#agent:rebel-designer") || !strings.Contains(output, "#art") {
+		t.Fatalf("agent filter output = %q", output)
+	}
+
+	runTasksTool(t, tool, ctx, map[string]any{"action": "update", "ref": "AG-2", "agent_id": "dev-coder"})
+	runTasksTool(t, tool, ctx, map[string]any{"action": "update", "ref": "AG-2", "agent_id": "dev-qa"})
+	output = runTasksTool(t, tool, ctx, map[string]any{"action": "next", "agent_id": "dev-qa"})
+	if !strings.Contains(output, "Fix login") || strings.Contains(output, "dev-coder") {
+		t.Fatalf("next output = %q, want reassigned task without old agent tag", output)
+	}
+}

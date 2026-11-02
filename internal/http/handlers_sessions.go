@@ -810,7 +810,16 @@ func (s *Server) handleCancelSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cancelledRuns := s.cancelActiveSessionRuns(sessionID)
-	if cancelledRuns > 0 || strings.EqualFold(string(sess.Status), string(session.StatusRunning)) {
+	if cancelledRuns > 0 {
+		// WHY: the canceled run still saves its partial turn; saving the copy
+		// loaded above would overwrite it, and a "paused" status written before
+		// that save made callers read an incomplete transcript.
+		s.waitForCanceledRunsToSettle(r.Context(), sessionID)
+		if fresh, err := s.sessionManager.Get(sessionID); err == nil {
+			sess = fresh
+		}
+	}
+	if strings.EqualFold(string(sess.Status), string(session.StatusRunning)) {
 		sess.SetStatus(session.StatusPaused)
 		if saveErr := s.sessionManager.Save(sess); saveErr != nil {
 			s.errorResponse(w, http.StatusInternalServerError, "Failed to update session status: "+saveErr.Error())

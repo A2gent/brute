@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
 
@@ -29,6 +30,8 @@ type runtimeObservabilityAccumulator struct {
 	// textUnits counts UTF-16 code units of assistant text seen so far, so the
 	// UI can place each tool call at the point in the text where it started.
 	textUnits int
+	// text keeps the streamed answer so a failed or canceled call still saves it.
+	text strings.Builder
 }
 
 func newRuntimeObservabilityAccumulator(turnID string, persistReasoning bool) *runtimeObservabilityAccumulator {
@@ -45,6 +48,7 @@ func (a *runtimeObservabilityAccumulator) observe(ev llm.StreamEvent) {
 	switch ev.Type {
 	case llm.StreamEventContentDelta:
 		a.textUnits += len(utf16.Encode([]rune(ev.ContentDelta)))
+		a.text.WriteString(ev.ContentDelta)
 	case llm.StreamEventReasoningDelta:
 		a.observeReasoning(ev.ReasoningDelta)
 	case llm.StreamEventToolStarted, llm.StreamEventToolUpdated,
@@ -62,6 +66,13 @@ func (a *runtimeObservabilityAccumulator) observe(ev llm.StreamEvent) {
 	case llm.StreamEventRuntimeWarning:
 		a.observeWarning(ev.RuntimeStatus, ev.RuntimeWarning)
 	}
+}
+
+// resetText drops the text of a previous attempt when the fallback chain starts
+// a new one, so a later failure does not save both attempts glued together.
+func (a *runtimeObservabilityAccumulator) resetText() {
+	a.text.Reset()
+	a.textUnits = 0
 }
 
 func (a *runtimeObservabilityAccumulator) observeReasoning(delta string) {
@@ -150,7 +161,7 @@ func (a *runtimeObservabilityAccumulator) hasDurablePayload() bool {
 	if a == nil {
 		return false
 	}
-	if a.nativeRuntime || a.cost != nil || len(a.warnings) > 0 || len(a.tools) > 0 {
+	if a.nativeRuntime || a.cost != nil || len(a.warnings) > 0 || len(a.tools) > 0 || strings.TrimSpace(a.text.String()) != "" {
 		return true
 	}
 	return a.persistReasoning && (a.reasoning != "" || a.reasoningTruncated)

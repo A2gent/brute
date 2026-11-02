@@ -15,6 +15,7 @@ type mockStreamingLLM struct {
 	MockLLM
 	streamEvents []llm.StreamEvent
 	response     *llm.ChatResponse
+	streamErr    error
 }
 
 func (m *mockStreamingLLM) ChatStream(ctx context.Context, request *llm.ChatRequest, onEvent func(llm.StreamEvent) error) (*llm.ChatResponse, error) {
@@ -29,6 +30,9 @@ func (m *mockStreamingLLM) ChatStream(ctx context.Context, request *llm.ChatRequ
 				return nil, err
 			}
 		}
+	}
+	if m.streamErr != nil {
+		return nil, m.streamErr
 	}
 	if m.response != nil {
 		return m.response, nil
@@ -194,6 +198,38 @@ func TestRunWithEventsPersistsRuntimeMetadataOnAssistantMessage(t *testing.T) {
 	cost, ok := last.Metadata["runtime_cost"].(map[string]interface{})
 	if !ok || cost["total_cost_usd"] != 0.02 {
 		t.Fatalf("runtime_cost = %#v", last.Metadata["runtime_cost"])
+	}
+}
+
+func TestRunWithEventsKeepsPartialTextWhenStreamIsCanceled(t *testing.T) {
+	store, err := storage.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+	sm := session.NewManager(store)
+	sess, err := sm.Create("test-agent")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	mock := &mockStreamingLLM{
+		streamEvents: []llm.StreamEvent{
+			{Type: llm.StreamEventContentDelta, ContentDelta: "Failed attempt"},
+			{Type: llm.StreamEventProviderTrace, Phase: "retrying"},
+			{Type: llm.StreamEventContentDelta, ContentDelta: "Checking the "},
+			{Type: llm.StreamEventToolStarted, ToolCallID: "toolu_1", ToolCallName: "tasks"},
+			{Type: llm.StreamEventContentDelta, ContentDelta: "board"},
+		},
+		streamErr: context.Canceled,
+	}
+	ag := New(Config{MaxSteps: 3}, mock, tools.NewManager(t.TempDir()), sm)
+
+	if _, _, err := ag.RunWithEvents(context.Background(), sess, "hello", nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunWithEvents error = %v, want context.Canceled", err)
+	}
+	last := sess.Messages[len(sess.Messages)-1]
+	if last.Role != "assistant" || last.Content != "Checking the board" || last.Metadata["runtime_tools"] == nil {
+		t.Fatalf("partial assistant message = %#v", last)
 	}
 }
 

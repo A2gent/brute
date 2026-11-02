@@ -149,7 +149,7 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 				return "", totalUsage, a.pauseTransition(sess, t, err, onEvent)
 			}
 			if runtimeAcc != nil && runtimeAcc.hasDurablePayload() {
-				sess.AddAssistantMessageWithMetadata("", nil, mergeRuntimeMetadata(
+				sess.AddAssistantMessageWithMetadata(runtimeAcc.text.String(), nil, mergeRuntimeMetadata(
 					llmTimingMetadata(llmStart, llmCompleted, a.config.Provider, a.config.Model),
 					runtimeAcc,
 				))
@@ -576,6 +576,9 @@ func (a *Agent) callLLM(ctx context.Context, request *llm.ChatRequest, step int,
 		}
 		if isLLMRuntimeForwardEvent(ev) || ev.Type == llm.StreamEventContentDelta {
 			acc.observe(ev)
+		}
+		if ev.Type == llm.StreamEventProviderTrace && (ev.Phase == "retrying" || ev.Phase == "provider_selected") {
+			acc.resetText()
 		}
 		if onEvent == nil {
 			return nil

@@ -173,7 +173,15 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 				_ = writeEvent(event)
 			}
 		})
+		if runErr != nil && isCancellationError(runErr) {
+			s.persistInterruptedDirectAgentTurn(sess, chatResp, true)
+			sess.SetStatus(session.StatusPaused)
+			_ = s.sessionManager.Save(sess)
+			_ = writeEvent(ChatStreamEvent{Type: "error", Error: "Request was canceled before completion.", Status: string(sess.Status), Messages: s.messagesToResponse(sess.Messages)})
+			return
+		}
 		if runErr != nil {
+			s.persistInterruptedDirectAgentTurn(sess, chatResp, false)
 			sess.AddAssistantMessage(fmt.Sprintf("Agent failed: %s", runErr.Error()), nil)
 			sess.SetStatus(session.StatusFailed)
 			_ = s.sessionManager.Save(sess)

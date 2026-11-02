@@ -344,12 +344,14 @@ const directAgentHydrationTimeout = 2 * time.Second
 // latestPage also enables the in-flight case: while the agent is still working
 // the parent holds only the request (activity is copied when the turn ends), so
 // reopening a running session showed no steps. The child's current-turn
-// messages are then appended after the request.
+// messages are then appended after the request. A paused session (stopped
+// before persistInterruptedDirectAgentTurn existed, or while it is still
+// copying) shows the child's newest turn the same way.
 func (s *Server) hydrateDirectAgentActivity(ctx context.Context, sess *session.Session, messages []MessageResponse, latestPage bool) []MessageResponse {
 	if !s.hasDirectAgentTarget(sess) {
 		return messages
 	}
-	inFlight := latestPage && sess.Status == session.StatusRunning && awaitsDirectAgentReply(messages)
+	inFlight := latestPage && (sess.Status == session.StatusRunning || sess.Status == session.StatusPaused) && awaitsDirectAgentReply(messages)
 	var inFlightActivity []MessageResponse
 	pending := map[string]int{}
 	for i, m := range messages {
@@ -387,8 +389,11 @@ func (s *Server) hydrateDirectAgentActivity(ctx context.Context, sess *session.S
 		if inFlight {
 			// Only the newest direct child runs the current turn.
 			inFlight = false
-			if child.Status == string(session.StatusRunning) {
+			if child.Status == string(session.StatusRunning) || sess.Status == session.StatusPaused {
 				inFlightActivity = directAgentInFlightActivity(child.Messages)
+				if directAgentActivityAlreadyCopied(sess.Messages, inFlightActivity) {
+					inFlightActivity = nil
+				}
 			}
 		}
 		for j := len(child.Messages) - 1; j >= 0; j-- {

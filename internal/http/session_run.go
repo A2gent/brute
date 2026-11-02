@@ -119,6 +119,9 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 
 	if runErr != nil {
 		if isCancellationError(runErr) {
+			if result.DirectAgent {
+				s.persistInterruptedDirectAgentTurn(sess, result.DirectReply, true)
+			}
 			sess.SetStatus(session.StatusPaused)
 			_ = s.sessionManager.Save(sess)
 			publishError("Request was canceled before completion")
@@ -134,6 +137,7 @@ func (s *Server) finalizeSessionRunWithoutStreaming(ctx context.Context, sess *s
 			return runErr
 		}
 		if result.DirectAgent {
+			s.persistInterruptedDirectAgentTurn(sess, result.DirectReply, false)
 			sess.AddAssistantMessage(fmt.Sprintf("Agent failed: %s", runErr.Error()), nil)
 			sess.SetStatus(session.StatusFailed)
 			_ = s.sessionManager.Save(sess)

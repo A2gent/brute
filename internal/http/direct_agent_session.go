@@ -146,21 +146,7 @@ func directAgentImagePayloads(sess *session.Session) []MessageImagePayload {
 			break
 		}
 	}
-	var out []MessageImagePayload
-	for _, img := range current {
-		resolved, err := img.Inline()
-		if err != nil {
-			logging.Warn("Direct agent: cannot load image %s of %s: %v", img.Path, sess.ID, err)
-			continue
-		}
-		out = append(out, MessageImagePayload{
-			Name:       strings.TrimSpace(resolved.Name),
-			MediaType:  strings.TrimSpace(resolved.MediaType),
-			DataBase64: strings.TrimSpace(resolved.DataBase64),
-			URL:        strings.TrimSpace(resolved.URL),
-		})
-	}
-	return out
+	return inlineImagePayloads(sess.ID, current)
 }
 
 // directAgentActivityMarker flags a parent reply whose child-turn activity was

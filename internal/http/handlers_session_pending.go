@@ -127,6 +127,7 @@ func (s *Server) handleSteerPendingMessage(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		logging.LogSession("message_steered", sessionID, "queued message promoted into active run")
+		s.steerDirectAgentInjection(sess, msg.Content, msg.Images)
 		s.publishSessionEvent(sessionID, s.sessionSnapshotStreamEvent(sess))
 		defer s.queueTelegramSessionMessageSync(sessionID)
 	} else if !s.startPendingRunLocked(sessionID, msg) {

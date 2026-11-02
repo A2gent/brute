@@ -168,7 +168,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.hasDirectAgentTarget(sess) {
-		chatResp, runErr := s.runDirectAgentSession(runCtx, sess, req.Message, func(event ChatStreamEvent) {
+		chatResp, runErr := s.runDirectAgentTurn(runCtx, sess, req.Message, func(event ChatStreamEvent) {
 			if event.Type != "done" && event.Type != "error" {
 				_ = writeEvent(event)
 			}
@@ -200,6 +200,9 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.refreshSessionSummaryAsync(sess)
+		if event := s.inputRequiredStreamEvent(sess); event != nil {
+			_ = writeEvent(*event)
+		}
 		_ = writeEvent(ChatStreamEvent{Type: "done", Content: chatResp.Content, Messages: s.messagesToResponse(sess.Messages), Status: string(sess.Status), Usage: &chatResp.Usage})
 		s.triggerSerialSessionQueueIfAdvanceable(sess)
 		return

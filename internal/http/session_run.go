@@ -55,7 +55,7 @@ func (s *Server) runSessionWithoutStreaming(ctx context.Context, sess *session.S
 		result.DirectAgent = true
 		// The child's done/error carry the child's transcript; the parent publishes
 		// its own terminal event below (same filter as the streaming chat path).
-		chatResp, err := s.runDirectAgentSession(ctx, sess, userMessage, func(event ChatStreamEvent) {
+		chatResp, err := s.runDirectAgentTurn(ctx, sess, userMessage, func(event ChatStreamEvent) {
 			if event.Type != "done" && event.Type != "error" {
 				publishEvent(event)
 			}

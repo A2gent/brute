@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/A2gent/brute/internal/approval"
+	"github.com/A2gent/brute/internal/session"
 )
 
 func newMCPBridgeTestServer(t *testing.T) *Server {
@@ -280,29 +280,6 @@ func TestMCPBridgeCallToolDirect(t *testing.T) {
 	}
 }
 
-func startMCPBridgeQuestion(t *testing.T, server *Server, sessionID, token string, args map[string]interface{}) chan mcpBridgeTestResponse {
-	t.Helper()
-	responses := make(chan mcpBridgeTestResponse, 1)
-	go func() {
-		_, resp := serveMCPBridge(t, server, newMCPBridgeRequest(t, sessionID, token,
-			mcpBridgeRPC(t, 7, "tools/call", map[string]interface{}{"name": "question", "arguments": args})))
-		responses <- resp
-	}()
-	waitForApprovalPending(t, server.approvalBroker, 1)
-	return responses
-}
-
-func awaitMCPBridgeResponse(t *testing.T, responses <-chan mcpBridgeTestResponse) mcpBridgeTestResponse {
-	t.Helper()
-	select {
-	case resp := <-responses:
-		return resp
-	case <-time.After(3 * time.Second):
-		t.Fatal("timed out waiting for MCP bridge response")
-		return mcpBridgeTestResponse{}
-	}
-}
-
 func mcpBridgeQuestionArgs() map[string]interface{} {
 	return map[string]interface{}{
 		"question": "Which color should I use?",
@@ -315,8 +292,7 @@ func mcpBridgeQuestionArgs() map[string]interface{} {
 	}
 }
 
-func TestMCPBridgeQuestionBlocksAndReturnsAnswer(t *testing.T) {
-
+func TestMCPBridgeQuestionParksSession(t *testing.T) {
 	server := newMCPBridgeTestServer(t)
 	sess, err := server.sessionManager.Create("build")
 	if err != nil {
@@ -324,126 +300,73 @@ func TestMCPBridgeQuestionBlocksAndReturnsAnswer(t *testing.T) {
 	}
 	token, revoke := server.mustMintMCPBridgeToken(t, sess.ID)
 	defer revoke()
-	events := mustSubscribe(t, server, sess.ID)
 
-	responses := startMCPBridgeQuestion(t, server, sess.ID, token, mcpBridgeQuestionArgs())
-
-	// Caesar sees a question approval with the raw question args as input.
-	required := waitForStreamApprovalEvent(t, events, "permission_required")
-	if required.Approval == nil {
-		t.Fatal("permission_required carried no approval")
-	}
-	if required.Approval.Kind != "question" {
-		t.Fatalf("approval kind = %q, want question", required.Approval.Kind)
-	}
-	if required.Approval.Input["question"] != "Which color should I use?" {
-		t.Fatalf("approval input question = %#v", required.Approval.Input["question"])
-	}
-	if len(required.Approval.Questions) != 1 {
-		t.Fatalf("approval questions = %#v", required.Approval.Questions)
-	}
-	q := required.Approval.Questions[0]
-	if q.Header != "Pick a color" || len(q.Options) != 2 || !q.Custom {
-		t.Fatalf("parsed question mismatch: %+v", q)
-	}
-
-	// Resolve the way Caesar's approval endpoint does.
-	server.setApprovalResolvePayload(required.Approval.RequestID, approvalResolvePayload{
-		Answers: map[string]string{"Which color should I use?": "Blue"},
-	})
-	if err := server.approvalBroker.Resolve(required.Approval.RequestID, sess.ID, approval.DecisionAllowOnce); err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-
-	resp := awaitMCPBridgeResponse(t, responses)
+	_, resp := serveMCPBridge(t, server, newMCPBridgeRequest(t, sess.ID, token,
+		mcpBridgeRPC(t, 7, "tools/call", map[string]interface{}{"name": "question", "arguments": mcpBridgeQuestionArgs()})))
 	text, isError := mcpBridgeCallResultText(t, resp)
-	if isError {
-		t.Fatalf("expected success, got %q", text)
+	if isError || text != mcpBridgeQuestionParked {
+		t.Fatalf("expected immediate park result, got %q (error=%v)", text, isError)
 	}
-	if !strings.Contains(text, "Blue") {
-		t.Fatalf("expected answer in tool result, got %q", text)
-	}
-}
-
-func TestMCPBridgeQuestionTimeout(t *testing.T) {
-
-	server := newMCPBridgeTestServer(t)
-	server.mcpBridge.questionTimeout = 50 * time.Millisecond
-	sess, err := server.sessionManager.Create("build")
+	got, err := server.sessionManager.Get(sess.ID)
 	if err != nil {
-		t.Fatalf("create session: %v", err)
+		t.Fatal(err)
 	}
-	token, revoke := server.mustMintMCPBridgeToken(t, sess.ID)
-	defer revoke()
-
-	responses := startMCPBridgeQuestion(t, server, sess.ID, token, mcpBridgeQuestionArgs())
-	resp := awaitMCPBridgeResponse(t, responses)
-	text, isError := mcpBridgeCallResultText(t, resp)
-	if !isError {
-		t.Fatalf("expected timeout error result, got %q", text)
+	if got.Status != session.StatusInputRequired {
+		t.Fatalf("status = %q, want input_required", got.Status)
 	}
-	if !strings.Contains(strings.ToLower(text), "timed out") {
-		t.Fatalf("expected timeout message, got %q", text)
+	q, err := server.sessionManager.GetPendingQuestion(sess.ID)
+	if err != nil || q == nil || q.Header != "Pick a color" || len(q.Options) != 2 {
+		t.Fatalf("pending question not persisted: %#v err=%v", q, err)
 	}
 	if pending := server.approvalBroker.PendingForSession(sess.ID); len(pending) != 0 {
-		t.Fatalf("expected no pending approvals after timeout, got %d", len(pending))
+		t.Fatalf("question must not hold an approval, got %d", len(pending))
 	}
 }
 
-func TestMCPBridgeRevokeCancelsPendingQuestion(t *testing.T) {
-
+func TestAnswerQuestionWaitsForParkingRunThenResumes(t *testing.T) {
 	server := newMCPBridgeTestServer(t)
 	sess, err := server.sessionManager.Create("build")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	token, revoke := server.mustMintMCPBridgeToken(t, sess.ID)
-
-	responses := startMCPBridgeQuestion(t, server, sess.ID, token, mcpBridgeQuestionArgs())
-	revoke()
-
-	resp := awaitMCPBridgeResponse(t, responses)
-	text, isError := mcpBridgeCallResultText(t, resp)
-	if !isError {
-		t.Fatalf("expected cancellation error result, got %q", text)
+	if err := server.sessionManager.SetPendingQuestion(sess.ID, &session.QuestionData{Question: "Which color?"}); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(strings.ToLower(text), "cancel") {
-		t.Fatalf("expected cancellation message, got %q", text)
+	if err := server.sessionManager.SetSessionStatus(sess.ID, string(session.StatusInputRequired)); err != nil {
+		t.Fatal(err)
 	}
-}
+	runID := server.registerActiveSessionRun(sess.ID, func() {})
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		server.unregisterActiveSessionRun(sess.ID, runID)
+	}()
 
-func TestAnswerQuestionBridgePendingSkipsResume(t *testing.T) {
-
-	server := newMCPBridgeTestServer(t)
-	sess, err := server.sessionManager.Create("build")
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	token, revoke := server.mustMintMCPBridgeToken(t, sess.ID)
-	defer revoke()
-
-	responses := startMCPBridgeQuestion(t, server, sess.ID, token, mcpBridgeQuestionArgs())
-
-	body := bytes.NewBufferString(`{"answer":"Use green"}`)
-	req := httptest.NewRequest(http.MethodPost, "/sessions/"+sess.ID+"/answer", body)
+	started := time.Now()
+	req := httptest.NewRequest(http.MethodPost, "/sessions/"+sess.ID+"/answer", bytes.NewBufferString(`{"answer":"Use green"}`))
 	rec := httptest.NewRecorder()
 	server.router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("answer status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+		t.Fatalf("answer status = %d (body %q)", rec.Code, rec.Body.String())
 	}
-
-	resp := awaitMCPBridgeResponse(t, responses)
-	text, isError := mcpBridgeCallResultText(t, resp)
-	if isError {
-		t.Fatalf("expected success, got %q", text)
+	if time.Since(started) < 100*time.Millisecond {
+		t.Fatal("answer did not wait for the parking run to end")
 	}
-	if !strings.Contains(text, "Use green") {
-		t.Fatalf("expected composer answer in tool result, got %q", text)
+	got, err := server.sessionManager.Get(sess.ID)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	// The fork must not spawn a resume run while the CLI subprocess owns the session.
-	if got := server.activeSessionRunCount(sess.ID); got != 0 {
-		t.Fatalf("active runs = %d, want 0 (resume must not fire for bridge questions)", got)
+	last := got.GetLastMessage()
+	found := false
+	for _, m := range got.Messages {
+		if m.Role == "user" && m.Content == "Use green" {
+			found = true
+		}
+	}
+	if !found || last == nil {
+		t.Fatalf("answer not recorded as user message: %#v", got.Messages)
+	}
+	if _, ok := got.Metadata["pending_question"]; ok {
+		t.Fatal("pending question was not cleared")
 	}
 }
 

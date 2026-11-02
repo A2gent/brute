@@ -18,16 +18,13 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
-	"github.com/A2gent/brute/internal/approval"
 	"github.com/A2gent/brute/internal/session"
 	"github.com/A2gent/brute/internal/tools"
 	"github.com/go-chi/chi/v5"
 )
 
 const (
-	mcpBridgeDefaultTimeout  = 5 * time.Minute
 	mcpBridgeProtocolVersion = "2024-11-05"
 	mcpBridgeMaxBodyBytes    = 4 << 20
 )
@@ -62,19 +59,15 @@ type mcpBridgeToken struct {
 }
 
 type mcpBridgeState struct {
-	mu              sync.Mutex
-	tokens          map[string]*mcpBridgeToken
-	relays          map[string]*mcpRelay
-	questions       map[string]int
-	questionTimeout time.Duration
+	mu     sync.Mutex
+	tokens map[string]*mcpBridgeToken
+	relays map[string]*mcpRelay
 }
 
 func newMCPBridgeState() *mcpBridgeState {
 	return &mcpBridgeState{
-		tokens:          make(map[string]*mcpBridgeToken),
-		relays:          make(map[string]*mcpRelay),
-		questions:       make(map[string]int),
-		questionTimeout: mcpBridgeDefaultTimeout,
+		tokens: make(map[string]*mcpBridgeToken),
+		relays: make(map[string]*mcpRelay),
 	}
 }
 
@@ -114,31 +107,6 @@ func (st *mcpBridgeState) resolve(token string) (string, context.Context, bool) 
 		return "", nil, false
 	}
 	return entry.sessionID, entry.ctx, true
-}
-
-func (st *mcpBridgeState) trackQuestionStart(sessionID string) {
-	st.mu.Lock()
-	st.questions[sessionID]++
-	st.mu.Unlock()
-}
-
-func (st *mcpBridgeState) trackQuestionEnd(sessionID string) {
-	st.mu.Lock()
-	if st.questions[sessionID] <= 1 {
-		delete(st.questions, sessionID)
-	} else {
-		st.questions[sessionID]--
-	}
-	st.mu.Unlock()
-}
-
-func (st *mcpBridgeState) hasPendingQuestion(sessionID string) bool {
-	if st == nil {
-		return false
-	}
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	return st.questions[sessionID] > 0
 }
 
 // claudecliMCPBridgeHook implements claudecli.MCPBridgeHook: it mints a
@@ -445,11 +413,6 @@ func (s *Server) mcpBridgeCallToolResult(tokenCtx context.Context, sess *session
 		return fmt.Sprintf("tool not found: %s", name), true, nil, nil
 	}
 
-	if name == "question" {
-		text, isError := s.mcpBridgeAskQuestion(tokenCtx, sess.ID, call.Arguments)
-		return text, isError, nil, nil
-	}
-
 	ctx := context.WithValue(tokenCtx, "session_id", sess.ID)
 	if scoped, _ := tokenCtx.Value(parentAgentToolsScopeKey{}).(bool); !scoped {
 		ctx = withDelegationAsync(ctx)
@@ -509,92 +472,17 @@ func (s *Server) mcpBridgeCallToolResult(tokenCtx context.Context, sess *session
 		}
 		return "Error: " + message, true, result, nil
 	}
+	if name == "question" {
+		return mcpBridgeQuestionParked, false, result, nil
+	}
 	return result.Output, false, result, nil
 }
 
-// mcpBridgeAskQuestion intercepts the question tool before tools.Manager so the
-// CLI run blocks on the approval broker instead of pausing the brute loop; the
-// same CLI loop continues once Caesar resolves the approval.
-func (s *Server) mcpBridgeAskQuestion(ctx context.Context, sessionID string, args json.RawMessage) (string, bool) {
-	var parsed struct {
-		Question string `json:"question"`
-		Header   string `json:"header"`
-	}
-	if err := json.Unmarshal(args, &parsed); err != nil {
-		return "invalid question parameters: " + err.Error(), true
-	}
-	question := strings.TrimSpace(parsed.Question)
-	if question == "" {
-		return "question is required", true
-	}
-	reason := strings.TrimSpace(parsed.Header)
-	if reason == "" {
-		reason = question
-	}
-
-	s.mcpBridge.trackQuestionStart(sessionID)
-	defer s.mcpBridge.trackQuestionEnd(sessionID)
-
-	result, err := s.approvalBroker.Request(ctx, approval.RequestParams{
-		SessionID: sessionID,
-		ToolName:  "question",
-		Input:     args,
-		Reason:    reason,
-		AskUser:   &approval.AskUserPayload{Question: question},
-		Timeout:   s.mcpBridge.questionTimeout,
-	})
-	if err != nil {
-		return fmt.Sprintf("question was not answered: %v", err), true
-	}
-	if result.Decision == approval.DecisionDeny {
-		return "User declined to answer the question", true
-	}
-	payload, _ := s.takeApprovalResolvePayload(result.RequestID)
-	answer := mcpBridgeFormatAnswer(payload)
-	if answer == "" {
-		answer = "User approved without providing a text answer"
-	}
-	return answer, false
-}
-
-func mcpBridgeFormatAnswer(payload approvalResolvePayload) string {
-	parts := make([]string, 0, len(payload.Answers)+1)
-	if len(payload.Answers) > 0 {
-		keys := make([]string, 0, len(payload.Answers))
-		for key := range payload.Answers {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			if value := strings.TrimSpace(payload.Answers[key]); value != "" {
-				parts = append(parts, value)
-			}
-		}
-	}
-	if message := strings.TrimSpace(payload.Message); message != "" {
-		parts = append(parts, message)
-	}
-	return strings.Join(parts, "\n")
-}
-
-// resolveMCPBridgeQuestion unblocks a bridge-held question with an answer that
-// arrived through POST /sessions/{id}/answer. It must not trigger a session
-// resume; the owning CLI run is still alive and continues on its own.
-func (s *Server) resolveMCPBridgeQuestion(sessionID, answer string) {
-	if s.approvalBroker == nil {
-		return
-	}
-	for _, req := range s.approvalBroker.PendingForSession(sessionID) {
-		if req.ToolName != "question" {
-			continue
-		}
-		s.setApprovalResolvePayload(req.ID, approvalResolvePayload{Message: strings.TrimSpace(answer)})
-		if err := s.approvalBroker.Resolve(req.ID, sessionID, approval.DecisionAllowOnce); err != nil {
-			s.clearApprovalResolvePayload(req.ID)
-		}
-		return
-	}
-}
+// mcpBridgeQuestionParked is returned once the question tool has persisted the
+// question (pending_question + input_required). WHY: holding tools/call open
+// until the user answers kept the CLI alive and timed out; instead the turn ends
+// and POST /sessions/{id}/answer resumes the same CLI session with the answer.
+const mcpBridgeQuestionParked = "Question delivered to the user. Reply with one short sentence saying you are waiting for their answer, then end your turn now without further tool calls. The answer will arrive as the next user message."
 
 func (s *Server) writeMCPBridgeRPCError(w http.ResponseWriter, id json.RawMessage, code int, message string) {
 	s.jsonResponse(w, http.StatusOK, mcpBridgeRPCResponse{

@@ -11,6 +11,18 @@ func (a *Agent) mergeFreshSessionState(sess *session.Session) bool {
 	return changed
 }
 
+func (a *Agent) awaitingUserInput(sess *session.Session) bool {
+	if a == nil || a.sessionManager == nil || sess == nil || strings.TrimSpace(sess.ID) == "" {
+		return false
+	}
+	tailID := ""
+	if tail := sess.GetLastMessage(); tail != nil {
+		tailID = tail.ID
+	}
+	fresh, err := a.sessionManager.GetLiveState(sess.ID, tailID)
+	return err == nil && fresh != nil && fresh.Status == session.StatusInputRequired
+}
+
 func (a *Agent) mergeFreshSessionLiveState(sess *session.Session) (*session.Session, bool) {
 	if a == nil || a.sessionManager == nil || sess == nil || strings.TrimSpace(sess.ID) == "" {
 		return nil, false

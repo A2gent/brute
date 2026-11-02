@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/A2gent/brute/internal/approval"
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/tools"
@@ -234,42 +233,27 @@ func TestMCPRelayApprovalCancellationAndTokenRevocation(t *testing.T) {
 	if code != 403 {
 		t.Fatalf("remote token accepted for parent: %d", code)
 	}
+	text, bad := mcpBridgeCallResultText(t, relayRPC(t, relay, "tools/call", map[string]interface{}{"name": "question", "arguments": mcpBridgeQuestionArgs()}))
+	if bad || text != mcpBridgeQuestionParked {
+		t.Fatalf("question not parked: %q", text)
+	}
+	if q, _ := child.sessionManager.GetPendingQuestion(id); q == nil {
+		t.Fatal("question not parked on child session")
+	}
+	if len(parent.approvalBroker.Pending()) != 0 {
+		t.Fatal("question ran on parent")
+	}
+	started := registerRelayBlockProbe(child)
 	responses := make(chan mcpBridgeTestResponse, 1)
 	go func() {
-		responses <- relayRPC(t, relay, "tools/call", map[string]interface{}{"name": "question", "arguments": map[string]interface{}{"question": "child approval?"}})
+		responses <- relayRPC(t, relay, "tools/call", map[string]interface{}{"name": "relay_block_probe", "arguments": map[string]interface{}{}})
 	}()
-	waitForApprovalPending(t, child.approvalBroker, 1)
-	if len(parent.approvalBroker.Pending()) != 0 {
-		t.Fatal("approval ran on parent")
-	}
-	pending := child.approvalBroker.PendingForSession(id)
-	if len(pending) != 1 {
-		t.Fatal("approval not bound to child")
-	}
-	child.setApprovalResolvePayload(pending[0].ID, approvalResolvePayload{Message: "approved-child"})
-	if err := child.approvalBroker.Resolve(pending[0].ID, id, approval.DecisionAllowOnce); err != nil {
-		t.Fatal(err)
-	}
-	text, bad := mcpBridgeCallResultText(t, awaitMCPBridgeResponse(t, responses))
-	if bad || text != "approved-child" {
-		t.Fatalf("approval lost: %q", text)
-	}
-	go func() {
-		responses <- relayRPC(t, relay, "tools/call", map[string]interface{}{"name": "question", "arguments": map[string]interface{}{"question": "cancel?"}})
-	}()
-	waitForApprovalPending(t, child.approvalBroker, 1)
+	waitForProbeStart(t, started)
 	cleanup()
 	select {
 	case <-responses:
 	case <-time.After(time.Second):
 		t.Fatal("pending relay call leaked")
-	}
-	deadline := time.Now().Add(time.Second)
-	for len(child.approvalBroker.PendingForSession(id)) != 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if len(child.approvalBroker.PendingForSession(id)) != 0 {
-		t.Fatal("pending child approval leaked")
 	}
 	revoke()
 	rec = httptest.NewRecorder()
@@ -298,25 +282,19 @@ func TestMCPRelayRevokeCancelsOnlyOwningCallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	token := strings.TrimPrefix(conf.Servers["a2gent"].Headers["Authorization"], "Bearer ")
+	started := registerRelayBlockProbe(child)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		rec := httptest.NewRecorder()
-		parent.router.ServeHTTP(rec, newMCPBridgeRequest(t, relay.id, token, mcpBridgeRPC(t, 1, "tools/call", map[string]interface{}{"name": "question", "arguments": map[string]interface{}{"question": "cancel callback?"}})))
+		parent.router.ServeHTTP(rec, newMCPBridgeRequest(t, relay.id, token, mcpBridgeRPC(t, 1, "tools/call", map[string]interface{}{"name": "relay_block_probe", "arguments": map[string]interface{}{}})))
 	}()
-	waitForApprovalPending(t, child.approvalBroker, 1)
+	waitForProbeStart(t, started)
 	revoke()
 	select {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("revoke left callback blocked")
-	}
-	deadline := time.Now().Add(time.Second)
-	for len(child.approvalBroker.PendingForSession(id)) > 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if len(child.approvalBroker.PendingForSession(id)) > 0 {
-		t.Fatal("child approval survived callback revocation")
 	}
 	if response := relayRPC(t, relay, "ping", nil); response.Error != nil {
 		t.Fatalf("revoking one callback broke relay: %+v", response)
@@ -436,5 +414,24 @@ func TestMCPRelayRuntimeNameWithDots(t *testing.T) {
 	}
 	if runtime, ok := validMCPRelayRuntime(t.Context(), key); !ok || runtime != "agent.claude" {
 		t.Fatalf("valid dotted runtime rejected: %q %v", runtime, ok)
+	}
+}
+
+func registerRelayBlockProbe(s *Server) <-chan struct{} {
+	started := make(chan struct{}, 1)
+	s.toolManager.Register(&bridgeDelegationProbe{name: "relay_block_probe", execute: func(ctx context.Context, _ json.RawMessage) (*tools.Result, error) {
+		started <- struct{}{}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}})
+	return started
+}
+
+func waitForProbeStart(t *testing.T, started <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("blocking probe did not start")
 	}
 }

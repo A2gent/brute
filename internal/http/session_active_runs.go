@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -32,6 +33,25 @@ func (s *Server) activeSessionRunCount(sessionID string) int {
 	s.activeRunsMu.Lock()
 	defer s.activeRunsMu.Unlock()
 	return len(s.activeRuns[sessionID])
+}
+
+const answerRunDrainTimeout = 30 * time.Second
+
+func (s *Server) waitForSessionRunsToEnd(ctx context.Context, sessionID string, timeout time.Duration) bool {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for s.activeSessionRunCount(sessionID) > 0 {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-deadline.C:
+			return false
+		case <-tick.C:
+		}
+	}
+	return true
 }
 
 func (s *Server) unregisterActiveSessionRun(sessionID, runID string) {

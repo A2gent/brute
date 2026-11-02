@@ -92,7 +92,6 @@ func TestMCPBridgeDisabledQuestionCannotBeCalled(t *testing.T) {
 	if err := s.store.SaveSettings(settings); err != nil {
 		t.Fatal(err)
 	}
-	s.mcpBridge.questionTimeout = time.Millisecond
 	sess, _ := s.sessionManager.Create("build")
 	for _, name := range []string{"question", "delegate_to_agent"} {
 		args, _ := json.Marshal(map[string]interface{}{"name": name, "arguments": map[string]string{"question": "bypass?"}})

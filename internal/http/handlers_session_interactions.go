@@ -95,21 +95,25 @@ func (s *Server) handleAnswerQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// WHY: while the MCP bridge holds a question, the Claude CLI subprocess is
-	// still alive and blocked on tools/call. Resuming here would spawn a second
-	// parallel run on the same session; resolve the broker instead and return.
-	if s.mcpBridge.hasPendingQuestion(sessionID) {
-		s.resolveMCPBridgeQuestion(sessionID, req.Answer)
-		s.jsonResponse(w, http.StatusOK, map[string]interface{}{"status": "ok"})
+	// WHY: a parked question ends the turn, but a fast answer can arrive while
+	// that run is still saving; resuming then would start a second parallel run.
+	if !s.waitForSessionRunsToEnd(r.Context(), sessionID, answerRunDrainTimeout) {
+		s.errorResponse(w, http.StatusConflict, "Session is still finishing its turn, try again")
+		return
+	}
+	leaseCtx, release, err := s.sessionManager.AcquireRun(s.sessionRunParentContext(), sessionID)
+	if err != nil {
+		s.errorResponse(w, http.StatusConflict, "Session is still finishing its turn, try again")
 		return
 	}
 
 	if err := s.sessionManager.AnswerQuestion(sessionID, req.Answer); err != nil {
+		release()
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to answer question: "+err.Error())
 		return
 	}
 
-	s.resumeSessionAfterQuestionAnswer(sessionID, req.Answer)
+	s.resumeSessionAfterQuestionAnswer(leaseCtx, release, sessionID, req.Answer)
 	s.jsonResponse(w, http.StatusOK, map[string]interface{}{"status": "ok"})
 }
 
@@ -144,6 +148,7 @@ func (s *Server) handleInjectSessionMessage(w http.ResponseWriter, r *http.Reque
 	defer s.queueTelegramSessionMessageSync(sess.ID)
 
 	logging.LogSession("message_injected", sess.ID, "via HTTP")
+	s.steerDirectAgentInjection(sess, req.Message, images)
 
 	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"status":  "ok",
@@ -151,11 +156,12 @@ func (s *Server) handleInjectSessionMessage(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-func (s *Server) resumeSessionAfterQuestionAnswer(sessionID string, userAnswer string) {
-	runCtx, cancelRun := context.WithCancel(s.sessionRunParentContext())
+func (s *Server) resumeSessionAfterQuestionAnswer(leaseCtx context.Context, release func(), sessionID string, userAnswer string) {
+	runCtx, cancelRun := context.WithCancel(leaseCtx)
 	runID := s.registerActiveSessionRun(sessionID, cancelRun)
 
 	go func() {
+		defer release()
 		defer func() {
 			cancelRun()
 			s.unregisterActiveSessionRun(sessionID, runID)
@@ -170,6 +176,13 @@ func (s *Server) resumeSessionAfterQuestionAnswer(sessionID string, userAnswer s
 			return
 		}
 		defer s.queueTelegramSessionMessageSync(sess.ID)
+		if s.hasDirectAgentTarget(sess) {
+			result, runErr := s.runSessionWithoutStreaming(runCtx, sess, userAnswer)
+			if err := s.finalizeSessionRunWithoutStreaming(runCtx, sess, result, runErr); err != nil {
+				logging.Warn("Direct agent resume after answer failed: session=%s error=%v", sessionID, err)
+			}
+			return
+		}
 
 		providerType := s.resolveSessionProviderType(sess)
 		model := s.resolveSessionModel(sess, providerType)

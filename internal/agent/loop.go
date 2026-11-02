@@ -197,7 +197,7 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			// assistant reply, append the injected note after it, and run one more
 			// turn so the backend flow actually incorporates the new user input.
 			finalContent := strings.TrimSpace(response.Content)
-			if finalContent == "" {
+			if finalContent == "" && !a.awaitingUserInput(sess) {
 				if emptyFinalResponseRetries < emptyFinalResponseMaxRetries {
 					emptyFinalResponseRetries++
 					transientUserPrompt = emptyFinalResponseRetryPrompt
@@ -214,10 +214,21 @@ func (a *Agent) loop(ctx context.Context, sess *session.Session, onEvent func(Ev
 			}
 			emptyFinalResponseRetries = 0
 			sess.AddAssistantMessageWithImagesAndMetadata(finalContent, llmImagesToSession(response.Images), nil, assistantMetadata)
+			// WHY: CLI providers run tools inside one LLM call; a question asked over
+			// the MCP bridge parks the session in the DB. Merge it before any save
+			// (completeTransition saves too) so input_required is not overwritten.
+			merged := a.mergeFreshSessionState(sess)
 			if err := a.completeTransition(sess, onEvent); err != nil {
 				return "", totalUsage, err
 			}
-			if a.mergeFreshSessionState(sess) {
+			if sess.Status == session.StatusInputRequired {
+				a.sessionManager.Save(sess)
+				if onEvent != nil {
+					onEvent(Event{Type: EventStepCompleted, Step: step})
+				}
+				return finalContent, totalUsage, nil
+			}
+			if merged {
 				if err := a.sessionManager.Save(sess); err != nil {
 					_ = err
 				}

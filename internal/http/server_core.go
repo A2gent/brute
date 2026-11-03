@@ -105,6 +105,8 @@ type Server struct {
 	tunnelMu     sync.Mutex
 	tunnelClient *a2atunnel.TunnelClient
 	tunnelCancel context.CancelFunc
+
+	selfUpdate selfUpdateState
 }
 
 // NewServer creates a new HTTP server instance
@@ -211,6 +213,7 @@ func (s *Server) PortReady() <-chan int {
 
 // Run starts the HTTP server
 func (s *Server) Run(ctx context.Context) error {
+	captureRunningCommit()
 
 	if ctx != nil {
 		s.runParentCtx = ctx

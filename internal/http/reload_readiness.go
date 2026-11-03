@@ -13,13 +13,7 @@ type reloadReadinessResponse struct {
 // queued sessions that are about to start; it exits when the queue stalls, so a
 // stuck queue cannot block reloads forever.
 func (s *Server) handleReloadReadiness(w http.ResponseWriter, r *http.Request) {
-	s.serialQueueMu.Lock()
-	workers := 0
-	for _, n := range s.serialQueueWorkers {
-		workers += n
-	}
-	s.serialQueueMu.Unlock()
-	runs := s.sessionManager.ActiveRunCount()
+	runs, workers := s.activeWork()
 
 	s.jsonResponse(w, http.StatusOK, reloadReadinessResponse{
 		Idle:               runs == 0 && workers == 0,

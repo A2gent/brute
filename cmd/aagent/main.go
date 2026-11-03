@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/A2gent/brute/internal/agent"
 	"github.com/A2gent/brute/internal/codexauth"
@@ -45,6 +47,8 @@ var (
 	verboseFlag  bool
 	portFlag     int
 )
+
+var restartOnExit atomic.Bool
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -101,6 +105,12 @@ Starts both the HTTP API server and the TUI interface simultaneously.`,
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	if restartOnExit.Load() {
+		if err := execSelf(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	}
 }
 
@@ -160,7 +170,9 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	server := httpserver.NewServer(cfg, llmClient, toolManager, sessionManager, store, clipStore, portFlag)
+	serverDone := make(chan struct{})
 	go func() {
+		defer close(serverDone)
 		logging.Info("Starting HTTP server on port %d", portFlag)
 		if err := server.Run(ctx); err != nil && err.Error() != "http: Server closed" {
 			logging.Error("HTTP server error: %v", err)
@@ -254,22 +266,52 @@ func runAgentWithServer(cmd *cobra.Command, args []string) error {
 		tea.WithMouseCellMotion(),
 	)
 
+	restartRequested := make(chan struct{})
+	go func() {
+		select {
+		case <-server.RestartRequests():
+			close(restartRequested)
+			p.Quit()
+		case <-ctx.Done():
+		}
+	}()
+
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)
 	}
 
-	// Cancel context to stop HTTP server
 	cancel()
 
-	// /update rebuilt the binary on disk; replace this process with it.
+	select {
+	case <-restartRequested:
+		tui.RestartRequested = true
+	default:
+	}
+	// /update or POST /system/update rebuilt the binary on disk; replace this process with it.
 	if tui.RestartRequested {
-		if exe, err := os.Executable(); err == nil {
-			if err := syscall.Exec(exe, os.Args, os.Environ()); err != nil {
-				return fmt.Errorf("restart failed, please start brute again: %w", err)
-			}
-		}
+		waitForServerShutdown(serverDone)
+		restartOnExit.Store(true)
 	}
 
+	return nil
+}
+
+func waitForServerShutdown(done <-chan struct{}) {
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		logging.Warn("HTTP server did not stop in time; restarting anyway")
+	}
+}
+
+func execSelf() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("restart failed, please start brute again: %w", err)
+	}
+	if err := syscall.Exec(exe, os.Args, os.Environ()); err != nil {
+		return fmt.Errorf("restart failed, please start brute again: %w", err)
+	}
 	return nil
 }
 
@@ -329,8 +371,12 @@ func runServer(cmd *cobra.Command, args []string) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
 	go func() {
-		<-sigChan
-		logging.Info("Received shutdown signal")
+		select {
+		case <-sigChan:
+			logging.Info("Received shutdown signal")
+		case <-server.RestartRequests():
+			restartOnExit.Store(true)
+		}
 		cancel()
 	}()
 	httpserver.WatchHostParent(ctx, cancel)

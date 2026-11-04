@@ -91,6 +91,9 @@ func mergeLocalDockerAgentYAMLLLM(base, override localDockerAgentYAMLLLM) localD
 	if strings.TrimSpace(override.ReasoningEffort) != "" {
 		out.ReasoningEffort = override.ReasoningEffort
 	}
+	if strings.TrimSpace(override.Router) != "" {
+		out.Router = override.Router
+	}
 	if strings.TrimSpace(override.BaseURL) != "" {
 		out.BaseURL = override.BaseURL
 	}

@@ -302,6 +302,9 @@ func (s *Server) runDockerAgentDelegationWithWorkspace(ctx context.Context, agen
 		"source":            "delegate_to_agent",
 		"parent_session_id": parentSessionID,
 	}
+	if parent, parentErr := s.sessionManager.Get(parentSessionID); parentErr == nil && sessionSkipsTelegramSync(parent) {
+		createMetadata[sessionSkipTelegramSyncKey] = true
+	}
 	if workspace != nil {
 		createMetadata["docker_workspace"] = dockerWorkspaceMetadata(*workspace)
 	}

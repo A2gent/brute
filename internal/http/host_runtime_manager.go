@@ -281,6 +281,9 @@ func (m *hostRuntimeManager) spawn(ctx context.Context, def *agentdef.Definition
 	}
 
 	useProxy := s.llmProxyEnabled() && !localDockerAgentBypassesParentLLMProxy(req)
+	if !useProxy && strings.TrimSpace(req.LLM.Router) != "" {
+		return nil, errRouterNeedsLLMProxy
+	}
 	if useProxy {
 		req.LLM = s.resolveLocalDockerAgentProxyLLM(req)
 	}
@@ -292,7 +295,7 @@ func (m *hostRuntimeManager) spawn(ctx context.Context, def *agentdef.Definition
 		return nil, err
 	}
 	if useProxy {
-		args = append(args, s.parentProxyEnvArgs(localDockerAgentRuntimeProvider(req.LLM.Provider), fmt.Sprintf("http://127.0.0.1:%d/v1", s.Port()))...)
+		args = append(args, s.parentProxyEnvArgs(localDockerAgentRuntimeProvider(req.LLM.Provider), req.LLM.Router, fmt.Sprintf("http://127.0.0.1:%d/v1", s.Port()))...)
 	}
 	env := hostEnvFromDockerArgs(args)
 	// Origin only: turn credentials travel in an internal stream header, never env.
@@ -346,6 +349,7 @@ func (m *hostRuntimeManager) spawn(ctx context.Context, def *agentdef.Definition
 		dockerRuntimeManagedLabelKey:        "true",
 		dockerRuntimeAgentDefLabelKey:       def.Agent.ID,
 		dockerRuntimeLLMFingerprintLabelKey: llmFingerprint(def),
+		dockerRuntimeRouterRulesLabelKey:    m.server.routerRulesHash(def.LLM.Router),
 	}
 	for key, value := range globalLabels {
 		labels[key] = value

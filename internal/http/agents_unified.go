@@ -616,6 +616,7 @@ func localDockerCreateRequestBaseFromDefinition(def *agentdef.Definition) create
 			Provider:        def.LLM.Provider,
 			Model:           def.LLM.Model,
 			ReasoningEffort: def.LLM.ReasoningEffort,
+			Router:          def.LLM.Router,
 		},
 		Tools: localDockerAgentYAMLTools{
 			Mode:     def.Tools.Mode,

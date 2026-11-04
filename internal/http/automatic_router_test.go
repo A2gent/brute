@@ -272,3 +272,20 @@ func TestResolveExecutionTargetKeepsSessionRouteForFollowUps(t *testing.T) {
 		t.Fatal("expected a fresh routing attempt for an unknown stored rule")
 	}
 }
+
+func TestSelectRoutingRuleFallsBackToDefaultRuleWhenRouterFails(t *testing.T) {
+	server := &Server{config: config.DefaultConfig()}
+	autoCfg := config.Provider{RouterProvider: "unsupported_router_provider"}
+	rules := []config.RouterRule{
+		{Match: "documentation", Provider: "google"},
+		{Match: "coding", Provider: "cursor"},
+	}
+
+	rule, reason, err := server.selectRoutingRule(context.Background(), "fix tests", autoCfg, rules)
+	if err != nil {
+		t.Fatalf("selectRoutingRule: %v", err)
+	}
+	if rule == nil || rule.Match != "documentation" || !strings.Contains(reason, "default rule fallback") {
+		t.Fatalf("rule = %+v reason = %q, want default rule fallback", rule, reason)
+	}
+}

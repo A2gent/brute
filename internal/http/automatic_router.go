@@ -264,7 +264,11 @@ func (s *Server) selectRoutingRule(ctx context.Context, userPrompt string, autoC
 
 	rule, reason, err := s.selectRoutingRuleViaLLM(ctx, userPrompt, autoCfg, rules)
 	if err != nil {
-		return nil, "", err
+		if ctx.Err() != nil {
+			return nil, "", err
+		}
+		logging.Error("Automatic router model decision failed, using default rule: %v", err)
+		return &rules[0], "router decision failed, default rule fallback", nil
 	}
 	if rule == nil {
 		return nil, "", fmt.Errorf("router returned no rule")
@@ -317,7 +321,7 @@ func (s *Server) selectRoutingRuleViaLLM(ctx context.Context, userPrompt string,
 		Temperature: 0,
 		// Gemini thinking models can consume a small output budget before emitting the
 		// JSON answer. Keep this aligned with the standalone automatic-router client.
-		MaxTokens: 2048,
+		MaxTokens: 4096,
 	}
 	if routerModel != "" {
 		req.Model = routerModel

@@ -244,6 +244,15 @@ func (s *Server) respondIntegrationTest(w http.ResponseWriter, r *http.Request, 
 		s.jsonResponse(w, status, IntegrationTestResponse{Success: ok, Message: message})
 		return
 	}
+	if integration.Provider == "slack" {
+		ok, message := s.testSlackIntegration(r.Context(), integration)
+		status := http.StatusOK
+		if !ok {
+			status = http.StatusBadGateway
+		}
+		s.jsonResponse(w, status, IntegrationTestResponse{Success: ok, Message: message})
+		return
+	}
 	if integration.Provider == "google_calendar" {
 		ok, message := s.testGoogleCalendarIntegration(r.Context(), integration)
 		status := http.StatusOK

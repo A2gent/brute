@@ -166,6 +166,8 @@ func normalizeRouterRules(raw []config.RouterRule) []config.RouterRule {
 // (Jev allows 32k tokens per question); intent survives in the head and tail.
 const routerPromptMaxBytes = llm.RouterPromptMaxBytes
 
+const routerMaxTokens = 4096
+
 func extractUserPrompt(messages []llm.Message) (string, []llm.Image) {
 	for i := len(messages) - 1; i >= 0; i-- {
 		msg := messages[i]
@@ -194,8 +196,11 @@ func (c *Client) selectRoutingRule(ctx context.Context, userPrompt string, image
 
 	rule, reason, err := c.selectRoutingRuleViaLLM(ctx, userPrompt, images, autoCfg, rules)
 	if err != nil {
-		logging.Error("Automatic router model decision failed: %v", err)
-		return nil, "", err
+		if ctx.Err() != nil {
+			return nil, "", err
+		}
+		logging.Error("Automatic router model decision failed, using default rule: %v", err)
+		return &rules[0], "router decision failed, default rule fallback", nil
 	}
 	return rule, reason, nil
 }
@@ -234,7 +239,7 @@ func (c *Client) selectRoutingRuleViaLLM(ctx context.Context, userPrompt string,
 			{Role: "user", Content: fmt.Sprintf("Rules: %s\n\nUser prompt: %s", string(rulesJSON), userPrompt)},
 		},
 		Temperature: 0,
-		MaxTokens:   2048,
+		MaxTokens:   routerMaxTokens,
 	}
 	if routerModel != "" {
 		req.Model = routerModel

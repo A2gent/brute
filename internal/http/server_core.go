@@ -106,6 +106,8 @@ type Server struct {
 	tunnelClient *a2atunnel.TunnelClient
 	tunnelCancel context.CancelFunc
 
+	slack slackRuntime
+
 	selfUpdate selfUpdateState
 }
 
@@ -237,6 +239,7 @@ func (s *Server) Run(ctx context.Context) error {
 	fmt.Printf("HTTP API server running on http://0.0.0.0:%d (accessible from any host)\n", s.Port())
 
 	go s.runTelegramDuplexLoop(ctx)
+	go s.runSlackSocketSupervisor(ctx)
 	go s.runA2ATunnelIfConfigured()
 	go s.dockerRuntime.runIdleReaper(ctx)
 	go reapOrphanedHostAgents()
@@ -265,6 +268,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// Synchronous: Serve returns as soon as Shutdown starts, and a goroutine
 	// would lose the race with process exit and orphan the host agents.
 	s.hostRuntime.stopAll()
+	s.waitForSlackRuns(slackReplyGraceTimeout + 5*time.Second)
 	return err
 }
 

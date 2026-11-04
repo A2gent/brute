@@ -22,6 +22,7 @@ type Config struct {
 	CORSAllowedOrigins     []string            `json:"cors_allowed_origins,omitempty"` // Allowed web origins for HTTP API CORS. Default: ["*"].
 	Providers              map[string]Provider `json:"providers"`
 	FallbackAggregates     []FallbackAggregate `json:"fallback_aggregates,omitempty"`
+	Routers                []NamedRouter       `json:"routers,omitempty"`
 	Tools                  ToolsConfig         `json:"tools"`
 	AgentRouter            AgentRouter         `json:"agent_router"`
 }
@@ -91,6 +92,39 @@ type FallbackAggregate struct {
 	ID    string              `json:"id"`
 	Name  string              `json:"name"`
 	Chain []FallbackChainNode `json:"chain"`
+}
+
+// NamedRouter is a reusable automatic-router setup that agents can reference by ID.
+// Agents without a router use the default automatic_router provider.
+type NamedRouter struct {
+	ID                    string       `json:"id"`
+	Name                  string       `json:"name"`
+	RouterProvider        string       `json:"router_provider"`
+	RouterModel           string       `json:"router_model,omitempty"`
+	RouterReasoningEffort string       `json:"router_reasoning_effort,omitempty"`
+	RouterRules           []RouterRule `json:"router_rules"`
+}
+
+// AsProvider returns the router as an automatic_router provider config.
+func (r NamedRouter) AsProvider() Provider {
+	return Provider{
+		Name:                  string(ProviderAutoRouter),
+		RouterProvider:        r.RouterProvider,
+		RouterModel:           r.RouterModel,
+		RouterReasoningEffort: r.RouterReasoningEffort,
+		RouterRules:           r.RouterRules,
+	}
+}
+
+// FindRouter returns the named router with the given ID.
+func (c *Config) FindRouter(id string) (NamedRouter, bool) {
+	id = NormalizeToken(id)
+	for _, r := range c.Routers {
+		if NormalizeToken(r.ID) == id {
+			return r, true
+		}
+	}
+	return NamedRouter{}, false
 }
 
 // RouterRule maps a textual task context to a target model/provider.

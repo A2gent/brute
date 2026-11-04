@@ -141,6 +141,14 @@ func (s *Server) registerLLMProxyRoutes(r chi.Router) {
 }
 
 func (s *Server) registerProviderRoutes(r chi.Router) {
+	r.Route("/routers", func(r chi.Router) {
+		r.Get("/", s.handleListRouters)
+		r.Post("/", s.handleCreateRouter)
+		r.Put("/{routerID}", s.handleUpdateRouter)
+		r.Delete("/{routerID}", s.handleDeleteRouter)
+	})
+	r.Get("/router-runtimes", s.handleListRouterRuntimes)
+	r.Post("/router-runtimes/restart", s.handleRestartRouterRuntimes)
 	// LLM provider configuration
 	r.Route("/providers", func(r chi.Router) {
 		r.Get("/", s.handleListProviders)
@@ -197,6 +205,7 @@ func (s *Server) registerIntegrationRoutes(r chi.Router) {
 		r.Post("/telegram/test-message", s.handleTelegramTestMessage)
 		r.Post("/telegram/check-groups", s.handleTelegramCheckGroups)
 		r.Post("/telegram/test-topic", s.handleTelegramTestTopic)
+		r.Post("/slack/users", s.handleSlackUsers)
 		// A2A tunnel status endpoints (no integrationID in path)
 		r.Get("/a2_registry/tunnel-status", s.handleA2ATunnelStatus)
 		r.Get("/a2_registry/tunnel-status/stream", s.handleA2ATunnelStatusStream)

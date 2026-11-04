@@ -46,7 +46,7 @@ var supportedIntegrationModes = map[string]struct{}{
 var requiredConfigFields = map[string][]string{
 	"telegram":        {"bot_token"},
 	"telegram_user":   {"api_id", "api_hash"},
-	"slack":           {"bot_token", "channel_id"},
+	"slack":           {"bot_token"},
 	"discord":         {"bot_token", "channel_id"},
 	"whatsapp":        {"access_token", "phone_number_id", "recipient"},
 	"webhook":         {"url"},

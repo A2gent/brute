@@ -28,7 +28,7 @@ const agentDefinitionSchemaYAML = agentDefinitionSchemaManagedMarker + `
 $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "https://a2gent.local/schemas/agent-definition.v1.schema.json"
 title: A2gent Agent Definition
-description: Unified reusable agent definition. Local reusable agents run in Docker by default; runtime.type=host runs the agent as a process directly on the host (no isolation).
+description: Unified reusable agent definition. Local reusable agents run in Docker by default; runtime.type=host runs the agent as a child process directly on the host (no isolation).
 type: object
 additionalProperties: false
 required:
@@ -53,6 +53,10 @@ properties:
         minLength: 1
       emoji:
         type: string
+      icon_url:
+        type: string
+      avatar_url:
+        type: string
       description:
         type: string
       kind:
@@ -65,7 +69,7 @@ properties:
         type: string
         enum: [docker, remote, host]
         default: docker
-        description: Use docker for local reusable agents. host is legacy-import-only and is normalized to docker.
+        description: docker is the default and runs the agent in an isolated container. host runs a child Brute process directly on the host with no isolation (workspace.mount is not enforced). remote delegates to an external A2A agent.
       image:
         type: string
         default: a2gent-brute:latest
@@ -91,12 +95,39 @@ properties:
         type: string
       model:
         type: string
+      reasoning_effort:
+        type: string
+      router:
+        type: string
+        description: Named router ID. When set, the agent runs on that router instead of provider/model.
+  metrics:
+    type: object
+    additionalProperties: false
+    description: Compact orchestration hints for parent agents. Cost is an expense score where lower is cheaper; speed and intelligence are capability scores where higher is better.
+    properties:
+      cost:
+        type: integer
+        minimum: 0
+        maximum: 100
+      speed:
+        type: integer
+        minimum: 0
+        maximum: 100
+      intelligence:
+        type: integer
+        minimum: 0
+        maximum: 100
+      source:
+        type: string
   instructions:
     type: object
     additionalProperties: false
     properties:
       system:
         type: string
+      system_file:
+        type: string
+        description: Relative file path inside the agent definition folder holding the system prompt.
       blocks:
         type: array
         items:
@@ -139,6 +170,9 @@ properties:
         type: array
         items:
           type: string
+      project_integrations_only:
+        type: boolean
+        description: Hide global integrations from integration tools, leaving only integrations bound to the agent's project.
   skills:
     type: object
     additionalProperties: false
@@ -182,6 +216,10 @@ properties:
         additionalProperties: false
         properties:
           category:
+            type: string
+          icon_url:
+            type: string
+          avatar_url:
             type: string
           discoverable:
             type: boolean

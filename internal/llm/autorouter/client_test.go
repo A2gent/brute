@@ -2,6 +2,7 @@ package autorouter
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -35,26 +36,31 @@ func routerTestConfig() *config.Config {
 	}
 }
 
-func TestResolveTargetFailsOnTruncatedRouterResponse(t *testing.T) {
+func TestResolveTargetFallsBackToDefaultRuleOnTruncatedRouterResponse(t *testing.T) {
 	router := &routerTestClient{response: &llm.ChatResponse{Content: `{"index":`}}
+	var targetRef string
 	client := New(routerTestConfig(), func(providerRef string, model string) (llm.Client, string, error) {
-		if providerRef != string(config.ProviderLMStudio) {
-			t.Fatalf("unexpected target client creation after routing failure: %s/%s", providerRef, model)
+		if providerRef == string(config.ProviderLMStudio) {
+			return router, model, nil
 		}
-		return router, model, nil
+		targetRef = providerRef + "/" + model
+		return &routerTestClient{}, model, nil
 	})
 
-	_, _, err := client.resolveTarget(context.Background(), &llm.ChatRequest{
+	target, _, err := client.resolveTarget(context.Background(), &llm.ChatRequest{
 		Messages: []llm.Message{{Role: "user", Content: "Create a controller concern and run its specs."}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "invalid router response") {
-		t.Fatalf("error = %v, want invalid router response", err)
+	if err != nil {
+		t.Fatalf("resolveTarget: %v", err)
+	}
+	if target.Provider != string(config.ProviderGoogle) || targetRef != string(config.ProviderGoogle)+"/docs-model" {
+		t.Fatalf("target = %s (%s), want first rule", target.Provider, targetRef)
 	}
 	if router.request == nil {
 		t.Fatal("router request was not captured")
 	}
-	if router.request.MaxTokens != 2048 {
-		t.Fatalf("router max tokens = %d, want 2048", router.request.MaxTokens)
+	if router.request.MaxTokens != routerMaxTokens {
+		t.Fatalf("router max tokens = %d, want %d", router.request.MaxTokens, routerMaxTokens)
 	}
 	if router.request.SystemPrompt != automaticRouterSystemPrompt {
 		t.Fatal("router did not receive the hardened system prompt as provider instructions")
@@ -64,20 +70,54 @@ func TestResolveTargetFailsOnTruncatedRouterResponse(t *testing.T) {
 	}
 }
 
-func TestResolveTargetFailsOnOutOfRangeRouterIndex(t *testing.T) {
-	router := &routerTestClient{response: &llm.ChatResponse{Content: `{"index":0,"reason":"none"}`}}
+func TestResolveTargetFallsBackToDefaultRuleOnRouterError(t *testing.T) {
 	client := New(routerTestConfig(), func(providerRef string, model string) (llm.Client, string, error) {
-		if providerRef != string(config.ProviderLMStudio) {
-			t.Fatalf("unexpected target client creation after routing failure: %s/%s", providerRef, model)
+		if providerRef == string(config.ProviderLMStudio) {
+			return errRouterClient{}, model, nil
 		}
-		return router, model, nil
+		return &routerTestClient{}, model, nil
 	})
-
-	_, _, err := client.resolveTarget(context.Background(), &llm.ChatRequest{
+	target, _, err := client.resolveTarget(context.Background(), &llm.ChatRequest{
 		Messages: []llm.Message{{Role: "user", Content: "Implement the source change."}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "out-of-range index 0") {
-		t.Fatalf("error = %v, want out-of-range routing error", err)
+	if err != nil || target.Provider != string(config.ProviderGoogle) {
+		t.Fatalf("target = %+v err = %v, want default rule", target, err)
+	}
+}
+
+func TestResolveTargetKeepsErrorOnCancelledContext(t *testing.T) {
+	client := New(routerTestConfig(), func(providerRef string, model string) (llm.Client, string, error) {
+		return errRouterClient{}, model, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err := client.resolveTarget(ctx, &llm.ChatRequest{
+		Messages: []llm.Message{{Role: "user", Content: "Implement the source change."}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "automatic router failed") {
+		t.Fatalf("error = %v, want automatic router failure", err)
+	}
+}
+
+type errRouterClient struct{}
+
+func (errRouterClient) Chat(context.Context, *llm.ChatRequest) (*llm.ChatResponse, error) {
+	return nil, errors.New("LM Studio model failed (finish_reason: length)")
+}
+
+func TestResolveTargetFallsBackOnOutOfRangeRouterIndex(t *testing.T) {
+	router := &routerTestClient{response: &llm.ChatResponse{Content: `{"index":0,"reason":"none"}`}}
+	client := New(routerTestConfig(), func(providerRef string, model string) (llm.Client, string, error) {
+		if providerRef == string(config.ProviderLMStudio) {
+			return router, model, nil
+		}
+		return &routerTestClient{}, model, nil
+	})
+	target, _, err := client.resolveTarget(context.Background(), &llm.ChatRequest{
+		Messages: []llm.Message{{Role: "user", Content: "Implement the source change."}},
+	})
+	if err != nil || target.Provider != string(config.ProviderGoogle) {
+		t.Fatalf("target = %+v err = %v, want default rule", target, err)
 	}
 }
 

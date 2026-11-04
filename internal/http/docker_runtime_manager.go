@@ -29,6 +29,7 @@ const (
 	// Definition-derived provider|model. Unlike the labels above it is never
 	// rewritten for proxy routing, so it can be compared with the current definition.
 	dockerRuntimeLLMFingerprintLabelKey = "a2gent.llm_fingerprint"
+	dockerRuntimeRouterRulesLabelKey    = "a2gent.router_rules_hash"
 	dockerAgentIdleTimeoutEnvVar        = "A2GENT_DOCKER_AGENT_IDLE_TIMEOUT"
 	dockerRuntimeReaperInterval         = 1 * time.Minute
 	dockerRuntimeCreateTimeout          = 60 * time.Second
@@ -492,6 +493,7 @@ func (m *dockerRuntimeManager) createAgentContainer(ctx context.Context, def *ag
 	req.Labels[dockerRuntimeManagedLabelKey] = "true"
 	req.Labels[dockerRuntimeAgentDefLabelKey] = def.Agent.ID
 	req.Labels[dockerRuntimeLLMFingerprintLabelKey] = llmFingerprint(def)
+	req.Labels[dockerRuntimeRouterRulesLabelKey] = m.server.routerRulesHash(def.LLM.Router)
 	applyDockerChildRuntime(req.Labels, &req.Environment, m.server.Port())
 	applyChildGlobalSystemPrompt(req.Labels, req.Environment, m.server.currentInheritedPrompts())
 	if len(workspace.ProjectMounts) > 0 {
@@ -709,7 +711,7 @@ func (m *dockerRuntimeManager) reapIdleContainers(ctx context.Context) {
 
 func llmFingerprint(def *agentdef.Definition) string {
 	provider, model := dockerDelegationLLMMetadataFromDefinition(def)
-	return provider + "|" + model
+	return provider + "|" + model + "|" + def.LLM.Router
 }
 
 // dockerRuntimeParentToolsLabelKey records the parent tools origin a container

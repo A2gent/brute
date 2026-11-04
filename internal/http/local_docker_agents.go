@@ -2,6 +2,8 @@ package http
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -83,6 +85,11 @@ type createLocalDockerAgentRequest struct {
 
 func (s *Server) resolveLocalDockerAgentProxyLLM(req createLocalDockerAgentRequest) localDockerAgentYAMLLLM {
 	resolved := req.LLM
+	if strings.TrimSpace(resolved.Router) != "" {
+		resolved.Provider = string(config.ProviderAutoRouter)
+		resolved.Model = ""
+		return resolved
+	}
 	provider := config.NormalizeProviderRef(localDockerAgentRuntimeProvider(resolved.Provider))
 	if provider == "" && s != nil && s.config != nil {
 		provider = config.NormalizeProviderRef(s.config.ActiveProvider)
@@ -99,21 +106,49 @@ func (s *Server) resolveLocalDockerAgentProxyLLM(req createLocalDockerAgentReque
 	return resolved
 }
 
+func (s *Server) routerProviderConfig(routerID string) config.Provider {
+	routerCfg := s.config.Providers[string(config.ProviderAutoRouter)]
+	if routerID = strings.TrimSpace(routerID); routerID != "" {
+		if named, ok := s.config.FindRouter(routerID); ok {
+			routerCfg = named.AsProvider()
+		} else {
+			logging.Warn("Named router %q not found; agent falls back to the default automatic router", routerID)
+		}
+	}
+	return routerCfg
+}
+
+// routerRulesHash identifies the router rules a runtime was started with, so a
+// later rule change can be told apart from a runtime that is already current.
+func (s *Server) routerRulesHash(routerID string) string {
+	if s == nil || s.config == nil {
+		return ""
+	}
+	encoded, err := config.EncodeAutoRouterEnv(s.routerProviderConfig(routerID))
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(encoded))
+	return hex.EncodeToString(sum[:8])
+}
+
+var errRouterNeedsLLMProxy = fmt.Errorf("llm.router requires the parent LLM proxy; it cannot be combined with a custom base_url or Docker Model Runner")
+
 // autoRouterDockerEnvArgs forwards the host's router_provider/rules to a child
 // that runs with provider automatic_router; the child then routes per task and
 // sends each chosen target through the parent LLM proxy.
-func (s *Server) autoRouterDockerEnvArgs(provider string) []string {
+func (s *Server) autoRouterDockerEnvArgs(provider string, routerID string) []string {
 	if s == nil || s.config == nil || config.ProviderType(provider) != config.ProviderAutoRouter {
 		return nil
 	}
-	encoded, err := config.EncodeAutoRouterEnv(s.config.Providers[string(config.ProviderAutoRouter)])
+	routerCfg := s.routerProviderConfig(routerID)
+	encoded, err := config.EncodeAutoRouterEnv(routerCfg)
 	if err != nil {
 		return nil
 	}
 	args := []string{"--env", config.AutoRouterEnvKey + "=" + encoded}
 	// Classifier routers (Jev) are not served by the parent proxy, so the child
 	// must call them directly and needs the key.
-	routerCfg := s.config.Providers[string(config.ProviderAutoRouter)]
 	if ref := config.NormalizeProviderRef(routerCfg.RouterProvider); config.IsClassifierProvider(ref) {
 		ptype := config.ProviderType(ref)
 		key := strings.TrimSpace(s.config.Providers[ref].APIKey)
@@ -249,6 +284,9 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 		lmStudioBaseURL = strings.TrimSpace(os.Getenv("LM_STUDIO_BASE_URL"))
 	}
 	useParentLLMProxy := s.llmProxyEnabled() && !localDockerAgentBypassesParentLLMProxy(req)
+	if !useParentLLMProxy && strings.TrimSpace(req.LLM.Router) != "" {
+		return nil, http.StatusBadRequest, errRouterNeedsLLMProxy
+	}
 	if useParentLLMProxy {
 		// Agent definitions may omit llm to inherit the host's active target. Resolve
 		// that inheritance before building Docker args so the child does not silently
@@ -387,7 +425,7 @@ func (s *Server) createLocalDockerAgent(ctx context.Context, req createLocalDock
 			if provider == string(config.ProviderAnthropic) {
 				args = appendClaudeRateLimitCacheDockerArgs(args)
 			}
-			args = append(args, s.parentProxyEnvArgs(provider, proxyBaseURL)...)
+			args = append(args, s.parentProxyEnvArgs(provider, req.LLM.Router, proxyBaseURL)...)
 			args = append(args, "--env", parentMCPKeyEnv+"="+relayKey,
 				"--label", mcpRelayKeyLabel+"="+mcpRelayKeyHash(relayKey))
 		}

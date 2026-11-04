@@ -69,7 +69,7 @@ func TestParentProxyEnvKeepsHostClaudeProfileAndAuth(t *testing.T) {
 	cfg.Providers["anthropic:work"] = config.Provider{ClaudeConfigDir: "/profiles/work"}
 	server := &Server{config: cfg}
 	for _, base := range []string{"http://127.0.0.1:5445/v1", "http://[::1]:5445/v1"} {
-		args := server.parentProxyEnvArgs("anthropic:work", base)
+		args := server.parentProxyEnvArgs("anthropic:work", "", base)
 		env := map[string]string{}
 		for i := 0; i+1 < len(args); i++ {
 			if args[i] == "--env" {
@@ -91,7 +91,7 @@ func TestParentProxyEnvKeepsHostClaudeProfileAndAuth(t *testing.T) {
 			t.Fatal("host Claude auth must be inherited, not replaced by proxy credentials")
 		}
 	}
-	dockerArgs := strings.Join(server.parentProxyEnvArgs("anthropic", "http://host.docker.internal:5445/v1"), "\n")
+	dockerArgs := strings.Join(server.parentProxyEnvArgs("anthropic", "", "http://host.docker.internal:5445/v1"), "\n")
 	if strings.Contains(dockerArgs, config.HostLLMEnvKey+"=") || !strings.Contains(dockerArgs, "ANTHROPIC_API_KEY=a2gent-proxy") {
 		t.Fatal("Docker proxy/auth behavior changed")
 	}

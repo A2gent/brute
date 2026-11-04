@@ -17,8 +17,8 @@ func (s *Server) useLocalHostLLM(ref string) bool {
 }
 
 // Docker uses host.docker.internal; only host runtimes receive a loopback URL.
-func (s *Server) parentProxyEnvArgs(provider string, proxyBaseURL string) []string {
-	args := s.autoRouterDockerEnvArgs(provider)
+func (s *Server) parentProxyEnvArgs(provider string, routerID string, proxyBaseURL string) []string {
+	args := s.autoRouterDockerEnvArgs(provider, routerID)
 	args = append(args,
 		"--env", "AAGENT_PROVIDER="+provider,
 		"--env", "A2GENT_PARENT_PROXY_URL="+proxyBaseURL,

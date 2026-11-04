@@ -34,6 +34,9 @@ func newIntegrationFromRequest(req IntegrationRequest) (*storage.Integration, er
 		delete(integration.Config, "project_scope")
 		delete(integration.Config, "group_project_map")
 	}
+	if integration.Provider == "slack" {
+		normalizeSlackConfig(integration)
+	}
 	if req.Enabled != nil {
 		integration.Enabled = *req.Enabled
 	}
@@ -74,6 +77,11 @@ func validateIntegration(integration storage.Integration) error {
 	for _, field := range requiredFields {
 		if strings.TrimSpace(integration.Config[field]) == "" {
 			return fmt.Errorf("missing required config field: %s", field)
+		}
+	}
+	if integration.Provider == "slack" {
+		if err := validateSlackIntegration(integration); err != nil {
+			return err
 		}
 	}
 	if integration.Provider == "a2_registry" {
@@ -147,7 +155,7 @@ func integrationToResponse(integration *storage.Integration) IntegrationResponse
 
 func isSensitiveIntegrationConfigKey(key string) bool {
 	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "api_key", "api_secret", "api_token", "access_token", "access_token_secret", "bot_token", "client_secret", "refresh_token", "api_hash", "session":
+	case "api_key", "api_secret", "api_token", "access_token", "access_token_secret", "bot_token", "app_token", "client_secret", "refresh_token", "api_hash", "session":
 		return true
 	default:
 		return false

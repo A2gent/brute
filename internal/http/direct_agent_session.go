@@ -108,6 +108,9 @@ func (s *Server) runDirectAgentSession(ctx context.Context, sess *session.Sessio
 	childID := s.reusableDirectAgentChild(ctx, sess, agent)
 	if childID == "" {
 		createMetadata := map[string]interface{}{"source": "direct_agent_session", "parent_session_id": sess.ID}
+		if sessionSkipsTelegramSync(sess) {
+			createMetadata[sessionSkipTelegramSyncKey] = true
+		}
 		if workspace != nil {
 			createMetadata["docker_workspace"] = dockerWorkspaceMetadata(*workspace)
 		}

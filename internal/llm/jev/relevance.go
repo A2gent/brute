@@ -93,7 +93,7 @@ func capText(text string, limit int) string {
 	return text[:limit] + marker
 }
 
-var secretPattern = regexp.MustCompile(`(?i)(-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|password|passwd|client[_-]?secret|secret[_-]?key|token|secret|signature|credential)\b["']?\s*[:=]\s*["']?\S+|\bbearer\s+\S+|\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]+|AKIA[A-Z0-9]{16})\b)`)
+var secretPattern = regexp.MustCompile(`(?i)(-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|password|passwd|client[_-]?secret|secret[_-]?key|token|secret|signature|credential)\b["']?\s*[:=]\s*["']?\S+|\bbearer\s+\S+|\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]+|AKIA[A-Z0-9]{16}|xox[a-z]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{10,})\b)`)
 var urlPattern = regexp.MustCompile(`(?i)https?://[^\s<>"'\x60]+`)
 
 // dsnPattern catches credentials embedded in any scheme, e.g. postgres://user:pass@host,

@@ -130,6 +130,8 @@ type LLM struct {
 	Provider        string `yaml:"provider,omitempty" json:"provider,omitempty"`
 	Model           string `yaml:"model,omitempty" json:"model,omitempty"`
 	ReasoningEffort string `yaml:"reasoning_effort,omitempty" json:"reasoning_effort,omitempty"`
+	// Router is a named router ID; when set the agent runs on that router instead of Provider/Model.
+	Router string `yaml:"router,omitempty" json:"router,omitempty"`
 }
 
 // Instructions hold the system prompt and configurable instruction blocks.
@@ -268,6 +270,7 @@ func (d *Definition) Normalize() {
 	d.LLM.Provider = strings.TrimSpace(d.LLM.Provider)
 	d.LLM.Model = strings.TrimSpace(d.LLM.Model)
 	d.LLM.ReasoningEffort = strings.TrimSpace(d.LLM.ReasoningEffort)
+	d.LLM.Router = strings.TrimSpace(d.LLM.Router)
 	d.Instructions.SystemFile = strings.TrimSpace(d.Instructions.SystemFile)
 	d.Metrics.Source = strings.TrimSpace(d.Metrics.Source)
 	d.Local.DefinitionDir = strings.TrimSpace(d.Local.DefinitionDir)

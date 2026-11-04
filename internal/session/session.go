@@ -43,6 +43,12 @@ type Session struct {
 	UpdatedAt       time.Time              `json:"updated_at"`
 }
 
+// MessageLLMContentKey in a user message's metadata replaces Content in model requests only.
+// Agent.Run ignores its task argument, so this is how a channel keeps a short visible request
+// while the model also receives context. Compaction and provider handoff summaries read Content
+// on purpose: untrusted context must not be rewritten into a summary that loses its delimiters.
+const MessageLLMContentKey = "llm_content"
+
 // Message represents a conversation message
 type Message struct {
 	Provenance  *llm.Provenance        `json:"provenance,omitempty"`

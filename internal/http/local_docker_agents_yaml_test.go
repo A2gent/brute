@@ -797,7 +797,7 @@ func TestAutoRouterDockerEnvArgsForwardsRouterConfig(t *testing.T) {
 	cfg.RouterProvider = string(config.ProviderJev)
 	server.config.Providers[string(config.ProviderAutoRouter)] = cfg
 
-	args := server.autoRouterDockerEnvArgs("automatic_router")
+	args := server.autoRouterDockerEnvArgs("automatic_router", "")
 	if len(args) != 4 || args[3] != "TYPESAFE_API_KEY=jev-secret" {
 		t.Fatalf("classifier key not forwarded: %v", args)
 	}
@@ -806,11 +806,11 @@ func TestAutoRouterDockerEnvArgsForwardsRouterConfig(t *testing.T) {
 	}
 	cfg.RouterProvider = "fallback_chain:cheap"
 	server.config.Providers[string(config.ProviderAutoRouter)] = cfg
-	args = server.autoRouterDockerEnvArgs("automatic_router")
+	args = server.autoRouterDockerEnvArgs("automatic_router", "")
 	if len(args) != 2 || !strings.HasPrefix(args[1], config.AutoRouterEnvKey+"=") || !strings.Contains(args[1], "fallback_chain:cheap") || !strings.Contains(args[1], "opus") {
 		t.Fatalf("unexpected args: %v", args)
 	}
-	if got := server.autoRouterDockerEnvArgs("anthropic"); got != nil {
+	if got := server.autoRouterDockerEnvArgs("anthropic", ""); got != nil {
 		t.Fatalf("non-router provider must not forward config: %v", got)
 	}
 }

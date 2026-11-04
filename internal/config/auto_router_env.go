@@ -15,9 +15,10 @@ const AutoRouterEnvKey = "A2GENT_AUTO_ROUTER_CONFIG"
 // EncodeAutoRouterEnv serializes only the routing fields (no keys or OAuth data).
 func EncodeAutoRouterEnv(p Provider) (string, error) {
 	data, err := json.Marshal(Provider{
-		RouterProvider: p.RouterProvider,
-		RouterModel:    p.RouterModel,
-		RouterRules:    p.RouterRules,
+		RouterProvider:        p.RouterProvider,
+		RouterModel:           p.RouterModel,
+		RouterReasoningEffort: p.RouterReasoningEffort,
+		RouterRules:           p.RouterRules,
 	})
 	return string(data), err
 }
@@ -41,6 +42,7 @@ func applyAutoRouterEnv(cfg *Config) {
 	p.Name = key
 	p.RouterProvider = in.RouterProvider
 	p.RouterModel = in.RouterModel
+	p.RouterReasoningEffort = in.RouterReasoningEffort
 	p.RouterRules = in.RouterRules
 	cfg.Providers[key] = p
 }

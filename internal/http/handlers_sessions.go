@@ -328,6 +328,13 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		// inside the project that actually declares that queue.
 		setSessionQueueName(sess, sessionQueueName(parentSession))
 	}
+	if sessionSkipsTelegramSync(parentSession) {
+		// A child's task can quote its parent, so it stays out of Telegram too.
+		if sess.Metadata == nil {
+			sess.Metadata = make(map[string]interface{})
+		}
+		sess.Metadata[sessionSkipTelegramSyncKey] = true
+	}
 	s.applySessionRunMode(r.Context(), &req, sess)
 	if req.QueueMode != "" {
 		if sess.Metadata == nil {
@@ -361,6 +368,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			projectID := strings.TrimSpace(req.ProjectID)
 			_, discoveredProjectID, err := s.definitionForUnifiedAgent(directUnifiedAgentID, projectID)
 			if err != nil {
+				// The session is already saved with its task; left behind, the queue would run it with the default agent.
+				_ = s.sessionManager.Delete(sess.ID)
 				s.errorResponse(w, http.StatusBadRequest, "Unified agent not found: "+directUnifiedAgentID)
 				return
 			}
@@ -368,6 +377,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			// the caller omitted project_id, but never allow cross-project launches.
 			if projectID == "" && strings.TrimSpace(discoveredProjectID) != "" {
 				if _, projectErr := s.store.GetProject(discoveredProjectID); projectErr != nil {
+					_ = s.sessionManager.Delete(sess.ID)
 					s.errorResponse(w, http.StatusBadRequest, "Unified agent project not found: "+projectErr.Error())
 					return
 				}
@@ -375,6 +385,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 				projectID = discoveredProjectID
 			}
 			if !agentVisibleInProjectSession(discoveredProjectID, projectID) {
+				_ = s.sessionManager.Delete(sess.ID)
 				s.errorResponse(w, http.StatusBadRequest, "Unified agent belongs to another project: "+directUnifiedAgentID)
 				return
 			}

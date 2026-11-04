@@ -55,6 +55,9 @@ func (a *Agent) buildRequest(ctx context.Context, sess *session.Session) *llm.Ch
 				continue
 			}
 			msg := llm.Message{Role: m.Role, Content: m.Content}
+			if llmContent, ok := m.Metadata[session.MessageLLMContentKey].(string); ok && m.Role == "user" && llmContent != "" {
+				msg.Content = llmContent
+			}
 			for i, attachment := range m.Images {
 				if decision := screenshotDecision(m, "attachment", i); decision != "" && decision != "keep" {
 					msg.Content += "\n" + decision

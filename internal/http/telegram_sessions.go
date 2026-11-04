@@ -261,10 +261,25 @@ func sameStringSets(a []string, b []string) bool {
 	return true
 }
 
+// sessionSkipTelegramSyncKey keeps a session out of Telegram. The browser adapter sets it on sessions that
+// carry other people's conversations, which must not be copied into a Telegram topic.
+const sessionSkipTelegramSyncKey = "skip_telegram_sync"
+
+func sessionSkipsTelegramSync(sess *session.Session) bool {
+	if sess == nil {
+		return false
+	}
+	skip, _ := sess.Metadata[sessionSkipTelegramSyncKey].(bool)
+	return skip
+}
+
 func (s *Server) syncHTTPCreatedSessionToTelegram(ctx context.Context, sessionID string, initialTask string) {
 	sess, err := s.sessionManager.Get(sessionID)
 	if err != nil {
 		logging.Warn("Telegram outbound sync skipped: failed to load session %s: %v", sessionID, err)
+		return
+	}
+	if sessionSkipsTelegramSync(sess) {
 		return
 	}
 
@@ -414,7 +429,7 @@ func (s *Server) queueTelegramSessionMessageSync(sessionID string) {
 
 func (s *Server) syncSessionMessagesToTelegramBySessionID(ctx context.Context, sessionID string) {
 	sess, err := s.sessionManager.Get(sessionID)
-	if err != nil || sess == nil || sess.Metadata == nil {
+	if err != nil || sess == nil || sess.Metadata == nil || sessionSkipsTelegramSync(sess) {
 		return
 	}
 	if metadataString(sess.Metadata["integration_provider"]) != "telegram" {

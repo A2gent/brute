@@ -268,8 +268,12 @@ func TestResolveExecutionTargetKeepsSessionRouteForFollowUps(t *testing.T) {
 
 	// A rule removed from config must not be reused.
 	sess.Metadata["routed_rule"] = "deleted rule"
-	if _, err := server.resolveExecutionTarget(context.Background(), config.ProviderAutoRouter, "", "next", sess); err == nil {
-		t.Fatal("expected a fresh routing attempt for an unknown stored rule")
+	target, err = server.resolveExecutionTarget(context.Background(), config.ProviderAutoRouter, "", "next", sess)
+	if err != nil {
+		t.Fatalf("fresh routing attempt must fall back to the default rule: %v", err)
+	}
+	if target.RoutingRule != "sensitive" || !strings.Contains(target.RoutingReason, "default rule fallback") {
+		t.Fatalf("expected a fresh routing attempt for an unknown stored rule, got %+v", target)
 	}
 }
 

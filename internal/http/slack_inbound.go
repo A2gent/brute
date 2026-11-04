@@ -350,7 +350,7 @@ func (s *Server) createSlackSession(integration *storage.Integration, channel, t
 	sess.Metadata[slackChannelIDKey] = channel
 	sess.Metadata[slackThreadTSKey] = threadTS
 	// Thread text is other people's conversation and must never be mirrored into Telegram.
-	sess.Metadata["skip_telegram_sync"] = true
+	sess.Metadata[sessionSkipTelegramSyncKey] = true
 
 	if projectID := strings.TrimSpace(integration.ProjectID); projectID != "" {
 		sess.ProjectID = &projectID

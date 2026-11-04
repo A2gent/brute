@@ -33,14 +33,15 @@ const (
 	slackNameCacheMaxSize   = 4096
 	slackReplyGraceTimeout  = 15 * time.Second
 
-	slackWorkingReaction = "eyes"
-	slackDeniedMessage   = "Sorry, you don't have access to this agent. Ask its owner to add you."
-	slackFailureMessage  = "Sorry, I couldn't complete that request. The owner can find the details in the agent logs."
-	slackNoReplyMessage  = "I finished without a text reply. The owner can check the session in Caesar."
-	slackWaitingMessage  = "I'm waiting for an external task to finish. Mention me again later to continue."
-	slackEmptyRequest    = "Summarize this thread and ask me what I need."
-	slackFilesNote       = "[The user attached files that you cannot see.]"
-	slackHistoryTagBase  = "untrusted_slack_thread"
+	slackWorkingReaction  = "eyes"
+	slackDeniedMessage    = "Sorry, you don't have access to this agent. Ask its owner to add you."
+	slackNoProjectMessage = "This agent isn't linked to a project. Ask its owner to choose one in the integration settings."
+	slackFailureMessage   = "Sorry, I couldn't complete that request. The owner can find the details in the agent logs."
+	slackNoReplyMessage   = "I finished without a text reply. The owner can check the session in Caesar."
+	slackWaitingMessage   = "I'm waiting for an external task to finish. Mention me again later to continue."
+	slackEmptyRequest     = "Summarize this thread and ask me what I need."
+	slackFilesNote        = "[The user attached files that you cannot see.]"
+	slackHistoryTagBase   = "untrusted_slack_thread"
 )
 
 var slackHistoryTagPattern = regexp.MustCompile(`(?i)` + slackHistoryTagBase)
@@ -135,14 +136,29 @@ func (s *Server) admitSlackMention(ctx context.Context, api *slackClient, integr
 	}
 	botToken := strings.TrimSpace(integration.Config["bot_token"])
 	reason := slackAccessDenial(ctx, api, botToken, integration, identity, event.User)
+	notice := slackDeniedMessage
 	if reason == "" {
-		return integration
+		if s.slackProjectExists(integration) {
+			return integration
+		}
+		reason = "integration has no valid project"
+		notice = slackNoProjectMessage
 	}
 	logging.Info("Slack mention denied: integration=%s user=%s reason=%s", integration.ID, event.User, reason)
-	if err := api.postEphemeral(ctx, botToken, event.Channel, event.User, event.threadRoot(), slackDeniedMessage); err != nil {
+	if err := api.postEphemeral(ctx, botToken, event.Channel, event.User, event.threadRoot(), notice); err != nil {
 		logging.Warn("Slack denial notice failed for integration %s: %v", integration.ID, err)
 	}
 	return nil
+}
+
+// slackProjectExists guards the run: a session with a missing project silently falls back to the
+// server work directory, outside the project the owner chose.
+func (s *Server) slackProjectExists(integration *storage.Integration) bool {
+	if integration.ProjectID == "" {
+		return false
+	}
+	_, err := s.validateIntegrationProjectID(integration.ProjectID)
+	return err == nil
 }
 
 func (s *Server) handleSlackMention(ctx context.Context, integrationID string, identity slackIdentity, event slackEvent) {
@@ -208,7 +224,7 @@ func (s *Server) postSlackReply(ctx context.Context, api *slackClient, botToken,
 
 func (s *Server) runSlackThreadTurn(ctx context.Context, api *slackClient, botToken string, integration *storage.Integration, identity slackIdentity, event slackEvent) (string, error) {
 	threadTS := event.threadRoot()
-	sess, err := s.findSlackSession(integration.ID, event.Channel, threadTS)
+	sess, err := s.findSlackSession(integration, event.Channel, threadTS)
 	if err != nil {
 		return "", err
 	}
@@ -312,7 +328,9 @@ func slackQuestionText(question *session.QuestionData) string {
 	return text.String()
 }
 
-func (s *Server) findSlackSession(integrationID, channel, threadTS string) (*session.Session, error) {
+// findSlackSession skips sessions of a previous project, so rebinding the integration moves a
+// thread to a new session instead of continuing in the old project.
+func (s *Server) findSlackSession(integration *storage.Integration, channel, threadTS string) (*session.Session, error) {
 	sessions, err := s.sessionManager.List()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list sessions: %w", err)
@@ -320,9 +338,10 @@ func (s *Server) findSlackSession(integrationID, channel, threadTS string) (*ses
 	for _, sess := range sessions {
 		if sess == nil || sess.Metadata == nil ||
 			metadataString(sess.Metadata["integration_provider"]) != "slack" ||
-			metadataString(sess.Metadata["integration_id"]) != integrationID ||
+			metadataString(sess.Metadata["integration_id"]) != integration.ID ||
 			metadataString(sess.Metadata[slackChannelIDKey]) != channel ||
-			metadataString(sess.Metadata[slackThreadTSKey]) != threadTS {
+			metadataString(sess.Metadata[slackThreadTSKey]) != threadTS ||
+			sess.ProjectID == nil || *sess.ProjectID != integration.ProjectID {
 			continue
 		}
 		full, err := s.sessionManager.Get(sess.ID)
@@ -352,11 +371,8 @@ func (s *Server) createSlackSession(integration *storage.Integration, channel, t
 	// Thread text is other people's conversation and must never be mirrored into Telegram.
 	sess.Metadata[sessionSkipTelegramSyncKey] = true
 
-	if projectID := strings.TrimSpace(integration.ProjectID); projectID != "" {
-		sess.ProjectID = &projectID
-	} else if err := s.assignTelegramSessionToProject(sess, ""); err != nil {
-		logging.Warn("Failed to assign project for Slack session %s: %v", sess.ID, err)
-	}
+	projectID := integration.ProjectID
+	sess.ProjectID = &projectID
 	if err := s.sessionManager.Save(sess); err != nil {
 		return nil, fmt.Errorf("failed to save Slack session: %w", err)
 	}

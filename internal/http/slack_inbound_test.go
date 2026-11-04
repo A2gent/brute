@@ -222,6 +222,68 @@ func TestSlackAccessReadsConfigPerEvent(t *testing.T) {
 	}
 }
 
+func TestSlackMentionWithoutWorkingProjectStartsNoSession(t *testing.T) {
+	for name, projectID := range map[string]string{"unbound": "", "deleted project": "gone"} {
+		t.Run(name, func(t *testing.T) {
+			fake := newFakeSlack(t)
+			model := &fakeModel{}
+			server, store := newSlackRunServer(t, fake, model)
+			integration := saveSlackIntegration(t, store, map[string]string{"allowed_user_ids": "U1"})
+			integration.ProjectID = projectID
+			if err := store.SaveIntegration(integration); err != nil {
+				t.Fatal(err)
+			}
+
+			runSlackMention(server, slackMention(slackTestRoot, "", "U1", "<@UBOT> hi"))
+
+			calls := fake.callsTo("chat.postEphemeral")
+			if len(calls) != 1 || calls[0].form.Get("text") != slackNoProjectMessage {
+				t.Fatalf("ephemeral calls = %+v", calls)
+			}
+			if got := model.agentRequests(); len(got) != 0 {
+				t.Fatalf("model requests = %d", len(got))
+			}
+			if sessions, err := server.sessionManager.List(); err != nil || len(sessions) != 0 {
+				t.Fatalf("sessions = %d, err = %v", len(sessions), err)
+			}
+		})
+	}
+}
+
+func TestSlackRebindingProjectMovesThreadToNewSession(t *testing.T) {
+	fake := newFakeSlack(t)
+	model := &fakeModel{}
+	server, store := newSlackRunServer(t, fake, model)
+	integration := saveSlackIntegration(t, store, map[string]string{"allowed_user_ids": "U1"})
+	fake.setThread(slackThreadMsg(slackTestRoot, "U1", "<@UBOT> FIRST-QUESTION"))
+	runSlackMention(server, slackMention(slackTestRoot, "", "U1", "<@UBOT> FIRST-QUESTION"))
+
+	saveSlackProject(t, store, "other-project")
+	integration.ProjectID = "other-project"
+	if err := store.SaveIntegration(integration); err != nil {
+		t.Fatal(err)
+	}
+	second := "1700000000.000900"
+	fake.setThread(slackThreadMsg(slackTestRoot, "U1", "<@UBOT> FIRST-QUESTION"), slackThreadMsg(second, "U1", "<@UBOT> again"))
+	runSlackMention(server, slackMention(second, slackTestRoot, "U1", "<@UBOT> again"))
+
+	sessions, err := server.sessionManager.List()
+	if err != nil || len(sessions) != 2 {
+		t.Fatalf("sessions = %d, err = %v", len(sessions), err)
+	}
+	projects := map[string]bool{}
+	for _, sess := range sessions {
+		projects[*sess.ProjectID] = true
+	}
+	if !projects[slackTestProject] || !projects["other-project"] {
+		t.Fatalf("session projects = %v", projects)
+	}
+	requests := model.agentRequests()
+	if last := requests[len(requests)-1].text(); !strings.Contains(last, "FIRST-QUESTION") {
+		t.Fatalf("new session lost the thread history:\n%s", last)
+	}
+}
+
 func TestSlackMentionDeliversHistoryToModelOnceAndFollowUpSendsOnlyNew(t *testing.T) {
 	fake := newFakeSlack(t)
 	fake.users["U1"] = slackUser{ID: "U1", TeamID: "T1", RealName: "Alice"}

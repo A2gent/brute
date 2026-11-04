@@ -66,6 +66,32 @@ func TestSlackTokensBlockJevEgress(t *testing.T) {
 	}
 }
 
+func TestSlackIntegrationCannotBeSavedWithoutProject(t *testing.T) {
+	server, store := newSlackRunServer(t, newFakeSlack(t), nil)
+	saveSlackProject(t, store, slackTestProject)
+	send := func(method, path, projectField string) *httptest.ResponseRecorder {
+		body := `{"provider":"slack","mode":"duplex",` + projectField + `"config":{"bot_token":"` + slackTestBotToken + `","app_token":"` + slackTestAppToken + `","access_mode":"workspace"}}`
+		rec := httptest.NewRecorder()
+		server.router.ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))
+		return rec
+	}
+
+	if rec := send(nethttp.MethodPost, "/integrations", ""); rec.Code != nethttp.StatusBadRequest {
+		t.Fatalf("create without project = %d %s", rec.Code, rec.Body)
+	}
+	rec := send(nethttp.MethodPost, "/integrations", `"project_id":"`+slackTestProject+`",`)
+	if rec.Code != nethttp.StatusCreated && rec.Code != nethttp.StatusOK {
+		t.Fatalf("create with project = %d %s", rec.Code, rec.Body)
+	}
+	var created IntegrationResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if rec := send(nethttp.MethodPut, "/integrations/"+created.ID, `"project_id":"",`); rec.Code != nethttp.StatusBadRequest {
+		t.Fatalf("clearing project = %d %s", rec.Code, rec.Body)
+	}
+}
+
 func postSlackDraftTest(t *testing.T, server *Server) (int, IntegrationTestResponse) {
 	t.Helper()
 	body := `{"provider":"slack","mode":"duplex","config":{"bot_token":"` + slackTestBotToken + `","app_token":"` + slackTestAppToken + `"}}`

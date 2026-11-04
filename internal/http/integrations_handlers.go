@@ -57,6 +57,10 @@ func (s *Server) handleCreateIntegration(w http.ResponseWriter, r *http.Request)
 		}
 		integration.ProjectID = projectID
 	}
+	if err := requireSlackProject(integration); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	now := time.Now()
 	integration.ID = uuid.New().String()
@@ -150,6 +154,10 @@ func (s *Server) handleUpdateIntegration(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		next.ProjectID = projectID
+	}
+	if err := requireSlackProject(next); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	next.ID = existing.ID
@@ -354,6 +362,15 @@ func (s *Server) respondIntegrationTest(w http.ResponseWriter, r *http.Request, 
 	}
 
 	s.jsonResponse(w, http.StatusOK, IntegrationTestResponse{Success: true, Message: "Configuration is valid. Live provider connectivity checks are not yet implemented."})
+}
+
+// requireSlackProject lives apart from validateIntegration because the connection test checks a
+// draft before any project is chosen.
+func requireSlackProject(integration *storage.Integration) error {
+	if integration.Provider == "slack" && integration.ProjectID == "" {
+		return fmt.Errorf("slack integration requires a project")
+	}
+	return nil
 }
 
 // validateIntegrationProjectID normalizes a requested integration project

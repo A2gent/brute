@@ -22,6 +22,7 @@ const (
 	slackTestAppToken = "xapp-test-token"
 	slackTestChannel  = "C100"
 	slackTestRoot     = "1700000000.000100"
+	slackTestProject  = "slack-project"
 	slackTestBotUser  = "UBOT"
 	slackTestBotID    = "BBOT"
 )
@@ -169,13 +170,22 @@ func slackMention(ts, threadTS, user, text string) slackEvent {
 	return slackEvent{Type: "app_mention", User: user, Text: text, TS: ts, ThreadTS: threadTS, Channel: slackTestChannel}
 }
 
+func saveSlackProject(t *testing.T, store *storage.SQLiteStore, id string) {
+	t.Helper()
+	folder := t.TempDir()
+	if err := store.SaveProject(&storage.Project{ID: id, Name: id, Folder: &folder, CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func saveSlackIntegration(t *testing.T, store *storage.SQLiteStore, config map[string]string) *storage.Integration {
 	t.Helper()
 	merged := map[string]string{"bot_token": slackTestBotToken, "app_token": slackTestAppToken}
 	for key, value := range config {
 		merged[key] = value
 	}
-	integration := &storage.Integration{ID: "slack-1", Provider: "slack", Name: "Slack", Mode: "duplex", Enabled: true, Config: merged, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	saveSlackProject(t, store, slackTestProject)
+	integration := &storage.Integration{ID: "slack-1", Provider: "slack", Name: "Slack", Mode: "duplex", Enabled: true, Config: merged, ProjectID: slackTestProject, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	if err := store.SaveIntegration(integration); err != nil {
 		t.Fatal(err)
 	}

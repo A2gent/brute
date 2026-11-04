@@ -374,7 +374,9 @@ func (t *parentAgentTool) Execute(ctx context.Context, params json.RawMessage) (
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)
 	if err != nil {
-		// Transport errors can contain endpoint details; never include headers.
+		if callCtx.Err() != nil {
+			return nil, fmt.Errorf("parent agent tool %q was interrupted before it finished: the parent turn ended or was steered; any delegated child session was canceled, check the parent session history for its id", t.Name())
+		}
 		return nil, fmt.Errorf("parent agent tools request failed: %w", err)
 	}
 	defer resp.Body.Close()

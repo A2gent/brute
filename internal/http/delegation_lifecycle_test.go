@@ -7,6 +7,7 @@ import (
 	"github.com/A2gent/brute/internal/tools"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -214,5 +215,28 @@ func TestParentAgentToolsForwardDelegationAsync(t *testing.T) {
 		if got := <-async; got != want {
 			t.Fatalf("parent async = %v, want %v", got, want)
 		}
+	}
+}
+
+func TestParentAgentToolsInterruptedCallReportsClearError(t *testing.T) {
+	parent, _, child, childSess, ctx, _ := parentAgentToolsTestPair(t)
+	started := make(chan struct{})
+	parent.toolManager.Register(&bridgeDelegationProbe{name: "delegate_to_agent", execute: func(ctx context.Context, _ json.RawMessage) (*tools.Result, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}})
+	manager := child.toolManagerForSession(childSess)
+	callCtx, cancel := context.WithCancel(ctx)
+	go func() {
+		<-started
+		cancel()
+	}()
+	_, err := manager.Execute(callCtx, "delegate_to_agent", json.RawMessage(`{}`))
+	if err == nil {
+		t.Fatal("expected an error for an interrupted call")
+	}
+	if !strings.Contains(err.Error(), "interrupted") || strings.Contains(err.Error(), "/mcp/sessions") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

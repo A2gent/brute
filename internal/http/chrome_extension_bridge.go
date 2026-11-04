@@ -327,6 +327,8 @@ func (s *Server) registerBrowserExtensionRoutes(r chi.Router) {
 		r.Get("/pages", s.handleChromeExtensionListPages)
 		r.Get("/ws", s.handleChromeExtensionWS)
 		r.Post("/commands/{commandID}/result", s.handleChromeExtensionCommandResult)
+		r.Post("/adblock/classify", s.handleAdblockClassify)
+		r.Get("/adblock/config", s.handleAdblockConfig)
 	})
 }
 

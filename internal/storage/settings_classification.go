@@ -20,6 +20,8 @@ func isManagedAppSettingKey(key string) bool {
 		"A2GENT_JEV_SCREENSHOTS_ENABLED":                      {},
 		"A2GENT_SYSTEM_ONE_BACKEND":                           {},
 		"A2GENT_SYSTEM_ONE_MODEL":                             {},
+		"A2GENT_ADBLOCK_BACKEND":                              {},
+		"A2GENT_ADBLOCK_MODEL":                                {},
 		"AAGENT_AGENT_DEFINITIONS_FOLDER":                     {},
 		"AAGENT_CONTEXT_COMPACTION_PROMPT":                    {},
 		"AAGENT_CONTEXT_COMPACTION_TRIGGER_PERCENT":           {},

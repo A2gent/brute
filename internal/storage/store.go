@@ -21,6 +21,10 @@ type Session struct {
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 
+	// Messages holds only part of the transcript (lists, summaries, pages), so a
+	// save must not treat absent messages as removed.
+	MessagesPartial bool
+
 	// Copy the frozen prefix in the session-save transaction, without loading it.
 	SystemPromptSnapshotSourceID string
 }

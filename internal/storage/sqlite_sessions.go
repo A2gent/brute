@@ -113,7 +113,7 @@ func (s *SQLiteStore) saveSessionMessages(sess *Session, ids []string, dirty map
 			}
 		}
 		for id := range existingMessageIDs {
-			if _, ok := currentMessageIDs[id]; ok {
+			if _, ok := currentMessageIDs[id]; ok || sess.MessagesPartial {
 				continue
 			}
 			if _, err := tx.Exec("DELETE FROM messages WHERE id = ? AND session_id = ?", id, sess.ID); err != nil {
@@ -279,6 +279,7 @@ func (s *SQLiteStore) getSession(id, metadataSQL string, includeMessages bool, l
 	}
 
 	if !includeMessages {
+		sess.MessagesPartial = true
 		return &sess, nil
 	}
 
@@ -286,6 +287,7 @@ func (s *SQLiteStore) getSession(id, metadataSQL string, includeMessages bool, l
 	query := `SELECT id, role, content, tool_calls, tool_results, metadata, timestamp FROM messages WHERE session_id = ?`
 	args := []interface{}{id}
 	paged := limit > 0 && (sess.Status == "completed" || sess.Status == "failed")
+	sess.MessagesPartial = paged
 	if paged && before != "" {
 		var exists bool
 		if err := s.sessionReader().QueryRow("SELECT EXISTS(SELECT 1 FROM messages WHERE session_id = ? AND id = ?)", id, before).Scan(&exists); err != nil {
@@ -381,6 +383,7 @@ func (s *SQLiteStore) GetSessionSummary(id string) (*Session, error) {
 	if taskProgress.Valid {
 		sess.TaskProgress = taskProgress.String
 	}
+	sess.MessagesPartial = true
 
 	return &sess, nil
 }
@@ -464,6 +467,7 @@ func (s *SQLiteStore) listSessionRows(metadataSQL, projectID, relatedTo string) 
 		if taskProgress.Valid {
 			sess.TaskProgress = taskProgress.String
 		}
+		sess.MessagesPartial = true
 
 		sessions = append(sessions, &sess)
 	}
@@ -558,6 +562,7 @@ func (s *SQLiteStore) ListSessionsByJob(jobID string) ([]*Session, error) {
 		if taskProgress.Valid {
 			sess.TaskProgress = taskProgress.String
 		}
+		sess.MessagesPartial = true
 
 		sessions = append(sessions, &sess)
 	}

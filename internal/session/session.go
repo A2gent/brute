@@ -28,6 +28,7 @@ const (
 type Session struct {
 	// Changed historical messages are explicitly included in incremental saves.
 	dirtyMessageIDs map[string]bool
+	messagesPartial bool
 	ID              string                 `json:"id"`
 	AgentID         string                 `json:"agent_id"`
 	ParentID        *string                `json:"parent_id,omitempty"`
@@ -284,6 +285,8 @@ func (s *Session) storageState() *storage.Session {
 		TaskProgress: s.TaskProgress,
 		CreatedAt:    s.CreatedAt,
 		UpdatedAt:    s.UpdatedAt,
+
+		MessagesPartial: s.messagesPartial,
 	}
 }
 
@@ -325,6 +328,8 @@ func FromStorage(ss *storage.Session) *Session {
 		TaskProgress: ss.TaskProgress,
 		CreatedAt:    ss.CreatedAt,
 		UpdatedAt:    ss.UpdatedAt,
+
+		messagesPartial: ss.MessagesPartial,
 	}
 }
 

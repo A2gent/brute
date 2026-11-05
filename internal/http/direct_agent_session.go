@@ -106,7 +106,9 @@ func (s *Server) runDirectAgentSession(ctx context.Context, sess *session.Sessio
 	}
 	baseURL := strings.TrimRight(agent.APIURL, "/")
 	childID := s.reusableDirectAgentChild(ctx, sess, agent)
+	prompt, images := task, directAgentImagePayloads(sess)
 	if childID == "" {
+		prompt, images = directAgentFreshChildRequest(sess, task)
 		createMetadata := map[string]interface{}{"source": "direct_agent_session", "parent_session_id": sess.ID}
 		if sessionSkipsTelegramSync(sess) {
 			createMetadata[sessionSkipTelegramSyncKey] = true
@@ -126,16 +128,32 @@ func (s *Server) runDirectAgentSession(ctx context.Context, sess *session.Sessio
 			logging.Warn("Direct agent: failed to save child mapping for %s: %v", sess.ID, err)
 		}
 	}
-	prompt := task
 	if workspace != nil {
-		prompt = s.rewriteDockerDelegationTask(task, *workspace)
+		prompt = s.rewriteDockerDelegationTask(prompt, *workspace)
 	}
 	headers, revoke, err := s.directAgentToolsHeaders(ctx, sess, agent.Runtime)
 	if err != nil {
 		return ChatResponse{}, err
 	}
 	defer revoke()
-	return postLocalDockerAgentChatStreamWithHeaders(ctx, client, baseURL+"/sessions/"+childID+"/chat/stream", ChatRequest{Message: prompt, Images: directAgentImagePayloads(sess)}, headers, onEvent)
+	return postLocalDockerAgentChatStreamWithHeaders(ctx, client, baseURL+"/sessions/"+childID+"/chat/stream", ChatRequest{Message: prompt, Images: images}, headers, onEvent)
+}
+
+// directAgentFreshChildRequest builds the first request of a new child when the
+// parent already has history. WHY: a child sees only what it is sent, so a retry
+// after a failed child creation delivered a bare "Continue" and the agent never
+// learned the original request. The same applies when the old child is unusable.
+func directAgentFreshChildRequest(sess *session.Session, task string) (string, []MessageImagePayload) {
+	current := len(sess.Messages) - 1
+	for current >= 0 && (sess.Messages[current].Role != "user" || injectedDuringRun(sess.Messages[current].Metadata)) {
+		current--
+	}
+	if current <= 0 {
+		return task, directAgentImagePayloads(sess)
+	}
+	history := &session.Session{ID: sess.ID, Title: sess.Title, Status: sess.Status, TaskProgress: sess.TaskProgress, Messages: sess.Messages[:current]}
+	images := linkedContinuationImages(history, sess.Messages[current].Images)
+	return buildLinkedContinuationContext(history, task).Prompt, inlineImagePayloads(sess.ID, images)
 }
 
 // directAgentImagePayloads returns the images of the current user request as

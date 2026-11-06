@@ -535,6 +535,8 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 			return []string{"KIMI_API_KEY"}
 		case config.ProviderAnthropic:
 			return []string{"ANTHROPIC_API_KEY"}
+		case config.ProviderA2gent:
+			return []string{"A2GENT_API_KEY"}
 		case config.ProviderOpenRouter:
 			return []string{"OPENROUTER_API_KEY"}
 		case config.ProviderGoogle:
@@ -639,7 +641,7 @@ func initLLMClient(cfg *config.Config) (llm.Client, error) {
 			return kimicli.NewClient(model, cfg.WorkDir), model, nil
 		case config.ProviderCursor:
 			return cursorcli.NewClientWithOptions(model, cursorcli.Options{WorkDir: cfg.WorkDir, APIKey: apiKey}), model, nil
-		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle, config.ProviderOpenCodeZen, config.ProviderGrok, config.ProviderMeta:
+		case config.ProviderA2gent, config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderGoogle, config.ProviderOpenCodeZen, config.ProviderGrok, config.ProviderMeta:
 			return lmstudio.NewClient(apiKey, model, baseURL), model, nil
 		case config.ProviderOpenAI:
 			return openaicodex.NewClientWithOptions(apiKey, model, baseURL, openaicodex.Options{

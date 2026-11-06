@@ -359,6 +359,9 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 	if providerType == config.ProviderOpenCodeZen && apiKey == "" {
 		apiKey = "public"
 	}
+	if providerType == config.ProviderA2gent && apiKey == "" {
+		apiKey = s.a2gentRegistryAPIKey(baseURL)
+	}
 
 	if def.RequiresKey && apiKey == "" {
 		return nil, fmt.Errorf("%s requires an API key (configure provider API key or set %s)", def.DisplayName, s.apiKeyEnvName(providerType))
@@ -371,7 +374,7 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return gemini.NewClient(apiKey, modelName, baseURL), nil
-	case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenCodeZen, config.ProviderGrok, config.ProviderMeta:
+	case config.ProviderA2gent, config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenCodeZen, config.ProviderGrok, config.ProviderMeta:
 
 		baseURL = normalizeOpenAIBaseURL(baseURL)
 		return lmstudio.NewClient(apiKey, modelName, baseURL), nil
@@ -532,6 +535,8 @@ func (s *Server) apiKeyEnvName(providerType config.ProviderType) string {
 		return "CURSOR_API_KEY"
 	case config.ProviderKimi:
 		return "KIMI_API_KEY"
+	case config.ProviderA2gent:
+		return "A2GENT_API_KEY"
 	case config.ProviderOpenRouter:
 		return "OPENROUTER_API_KEY"
 	case config.ProviderOpenCodeZen:
@@ -768,6 +773,9 @@ func (s *Server) providerConfiguredForUse(providerType config.ProviderType) bool
 	apiKey := strings.TrimSpace(provider.APIKey)
 	if apiKey == "" {
 		apiKey = s.apiKeyFromEnv(providerType)
+	}
+	if apiKey == "" && providerType == config.ProviderA2gent {
+		apiKey = s.a2gentRegistryAPIKey(baseURL)
 	}
 	return apiKey != ""
 }

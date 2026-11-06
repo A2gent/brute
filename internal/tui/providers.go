@@ -297,7 +297,7 @@ func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
 		case config.ProviderGoogle:
 			// Google Gemini uses a dedicated client with OpenAI-compatible API + Gemini extensions
 			return gemini.NewClient(apiKey, model, baseURL), model, nil
-		case config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenCodeZen, config.ProviderGrok, config.ProviderMeta:
+		case config.ProviderA2gent, config.ProviderLMStudio, config.ProviderOpenRouter, config.ProviderOpenCodeZen, config.ProviderGrok, config.ProviderMeta:
 			// Other OpenAI-compatible providers
 			return lmstudio.NewClient(apiKey, model, baseURL), model, nil
 		case config.ProviderOpenAI:
@@ -529,6 +529,8 @@ func providerAPIKeyEnvName(providerType config.ProviderType) string {
 		return "ANTHROPIC_API_KEY"
 	case config.ProviderCursor:
 		return "CURSOR_API_KEY"
+	case config.ProviderA2gent:
+		return "A2GENT_API_KEY"
 	case config.ProviderOpenRouter:
 		return "OPENROUTER_API_KEY"
 	case config.ProviderGoogle:

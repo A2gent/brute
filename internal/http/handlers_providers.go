@@ -303,7 +303,7 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.BaseURL != nil {
 			baseURL := strings.TrimSpace(*req.BaseURL)
-			if providerType == config.ProviderLMStudio || providerType == config.ProviderOpenRouter || providerType == config.ProviderGoogle || providerType == config.ProviderOpenAI || providerType == config.ProviderGrok || providerType == config.ProviderMeta {
+			if providerType == config.ProviderA2gent || providerType == config.ProviderLMStudio || providerType == config.ProviderOpenRouter || providerType == config.ProviderGoogle || providerType == config.ProviderOpenAI || providerType == config.ProviderGrok || providerType == config.ProviderMeta {
 				baseURL = normalizeOpenAIBaseURL(baseURL)
 			}
 			provider.BaseURL = baseURL

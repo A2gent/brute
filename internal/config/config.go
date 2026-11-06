@@ -139,6 +139,7 @@ type RouterRule struct {
 type ProviderType string
 
 const (
+	ProviderA2gent      ProviderType = "a2gent"
 	ProviderKimi        ProviderType = "kimi"
 	ProviderKimiCLI     ProviderType = "kimi_cli"
 	ProviderOpenRouter  ProviderType = "openrouter"
@@ -169,6 +170,14 @@ type ProviderDefinition struct {
 // SupportedProviders returns all supported provider definitions
 func SupportedProviders() []ProviderDefinition {
 	return []ProviderDefinition{
+		{
+			Type:          ProviderA2gent,
+			DisplayName:   "A2gent",
+			DefaultURL:    "https://a2gent.net/v1",
+			RequiresKey:   true,
+			DefaultModel:  "a2gent/default",
+			ContextWindow: 1048576,
+		},
 		{
 			Type:          ProviderAutoRouter,
 			DisplayName:   "Automatic Router",
@@ -397,9 +406,8 @@ func DefaultConfig() *Config {
 	workDir, _ := os.Getwd()
 
 	return &Config{
-		// The router picks a provider/model per request; DefaultModel is only a fallback.
 		DefaultModel:   "kimi-k2.5",
-		ActiveProvider: string(ProviderAutoRouter),
+		ActiveProvider: string(ProviderA2gent),
 		// Complex coding runs routinely exceed the old 50-step budget.
 		MaxSteps:    100,
 		Temperature: 0.0,

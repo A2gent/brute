@@ -48,6 +48,43 @@ func TestWaitUntilTimeout(t *testing.T) {
 	}
 }
 
+func TestWaitUntilStopsEarly(t *testing.T) {
+	cases := []struct {
+		name, key, check, wantErr string
+	}{
+		{"fail command matches", "fail_command", "grep -q ERROR job.log", "fail_command matched"},
+		{"job exited", "alive_command", "false", "awaited job exited before the condition was met"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			start := time.Now()
+			result := runWaitUntil(t, context.Background(), dir, map[string]interface{}{
+				"command":         "echo ERROR > job.log; grep -q DONE job.log",
+				tc.key:            tc.check,
+				"timeout_seconds": 60,
+			})
+			if result.Success || result.Error != tc.wantErr {
+				t.Fatalf("result = %+v", result)
+			}
+			if elapsed := time.Since(start); elapsed > 5*time.Second {
+				t.Fatalf("early stop took %v", elapsed)
+			}
+		})
+	}
+}
+
+func TestWaitUntilAliveCommandRechecksCondition(t *testing.T) {
+	result := runWaitUntil(t, context.Background(), t.TempDir(), map[string]interface{}{
+		"command":         "test -f done",
+		"alive_command":   "touch done; false",
+		"timeout_seconds": 60,
+	})
+	if !result.Success {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
 func TestWaitUntilCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(200*time.Millisecond, cancel)

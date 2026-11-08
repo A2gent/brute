@@ -27,6 +27,8 @@ type WaitUntilTool struct {
 
 type WaitUntilParams struct {
 	Command         string `json:"command"`
+	FailCommand     string `json:"fail_command,omitempty"`
+	AliveCommand    string `json:"alive_command,omitempty"`
 	IntervalSeconds int    `json:"interval_seconds,omitempty"`
 	TimeoutSeconds  int    `json:"timeout_seconds,omitempty"`
 	Cwd             string `json:"cwd,omitempty"`
@@ -43,7 +45,8 @@ func (t *WaitUntilTool) Name() string {
 func (t *WaitUntilTool) Description() string {
 	return `Wait until a shell check succeeds (exit code 0), polling it without extra LLM steps.
 Use instead of repeated polling/sleep loops (new commit, file appears, server up, process done); for delegated agents use wait_for_agent.
-Returns met/timeout, attempts, elapsed time and the tail of the last check output.`
+When waiting for output of a background job, always pass alive_command (and fail_command if errors are recognizable): otherwise a crashed job makes the wait run until timeout.
+Returns met/failed/exited/timeout, attempts, elapsed time and the tail of the last check output.`
 }
 
 func (t *WaitUntilTool) Schema() map[string]interface{} {
@@ -53,6 +56,14 @@ func (t *WaitUntilTool) Schema() map[string]interface{} {
 			"command": map[string]interface{}{
 				"type":        "string",
 				"description": "Shell check; the condition is met when it exits with code 0, e.g. `test -f out.log` or `curl -sf localhost:3000/health`",
+			},
+			"fail_command": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional shell check; stop early with failure when it exits 0, e.g. `grep -qiE 'error|fail' job.log`",
+			},
+			"alive_command": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional shell check that the awaited job still runs, e.g. `pgrep -f godot` or `kill -0 1234`; stop early when it exits non-zero",
 			},
 			"interval_seconds": map[string]interface{}{
 				"type":        "integer",
@@ -104,6 +115,20 @@ func (t *WaitUntilTool) Execute(ctx context.Context, params json.RawMessage) (*R
 		metadata := map[string]interface{}{"attempts": attempts, "elapsed_ms": time.Since(start).Milliseconds(), "exit_code": exitCode}
 		if exitCode == 0 {
 			return &Result{Success: true, Output: waitUntilSummary("condition met", attempts, start, output), Metadata: metadata}, nil
+		}
+		if p.FailCommand != "" {
+			if failOutput, failCode := runWaitCheck(waitCtx, workDir, p.FailCommand); failCode == 0 {
+				return &Result{Success: false, Error: "fail_command matched", Output: waitUntilSummary("failed", attempts, start, output+"\n"+failOutput), Metadata: metadata}, nil
+			}
+		}
+		if p.AliveCommand != "" {
+			if _, aliveCode := runWaitCheck(waitCtx, workDir, p.AliveCommand); aliveCode != 0 && waitCtx.Err() == nil {
+				// The job may finish between the condition check and the alive check, so look once more.
+				if output, exitCode = runWaitCheck(waitCtx, workDir, p.Command); exitCode == 0 {
+					return &Result{Success: true, Output: waitUntilSummary("condition met", attempts, start, output), Metadata: metadata}, nil
+				}
+				return &Result{Success: false, Error: "awaited job exited before the condition was met", Output: waitUntilSummary("exited", attempts, start, output), Metadata: metadata}, nil
+			}
 		}
 		timer := time.NewTimer(interval)
 		select {

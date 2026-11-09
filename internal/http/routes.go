@@ -206,6 +206,7 @@ func (s *Server) registerIntegrationRoutes(r chi.Router) {
 		r.Post("/telegram/check-groups", s.handleTelegramCheckGroups)
 		r.Post("/telegram/test-topic", s.handleTelegramTestTopic)
 		r.Post("/slack/users", s.handleSlackUsers)
+		r.Post("/slack/channels", s.handleSlackChannels)
 		// A2A tunnel status endpoints (no integrationID in path)
 		r.Get("/a2_registry/tunnel-status", s.handleA2ATunnelStatus)
 		r.Get("/a2_registry/tunnel-status/stream", s.handleA2ATunnelStatusStream)

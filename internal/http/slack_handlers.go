@@ -17,6 +17,8 @@ const (
 	slackBotTokenPrefix = "xoxb-"
 	slackAppTokenPrefix = "xapp-"
 	slackbotUserID      = "USLACKBOT"
+
+	slackChannelProjectsKey = "channel_projects"
 )
 
 func normalizeSlackConfig(integration *storage.Integration) {
@@ -28,6 +30,44 @@ func normalizeSlackConfig(integration *storage.Integration) {
 		mode = slackAccessModeAllowlist
 	}
 	integration.Config["access_mode"] = mode
+	normalizeSlackChannelProjects(integration.Config)
+}
+
+func normalizeSlackChannelProjects(config map[string]string) {
+	raw := strings.TrimSpace(config[slackChannelProjectsKey])
+	if raw == "" {
+		delete(config, slackChannelProjectsKey)
+		return
+	}
+	mapping, err := parseSlackChannelProjects(raw)
+	if err != nil {
+		return
+	}
+	if len(mapping) == 0 {
+		delete(config, slackChannelProjectsKey)
+		return
+	}
+	encoded, _ := json.Marshal(mapping)
+	config[slackChannelProjectsKey] = string(encoded)
+}
+
+// parseSlackChannelProjects trims entries and drops rows missing a channel or a project.
+func parseSlackChannelProjects(raw string) (map[string]string, error) {
+	mapping := map[string]string{}
+	if strings.TrimSpace(raw) == "" {
+		return mapping, nil
+	}
+	var decoded map[string]string
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		return nil, errors.New("channel_projects must be a JSON object mapping Slack channel IDs to project IDs")
+	}
+	for channel, projectID := range decoded {
+		channel, projectID = strings.TrimSpace(channel), strings.TrimSpace(projectID)
+		if channel != "" && projectID != "" {
+			mapping[channel] = projectID
+		}
+	}
+	return mapping, nil
 }
 
 func validateSlackIntegration(integration storage.Integration) error {
@@ -57,6 +97,9 @@ func validateSlackIntegration(integration storage.Integration) error {
 		if !strings.HasPrefix(appToken, slackAppTokenPrefix) {
 			return errors.New("app_token must start with xapp-: create an app-level token under Basic Information")
 		}
+	}
+	if _, err := parseSlackChannelProjects(integration.Config[slackChannelProjectsKey]); err != nil {
+		return err
 	}
 	switch strings.ToLower(strings.TrimSpace(integration.Config["access_mode"])) {
 	case "", slackAccessModeAllowlist, slackAccessModeWorkspace:
@@ -149,4 +192,41 @@ func (s *Server) handleSlackUsers(w http.ResponseWriter, r *http.Request) {
 		users = append(users, SlackUserResponse{ID: member.ID, Name: member.Name, RealName: realName})
 	}
 	s.jsonResponse(w, http.StatusOK, SlackUsersResponse{Users: users})
+}
+
+type SlackChannelResponse struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	IsPrivate bool   `json:"is_private"`
+}
+
+type SlackChannelsResponse struct {
+	Channels []SlackChannelResponse `json:"channels"`
+}
+
+func (s *Server) handleSlackChannels(w http.ResponseWriter, r *http.Request) {
+	var req SlackUsersRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+	botToken := s.resolveSlackBotToken(req)
+	if botToken == "" {
+		s.errorResponse(w, http.StatusBadRequest, "bot_token is required")
+		return
+	}
+	conversations, err := s.slackAPI().listConversations(r.Context(), botToken)
+	if err != nil {
+		message := "Failed to list Slack channels: " + err.Error()
+		if slackErrorCode(err) == "missing_scope" {
+			message += ". Reinstall the Slack app with the channels:read and groups:read scopes."
+		}
+		s.errorResponse(w, http.StatusBadGateway, message)
+		return
+	}
+	channels := make([]SlackChannelResponse, 0, len(conversations))
+	for _, conversation := range conversations {
+		channels = append(channels, SlackChannelResponse{ID: conversation.ID, Name: conversation.Name, IsPrivate: conversation.IsPrivate})
+	}
+	s.jsonResponse(w, http.StatusOK, SlackChannelsResponse{Channels: channels})
 }

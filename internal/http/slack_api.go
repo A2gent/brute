@@ -213,6 +213,34 @@ func (c *slackClient) listUsers(ctx context.Context, botToken string) ([]slackUs
 	}
 }
 
+type slackConversation struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	IsPrivate bool   `json:"is_private"`
+}
+
+func (c *slackClient) listConversations(ctx context.Context, botToken string) ([]slackConversation, error) {
+	var conversations []slackConversation
+	cursor := ""
+	for {
+		params := url.Values{"types": {"public_channel,private_channel"}, "exclude_archived": {"true"}, "limit": {slackPageSize}}
+		if cursor != "" {
+			params.Set("cursor", cursor)
+		}
+		var page struct {
+			Channels         []slackConversation   `json:"channels"`
+			ResponseMetadata slackResponseMetadata `json:"response_metadata"`
+		}
+		if err := c.call(ctx, botToken, "users.conversations", params, &page); err != nil {
+			return nil, err
+		}
+		conversations = append(conversations, page.Channels...)
+		if cursor = page.ResponseMetadata.NextCursor; cursor == "" {
+			return conversations, nil
+		}
+	}
+}
+
 type slackThreadMessage struct {
 	TS         string `json:"ts"`
 	User       string `json:"user"`

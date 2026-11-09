@@ -44,6 +44,7 @@ type fakeSlack struct {
 	users      map[string]slackUser
 	thread     []map[string]interface{}
 	members    [][]slackUser
+	channels   [][]slackConversation
 	methodErrs map[string]string
 	gate       map[string]chan struct{}
 
@@ -115,6 +116,13 @@ func (f *fakeSlack) response(method string, r *nethttp.Request) map[string]inter
 		fmt.Sscanf(r.PostForm.Get("cursor"), "page-%d", &page)
 		out["members"] = f.members[page]
 		if page+1 < len(f.members) {
+			out["response_metadata"] = map[string]string{"next_cursor": fmt.Sprintf("page-%d", page+1)}
+		}
+	case "users.conversations":
+		page := 0
+		fmt.Sscanf(r.PostForm.Get("cursor"), "page-%d", &page)
+		out["channels"] = f.channels[page]
+		if page+1 < len(f.channels) {
 			out["response_metadata"] = map[string]string{"next_cursor": fmt.Sprintf("page-%d", page+1)}
 		}
 	case "conversations.replies":

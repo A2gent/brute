@@ -57,7 +57,7 @@ func (s *Server) handleCreateIntegration(w http.ResponseWriter, r *http.Request)
 		}
 		integration.ProjectID = projectID
 	}
-	if err := requireSlackProject(integration); err != nil {
+	if err := s.requireSlackProjects(integration); err != nil {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -155,7 +155,7 @@ func (s *Server) handleUpdateIntegration(w http.ResponseWriter, r *http.Request)
 		}
 		next.ProjectID = projectID
 	}
-	if err := requireSlackProject(next); err != nil {
+	if err := s.requireSlackProjects(next); err != nil {
 		s.errorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -364,11 +364,23 @@ func (s *Server) respondIntegrationTest(w http.ResponseWriter, r *http.Request, 
 	s.jsonResponse(w, http.StatusOK, IntegrationTestResponse{Success: true, Message: "Configuration is valid. Live provider connectivity checks are not yet implemented."})
 }
 
-// requireSlackProject lives apart from validateIntegration because the connection test checks a
+// requireSlackProjects lives apart from validateIntegration because the connection test checks a
 // draft before any project is chosen.
-func requireSlackProject(integration *storage.Integration) error {
-	if integration.Provider == "slack" && integration.ProjectID == "" {
-		return fmt.Errorf("slack integration requires a project")
+func (s *Server) requireSlackProjects(integration *storage.Integration) error {
+	if integration.Provider != "slack" {
+		return nil
+	}
+	mapping, err := parseSlackChannelProjects(integration.Config[slackChannelProjectsKey])
+	if err != nil {
+		return err
+	}
+	for _, projectID := range mapping {
+		if _, err := s.validateIntegrationProjectID(projectID); err != nil {
+			return fmt.Errorf("channel_projects: %w", err)
+		}
+	}
+	if integration.ProjectID == "" && len(mapping) == 0 {
+		return fmt.Errorf("slack integration requires a default project or at least one channel mapping")
 	}
 	return nil
 }

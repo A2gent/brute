@@ -469,3 +469,26 @@ func TestParentAgentToolsBoundsResponse(t *testing.T) {
 		t.Fatalf("oversized response must be rejected: %+v %v", result, err)
 	}
 }
+
+func TestParentAgentToolsProjectSessionHistoryUsesParentProject(t *testing.T) {
+	parent, parentSess, child, childSess, ctx, _ := parentAgentToolsTestPair(t)
+	projectID := "parent-project"
+	now := time.Now()
+	if err := parent.store.SaveProject(&storage.Project{ID: projectID, Name: projectID, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	parentSess.ProjectID = &projectID
+	if err := parent.sessionManager.Save(parentSess); err != nil {
+		t.Fatal(err)
+	}
+	past, _ := parent.sessionManager.Create("build")
+	past.ProjectID = &projectID
+	past.Title = "VAICO corrupted images"
+	if err := parent.sessionManager.Save(past); err != nil {
+		t.Fatal(err)
+	}
+	result, err := child.toolManagerForSession(childSess).Execute(ctx, "project_session_history", json.RawMessage(`{"action":"list","query":"vaico"}`))
+	if err != nil || !result.Success || !strings.Contains(result.Output, past.ID) {
+		t.Fatalf("history should come from parent project: %+v %v", result, err)
+	}
+}

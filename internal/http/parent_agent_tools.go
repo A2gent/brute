@@ -66,6 +66,8 @@ var toolPlacements = map[string]toolPlacement{
 	"chrome_extension":     placementParent, // the extension connects only to the parent port
 	"recurring_jobs":       placementParent, // Caesar reads jobs from the parent store
 	"tasks":                placementParent, // Caesar reads tasks from the parent store
+	// Host children have their own store without the project or its past sessions.
+	"project_session_history": placementParent,
 
 	// Child-local by design: workspace, session, media and agent-internal tools.
 	// Agent creation and external A2A stay local until children get a parent-scoped
@@ -79,7 +81,7 @@ var toolPlacements = map[string]toolPlacement{
 	"grep": placementChild, "import_agent_definition_yaml": placementChild, "insert_lines": placementChild,
 	"man": placementChild, "mcp_call": placementChild, "mcp_list_tools": placementChild, "mcp_manage": placementChild,
 	"notify_webapp": placementChild, "parallel": placementChild, "pipeline": placementChild,
-	"project_session_history": placementChild, "question": placementChild, "random_number": placementChild,
+	"question": placementChild, "random_number": placementChild,
 	"read": placementChild, "relevance_gate": placementChild, "replace_lines": placementChild,
 	"session_task_progress": placementChild, "sql_query": placementChild, "stt": placementChild,
 	"suggest_git_commit": placementChild, "suggest_session": placementChild, "take_camera_photo_tool": placementChild,

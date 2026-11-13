@@ -4,20 +4,22 @@ package http
 
 // JobTriggerFields is embedded in CreateJobRequest and JobResponse.
 type JobTriggerFields struct {
-	TriggerType      string `json:"trigger_type,omitempty"` // "schedule" (default) | "webhook"
-	TriggerSource    string `json:"trigger_source,omitempty"`
-	TriggerEvents    string `json:"trigger_events,omitempty"`
-	TriggerBranches  string `json:"trigger_branches,omitempty"`
-	TriggerCondition string `json:"trigger_condition,omitempty"`
+	TriggerType       string `json:"trigger_type,omitempty"` // "schedule" (default) | "webhook"
+	TriggerSource     string `json:"trigger_source,omitempty"`
+	TriggerEvents     string `json:"trigger_events,omitempty"`
+	TriggerBranches   string `json:"trigger_branches,omitempty"`
+	TriggerCondition  string `json:"trigger_condition,omitempty"`
+	TriggerRepository string `json:"trigger_repository,omitempty"`
 }
 
 // JobTriggerUpdateFields is embedded in UpdateJobRequest; nil leaves a field unchanged.
 type JobTriggerUpdateFields struct {
-	TriggerType      *string `json:"trigger_type,omitempty"`
-	TriggerSource    *string `json:"trigger_source,omitempty"`
-	TriggerEvents    *string `json:"trigger_events,omitempty"`
-	TriggerBranches  *string `json:"trigger_branches,omitempty"`
-	TriggerCondition *string `json:"trigger_condition,omitempty"`
+	TriggerType       *string `json:"trigger_type,omitempty"`
+	TriggerSource     *string `json:"trigger_source,omitempty"`
+	TriggerEvents     *string `json:"trigger_events,omitempty"`
+	TriggerBranches   *string `json:"trigger_branches,omitempty"`
+	TriggerCondition  *string `json:"trigger_condition,omitempty"`
+	TriggerRepository *string `json:"trigger_repository,omitempty"`
 }
 
 // JobWebhookFields exposes the Square connection of a webhook-triggered loop.

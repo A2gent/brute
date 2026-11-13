@@ -14,7 +14,7 @@ const recurringJobSelectColumns = `
 	run_target,
 	launch_agent_id, launch_agent_name, launch_agent_runtime, unified_agent_id, docker_agent_id,
 	llm_provider, llm_model, queue_serial, queue_name, gate_tool, gate_params, gate_question,
-	trigger_type, trigger_source, trigger_events, trigger_branches, trigger_condition, webhook_endpoint_id, webhook_url, webhook_signing_secret,
+	trigger_type, trigger_source, trigger_events, trigger_branches, trigger_condition, trigger_repository, webhook_endpoint_id, webhook_url, webhook_signing_secret,
 	enabled, last_run_at, next_run_at, created_at, updated_at
 `
 
@@ -31,7 +31,7 @@ func scanRecurringJob(
 		&job.RunTarget,
 		&job.LaunchAgentID, &job.LaunchAgentName, &job.LaunchAgentRun, &job.UnifiedAgentID, &job.DockerAgentID,
 		&job.LLMProvider, &job.LLMModel, &queueSerial, &job.QueueName, &job.GateTool, &job.GateParams, &job.GateQuestion,
-		&job.TriggerType, &job.TriggerSource, &job.TriggerEvents, &job.TriggerBranches, &job.TriggerCondition, &job.WebhookEndpointID, &job.WebhookURL, &job.WebhookSigningSecret,
+		&job.TriggerType, &job.TriggerSource, &job.TriggerEvents, &job.TriggerBranches, &job.TriggerCondition, &job.TriggerRepository, &job.WebhookEndpointID, &job.WebhookURL, &job.WebhookSigningSecret,
 		&enabled, &lastRunAt, &nextRunAt, &job.CreatedAt, &job.UpdatedAt,
 	)
 	if err != nil {
@@ -54,7 +54,7 @@ func scanRecurringJob(
 func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
 	_, err := s.db.Exec(`
 		INSERT INTO recurring_jobs (`+recurringJobSelectColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			project_id = excluded.project_id,
 			name = excluded.name,
@@ -81,6 +81,7 @@ func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
 			trigger_events = excluded.trigger_events,
 			trigger_branches = excluded.trigger_branches,
 			trigger_condition = excluded.trigger_condition,
+			trigger_repository = excluded.trigger_repository,
 			webhook_endpoint_id = excluded.webhook_endpoint_id,
 			webhook_url = excluded.webhook_url,
 			webhook_signing_secret = excluded.webhook_signing_secret,
@@ -92,7 +93,7 @@ func (s *SQLiteStore) SaveJob(job *RecurringJob) error {
 		job.RunTarget,
 		job.LaunchAgentID, job.LaunchAgentName, job.LaunchAgentRun, job.UnifiedAgentID, job.DockerAgentID,
 		job.LLMProvider, job.LLMModel, job.QueueSerial, job.QueueName, job.GateTool, job.GateParams, job.GateQuestion,
-		normalizeTriggerType(job.TriggerType), job.TriggerSource, job.TriggerEvents, job.TriggerBranches, job.TriggerCondition, job.WebhookEndpointID, job.WebhookURL, job.WebhookSigningSecret,
+		normalizeTriggerType(job.TriggerType), job.TriggerSource, job.TriggerEvents, job.TriggerBranches, job.TriggerCondition, job.TriggerRepository, job.WebhookEndpointID, job.WebhookURL, job.WebhookSigningSecret,
 		job.Enabled, job.LastRunAt, job.NextRunAt, job.CreatedAt, job.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to save job: %w", err)

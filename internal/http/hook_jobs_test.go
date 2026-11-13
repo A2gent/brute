@@ -17,7 +17,7 @@ import (
 
 func TestCreateWebhookJobHasNoScheduleAndIsNeverDue(t *testing.T) {
 	server, store := newBruteHTTPProxyTestServer(t)
-	body := `{"name":"CI watcher","task_prompt":"fix it","enabled":true,"trigger_type":"webhook","trigger_source":"bitbucket","trigger_events":"ci_failed"}`
+	body := `{"name":"CI watcher","task_prompt":"fix it","enabled":true,"trigger_type":"webhook","trigger_source":"bitbucket","trigger_events":"ci_failed","trigger_repository":"https://bitbucket.org/acme/app"}`
 	rec := httptest.NewRecorder()
 	server.handleCreateJob(rec, httptest.NewRequest(http.MethodPost, "/jobs", strings.NewReader(body)))
 	if rec.Code != http.StatusCreated {
@@ -25,8 +25,12 @@ func TestCreateWebhookJobHasNoScheduleAndIsNeverDue(t *testing.T) {
 	}
 	var resp JobResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
-	if resp.TriggerType != jobTriggerWebhook || resp.ScheduleCron != "" || resp.NextRunAt != nil || resp.TriggerSource != "bitbucket" {
+	if resp.TriggerType != jobTriggerWebhook || resp.ScheduleCron != "" || resp.NextRunAt != nil || resp.TriggerSource != "bitbucket" || resp.TriggerRepository != "https://bitbucket.org/acme/app" {
 		t.Fatalf("unexpected webhook job response: %+v", resp)
+	}
+	stored, err := store.GetJob(resp.ID)
+	if err != nil || stored.TriggerRepository != "https://bitbucket.org/acme/app" {
+		t.Fatalf("repository was not stored: %v %+v", err, stored)
 	}
 	due, err := store.GetDueJobs(time.Now().Add(time.Hour))
 	if err != nil || len(due) != 0 {

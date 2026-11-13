@@ -249,9 +249,60 @@ func VerifySignature(headers http.Header, body []byte, secret string) error {
 // Filter is the deterministic part of a hook trigger. The plain-text condition
 // is evaluated separately (by Jev) because it needs a model.
 type Filter struct {
-	Source   string
-	Events   string // comma-separated
-	Branches string // comma-separated globs
+	Source     string
+	Events     string // comma-separated
+	Branches   string // comma-separated globs
+	Repository string // URL, SSH remote, owner/name, or CircleCI slug; empty = any
+}
+
+// RepositoryKey reduces a pasted URL, SSH remote, owner/name, or CircleCI slug
+// (gh/owner/repo) to a lowercase owner/name so hook filters can compare them.
+func RepositoryKey(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimRight(value, "/")
+	if value == "" {
+		return ""
+	}
+	if len(value) >= 4 && strings.EqualFold(value[len(value)-4:], ".git") {
+		value = value[:len(value)-4]
+	}
+	lower := strings.ToLower(value)
+	if !strings.Contains(lower, "://") {
+		if at := strings.LastIndex(lower, "@"); at >= 0 {
+			if colon := strings.Index(lower[at:], ":"); colon >= 0 {
+				value = value[at+colon+1:]
+			}
+		}
+	} else if scheme := strings.Index(lower, "://"); scheme >= 0 {
+		rest := value[scheme+3:]
+		slash := strings.Index(rest, "/")
+		if slash < 0 {
+			return ""
+		}
+		value = rest[slash+1:]
+	}
+	lower = strings.ToLower(value)
+	for _, host := range []string{"github.com/", "www.github.com/", "bitbucket.org/", "www.bitbucket.org/"} {
+		if strings.HasPrefix(lower, host) {
+			value = value[len(host):]
+			break
+		}
+	}
+	value = strings.Trim(value, "/")
+	if value == "" {
+		return ""
+	}
+	parts := strings.Split(value, "/")
+	if len(parts) >= 3 {
+		switch strings.ToLower(parts[0]) {
+		case "gh", "bb", "github", "bitbucket":
+			parts = parts[1:]
+		}
+	}
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return ""
+	}
+	return strings.ToLower(parts[0]) + "/" + strings.ToLower(parts[1])
 }
 
 // Matches reports whether the event passes the filter, with a reason when it does not.
@@ -284,6 +335,17 @@ func (f Filter) Matches(ev Event) (bool, string) {
 		}
 		if !matched {
 			return false, fmt.Sprintf("branch %q not in %s", ev.Branch, f.Branches)
+		}
+	}
+	if wanted := strings.TrimSpace(f.Repository); wanted != "" {
+		key := RepositoryKey(wanted)
+		actual := RepositoryKey(ev.Repository)
+		if key != "" {
+			if actual != key {
+				return false, fmt.Sprintf("repository %q is not %s", ev.Repository, key)
+			}
+		} else if !strings.EqualFold(strings.TrimSpace(ev.Repository), wanted) {
+			return false, fmt.Sprintf("repository %q is not %s", ev.Repository, wanted)
 		}
 	}
 	return true, ""

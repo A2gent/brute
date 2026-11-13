@@ -57,6 +57,7 @@ func applyJobTrigger(job *storage.RecurringJob, f JobTriggerFields) error {
 	job.TriggerEvents = strings.TrimSpace(f.TriggerEvents)
 	job.TriggerBranches = strings.TrimSpace(f.TriggerBranches)
 	job.TriggerCondition = strings.TrimSpace(f.TriggerCondition)
+	job.TriggerRepository = strings.TrimSpace(f.TriggerRepository)
 	return nil
 }
 
@@ -72,16 +73,18 @@ func applyJobTriggerUpdate(job *storage.RecurringJob, f JobTriggerUpdateFields) 
 	set(&merged.TriggerEvents, f.TriggerEvents)
 	set(&merged.TriggerBranches, f.TriggerBranches)
 	set(&merged.TriggerCondition, f.TriggerCondition)
+	set(&merged.TriggerRepository, f.TriggerRepository)
 	return applyJobTrigger(job, merged)
 }
 
 func jobTriggerFieldsFromJob(job *storage.RecurringJob) JobTriggerFields {
 	return JobTriggerFields{
-		TriggerType:      normalizeJobTriggerType(job.TriggerType),
-		TriggerSource:    job.TriggerSource,
-		TriggerEvents:    job.TriggerEvents,
-		TriggerBranches:  job.TriggerBranches,
-		TriggerCondition: job.TriggerCondition,
+		TriggerType:       normalizeJobTriggerType(job.TriggerType),
+		TriggerSource:     job.TriggerSource,
+		TriggerEvents:     job.TriggerEvents,
+		TriggerBranches:   job.TriggerBranches,
+		TriggerCondition:  job.TriggerCondition,
+		TriggerRepository: job.TriggerRepository,
 	}
 }
 
@@ -130,7 +133,7 @@ func (s *Server) dispatchHookEvent(job *storage.RecurringJob, headers http.Heade
 		return res
 	}
 	ev := hooks.ParseEvent(headers, body)
-	filter := hooks.Filter{Source: job.TriggerSource, Events: job.TriggerEvents, Branches: job.TriggerBranches}
+	filter := hooks.Filter{Source: job.TriggerSource, Events: job.TriggerEvents, Branches: job.TriggerBranches, Repository: job.TriggerRepository}
 	if ok, reason := filter.Matches(ev); !ok {
 		res.Status, res.Reason = "ignored", reason
 		return res

@@ -68,6 +68,45 @@ func TestFilterMatches(t *testing.T) {
 	}
 }
 
+func TestRepositoryKey(t *testing.T) {
+	cases := map[string]string{
+		"https://github.com/acme/app":           "acme/app",
+		"https://github.com/acme/app.git":       "acme/app",
+		"https://github.com/acme/app/tree/main": "acme/app",
+		"git@github.com:Acme/App.git":           "acme/app",
+		"github.com/acme/app":                   "acme/app",
+		"https://bitbucket.org/ws/repo":         "ws/repo",
+		"git@bitbucket.org:ws/repo.git":         "ws/repo",
+		"acme/app":                              "acme/app",
+		"gh/acme/app":                           "acme/app",
+		"bitbucket/ws/repo":                     "ws/repo",
+		"not a repo":                            "",
+		"https://github.com/acme":               "",
+		"":                                      "",
+	}
+	for in, want := range cases {
+		if got := RepositoryKey(in); got != want {
+			t.Errorf("RepositoryKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestRepositoryFilter(t *testing.T) {
+	ev := Event{Source: SourceGitHub, Type: TypePush, Repository: "Acme/App"}
+	if ok, reason := (Filter{Repository: "https://github.com/acme/app.git"}).Matches(ev); !ok {
+		t.Fatalf("url should match full_name: %s", reason)
+	}
+	if ok, _ := (Filter{Repository: "gh/acme/app"}).Matches(ev); !ok {
+		t.Fatal("circleci slug should match owner/name")
+	}
+	if ok, reason := (Filter{Repository: "https://github.com/other/app"}).Matches(ev); ok {
+		t.Fatalf("other repository should not match: %s", reason)
+	}
+	if ok, _ := (Filter{Repository: "https://github.com/acme/app"}).Matches(Event{Source: SourceGitHub, Type: TypePush}); ok {
+		t.Fatal("event without a repository must not pass a repository filter")
+	}
+}
+
 func TestVerifySignature(t *testing.T) {
 	body := []byte(`{"a":1}`)
 	mac := hmac.New(sha256.New, []byte("s3cret"))

@@ -306,6 +306,8 @@ func (s *SQLiteStore) migrate() error {
 		`ALTER TABLE recurring_jobs ADD COLUMN trigger_events TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE recurring_jobs ADD COLUMN trigger_branches TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE recurring_jobs ADD COLUMN trigger_condition TEXT NOT NULL DEFAULT ''`,
+		// Repository a hook watches. Empty means events from any repository are accepted.
+		`ALTER TABLE recurring_jobs ADD COLUMN trigger_repository TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE recurring_jobs ADD COLUMN webhook_endpoint_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE recurring_jobs ADD COLUMN webhook_url TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE recurring_jobs ADD COLUMN webhook_signing_secret TEXT NOT NULL DEFAULT ''`,

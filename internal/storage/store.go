@@ -79,6 +79,7 @@ type RecurringJob struct {
 	TriggerEvents        string // Comma-separated normalized (ci_failed) or raw (workflow_run) event types; empty = any
 	TriggerBranches      string // Comma-separated branch globs; empty = any
 	TriggerCondition     string // Optional plain-text condition checked by Jev against the event
+	TriggerRepository    string // Repository URL or owner/name this hook watches; empty = any
 	WebhookEndpointID    string // Square webhook endpoint relaying events to this hook
 	WebhookURL           string // Public Square URL (includes ?secret=) to paste into the provider
 	WebhookSigningSecret string // HMAC secret for X-Hub-Signature(-256) verification

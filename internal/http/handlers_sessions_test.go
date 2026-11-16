@@ -322,3 +322,48 @@ func TestHandleGetSessionDoesNotExposeOrEraseCompressionState(t *testing.T) {
 		}
 	}
 }
+
+func TestHandleUpdateSessionTitle(t *testing.T) {
+	t.Parallel()
+
+	server, _ := newBruteHTTPProxyTestServer(t)
+	sess, err := server.sessionManager.Create("build")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	req := httptest.NewRequest(stdhttp.MethodPut, "/sessions/"+sess.ID+"/title", strings.NewReader(`{"title":"  Renamed  "}`))
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+
+	if rec.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp SessionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Title != "Renamed" {
+		t.Fatalf("expected trimmed title, got %q", resp.Title)
+	}
+	saved, err := server.sessionManager.Get(sess.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if saved.Title != "Renamed" || saved.Summary != "Renamed" {
+		t.Fatalf("expected persisted title and summary, got %q / %q", saved.Title, saved.Summary)
+	}
+}
+
+func TestHandleUpdateSessionTitleRejectsMissingSession(t *testing.T) {
+	t.Parallel()
+
+	server, _ := newBruteHTTPProxyTestServer(t)
+	req := httptest.NewRequest(stdhttp.MethodPut, "/sessions/missing/title", strings.NewReader(`{"title":"x"}`))
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+
+	if rec.Code != stdhttp.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

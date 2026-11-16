@@ -335,6 +335,7 @@ func (s *Server) registerSessionRoutes(r chi.Router) {
 		r.Post("/{sessionID}/cancel", s.handleCancelSession)
 		r.Post("/{sessionID}/compact", s.handleCompactSessionContext)
 		r.Put("/{sessionID}/project", s.handleUpdateSessionProject)
+		r.Put("/{sessionID}/title", s.handleUpdateSessionTitle)
 		r.Put("/{sessionID}/provider", s.handleUpdateSessionProviderTransition)
 		r.Get("/{sessionID}/provider-transitions", s.handleListProviderTransitions)
 		r.Post("/{sessionID}/provider-transitions", s.handleCreateProviderTransition)

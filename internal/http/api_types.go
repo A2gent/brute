@@ -688,6 +688,10 @@ type UpdateSessionProjectRequest struct {
 	ProjectID *string `json:"project_id"`
 }
 
+type UpdateSessionTitleRequest struct {
+	Title string `json:"title"`
+}
+
 type UpdateSessionProviderRequest struct {
 	Provider string  `json:"provider"`
 	Model    *string `json:"model,omitempty"`

@@ -619,6 +619,38 @@ func (s *Server) handleUpdateSessionProject(w http.ResponseWriter, r *http.Reque
 	s.jsonResponse(w, http.StatusOK, s.sessionToResponse(sess))
 }
 
+func (s *Server) handleUpdateSessionTitle(w http.ResponseWriter, r *http.Request) {
+	sessionID := chi.URLParam(r, "sessionID")
+
+	sess, err := s.sessionManager.Get(sessionID)
+	if err != nil {
+		s.errorResponse(w, http.StatusNotFound, "Session not found: "+err.Error())
+		return
+	}
+
+	var req UpdateSessionTitleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	title := strings.TrimSpace(req.Title)
+	sess.SetTitle(title)
+	if title != "" {
+		sess.SetSummary(title)
+	} else {
+		sess.Summary = ""
+		sess.RefreshSummary()
+	}
+
+	if err := s.sessionManager.Save(sess); err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to update session title: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, s.sessionToResponse(sess))
+}
+
 func (s *Server) handleUpdateSessionNeedsFeedback(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionID")
 

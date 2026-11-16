@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -136,5 +137,65 @@ func TestHandleProjectDatabaseColumnAnalyticsRejectsRedis(t *testing.T) {
 	server.router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected bad request for Redis analytics, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleProjectDatabasePersistsSchema(t *testing.T) {
+	server, projectID, _ := newProjectFileTestServer(t)
+	body, _ := json.Marshal(CreateProjectDatabaseRequest{
+		Name:        "PG",
+		Engine:      "postgres",
+		DSN:         "postgres://localhost/app",
+		Environment: "Local",
+		Schema:      " sales ",
+	})
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/projects/"+projectID+"/databases", bytes.NewBuffer(body)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	var created ProjectDatabaseResponse
+	_ = json.NewDecoder(rec.Body).Decode(&created)
+	if created.Schema != "sales" {
+		t.Fatalf("expected trimmed schema, got %q", created.Schema)
+	}
+
+	body, _ = json.Marshal(map[string]string{"name": "PG renamed"})
+	rec = httptest.NewRecorder()
+	server.router.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/projects/"+projectID+"/databases/"+created.ID, bytes.NewBuffer(body)))
+	var renamed ProjectDatabaseResponse
+	_ = json.NewDecoder(rec.Body).Decode(&renamed)
+	if rec.Code != http.StatusOK || renamed.Schema != "sales" {
+		t.Fatalf("update without schema should keep it: %d %+v", rec.Code, renamed)
+	}
+
+	body, _ = json.Marshal(map[string]string{"schema": "billing"})
+	rec = httptest.NewRecorder()
+	server.router.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/projects/"+projectID+"/databases/"+created.ID, bytes.NewBuffer(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update schema: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	server.router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/projects/"+projectID+"/databases", nil))
+	var listed []ProjectDatabaseResponse
+	_ = json.NewDecoder(rec.Body).Decode(&listed)
+	if len(listed) != 1 || listed[0].Schema != "billing" {
+		t.Fatalf("expected persisted schema billing, got %+v", listed)
+	}
+}
+
+func TestHandleProjectDatabaseListSchemasSQLiteIsEmpty(t *testing.T) {
+	server, projectID, _ := newProjectFileTestServer(t)
+	body, _ := json.Marshal(CreateProjectDatabaseRequest{Name: "Lite", Engine: "sqlite", DSN: ":memory:", Environment: "Local"})
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/projects/"+projectID+"/databases", bytes.NewBuffer(body)))
+	var created ProjectDatabaseResponse
+	_ = json.NewDecoder(rec.Body).Decode(&created)
+
+	rec = httptest.NewRecorder()
+	server.router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/projects/"+projectID+"/databases/"+created.ID+"/schemas", nil))
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "[]" {
+		t.Fatalf("expected empty schema list, got %d %s", rec.Code, rec.Body.String())
 	}
 }

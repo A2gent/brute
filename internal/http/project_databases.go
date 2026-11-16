@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -11,6 +12,30 @@ import (
 	"github.com/A2gent/brute/internal/dbtool"
 	"github.com/A2gent/brute/internal/storage"
 )
+
+func projectDatabaseResponse(db *storage.ProjectDatabase) ProjectDatabaseResponse {
+	return ProjectDatabaseResponse{
+		ID:          db.ID,
+		ProjectID:   db.ProjectID,
+		Name:        db.Name,
+		Engine:      db.Engine,
+		DSN:         db.DSN,
+		Environment: db.Environment,
+		IsReadOnly:  db.IsReadOnly,
+		Schema:      db.Schema,
+		CreatedAt:   db.CreatedAt,
+		UpdatedAt:   db.UpdatedAt,
+	}
+}
+
+func projectDatabaseConfig(db *storage.ProjectDatabase) dbtool.Config {
+	return dbtool.Config{
+		Engine:     db.Engine,
+		DSN:        db.DSN,
+		IsReadOnly: db.IsReadOnly,
+		Schema:     db.Schema,
+	}
+}
 
 func (s *Server) handleListProjectDatabases(w http.ResponseWriter, r *http.Request) {
 	projectID := chi.URLParam(r, "projectID")
@@ -22,17 +47,7 @@ func (s *Server) handleListProjectDatabases(w http.ResponseWriter, r *http.Reque
 
 	resp := make([]ProjectDatabaseResponse, len(dbs))
 	for i, db := range dbs {
-		resp[i] = ProjectDatabaseResponse{
-			ID:          db.ID,
-			ProjectID:   db.ProjectID,
-			Name:        db.Name,
-			Engine:      db.Engine,
-			DSN:         db.DSN,
-			Environment: db.Environment,
-			IsReadOnly:  db.IsReadOnly,
-			CreatedAt:   db.CreatedAt,
-			UpdatedAt:   db.UpdatedAt,
-		}
+		resp[i] = projectDatabaseResponse(db)
 	}
 	s.jsonResponse(w, http.StatusOK, resp)
 }
@@ -50,6 +65,11 @@ func (s *Server) handleCreateProjectDatabase(w http.ResponseWriter, r *http.Requ
 		s.errorResponse(w, http.StatusBadRequest, "Name, engine, dsn, and environment are required")
 		return
 	}
+	req.Schema = strings.TrimSpace(req.Schema)
+	if err := dbtool.ValidateSchemaName(req.Schema); err != nil {
+		s.errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	now := time.Now()
 	db := &storage.ProjectDatabase{
@@ -60,6 +80,7 @@ func (s *Server) handleCreateProjectDatabase(w http.ResponseWriter, r *http.Requ
 		DSN:         req.DSN,
 		Environment: req.Environment,
 		IsReadOnly:  req.IsReadOnly,
+		Schema:      req.Schema,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -70,17 +91,7 @@ func (s *Server) handleCreateProjectDatabase(w http.ResponseWriter, r *http.Requ
 	}
 
 	s.publishProjectResourcesChanged("databases", db.ProjectID)
-	s.jsonResponse(w, http.StatusCreated, ProjectDatabaseResponse{
-		ID:          db.ID,
-		ProjectID:   db.ProjectID,
-		Name:        db.Name,
-		Engine:      db.Engine,
-		DSN:         db.DSN,
-		Environment: db.Environment,
-		IsReadOnly:  db.IsReadOnly,
-		CreatedAt:   db.CreatedAt,
-		UpdatedAt:   db.UpdatedAt,
-	})
+	s.jsonResponse(w, http.StatusCreated, projectDatabaseResponse(db))
 }
 
 func (s *Server) handleUpdateProjectDatabase(w http.ResponseWriter, r *http.Request) {
@@ -113,6 +124,14 @@ func (s *Server) handleUpdateProjectDatabase(w http.ResponseWriter, r *http.Requ
 	if req.IsReadOnly != nil {
 		db.IsReadOnly = *req.IsReadOnly
 	}
+	if req.Schema != nil {
+		schema := strings.TrimSpace(*req.Schema)
+		if err := dbtool.ValidateSchemaName(schema); err != nil {
+			s.errorResponse(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		db.Schema = schema
+	}
 	db.UpdatedAt = time.Now()
 
 	if err := s.store.SaveProjectDatabase(db); err != nil {
@@ -121,17 +140,7 @@ func (s *Server) handleUpdateProjectDatabase(w http.ResponseWriter, r *http.Requ
 	}
 
 	s.publishProjectResourcesChanged("databases", db.ProjectID)
-	s.jsonResponse(w, http.StatusOK, ProjectDatabaseResponse{
-		ID:          db.ID,
-		ProjectID:   db.ProjectID,
-		Name:        db.Name,
-		Engine:      db.Engine,
-		DSN:         db.DSN,
-		Environment: db.Environment,
-		IsReadOnly:  db.IsReadOnly,
-		CreatedAt:   db.CreatedAt,
-		UpdatedAt:   db.UpdatedAt,
-	})
+	s.jsonResponse(w, http.StatusOK, projectDatabaseResponse(db))
 }
 
 func (s *Server) handleDeleteProjectDatabase(w http.ResponseWriter, r *http.Request) {
@@ -158,11 +167,7 @@ func (s *Server) handleProjectDatabaseListTables(w http.ResponseWriter, r *http.
 		return
 	}
 
-	cfg := dbtool.Config{
-		Engine:     dbRecord.Engine,
-		DSN:        dbRecord.DSN,
-		IsReadOnly: dbRecord.IsReadOnly,
-	}
+	cfg := projectDatabaseConfig(dbRecord)
 
 	tables, err := dbtool.GetTables(r.Context(), cfg)
 	if err != nil {
@@ -176,6 +181,20 @@ func (s *Server) handleProjectDatabaseListTables(w http.ResponseWriter, r *http.
 	}
 
 	s.jsonResponse(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleProjectDatabaseListSchemas(w http.ResponseWriter, r *http.Request) {
+	dbRecord, err := s.store.GetProjectDatabase(chi.URLParam(r, "dbID"))
+	if err != nil {
+		s.errorResponse(w, http.StatusNotFound, "Project database not found")
+		return
+	}
+	schemas, err := dbtool.ListSchemas(r.Context(), projectDatabaseConfig(dbRecord))
+	if err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to fetch schemas: "+err.Error())
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, schemas)
 }
 
 func (s *Server) handleProjectDatabaseTableSchema(w http.ResponseWriter, r *http.Request) {
@@ -196,11 +215,7 @@ func (s *Server) handleProjectDatabaseTableSchema(w http.ResponseWriter, r *http
 		return
 	}
 
-	columns, err := dbtool.GetTableColumns(r.Context(), dbtool.Config{
-		Engine:     dbRecord.Engine,
-		DSN:        dbRecord.DSN,
-		IsReadOnly: dbRecord.IsReadOnly,
-	}, tableName)
+	columns, err := dbtool.GetTableColumns(r.Context(), projectDatabaseConfig(dbRecord), tableName)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Failed to load table schema: "+err.Error())
 		return
@@ -255,11 +270,7 @@ func (s *Server) handleProjectDatabaseUpdateCell(w http.ResponseWriter, r *http.
 		return
 	}
 
-	result, err := dbtool.UpdateTableCell(r.Context(), dbtool.Config{
-		Engine:     dbRecord.Engine,
-		DSN:        dbRecord.DSN,
-		IsReadOnly: dbRecord.IsReadOnly,
-	}, tableName, req.Column, req.Value, req.PrimaryKey)
+	result, err := dbtool.UpdateTableCell(r.Context(), projectDatabaseConfig(dbRecord), tableName, req.Column, req.Value, req.PrimaryKey)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Failed to update cell: "+err.Error())
 		return
@@ -290,11 +301,7 @@ func (s *Server) handleProjectDatabaseColumnAnalytics(w http.ResponseWriter, r *
 		return
 	}
 
-	analytics, err := dbtool.GetColumnAnalytics(r.Context(), dbtool.Config{
-		Engine:     dbRecord.Engine,
-		DSN:        dbRecord.DSN,
-		IsReadOnly: dbRecord.IsReadOnly,
-	}, tableName, columnName, 20)
+	analytics, err := dbtool.GetColumnAnalytics(r.Context(), projectDatabaseConfig(dbRecord), tableName, columnName, 20)
 	if err != nil {
 		s.errorResponse(w, http.StatusBadRequest, "Failed to analyze column: "+err.Error())
 		return
@@ -338,11 +345,7 @@ func (s *Server) handleProjectDatabaseQuery(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	cfg := dbtool.Config{
-		Engine:     dbRecord.Engine,
-		DSN:        dbRecord.DSN,
-		IsReadOnly: dbRecord.IsReadOnly, // Enforced in ExecuteQuery
-	}
+	cfg := projectDatabaseConfig(dbRecord)
 
 	result, err := dbtool.ExecuteQuery(r.Context(), cfg, req.Query, req.Limit, req.Offset, "json")
 	if err != nil {

@@ -225,6 +225,7 @@ type ProjectDatabase struct {
 	DSN         string
 	Environment string
 	IsReadOnly  bool
+	Schema      string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }

@@ -160,6 +160,7 @@ func (t *SQLQueryTool) Execute(ctx context.Context, params json.RawMessage) (*Re
 			Engine:     strings.TrimSpace(matchedDB.Engine),
 			DSN:        strings.TrimSpace(matchedDB.DSN),
 			IsReadOnly: matchedDB.IsReadOnly,
+			Schema:     matchedDB.Schema,
 		}
 	} else if hasDsn && dsn != "" {
 		engine, _ := args["engine"].(string)

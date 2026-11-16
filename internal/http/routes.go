@@ -442,6 +442,7 @@ func (s *Server) registerProjectRoutes(r chi.Router) {
 		r.Post("/{projectID}/databases/diagnose", s.handleDiagnoseProjectDatabase)
 		r.Put("/{projectID}/databases/{dbID}", s.handleUpdateProjectDatabase)
 		r.Delete("/{projectID}/databases/{dbID}", s.handleDeleteProjectDatabase)
+		r.Get("/{projectID}/databases/{dbID}/schemas", s.handleProjectDatabaseListSchemas)
 		r.Get("/{projectID}/databases/{dbID}/tables", s.handleProjectDatabaseListTables)
 		r.Get("/{projectID}/databases/{dbID}/tables/{tableName}/schema", s.handleProjectDatabaseTableSchema)
 		r.Patch("/{projectID}/databases/{dbID}/tables/{tableName}/cells", s.handleProjectDatabaseUpdateCell)

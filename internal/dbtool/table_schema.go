@@ -53,9 +53,9 @@ func GetTableColumns(ctx context.Context, cfg Config, tableName string) ([]Table
 	var columns []TableColumn
 	switch engine {
 	case "postgres":
-		columns, err = getPostgresTableColumns(ctx, db, tableName)
+		columns, err = getPostgresTableColumns(ctx, db, selectedSchema(cfg), tableName)
 	case "mysql":
-		columns, err = getMySQLTableColumns(ctx, db, tableName)
+		columns, err = getMySQLTableColumns(ctx, db, selectedSchema(cfg), tableName)
 	case "sqlite":
 		columns, err = getSQLiteTableColumns(ctx, db, tableName)
 	default:
@@ -65,7 +65,7 @@ func GetTableColumns(ctx context.Context, cfg Config, tableName string) ([]Table
 		return nil, err
 	}
 
-	foreignKeysByColumn, err := getTableForeignKeysByColumn(ctx, db, engine, tableName)
+	foreignKeysByColumn, err := getTableForeignKeysByColumn(ctx, db, engine, selectedSchema(cfg), tableName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load foreign keys: %w", err)
 	}
@@ -78,7 +78,7 @@ func GetTableColumns(ctx context.Context, cfg Config, tableName string) ([]Table
 	return columns, nil
 }
 
-func getTableForeignKeysByColumn(ctx context.Context, db *sql.DB, engine, tableName string) (map[string][]ColumnAnalyticsForeignKey, error) {
+func getTableForeignKeysByColumn(ctx context.Context, db *sql.DB, engine, schema, tableName string) (map[string][]ColumnAnalyticsForeignKey, error) {
 	foreignKeysByColumn := map[string][]ColumnAnalyticsForeignKey{}
 	switch engine {
 	case "postgres":
@@ -90,9 +90,9 @@ JOIN information_schema.key_column_usage kcu
 JOIN information_schema.constraint_column_usage ccu
   ON ccu.constraint_name = tc.constraint_name AND ccu.constraint_schema = tc.constraint_schema
 WHERE tc.constraint_type = 'FOREIGN KEY'
-  AND tc.table_schema = current_schema()
-  AND tc.table_name = $1
-ORDER BY tc.constraint_name, kcu.ordinal_position`, tableName)
+  AND tc.table_schema = COALESCE(NULLIF($1, ''), current_schema())
+  AND tc.table_name = $2
+ORDER BY tc.constraint_name, kcu.ordinal_position`, schema, tableName)
 		if err != nil {
 			return nil, err
 		}
@@ -110,10 +110,10 @@ ORDER BY tc.constraint_name, kcu.ordinal_position`, tableName)
 		rows, err := db.QueryContext(ctx, `
 SELECT column_name, constraint_name, referenced_table_name, referenced_column_name
 FROM information_schema.key_column_usage
-WHERE table_schema = DATABASE()
+WHERE table_schema = COALESCE(NULLIF(?, ''), DATABASE())
   AND table_name = ?
   AND referenced_table_name IS NOT NULL
-ORDER BY constraint_name, ordinal_position`, tableName)
+ORDER BY constraint_name, ordinal_position`, schema, tableName)
 		if err != nil {
 			return nil, err
 		}
@@ -165,7 +165,7 @@ func lookupAnyColumn(ctx context.Context, db *sql.DB, engine, tableName string) 
 	return columns[0]
 }
 
-func getPostgresTableColumns(ctx context.Context, db *sql.DB, tableName string) ([]TableColumn, error) {
+func getPostgresTableColumns(ctx context.Context, db *sql.DB, schema, tableName string) ([]TableColumn, error) {
 	rows, err := db.QueryContext(ctx, `
 SELECT
   c.column_name,
@@ -180,12 +180,12 @@ LEFT JOIN (
     ON tc.constraint_name = ku.constraint_name
     AND tc.table_schema = ku.table_schema
   WHERE tc.constraint_type = 'PRIMARY KEY'
-    AND tc.table_schema = current_schema()
-    AND tc.table_name = $1
+    AND tc.table_schema = COALESCE(NULLIF($1, ''), current_schema())
+    AND tc.table_name = $2
 ) pk ON pk.column_name = c.column_name
-WHERE c.table_schema = current_schema()
-  AND c.table_name = $1
-ORDER BY c.ordinal_position`, tableName)
+WHERE c.table_schema = COALESCE(NULLIF($1, ''), current_schema())
+  AND c.table_name = $2
+ORDER BY c.ordinal_position`, schema, tableName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load table schema: %w", err)
 	}
@@ -193,7 +193,7 @@ ORDER BY c.ordinal_position`, tableName)
 	return scanTableColumns(rows)
 }
 
-func getMySQLTableColumns(ctx context.Context, db *sql.DB, tableName string) ([]TableColumn, error) {
+func getMySQLTableColumns(ctx context.Context, db *sql.DB, schema, tableName string) ([]TableColumn, error) {
 	rows, err := db.QueryContext(ctx, `
 SELECT
   c.column_name,
@@ -201,9 +201,9 @@ SELECT
   c.is_nullable = 'YES' AS is_nullable,
   c.column_key = 'PRI' AS is_primary_key
 FROM information_schema.columns c
-WHERE c.table_schema = DATABASE()
+WHERE c.table_schema = COALESCE(NULLIF(?, ''), DATABASE())
   AND c.table_name = ?
-ORDER BY c.ordinal_position`, tableName)
+ORDER BY c.ordinal_position`, schema, tableName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load table schema: %w", err)
 	}

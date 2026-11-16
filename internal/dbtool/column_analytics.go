@@ -109,7 +109,7 @@ func GetColumnAnalytics(ctx context.Context, cfg Config, tableName, columnName s
 		return nil, fmt.Errorf("failed to read top column values: %w", err)
 	}
 
-	foreignKeys, err := getColumnForeignKeys(ctx, db, engine, tableName, columnName)
+	foreignKeys, err := getColumnForeignKeys(ctx, db, engine, selectedSchema(cfg), tableName, columnName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect foreign keys: %w", err)
 	}
@@ -136,7 +136,7 @@ func validateAnalyticsColumn(ctx context.Context, db *sql.DB, engine, tableName,
 	return fmt.Errorf("column %q was not found in table %q", columnName, tableName)
 }
 
-func getColumnForeignKeys(ctx context.Context, db *sql.DB, engine, tableName, columnName string) ([]ColumnAnalyticsForeignKey, error) {
+func getColumnForeignKeys(ctx context.Context, db *sql.DB, engine, schema, tableName, columnName string) ([]ColumnAnalyticsForeignKey, error) {
 	switch engine {
 	case "postgres":
 		return queryColumnForeignKeys(ctx, db, `
@@ -147,19 +147,19 @@ JOIN information_schema.key_column_usage kcu
 JOIN information_schema.constraint_column_usage ccu
   ON ccu.constraint_name = tc.constraint_name AND ccu.constraint_schema = tc.constraint_schema
 WHERE tc.constraint_type = 'FOREIGN KEY'
-  AND tc.table_schema = current_schema()
-  AND tc.table_name = $1
-  AND kcu.column_name = $2
-ORDER BY tc.constraint_name`, tableName, columnName)
+  AND tc.table_schema = COALESCE(NULLIF($1, ''), current_schema())
+  AND tc.table_name = $2
+  AND kcu.column_name = $3
+ORDER BY tc.constraint_name`, schema, tableName, columnName)
 	case "mysql":
 		return queryColumnForeignKeys(ctx, db, `
 SELECT constraint_name, referenced_table_name, referenced_column_name
 FROM information_schema.key_column_usage
-WHERE table_schema = DATABASE()
+WHERE table_schema = COALESCE(NULLIF(?, ''), DATABASE())
   AND table_name = ?
   AND column_name = ?
   AND referenced_table_name IS NOT NULL
-ORDER BY constraint_name`, tableName, columnName)
+ORDER BY constraint_name`, schema, tableName, columnName)
 	case "sqlite":
 		rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA foreign_key_list(%s)", quoteSQLIdentifier(engine, tableName)))
 		if err != nil {
@@ -187,8 +187,8 @@ ORDER BY constraint_name`, tableName, columnName)
 	}
 }
 
-func queryColumnForeignKeys(ctx context.Context, db *sql.DB, query, tableName, columnName string) ([]ColumnAnalyticsForeignKey, error) {
-	rows, err := db.QueryContext(ctx, query, tableName, columnName)
+func queryColumnForeignKeys(ctx context.Context, db *sql.DB, query string, args ...any) ([]ColumnAnalyticsForeignKey, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

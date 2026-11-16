@@ -735,6 +735,7 @@ type ProjectDatabaseResponse struct {
 	DSN         string    `json:"dsn"`
 	Environment string    `json:"environment"`
 	IsReadOnly  bool      `json:"is_read_only"`
+	Schema      string    `json:"schema"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -745,6 +746,7 @@ type CreateProjectDatabaseRequest struct {
 	DSN         string `json:"dsn"`
 	Environment string `json:"environment"`
 	IsReadOnly  bool   `json:"is_read_only"`
+	Schema      string `json:"schema"`
 }
 
 type UpdateProjectDatabaseRequest struct {
@@ -753,6 +755,7 @@ type UpdateProjectDatabaseRequest struct {
 	DSN         *string `json:"dsn,omitempty"`
 	Environment *string `json:"environment,omitempty"`
 	IsReadOnly  *bool   `json:"is_read_only,omitempty"`
+	Schema      *string `json:"schema,omitempty"`
 }
 
 type ProjectDatabaseTableResponse struct {

@@ -379,6 +379,7 @@ func (s *SQLiteStore) migrate() error {
 		`DROP TABLE IF EXISTS team_run_members`,
 		`DROP TABLE IF EXISTS team_runs`,
 		`DROP TABLE IF EXISTS teams`,
+		`ALTER TABLE project_databases ADD COLUMN schema TEXT NOT NULL DEFAULT ''`,
 	}
 
 	for _, m := range migrations {

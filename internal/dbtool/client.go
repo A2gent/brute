@@ -20,6 +20,7 @@ type Config struct {
 	Engine     string
 	DSN        string
 	IsReadOnly bool
+	Schema     string
 }
 
 // supportedEngines lists every engine the explorer, HTTP API, and sql_query tool accept.
@@ -62,7 +63,12 @@ func connectContext(ctx context.Context, cfg Config) (*sql.DB, error) {
 		return nil, fmt.Errorf("unsupported database engine: %s", cfg.Engine)
 	}
 
-	db, err := sql.Open(driverName, cfg.DSN)
+	dsn, err := applySchemaToDSN(cfg.Engine, cfg.DSN, cfg.Schema)
+	if err != nil {
+		return nil, err
+	}
+
+	db, err := sql.Open(driverName, dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -364,18 +370,27 @@ func GetTables(ctx context.Context, cfg Config) ([]string, error) {
 	defer db.Close()
 
 	var query string
+	var args []any
 	switch cfg.Engine {
 	case "postgres":
-		query = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+		query = "SELECT table_name FROM information_schema.tables WHERE table_schema = $1 ORDER BY table_name"
+		schema := selectedSchema(cfg)
+		if schema == "" {
+			schema = defaultPostgresSchema
+		}
+		args = append(args, schema)
 	case "mysql":
 		query = "SHOW TABLES"
+		if schema := selectedSchema(cfg); schema != "" {
+			query += " FROM " + quoteSQLIdentifier("mysql", schema)
+		}
 	case "sqlite":
 		query = "SELECT name FROM sqlite_master WHERE type='table'"
 	default:
 		return nil, fmt.Errorf("unsupported engine")
 	}
 
-	rows, err := db.QueryContext(ctx, query)
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

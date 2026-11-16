@@ -3,8 +3,8 @@ package storage
 // SaveProjectDatabase creates or updates a project database.
 func (s *SQLiteStore) SaveProjectDatabase(db *ProjectDatabase) error {
 	_, err := s.db.Exec(`
-		INSERT INTO project_databases (id, project_id, name, engine, dsn, environment, is_read_only, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO project_databases (id, project_id, name, engine, dsn, environment, is_read_only, schema, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			project_id = excluded.project_id,
 			name = excluded.name,
@@ -12,20 +12,21 @@ func (s *SQLiteStore) SaveProjectDatabase(db *ProjectDatabase) error {
 			dsn = excluded.dsn,
 			environment = excluded.environment,
 			is_read_only = excluded.is_read_only,
+			schema = excluded.schema,
 			updated_at = excluded.updated_at
-	`, db.ID, db.ProjectID, db.Name, db.Engine, db.DSN, db.Environment, db.IsReadOnly, db.CreatedAt, db.UpdatedAt)
+	`, db.ID, db.ProjectID, db.Name, db.Engine, db.DSN, db.Environment, db.IsReadOnly, db.Schema, db.CreatedAt, db.UpdatedAt)
 	return err
 }
 
 // GetProjectDatabase returns a project database by ID.
 func (s *SQLiteStore) GetProjectDatabase(id string) (*ProjectDatabase, error) {
 	row := s.db.QueryRow(`
-		SELECT id, project_id, name, engine, dsn, environment, is_read_only, created_at, updated_at
+		SELECT id, project_id, name, engine, dsn, environment, is_read_only, schema, created_at, updated_at
 		FROM project_databases WHERE id = ?
 	`, id)
 
 	var db ProjectDatabase
-	err := row.Scan(&db.ID, &db.ProjectID, &db.Name, &db.Engine, &db.DSN, &db.Environment, &db.IsReadOnly, &db.CreatedAt, &db.UpdatedAt)
+	err := row.Scan(&db.ID, &db.ProjectID, &db.Name, &db.Engine, &db.DSN, &db.Environment, &db.IsReadOnly, &db.Schema, &db.CreatedAt, &db.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +37,7 @@ func (s *SQLiteStore) GetProjectDatabase(id string) (*ProjectDatabase, error) {
 // ListProjectDatabases returns all databases for a project.
 func (s *SQLiteStore) ListProjectDatabases(projectID string) ([]*ProjectDatabase, error) {
 	rows, err := s.db.Query(`
-		SELECT id, project_id, name, engine, dsn, environment, is_read_only, created_at, updated_at
+		SELECT id, project_id, name, engine, dsn, environment, is_read_only, schema, created_at, updated_at
 		FROM project_databases
 		WHERE project_id = ?
 		ORDER BY created_at DESC
@@ -49,7 +50,7 @@ func (s *SQLiteStore) ListProjectDatabases(projectID string) ([]*ProjectDatabase
 	var dbs []*ProjectDatabase
 	for rows.Next() {
 		var db ProjectDatabase
-		err := rows.Scan(&db.ID, &db.ProjectID, &db.Name, &db.Engine, &db.DSN, &db.Environment, &db.IsReadOnly, &db.CreatedAt, &db.UpdatedAt)
+		err := rows.Scan(&db.ID, &db.ProjectID, &db.Name, &db.Engine, &db.DSN, &db.Environment, &db.IsReadOnly, &db.Schema, &db.CreatedAt, &db.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}

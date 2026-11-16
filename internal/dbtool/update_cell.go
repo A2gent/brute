@@ -42,7 +42,7 @@ func UpdateTableCell(
 	}
 	defer db.Close()
 
-	columns, err := getPostgresTableColumns(ctx, db, tableName)
+	columns, err := getPostgresTableColumns(ctx, db, selectedSchema(cfg), tableName)
 	if err != nil {
 		return nil, err
 	}

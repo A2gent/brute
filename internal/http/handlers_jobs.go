@@ -109,7 +109,14 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 
 	// Webhook-triggered loops have no cron; the scheduler skips them.
 	cronExpr := ""
-	if !isWebhook {
+	if !isWebhook && strings.TrimSpace(req.ScheduleCron) != "" {
+		// Loops moved from another machine keep their exact cron instead of a fresh LLM parse.
+		cronExpr = strings.TrimSpace(req.ScheduleCron)
+		if _, err := s.calculateNextRun(cronExpr, time.Now()); err != nil {
+			s.errorResponse(w, http.StatusBadRequest, "Invalid schedule_cron: "+err.Error())
+			return
+		}
+	} else if !isWebhook {
 		parsed, err := s.parseScheduleToCron(r.Context(), req.ScheduleText)
 		if err != nil {
 			s.errorResponse(w, http.StatusBadRequest, "Failed to parse schedule: "+err.Error())

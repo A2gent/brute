@@ -441,6 +441,7 @@ type CreateJobRequest struct {
 	Name               string `json:"name"`
 	ProjectID          string `json:"project_id,omitempty"`
 	ScheduleText       string `json:"schedule_text"` // Natural language schedule
+	ScheduleCron       string `json:"schedule_cron,omitempty"`
 	TaskPrompt         string `json:"task_prompt"`
 	TaskPromptSource   string `json:"task_prompt_source,omitempty"` // "text" | "file"
 	TaskPromptFile     string `json:"task_prompt_file,omitempty"`

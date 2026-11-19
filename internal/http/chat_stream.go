@@ -88,6 +88,9 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	if lastUserMsg != req.Message || !sameMessageImages(lastUserMessageImages(sess), images) {
 		sess.AddUserMessageWithImages(req.Message, images)
 	}
+	// A new message answers any parked question; keeping it re-showed the old
+	// question when the turn ended in input_required again.
+	delete(sess.Metadata, "pending_question")
 	sess.SetStatus(session.StatusRunning)
 	if err := s.sessionManager.Save(sess); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to update session: "+err.Error())

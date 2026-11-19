@@ -63,10 +63,12 @@ func mergeSessionLiveState(sess, fresh *session.Session) bool {
 		for key, value := range fresh.Metadata {
 			merged[key] = value
 		}
-		// In-flight token/provider metadata wins, but approval_audit is written by
-		// the HTTP server during the turn, so the DB copy MUST win for that key.
+		// In-flight token/provider metadata wins, but approval_audit and
+		// pending_question are written outside the loop during the turn (HTTP
+		// server, question tool over the MCP bridge), so the DB copy MUST win.
+		// A stale in-memory question otherwise replaced a newer one.
 		for key, value := range sess.Metadata {
-			if key != "approval_audit" {
+			if key != "approval_audit" && key != "pending_question" {
 				merged[key] = value
 			}
 		}

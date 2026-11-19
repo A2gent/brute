@@ -41,6 +41,31 @@ func TestGetGeneratedAssetServesSupportedMedia(t *testing.T) {
 	}
 }
 
+func TestGetGeneratedAssetServesVideoAsPlayableMP4(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	generatedDir := filepath.Join(root, "generated", "minimax")
+	if err := os.MkdirAll(generatedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(generatedDir, "clip.mp4")
+	if err := os.WriteFile(path, []byte("mp4-test-video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	server := &Server{config: &config.Config{DataPath: root}}
+	req := httptest.NewRequest(http.MethodGet, "/assets/generated?path="+path, nil)
+	rec := httptest.NewRecorder()
+	server.handleGetGeneratedAsset(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "video/mp4" {
+		t.Fatalf("expected video/mp4 content type, got %q", got)
+	}
+}
+
 func TestGetGeneratedAssetRejectsPathOutsideGeneratedRoot(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

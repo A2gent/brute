@@ -142,16 +142,32 @@ func (s *Server) handleGetGeneratedAsset(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	contentType := strings.TrimSpace(mime.TypeByExtension(strings.ToLower(filepath.Ext(absPath))))
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
+	contentType := generatedAssetContentType(absPath)
 	filename := strings.ReplaceAll(filepath.Base(absPath), `"`, "")
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", `inline; filename="`+filename+`"`)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeFile(w, r, resolvedPath)
+}
+
+// Go's mime table lacks video containers and .glb on some hosts; browsers refuse to play
+// a video served as application/octet-stream because of nosniff.
+func generatedAssetContentType(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".mp4", ".m4v":
+		return "video/mp4"
+	case ".webm":
+		return "video/webm"
+	case ".mov":
+		return "video/quicktime"
+	case ".glb":
+		return "model/gltf-binary"
+	}
+	if contentType := strings.TrimSpace(mime.TypeByExtension(strings.ToLower(filepath.Ext(path)))); contentType != "" {
+		return contentType
+	}
+	return "application/octet-stream"
 }
 
 func (s *Server) generatedAssetRoots() []string {

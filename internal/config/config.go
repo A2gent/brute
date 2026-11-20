@@ -255,7 +255,7 @@ func SupportedProviders() []ProviderDefinition {
 			DisplayName:   "Google Gemini",
 			DefaultURL:    "https://generativelanguage.googleapis.com/v1beta/openai",
 			RequiresKey:   true,
-			DefaultModel:  "gemini-3-flash-preview",
+			DefaultModel:  "gemini-4-hydrogen",
 			ContextWindow: 1048576,
 		},
 		{

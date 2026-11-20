@@ -106,14 +106,19 @@ func (m Model) showStaticModels() (tea.Model, tea.Cmd) {
 		m.availableModels = anthropic.CLIModels(apiKey)
 	case config.ProviderGoogle:
 		m.availableModels = []string{
-			"gemini-3-pro-preview",
-			"gemini-3-flash-preview",
+			"gemini-4-neon",
+			"gemini-4-carbon",
+			"gemini-4-hydrogen",
+			"gemini-3.5-flash",
+			"gemini-3.5-flash-lite",
+			"gemini-3.1-pro-preview",
+			"gemini-3.1-flash-lite",
+			"gemini-3.1-flash-image",
+			"gemini-3-pro-image",
 			"gemini-2.5-pro",
 			"gemini-2.5-flash",
 			"gemini-2.5-flash-image",
 			"gemini-2.5-flash-lite",
-			"gemini-2.0-flash",
-			"gemini-2.0-flash-lite",
 		}
 	case config.ProviderGrok:
 		m.availableModels = []string{"grok-4.5", "grok-4", "grok-3", "grok-3-mini"}

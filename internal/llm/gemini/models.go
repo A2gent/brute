@@ -115,44 +115,33 @@ func ListModelsWithContext(ctx context.Context, apiKey, baseURL string) ([]strin
 // fallbackModels returns a static list of known Gemini models
 func fallbackModels() []string {
 	return []string{
-		// Gemini 3 (Preview - latest generation)
-		"gemini-3-pro-preview",
-		"gemini-3-flash-preview",
-		"gemini-3-pro-image-preview",
+		// Gemini 4 (latest generation)
+		"gemini-4-neon",
+		"gemini-4-carbon",
+		"gemini-4-hydrogen",
 
-		// Gemini 2.5 (Latest stable generation)
-		"gemini-2.5-pro",
-		"gemini-2.5-pro-preview-03-25",
-		"gemini-2.5-flash",
-		"gemini-2.5-flash-preview",
+		// Gemini 3.x
+		"gemini-3.5-flash",
+		"gemini-3.5-flash-lite",
+		"gemini-3.1-pro-preview",
+		"gemini-3.1-flash-lite",
+
+		// Image generation (Nano Banana)
+		"gemini-3.1-flash-image",
+		"gemini-3-pro-image",
+		"gemini-3.1-flash-lite-image",
 		"gemini-2.5-flash-image",
+
+		// Gemini 2.5 (Stable generation)
+		"gemini-2.5-pro",
+		"gemini-2.5-flash",
 		"gemini-2.5-flash-lite",
-		"gemini-2.5-flash-lite-preview",
-
-		// Gemini 2.0 (Stable generation)
-		"gemini-2.0-flash",
-		"gemini-2.0-flash-exp",
-		"gemini-2.0-flash-lite",
-		"gemini-2.0-flash-thinking-exp",
-		"gemini-2.0-pro-exp",
-
-		// Gemini 1.5 (Legacy stable generation)
-		"gemini-1.5-pro-latest",
-		"gemini-1.5-pro",
-		"gemini-1.5-pro-001",
-		"gemini-1.5-pro-002",
-		"gemini-1.5-flash-latest",
-		"gemini-1.5-flash",
-		"gemini-1.5-flash-001",
-		"gemini-1.5-flash-002",
-		"gemini-1.5-flash-8b-latest",
-		"gemini-1.5-flash-8b",
 	}
 }
 
 // DefaultModel returns the recommended default model
 func DefaultModel() string {
-	return "gemini-3-flash-preview"
+	return "gemini-4-hydrogen"
 }
 
 // ValidateModel checks if a model name is valid

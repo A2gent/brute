@@ -125,6 +125,44 @@ func TestAutoReadOnlyNativeProvidersQueue(t *testing.T) {
 	}
 }
 
+func TestAutoReadOnlyHostNativeToolProvidersQueue(t *testing.T) {
+	native := func(provider string) bool { return provider == "google" }
+	for _, tc := range []struct {
+		name       string
+		provider   string
+		transition string
+	}{{"direct", "google", ""}, {"transition target", "openai", "google"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := storage.NewSQLiteStore(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			sm := session.NewManager(store)
+			sess, err := sm.Create("test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			sess.Metadata[session.RunModeReadOnlyKey] = true
+			sess.AddUserMessage("Analyze")
+			if tc.transition != "" {
+				transition, err := session.NewProviderTransition("native-transition", session.ProviderEndpoint{Provider: tc.provider, Model: "source"}, session.ProviderEndpoint{Provider: tc.transition, Model: "native"}, "manual", "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				session.PutProviderTransition(sess, transition)
+			}
+			ag := New(Config{Provider: tc.provider, HasNativeTools: native}, nil, tools.NewManager(t.TempDir()), sm)
+			if _, _, err := ag.Run(context.Background(), sess, "Analyze"); err != nil {
+				t.Fatal(err)
+			}
+			if sess.Status != session.StatusQueued || !sess.WriteRequested() {
+				t.Fatal("host-flagged native provider was not queued")
+			}
+		})
+	}
+}
+
 func TestAutoReadOnlyQueuesBeforeNativeTransitionCompaction(t *testing.T) {
 	store, err := storage.NewSQLiteStore(t.TempDir())
 	if err != nil {

@@ -42,6 +42,7 @@ func (s *Server) newAgentFromConfig(cfg agent.Config, client llm.Client, manager
 	cfg.TransitionMode = s.transitionMode()
 	cfg.ResolveTransitionTarget = s.resolveTransitionTarget
 	cfg.PrepareContext = s.withIntegrationScope
+	cfg.HasNativeTools = func(provider string) bool { return s != nil && s.config.IsAntigravityRef(provider) }
 	cfg.CompressToolResults = s.toolResultCompressionEnabled()
 	cfg.RelevanceGate = s.relevanceGate()
 	if s != nil && s.config != nil {

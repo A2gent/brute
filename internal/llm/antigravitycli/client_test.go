@@ -2,6 +2,7 @@ package antigravitycli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,5 +112,14 @@ exit 1
 	_, err := client.Chat(context.Background(), &llm.ChatRequest{Messages: []llm.Message{{Role: "user", Content: "hi"}}})
 	if err == nil || !strings.Contains(err.Error(), "authentication failed") || !strings.Contains(err.Error(), "Google Sign-In") {
 		t.Fatalf("expected auth error with hint, got %v", err)
+	}
+}
+
+func TestChatRejectsImageAttachments(t *testing.T) {
+	writeFakeAgy(t, "echo should-not-run; exit 1\n")
+	client := NewClientWithOptions("", Options{WorkDir: t.TempDir()})
+	_, err := client.Chat(context.Background(), &llm.ChatRequest{Messages: []llm.Message{{Role: "user", Content: "what is this", Images: []llm.Image{{MediaType: "image/png"}}}}})
+	if !errors.Is(err, ErrImagesUnsupported) {
+		t.Fatalf("expected ErrImagesUnsupported, got %v", err)
 	}
 }

@@ -14,7 +14,10 @@ type Config struct {
 	ResolveTransitionTarget func(*session.Session, session.ProviderEndpoint) (llm.Client, int, error)
 	// PrepareContext lets the host attach per-session values (e.g. the
 	// integration scope) to the context every tool call receives.
-	PrepareContext           func(context.Context, *session.Session) context.Context
+	PrepareContext func(context.Context, *session.Session) context.Context
+	// HasNativeTools reports config-dependent providers (e.g. Google in
+	// Antigravity mode) whose CLI runs its own tools outside the manager guard.
+	HasNativeTools           func(provider string) bool
 	Name                     string
 	Description              string
 	Provider                 string

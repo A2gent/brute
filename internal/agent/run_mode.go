@@ -79,11 +79,15 @@ func (a *Agent) readOnlyNeedsSerialRuntime(sess *session.Session) bool {
 	if !sess.IsAutoReadOnly() {
 		return false
 	}
-	if readOnlyRequiresSerialRuntime(a.config.Provider) {
+	if a.providerRequiresSerialRuntime(a.config.Provider) {
 		return true
 	}
 	// Target-side transition compaction can invoke the native client before the
 	// normal model step, so check the pending target before crossing that boundary.
 	t := session.CurrentProviderTransition(sess)
-	return t != nil && !t.Terminal() && readOnlyRequiresSerialRuntime(t.Target.Provider)
+	return t != nil && !t.Terminal() && a.providerRequiresSerialRuntime(t.Target.Provider)
+}
+
+func (a *Agent) providerRequiresSerialRuntime(provider string) bool {
+	return readOnlyRequiresSerialRuntime(provider) || (a.config.HasNativeTools != nil && a.config.HasNativeTools(provider))
 }

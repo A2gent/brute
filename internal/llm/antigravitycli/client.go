@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/logging"
@@ -20,7 +22,10 @@ const (
 	defaultMaxOutputBytes = 4 * 1024 * 1024
 	maxToolOutputBytes    = 16 * 1024
 	InstallCommand        = "curl -fsSL https://antigravity.google/cli/install.sh | bash"
+	commandWaitDelay      = 5 * time.Second
 )
+
+var ErrImagesUnsupported = errors.New("image attachments are not supported in Antigravity mode")
 
 type Options struct {
 	Executable      string
@@ -144,8 +149,13 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	if err != nil {
 		return nil, fmt.Errorf("Antigravity CLI executable %q was not found; install it with `%s` or set AAGENT_ANTIGRAVITY_CLI_PATH", c.options.Executable, InstallCommand)
 	}
+	if last := request.Messages; len(last) > 0 && len(last[len(last)-1].Images) > 0 {
+		return nil, ErrImagesUnsupported
+	}
 	cmd := exec.CommandContext(ctx, agyPath, c.buildArgs(model, buildPrompt(request))...)
 	cmd.Dir = c.options.WorkDir
+	cmd.WaitDelay = commandWaitDelay
+	configureCommand(cmd)
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("failed to open Antigravity CLI stdout: %w", err)
@@ -161,18 +171,22 @@ func (c *Client) ChatStream(ctx context.Context, request *llm.ChatRequest, onEve
 	scanner.Buffer(make([]byte, 0, 64*1024), defaultMaxOutputBytes)
 	for scanner.Scan() {
 		if err := state.handleLine(scanner.Bytes()); err != nil {
-			_ = cmd.Process.Kill()
+			killCommand(cmd)
 			_ = cmd.Wait()
 			return nil, err
 		}
 	}
-	scanErr := scanner.Err()
+	if scanErr := scanner.Err(); scanErr != nil {
+		killCommand(cmd)
+		_ = cmd.Wait()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, fmt.Errorf("failed to read Antigravity CLI stream: %w", scanErr)
+	}
 	waitErr := cmd.Wait()
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr
-	}
-	if scanErr != nil {
-		return nil, fmt.Errorf("failed to read Antigravity CLI stream: %w", scanErr)
 	}
 	return state.finish(waitErr, stderr.String())
 }

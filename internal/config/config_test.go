@@ -125,7 +125,7 @@ func TestGrokProviderDefinition(t *testing.T) {
 	if def.DefaultURL != "https://api.x.ai/v1" {
 		t.Fatalf("default URL = %q", def.DefaultURL)
 	}
-	if def.DefaultModel != "grok-4.5" {
+	if def.DefaultModel != "grok-4.7" {
 		t.Fatalf("default model = %q", def.DefaultModel)
 	}
 	if !def.RequiresKey {

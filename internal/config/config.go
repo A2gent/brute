@@ -199,7 +199,7 @@ func SupportedProviders() []ProviderDefinition {
 			DisplayName:   "Kimi (Moonshot AI)",
 			DefaultURL:    "https://api.kimi.com/coding/v1",
 			RequiresKey:   true,
-			DefaultModel:  "kimi-k2.5",
+			DefaultModel:  "k3.1-pro",
 			ContextWindow: 131072,
 		},
 		{
@@ -239,7 +239,7 @@ func SupportedProviders() []ProviderDefinition {
 			DisplayName:   "Anthropic Claude (Claude CLI)",
 			DefaultURL:    "",
 			RequiresKey:   false,
-			DefaultModel:  "claude-opus-4-8",
+			DefaultModel:  "claude-opus-5-5",
 			ContextWindow: 1000000,
 		},
 		{
@@ -263,7 +263,7 @@ func SupportedProviders() []ProviderDefinition {
 			DisplayName:   "OpenAI",
 			DefaultURL:    "https://api.openai.com/v1",
 			RequiresKey:   true,
-			DefaultModel:  "gpt-5.5",
+			DefaultModel:  "gpt-6.2-sol",
 			ContextWindow: 1000000,
 		},
 		{
@@ -271,7 +271,7 @@ func SupportedProviders() []ProviderDefinition {
 			DisplayName:   "OpenAI (Codex OAuth)",
 			DefaultURL:    "https://chatgpt.com/backend-api/codex",
 			RequiresKey:   true,
-			DefaultModel:  "gpt-5.5",
+			DefaultModel:  "gpt-6.2-sol",
 			ContextWindow: 1000000,
 		},
 		{
@@ -279,7 +279,7 @@ func SupportedProviders() []ProviderDefinition {
 			DisplayName:   "Grok (x.ai)",
 			DefaultURL:    "https://api.x.ai/v1",
 			RequiresKey:   true,
-			DefaultModel:  "grok-4.5",
+			DefaultModel:  "grok-4.7",
 			ContextWindow: 131072,
 		},
 		{
@@ -406,7 +406,7 @@ func DefaultConfig() *Config {
 	workDir, _ := os.Getwd()
 
 	return &Config{
-		DefaultModel:   "kimi-k2.5",
+		DefaultModel:   "k3.1-pro",
 		ActiveProvider: string(ProviderA2gent),
 		// Complex coding runs routinely exceed the old 50-step budget.
 		MaxSteps:    100,
@@ -537,7 +537,7 @@ func Load() (*Config, error) {
 // applyEnvModelToActiveProvider pins AAGENT_MODEL onto the active provider.
 // Client creation prefers the provider's built-in default model over
 // cfg.DefaultModel, so without this a child agent launched with
-// AAGENT_MODEL=gpt-6.1-sol silently ran the provider default (gpt-5.5).
+// AAGENT_MODEL=gpt-6.1-sol silently ran the provider default (gpt-6.2-sol).
 func applyEnvModelToActiveProvider(cfg *Config) {
 	model := strings.TrimSpace(os.Getenv("AAGENT_MODEL"))
 	if model == "" || os.Getenv("AAGENT_PROVIDER") == "" {

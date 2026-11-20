@@ -60,19 +60,21 @@ func (m Model) showStaticModels() (tea.Model, tea.Cmd) {
 	// Define known models for each provider
 	switch config.ProviderType(m.appConfig.ActiveProvider) {
 	case config.ProviderKimi:
-		m.availableModels = []string{"kimi-k2.5", "kimi-k2", "kimi-for-coding"}
+		m.availableModels = []string{"k3.1-pro", "k3.1-pro-highspeed", "k3", "k3-256k", "kimi-for-coding", "kimi-for-coding-highspeed"}
 	case config.ProviderOpenRouter:
 		m.availableModels = []string{
 			"openrouter/auto",
-			"anthropic/claude-opus-4-8",
-			"anthropic/claude-sonnet-5",
-			"anthropic/claude-opus-4-6",
-			"anthropic/claude-sonnet-4-6",
-			"openai/gpt-4.1",
-			"openai/gpt-4.1-mini",
-			"google/gemini-3-flash-preview",
-			"google/gemini-2.5-pro",
-			"meta-llama/llama-4-maverick",
+			"anthropic/claude-fable-5.2",
+			"anthropic/claude-opus-5.5",
+			"anthropic/claude-sonnet-5.5",
+			"anthropic/claude-haiku-5.5",
+			"openai/gpt-6.2-astra",
+			"openai/gpt-6.2-sol",
+			"google/gemini-4-hydrogen",
+			"google/gemini-3.5-flash",
+			"x-ai/grok-4.7",
+			"moonshotai/kimi-k3.1-pro",
+			"meta/muse-spark-1.3",
 		}
 	case config.ProviderKimiCLI:
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -121,7 +123,7 @@ func (m Model) showStaticModels() (tea.Model, tea.Cmd) {
 			"gemini-2.5-flash-lite",
 		}
 	case config.ProviderGrok:
-		m.availableModels = []string{"grok-4.5", "grok-4", "grok-3", "grok-3-mini"}
+		m.availableModels = []string{"grok-4.7", "grok-4.6", "grok-4.5", "grok-4.3", "grok-build-0.1"}
 	case config.ProviderMeta:
 		m.availableModels = []string{"muse-spark-1.3", "muse-spark-1.2", "muse-spark-1.1"}
 	case config.ProviderJev:
@@ -217,7 +219,7 @@ func (m Model) activateProvider(providerType config.ProviderType) (tea.Model, te
 
 // createLLMClient creates an LLM client for the given provider type
 func (m Model) createLLMClient(providerType config.ProviderType) llm.Client {
-	defaultClient := anthropic.NewClientWithBaseURL("", "kimi-k2.5", "https://api.kimi.com/coding/v1")
+	defaultClient := anthropic.NewClientWithBaseURL("", "k3.1-pro", "https://api.kimi.com/coding/v1")
 	if m.appConfig == nil {
 		return defaultClient
 	}

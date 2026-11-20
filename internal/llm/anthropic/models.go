@@ -108,7 +108,13 @@ func CLIModels(apiKey string) []string {
 
 func fallbackModels() []string {
 	return []string{
+		"claude-fable-5-2",
+		"claude-fable-5-1",
 		"claude-fable-5",
+		"claude-opus-5-5",
+		"claude-sonnet-5-5",
+		"claude-haiku-5-5",
+		"claude-opus-5",
 		"claude-sonnet-5",
 		"claude-opus-4-8",
 		"claude-opus-4-7",
@@ -121,5 +127,5 @@ func fallbackModels() []string {
 }
 
 func DefaultModel() string {
-	return "claude-opus-4-8"
+	return "claude-opus-5-5"
 }

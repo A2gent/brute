@@ -23,10 +23,10 @@ func TestListModelCatalogLeadsWithGPT6AstraWithoutCredentials(t *testing.T) {
 	if len(models) != len(CuratedModels) {
 		t.Fatalf("expected curated list of %d, got %d", len(CuratedModels), len(models))
 	}
-	if models[0] != "gpt-6-astra" {
+	if models[0] != "gpt-6.2-astra" {
 		t.Fatalf("newest OpenAI flagship should lead the catalog, got %q", models[0])
 	}
-	for i, want := range []string{"gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna"} {
+	for i, want := range []string{"gpt-6.2-astra", "gpt-6.2-sol", "gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna"} {
 		if models[i] != want {
 			t.Fatalf("official flagship order at %d: want %q got %q", i, want, models[i])
 		}
@@ -58,8 +58,8 @@ func TestListModelCatalogKeepsGPT6AstraWhenLiveAPIOmitsIt(t *testing.T) {
 		HTTPClient: server.Client(),
 	})
 
-	if models[0] != "gpt-6-astra" {
-		t.Fatalf("gpt-6-astra must stay selectable even when /models omits it, got %v", models)
+	if models[0] != "gpt-6.2-astra" {
+		t.Fatalf("gpt-6.2-astra must stay selectable even when /models omits it, got %v", models)
 	}
 	if !contains(models, "gpt-5.5") {
 		t.Fatalf("live chat model missing: %v", models)
@@ -121,7 +121,7 @@ func TestListModelCatalogFallsBackToCuratedOnDiscoveryFailure(t *testing.T) {
 	if len(models) != len(CuratedModels) {
 		t.Fatalf("discovery failure should fall back to curated, got %v", models)
 	}
-	if models[0] != "gpt-6-astra" {
-		t.Fatalf("fallback catalog should still lead with gpt-6-astra, got %v", models)
+	if models[0] != "gpt-6.2-astra" {
+		t.Fatalf("fallback catalog should still lead with gpt-6.2-astra, got %v", models)
 	}
 }

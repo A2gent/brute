@@ -251,8 +251,8 @@ func TestOpenAIModelsRouteKeepsGPT6AstraWhenLiveOmitsIt(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("failed to decode OpenAI models response: %v", err)
 	}
-	if len(response.Models) == 0 || response.Models[0] != "gpt-6-astra" {
-		t.Fatalf("gpt-6-astra should lead OpenAI picker even when live /models omits it, got %v", response.Models)
+	if len(response.Models) == 0 || response.Models[0] != "gpt-6.2-astra" {
+		t.Fatalf("gpt-6.2-astra should lead OpenAI picker even when live /models omits it, got %v", response.Models)
 	}
 	foundLive := false
 	for _, model := range response.Models {
@@ -470,7 +470,7 @@ func TestOpenAIModelsRouteReturnsCuratedWithoutAPIKey(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("failed to decode OpenAI models response: %v", err)
 	}
-	if len(response.Models) == 0 || response.Models[0] != "gpt-6-astra" {
-		t.Fatalf("offline OpenAI catalog should still include gpt-6-astra, got %v", response.Models)
+	if len(response.Models) == 0 || response.Models[0] != "gpt-6.2-astra" {
+		t.Fatalf("offline OpenAI catalog should still include gpt-6.2-astra, got %v", response.Models)
 	}
 }

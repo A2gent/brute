@@ -17,7 +17,7 @@ import (
 
 const (
 	defaultBaseURL = "https://api.moonshot.cn/v1"
-	defaultModel   = "kimi-k2.5"
+	defaultModel   = "kimi-k3.1-pro"
 )
 
 // Client implements the LLM client for Kimi K2.5 (Moonshot AI)

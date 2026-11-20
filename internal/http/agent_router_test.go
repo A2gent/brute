@@ -162,3 +162,25 @@ func TestApplyAgentAutoRoute(t *testing.T) {
 		t.Fatalf("expected default fallback when no agent is enabled, got %q", req.UnifiedAgentID)
 	}
 }
+
+func TestApplyTaskAssignee(t *testing.T) {
+	server := newAgentRouterTestServer(t)
+
+	req := CreateSessionRequest{ProjectID: "proj-app", AgentAutoRoute: true}
+	server.applyTaskAssignee(&req, &storage.Task{Ref: "T-1", Tags: []string{"docs", "agent:project-writer"}})
+	if req.UnifiedAgentID != "project-writer" || req.AgentAutoRoute {
+		t.Fatalf("expected task assignee to be launched, got %+v", req)
+	}
+
+	req = CreateSessionRequest{ProjectID: "proj-app", UnifiedAgentID: "global-coder"}
+	server.applyTaskAssignee(&req, &storage.Task{Ref: "T-2", Tags: []string{"agent:project-writer"}})
+	if req.UnifiedAgentID != "global-coder" {
+		t.Fatalf("explicit agent must win over task assignee, got %q", req.UnifiedAgentID)
+	}
+
+	req = CreateSessionRequest{ProjectID: "proj-app"}
+	server.applyTaskAssignee(&req, &storage.Task{Ref: "T-3", Tags: []string{"agent:missing"}})
+	if req.UnifiedAgentID != "" {
+		t.Fatalf("unknown assignee must fall back to default agent, got %q", req.UnifiedAgentID)
+	}
+}

@@ -308,6 +308,34 @@ const agentRouterSystemPrompt = `You are a strict agent router. Choose the singl
 Return exactly one complete JSON object on one line and nothing else:
 {"index":<1-based integer>,"reason":"brief explanation"}`
 
+// applyTaskAssignee launches a task session as the agent from the task's agent:<id> tag
+// unless the caller picked an agent explicitly; unknown assignees fall back to the default agent.
+func (s *Server) applyTaskAssignee(req *CreateSessionRequest, task *storage.Task) {
+	if task == nil || strings.TrimSpace(req.UnifiedAgentID+req.DockerAgentID+req.SubAgentID) != "" {
+		return
+	}
+	agentID := taskAssigneeID(task.Tags)
+	if agentID == "" {
+		return
+	}
+	if _, projectID, err := s.definitionForUnifiedAgent(agentID, req.ProjectID); err != nil || !agentVisibleInProjectSession(projectID, req.ProjectID) {
+		logging.Warn("Task %s assignee %q is not a launchable agent, using default session agent", task.Ref, agentID)
+		return
+	}
+	req.UnifiedAgentID = agentID
+	req.AgentAutoRoute = false
+}
+
+func taskAssigneeID(tags []string) string {
+	for _, tag := range tags {
+		tag = strings.TrimPrefix(strings.TrimSpace(tag), "#")
+		if strings.HasPrefix(strings.ToLower(tag), agentTagPrefix) {
+			return strings.TrimSpace(tag[len(agentTagPrefix):])
+		}
+	}
+	return ""
+}
+
 func (s *Server) applyAgentAutoRoute(ctx context.Context, req *CreateSessionRequest, sess *session.Session) {
 	if !req.AgentAutoRoute || strings.TrimSpace(req.UnifiedAgentID+req.DockerAgentID+req.SubAgentID) != "" {
 		return

@@ -81,6 +81,11 @@ func (s *Server) providerUsageStatusForProvider(ctx context.Context, providerTyp
 		return s.anthropicUsageStatus(providerType)
 	}
 
+	if providerType == config.ProviderGoogle && s.config.GoogleUsesAntigravity() {
+		usage, _ := s.antigravityUsageStatus(ctx)
+		return usage
+	}
+
 	switch providerType {
 	case config.ProviderOpenAI:
 		response.Source = "OpenAI API"

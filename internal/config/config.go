@@ -50,6 +50,8 @@ type Provider struct {
 	// MinBalancePercent stops using the provider once its weekly usage left drops below this percent.
 	// nil means DefaultMinBalancePercent; 0 disables the limit.
 	MinBalancePercent *int `json:"min_balance_percent,omitempty"`
+	// AuthMode selects the Google backend: api_key (Gemini API) or antigravity (agy CLI).
+	AuthMode string `json:"auth_mode,omitempty"`
 
 	// Claude CLI instance fields (anthropic and anthropic:<id> providers).
 	BinaryPath       string            `json:"binary_path,omitempty"`

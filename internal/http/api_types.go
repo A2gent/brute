@@ -562,37 +562,40 @@ type UpdateSettingsRequest struct {
 }
 
 type ProviderConfigResponse struct {
-	Type                  string                     `json:"type"`
-	DisplayName           string                     `json:"display_name"`
-	DefaultURL            string                     `json:"default_url"`
-	RequiresKey           bool                       `json:"requires_key"`
-	DefaultModel          string                     `json:"default_model"`
-	ContextWindow         int                        `json:"context_window"`
-	IsActive              bool                       `json:"is_active"`
-	Configured            bool                       `json:"configured"`
-	HasAPIKey             bool                       `json:"has_api_key"`
-	BaseURL               string                     `json:"base_url"`
-	Model                 string                     `json:"model"`
-	PromptCacheRetention  string                     `json:"prompt_cache_retention,omitempty"`
-	PromptCacheKey        string                     `json:"prompt_cache_key,omitempty"`
-	ReasoningEffort       string                     `json:"reasoning_effort,omitempty"`
-	TextVerbosity         string                     `json:"text_verbosity,omitempty"`
-	ServiceTier           string                     `json:"service_tier,omitempty"`
-	MaxTokens             int                        `json:"max_tokens,omitempty"`
-	StatefulResponses     bool                       `json:"stateful_responses,omitempty"`
-	MinBalancePercent     int                        `json:"min_balance_percent"`
-	ProxyManaged          bool                       `json:"proxy_managed"`
-	ProxyBaseURL          string                     `json:"proxy_base_url,omitempty"`
-	FallbackChain         []config.FallbackChainNode `json:"fallback_chain,omitempty"`
-	RouterProvider        string                     `json:"router_provider,omitempty"`
-	RouterModel           string                     `json:"router_model,omitempty"`
-	RouterReasoningEffort string                     `json:"router_reasoning_effort,omitempty"`
-	RouterRules           []config.RouterRule        `json:"router_rules,omitempty"`
-	BinaryPath            string                     `json:"binary_path,omitempty"`
-	ConfigDir             string                     `json:"config_dir,omitempty"`
-	HomePath              string                     `json:"home_path,omitempty"`
-	EnvOverrides          map[string]string          `json:"env_overrides,omitempty"`
-	SensitiveSecretKeys   []string                   `json:"sensitive_secret_keys,omitempty"`
+	Type                      string                     `json:"type"`
+	DisplayName               string                     `json:"display_name"`
+	DefaultURL                string                     `json:"default_url"`
+	RequiresKey               bool                       `json:"requires_key"`
+	DefaultModel              string                     `json:"default_model"`
+	ContextWindow             int                        `json:"context_window"`
+	IsActive                  bool                       `json:"is_active"`
+	Configured                bool                       `json:"configured"`
+	HasAPIKey                 bool                       `json:"has_api_key"`
+	BaseURL                   string                     `json:"base_url"`
+	Model                     string                     `json:"model"`
+	PromptCacheRetention      string                     `json:"prompt_cache_retention,omitempty"`
+	PromptCacheKey            string                     `json:"prompt_cache_key,omitempty"`
+	ReasoningEffort           string                     `json:"reasoning_effort,omitempty"`
+	TextVerbosity             string                     `json:"text_verbosity,omitempty"`
+	ServiceTier               string                     `json:"service_tier,omitempty"`
+	MaxTokens                 int                        `json:"max_tokens,omitempty"`
+	StatefulResponses         bool                       `json:"stateful_responses,omitempty"`
+	MinBalancePercent         int                        `json:"min_balance_percent"`
+	ProxyManaged              bool                       `json:"proxy_managed"`
+	ProxyBaseURL              string                     `json:"proxy_base_url,omitempty"`
+	FallbackChain             []config.FallbackChainNode `json:"fallback_chain,omitempty"`
+	RouterProvider            string                     `json:"router_provider,omitempty"`
+	RouterModel               string                     `json:"router_model,omitempty"`
+	RouterReasoningEffort     string                     `json:"router_reasoning_effort,omitempty"`
+	RouterRules               []config.RouterRule        `json:"router_rules,omitempty"`
+	BinaryPath                string                     `json:"binary_path,omitempty"`
+	ConfigDir                 string                     `json:"config_dir,omitempty"`
+	HomePath                  string                     `json:"home_path,omitempty"`
+	EnvOverrides              map[string]string          `json:"env_overrides,omitempty"`
+	SensitiveSecretKeys       []string                   `json:"sensitive_secret_keys,omitempty"`
+	AuthMode                  string                     `json:"auth_mode,omitempty"`
+	AntigravityInstalled      bool                       `json:"antigravity_installed,omitempty"`
+	AntigravityInstallCommand string                     `json:"antigravity_install_command,omitempty"`
 }
 
 type ProviderUsageResponse struct {
@@ -643,6 +646,7 @@ type UpdateProviderRequest struct {
 	RouterReasoningEffort *string                     `json:"router_reasoning_effort,omitempty"`
 	RouterRules           *[]config.RouterRule        `json:"router_rules,omitempty"`
 	Active                *bool                       `json:"active,omitempty"`
+	AuthMode              *string                     `json:"auth_mode,omitempty"`
 }
 
 type SetActiveProviderRequest struct {

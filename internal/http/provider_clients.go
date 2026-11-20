@@ -12,6 +12,7 @@ import (
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/anthropic"
+	"github.com/A2gent/brute/internal/llm/antigravitycli"
 	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/llm/cursorcli"
 	"github.com/A2gent/brute/internal/llm/fallback"
@@ -285,6 +286,9 @@ func (s *Server) createBaseLLMClientForSession(providerType config.ProviderType,
 			firstNonEmpty(strings.TrimSpace(provider.APIKey), s.apiKeyFromEnv(providerType)),
 		)), nil
 	}
+	if s.config.IsAntigravityRef(string(providerType)) {
+		return s.newAntigravityClient(modelName, s.resolveSessionWorkDir(sess)), nil
+	}
 	return s.createBaseLLMClient(providerType, modelName)
 }
 
@@ -342,6 +346,9 @@ func (s *Server) createBaseLLMClient(providerType config.ProviderType, model str
 			s.resolveSessionWorkDir(nil),
 			firstNonEmpty(strings.TrimSpace(provider.APIKey), s.apiKeyFromEnv(providerType)),
 		)), nil
+	}
+	if s.config.IsAntigravityRef(string(providerType)) {
+		return s.newAntigravityClient(modelName, s.resolveSessionWorkDir(nil)), nil
 	}
 
 	apiKey := strings.TrimSpace(provider.APIKey)
@@ -754,6 +761,9 @@ func (s *Server) providerConfiguredForUse(providerType config.ProviderType) bool
 	}
 	if providerType == config.ProviderCursor {
 		return cursorcli.IsAvailable()
+	}
+	if s.config.IsAntigravityRef(ref) {
+		return antigravitycli.IsAvailable()
 	}
 	provider := s.config.Providers[string(providerType)]
 	baseURL := strings.TrimSpace(provider.BaseURL)

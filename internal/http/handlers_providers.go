@@ -145,6 +145,9 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 			ProxyBaseURL:         proxyBaseURL,
 			FallbackChain:        nil,
 		})
+		if def.Type == config.ProviderGoogle {
+			s.decorateGoogleProviderResponse(&resp[len(resp)-1])
+		}
 	}
 
 	for _, ref := range s.config.ListConfiguredClaudeInstanceRefs() {
@@ -336,6 +339,12 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		if req.StatefulResponses != nil {
 			provider.StatefulResponses = req.StatefulResponses
 		}
+		if providerType == config.ProviderGoogle {
+			if err := s.applyGoogleAuthMode(&provider, def, req); err != nil {
+				s.errorResponse(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		}
 
 		if providerType == config.ProviderOpenAICodex {
 			// Codex OAuth uses a fixed backend endpoint, not a user-supplied URL.
@@ -519,6 +528,10 @@ func (s *Server) handleListKimiModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListGoogleModels(w http.ResponseWriter, r *http.Request) {
+	if s.config.GoogleUsesAntigravity() {
+		s.listAntigravityModels(w, r)
+		return
+	}
 	provider := s.config.Providers[string(config.ProviderGoogle)]
 	apiKey := strings.TrimSpace(provider.APIKey)
 	if apiKey == "" {
@@ -832,6 +845,10 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 				Success: false,
 				Message: "Kimi CLI executable was not found. Install Kimi Code CLI or set AAGENT_KIMI_CLI_PATH.",
 			})
+			return
+		}
+		if s.config.IsAntigravityRef(string(providerType)) {
+			s.jsonResponse(w, http.StatusBadRequest, ProviderTestResponse{Success: false, Message: antigravityNotInstalledMessage()})
 			return
 		}
 

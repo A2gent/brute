@@ -10,6 +10,7 @@ import (
 	"github.com/A2gent/brute/internal/config"
 	"github.com/A2gent/brute/internal/llm"
 	"github.com/A2gent/brute/internal/llm/anthropic"
+	"github.com/A2gent/brute/internal/llm/antigravitycli"
 	"github.com/A2gent/brute/internal/llm/claudecli"
 	"github.com/A2gent/brute/internal/llm/cursorcli"
 	"github.com/A2gent/brute/internal/llm/fallback"
@@ -211,6 +212,9 @@ func (s *Scheduler) createBaseLLMClient(providerType config.ProviderType, model 
 			WorkDir: workDir,
 			APIKey:  firstNonEmpty(strings.TrimSpace(provider.APIKey), s.apiKeyFromEnv(providerType)),
 		}), nil
+	}
+	if s.config.IsAntigravityRef(string(providerType)) {
+		return antigravitycli.NewClientWithOptions(modelName, antigravitycli.Options{WorkDir: workDir}), nil
 	}
 
 	if s.parentProxyAvailable() && !config.IsClassifierProvider(string(providerType)) {
@@ -498,6 +502,9 @@ func (s *Scheduler) providerConfiguredForUse(providerType config.ProviderType) b
 	}
 	if providerType == config.ProviderCursor {
 		return cursorcli.IsAvailable()
+	}
+	if s.config.IsAntigravityRef(ref) {
+		return antigravitycli.IsAvailable()
 	}
 	provider := s.config.Providers[ref]
 	baseURL := strings.TrimSpace(provider.BaseURL)

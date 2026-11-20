@@ -144,3 +144,8 @@
 - A canceled delegation can still have edited its assigned file. Check the working tree before retrying and keep agent edit scopes disjoint.
 - Cursor reads user MCP configuration from ~/.cursor/mcp.json independently of CURSOR_CONFIG_DIR. Assert exact MCP permissions and absence of blanket --approve-mcps; a successful child probe alone is not a confinement check.
 - A real Cursor CLI rejects `version` in project .cursor/cli.json even though global cli-config.json requires it. Keep schema assertions for both files; fake CLI success cannot validate the installed CLI schema.
+
+## 2026-11-20 - Antigravity CLI (agy) provider
+- agy 1.5.13 has no per-run MCP flag: `--settings` rejects `mcpServers`, and `~/.gemini/config/mcp_config.json` does not expand `${ENV}` in `url`/`headers`. Stdio MCP servers do inherit agy's environment, so a per-session bridge needs a stable stdio relay entry that reads the URL and token from env.
+- agy auth lives under HOME (`~/.gemini`); running it with a temp HOME fails with "authentication timed out", so do not isolate it by changing HOME.
+- Probe flags with `agy --help` and a real `agy -p ... --output-format stream-json` run. Events are `init`, `step_update` (`step_type` agent_response/tool) and `result` with `status`.

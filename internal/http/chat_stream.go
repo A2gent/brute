@@ -91,6 +91,13 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	// A new message answers any parked question; keeping it re-showed the old
 	// question when the turn ended in input_required again.
 	delete(sess.Metadata, "pending_question")
+	if r.Header.Get(parentAgentToolsHeader) == "" {
+		if !s.reserveSessionSlot(sess) {
+			s.respondChatStreamQueued(w, sess)
+			return
+		}
+		defer s.releaseSessionSlot(sess.ID)
+	}
 	sess.SetStatus(session.StatusRunning)
 	if err := s.sessionManager.Save(sess); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to update session: "+err.Error())
@@ -155,13 +162,8 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if mention := s.resolveAgentMention(sess, req.Message); mention != nil {
-		reply, runErr := s.runAgentMention(runCtx, sess, mention)
-		if runErr != nil {
-			reply = fmt.Sprintf("@%s failed: %s", mention.AgentName, runErr.Error())
-		}
-		sess.AddAssistantMessageWithMetadata(reply, nil, mentionReplyMetadata(mention))
-		sess.SetStatus(session.StatusCompleted)
-		if saveErr := s.sessionManager.Save(sess); saveErr != nil {
+		reply, saveErr := s.completeAgentMentionTurn(runCtx, sess, mention)
+		if saveErr != nil {
 			_ = writeEvent(ChatStreamEvent{Type: "error", Error: "Failed to save agent response: " + saveErr.Error(), Status: string(sess.Status), Messages: s.messagesToResponse(sess.Messages)})
 			return
 		}

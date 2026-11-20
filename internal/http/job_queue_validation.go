@@ -5,11 +5,10 @@ import (
 	"strings"
 
 	"github.com/A2gent/brute/internal/logging"
-	"github.com/A2gent/brute/internal/storage"
 )
 
-// A loop may only join a queue the project actually declares, otherwise its sessions
-// would wait in a scope with no visible limit in settings.
+// A loop may only join a queue declared in the global concurrency settings, otherwise its
+// sessions would wait in a scope with no visible limit.
 func (s *Server) validateJobQueueName(projectID *string, raw string) (string, error) {
 	name := strings.TrimSpace(raw)
 	if name == "" {
@@ -21,38 +20,27 @@ func (s *Server) validateJobQueueName(projectID *string, raw string) (string, er
 	if projectID == nil || strings.TrimSpace(*projectID) == "" {
 		return "", errors.New("A queue can only be set for a project loop")
 	}
-	project, err := s.store.GetProject(*projectID)
-	if err != nil || project == nil {
-		return "", errors.New("Project not found")
-	}
-	if _, ok := sessionQueueLimit(project.Settings, name); !ok {
+	if _, ok := s.loadConcurrencyConfig().queueLimit(name); !ok {
 		return "", errors.New("Unknown queue: " + name)
 	}
 	return name, nil
 }
 
-func sessionQueueNames(project *storage.Project) []string {
-	if project == nil {
-		return nil
-	}
-	queues, err := parseSessionQueues(project.Settings[projectSessionQueuesKey])
-	if err != nil {
-		return nil
-	}
-	names := make([]string, 0, len(queues))
-	for _, queue := range queues {
-		names = append(names, queue.Name)
-	}
-	return names
-}
-
 // detachLoopsFromRemovedQueues clears bindings of loops whose queue was deleted, so the
-// loop falls back to the project default queue instead of an unlisted scope.
-func (s *Server) detachLoopsFromRemovedQueues(project *storage.Project) {
-	if project == nil || s.store == nil {
+// loop falls back to its project default queue instead of an unlisted scope.
+func (s *Server) detachLoopsFromRemovedQueues() {
+	if s.store == nil {
 		return
 	}
-	if _, err := s.store.DetachQueuesFromJobs(project.ID, sessionQueueNames(project)); err != nil {
-		logging.Warn("Failed to detach loops from removed queues: %v", err)
+	projects, err := s.store.ListProjects()
+	if err != nil {
+		logging.Warn("Failed to list projects to detach removed queues: %v", err)
+		return
+	}
+	keep := s.loadConcurrencyConfig().queueNames()
+	for _, project := range projects {
+		if _, err := s.store.DetachQueuesFromJobs(project.ID, keep); err != nil {
+			logging.Warn("Failed to detach loops from removed queues: %v", err)
+		}
 	}
 }

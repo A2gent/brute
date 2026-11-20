@@ -127,6 +127,8 @@ func (s *Server) registerSettingsRoutes(r chi.Router) {
 	r.Get("/settings", s.handleGetSettings)
 	r.Put("/settings", s.handleUpdateSettings)
 	r.Post("/settings/instruction-estimate", s.handleEstimateInstructionPrompt)
+	r.Get("/concurrency", s.handleGetConcurrency)
+	r.Put("/concurrency", s.handleUpdateConcurrency)
 }
 
 func (s *Server) registerLLMProxyRoutes(r chi.Router) {

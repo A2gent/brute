@@ -68,16 +68,18 @@ func (s *Server) unregisterActiveSessionRun(sessionID, runID string) {
 		// The last run ended on its own (cancel removes the entry first, so a user
 		// stop never lands here): deliver anything the user queued meanwhile.
 		go s.drainSessionPendingMessages(sessionID)
+		go s.notifySessionSlotFreed()
 	}
 }
 
 func (s *Server) cancelActiveSessionRuns(sessionID string) int {
 	s.delegationJobs.cancelParent(sessionID)
+	waiters := s.cancelSessionSlotWaiters(sessionID)
 	s.activeRunsMu.Lock()
 	runs, ok := s.activeRuns[sessionID]
 	if !ok || len(runs) == 0 {
 		s.activeRunsMu.Unlock()
-		return 0
+		return waiters
 	}
 	cancels := make([]context.CancelFunc, 0, len(runs))
 	for _, cancel := range runs {
@@ -89,7 +91,8 @@ func (s *Server) cancelActiveSessionRuns(sessionID string) int {
 	for _, cancel := range cancels {
 		cancel()
 	}
-	return len(cancels)
+	go s.notifySessionSlotFreed()
+	return len(cancels) + waiters
 }
 
 func isCancellationError(err error) bool {

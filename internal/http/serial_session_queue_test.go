@@ -148,6 +148,7 @@ func runQueuedProjectSessionsWithHook(t *testing.T, settings map[string]string, 
 
 	sessionManager := session.NewManager(store)
 	server := NewServer(cfg, nil, tools.NewManager(cfg.WorkDir), sessionManager, store, speechcache.New(0), 0)
+	server.migrateProjectConcurrencySettings()
 	api := httptest.NewServer(server.router)
 	defer api.Close()
 

@@ -88,3 +88,14 @@ func (s *Server) runAgentMention(ctx context.Context, sess *session.Session, m *
 func mentionReplyMetadata(m *agentMention) map[string]interface{} {
 	return map[string]interface{}{"mentioned_agent_id": m.AgentID, "mentioned_agent_name": m.AgentName}
 }
+
+// completeAgentMentionTurn answers the turn with the mentioned agent's reply and saves it.
+func (s *Server) completeAgentMentionTurn(ctx context.Context, sess *session.Session, m *agentMention) (string, error) {
+	reply, runErr := s.runAgentMention(ctx, sess, m)
+	if runErr != nil {
+		reply = fmt.Sprintf("@%s failed: %s", m.AgentName, runErr.Error())
+	}
+	sess.AddAssistantMessageWithMetadata(reply, nil, mentionReplyMetadata(m))
+	sess.SetStatus(session.StatusCompleted)
+	return reply, s.sessionManager.Save(sess)
+}

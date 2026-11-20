@@ -339,6 +339,11 @@ func (s *Server) handleTelegramInboundMessage(
 	agentConfig := s.agentConfigFromTarget(sess, target, systemPrompt, s.config.MaxSteps, s.config.Temperature)
 	ag := s.newAgentFromConfig(agentConfig, target.Client, s.toolManagerForSession(sess))
 
+	releaseSlot, err := s.waitForSessionSlot(ctx, sess)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseSlot()
 	response, _, err := ag.Run(ctx, sess, llmUserMessage)
 	if err != nil {
 		addRequestFailedAssistantMessage(sess, err)

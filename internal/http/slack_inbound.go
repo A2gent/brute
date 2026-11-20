@@ -302,6 +302,11 @@ func (s *Server) runSlackThreadTurn(ctx context.Context, api *slackClient, botTo
 		return "", fmt.Errorf("failed to save session: %w", err)
 	}
 
+	releaseSlot, err := s.waitForSessionSlot(leaseCtx, sess)
+	if err != nil {
+		return "", err
+	}
+	defer releaseSlot()
 	runCtx, finishRun := s.beginBackgroundSessionRun(leaseCtx, sess.ID)
 	defer finishRun()
 	// Routing sees only the request, so thread text cannot steer provider selection.

@@ -100,6 +100,7 @@ type preparedJobExecution struct {
 	effectiveTaskPrompt string
 	startedAt           time.Time
 	queued              bool // session waits in the serial queue; the queue worker runs it
+	slotReserved        bool
 }
 
 // ExecuteJob runs a recurring job using the same agent routing as chat sessions.
@@ -181,7 +182,14 @@ func (s *Server) prepareJobExecution(job *storage.RecurringJob, extraContext str
 		effectiveTaskPrompt += "\n\n" + strings.TrimSpace(extraContext)
 	}
 	sess.AddUserMessage(effectiveTaskPrompt)
-	if job.QueueSerial {
+	slotReserved := !job.QueueSerial && s.reserveSessionSlot(sess)
+	awaitsAdmission := !job.QueueSerial && !slotReserved
+	if awaitsAdmission {
+		sess.Metadata[sessionQueueModeMetadataKey] = sessionQueueModeSerial
+		sess.Metadata[sessionQueueAutoStartKey] = true
+		sess.Metadata[sessionAwaitsAdmissionKey] = true
+		sess.SetStatus(session.StatusQueued)
+	} else if job.QueueSerial {
 		sess.Metadata[sessionQueueModeMetadataKey] = sessionQueueModeSerial
 		sess.Metadata[sessionQueueAutoStartKey] = true
 		setSessionQueueName(sess, job.QueueName)
@@ -192,7 +200,7 @@ func (s *Server) prepareJobExecution(job *storage.RecurringJob, extraContext str
 	if err := s.sessionManager.Save(sess); err != nil {
 		logging.Warn("Failed to persist job session prompt: %v", err)
 	}
-	if job.QueueSerial {
+	if job.QueueSerial || awaitsAdmission {
 		s.triggerSerialSessionQueueForSession(sess)
 	}
 
@@ -201,11 +209,15 @@ func (s *Server) prepareJobExecution(job *storage.RecurringJob, extraContext str
 		sess:                sess,
 		effectiveTaskPrompt: effectiveTaskPrompt,
 		startedAt:           now,
-		queued:              job.QueueSerial,
+		queued:              job.QueueSerial || awaitsAdmission,
+		slotReserved:        slotReserved,
 	}, nil
 }
 
 func (s *Server) finishJobExecution(ctx context.Context, job *storage.RecurringJob, prepared *preparedJobExecution) {
+	if prepared != nil && prepared.slotReserved && prepared.sess != nil {
+		defer s.releaseSessionSlot(prepared.sess.ID)
+	}
 	if prepared == nil || prepared.exec == nil || prepared.sess == nil || prepared.effectiveTaskPrompt == "" {
 		return
 	}

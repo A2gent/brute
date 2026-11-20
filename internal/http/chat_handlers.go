@@ -64,6 +64,15 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sess.AddUserMessageWithImages(req.Message, images)
+	if !s.reserveSessionSlot(sess) {
+		if err := s.queueSessionForAdmission(sess); err != nil {
+			s.errorResponse(w, http.StatusInternalServerError, "Failed to queue session: "+err.Error())
+			return
+		}
+		s.jsonResponse(w, http.StatusAccepted, ChatResponse{Messages: s.messagesToResponse(sess.Messages), Status: string(sess.Status)})
+		return
+	}
+	defer s.releaseSessionSlot(sess.ID)
 	sess.SetStatus(session.StatusRunning)
 	if err := s.sessionManager.Save(sess); err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, "Failed to update session: "+err.Error())

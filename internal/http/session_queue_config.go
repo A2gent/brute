@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// Project setting holding named queues: JSON array of {"name": "godot", "limit": 1}.
+// Legacy project setting holding named queues, migrated into the global concurrency settings.
 const projectSessionQueuesKey = "session_queues"
 
 const (
@@ -81,20 +81,6 @@ func clampSessionQueueLimit(n int) int {
 		return maxParallelSessionsLimit
 	}
 	return n
-}
-
-// sessionQueueLimit returns the configured limit of a named queue.
-func sessionQueueLimit(settings map[string]string, name string) (int, bool) {
-	queues, err := parseSessionQueues(settings[projectSessionQueuesKey])
-	if err != nil {
-		return 0, false
-	}
-	for _, queue := range queues {
-		if queue.Name == name {
-			return queue.Limit, true
-		}
-	}
-	return 0, false
 }
 
 func serialQueueScope(projectID, queueName string) string {

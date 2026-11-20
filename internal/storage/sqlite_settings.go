@@ -85,6 +85,20 @@ func (s *SQLiteStore) SaveSettings(settings map[string]string) error {
 	return s.saveSettingsAndCustomEnv(normalizeManagedSettings(settings), nil, false)
 }
 
+// SetSetting upserts one managed app setting without touching the others.
+func (s *SQLiteStore) SetSetting(key, value string) error {
+	key = strings.TrimSpace(key)
+	if key == "" || !isManagedAppSettingKey(key) {
+		return fmt.Errorf("unmanaged setting key %q", key)
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO app_settings (key, value, updated_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+	`, key, value, time.Now())
+	return err
+}
+
 func (s *SQLiteStore) GetCustomEnv() (map[string]string, error) {
 	rows, err := s.db.Query(`
 		SELECT key, value

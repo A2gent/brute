@@ -68,8 +68,10 @@ type Server struct {
 	serialQueueMu            sync.Mutex
 	serialQueueWorkers       map[string]int      // scope -> live worker count; guarded by serialQueueMu
 	serialQueueClaimed       map[string]struct{} // session IDs picked by a worker but not yet finished; guarded by serialQueueMu
-	sessionTreeMu            sync.RWMutex        // serializes child creation with archiving a session subtree
-	sessionSummaryWG         sync.WaitGroup      // tracks async session summary goroutines (tests wait on it)
+	concurrencyOnce          sync.Once
+	concurrency              *concurrencyRuntime
+	sessionTreeMu            sync.RWMutex   // serializes child creation with archiving a session subtree
+	sessionSummaryWG         sync.WaitGroup // tracks async session summary goroutines (tests wait on it)
 	sessionSummaryMu         sync.Mutex
 	sessionSummarySeq        uint64                           // guarded by sessionSummaryMu
 	sessionSummaryLatest     map[string]uint64                // session ID -> latest summary token; guarded by sessionSummaryMu
@@ -243,7 +245,11 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.runA2ATunnelIfConfigured()
 	go s.dockerRuntime.runIdleReaper(ctx)
 	go reapOrphanedHostAgents()
-	go s.resumeSerialSessionQueues()
+	go func() {
+		s.migrateProjectConcurrencySettings()
+		s.resumeSerialSessionQueues()
+	}()
+	go s.runConcurrencyMonitor(ctx)
 	go s.refreshCodexContextWindows(ctx)
 	go s.refreshAnthropicContextWindows(ctx)
 	go s.refreshOpenRouterContextWindows(ctx)

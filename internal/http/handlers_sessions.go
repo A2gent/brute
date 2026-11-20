@@ -545,6 +545,9 @@ func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
 	runInBackground := false
 	if sessionIsSerialQueuedAutoRun(sess) {
 		initialPrompt, _, runInBackground = firstQueuedUserMessage(sess)
+		if sessionAwaitsAdmission(sess) {
+			initialPrompt, runInBackground = lastUserMessage(sess)
+		}
 		// Serial-queued sessions defer worktree creation until execution; manual Start
 		// bypasses the queue, so provision the isolated workspace before marking running.
 		if sess.ProjectID != nil && (sess.ParentID == nil || *sess.ParentID == "") && s.sessionWorktree(sess) == nil {
@@ -561,6 +564,7 @@ func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
 		delete(sess.Metadata, sessionQueueAutoStartKey)
 		delete(sess.Metadata, sessionQueueModeMetadataKey)
 		delete(sess.Metadata, sessionQueueNameKey)
+		delete(sess.Metadata, sessionAwaitsAdmissionKey)
 	}
 
 	sess.SetStatus(session.StatusRunning)

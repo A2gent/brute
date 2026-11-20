@@ -84,6 +84,10 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if _, supplied := req.Settings[concurrencySettingKey]; !supplied && previousSettings[concurrencySettingKey] != "" {
+		req.Settings[concurrencySettingKey] = previousSettings[concurrencySettingKey]
+	}
+
 	nextCustomEnv := map[string]string{}
 	if req.CustomEnv != nil {
 		nextCustomEnv = *req.CustomEnv
@@ -97,6 +101,10 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	syncCustomEnvToEnv(oldCustomEnv, nextCustomEnv)
+	if previousSettings[concurrencySettingKey] != req.Settings[concurrencySettingKey] {
+		s.invalidateConcurrencyConfig()
+		s.scheduleSessionQueueResume()
+	}
 	syncSpeechSettings(previousSettings, req.Settings)
 	filesearch.SetIndexingEnabledFromSettings(req.Settings)
 	folder := strings.TrimSpace(req.Settings[sessionsFolderSettingKey])

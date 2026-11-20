@@ -13,30 +13,42 @@ import (
 
 const serialQueueGlobalScope = "__global__"
 
-// Project setting that raises how many queued sessions may run at once within a project.
+// Sessions queued only because a concurrency limit was full; each still needs admission.
+const serialQueueAdmissionScope = "__admission__"
+
+const admissionScopeDefaultWorkers = 10
+
+// Legacy project setting migrated into the global per-project limit on startup.
 const (
 	projectMaxParallelSessionsKey = "max_parallel_sessions"
 	maxParallelSessionsLimit      = 10
 )
 
 // serialQueueLimitForScope returns the number of concurrent queue workers allowed for a scope.
-// Defaults to 1 (strictly serial) for the global scope and for projects without the setting.
-// A named queue uses its own limit and falls back to the default queue limit once deleted.
+// A project's default queue runs one session at a time unless the project has a global
+// per-project limit; a named queue uses its global limit and falls back to the project
+// default once deleted.
 func (s *Server) serialQueueLimitForScope(scope string) int {
-	if scope == serialQueueGlobalScope || s.store == nil {
+	cfg := s.loadConcurrencyConfig()
+	if scope == serialQueueAdmissionScope {
+		if cfg.MaxSessions > 0 {
+			return cfg.MaxSessions
+		}
+		return admissionScopeDefaultWorkers
+	}
+	if scope == serialQueueGlobalScope {
 		return 1
 	}
 	projectID, queueName := splitSerialQueueScope(scope)
-	project, err := s.store.GetProject(projectID)
-	if err != nil || project == nil {
-		return 1
-	}
 	if queueName != "" {
-		if limit, ok := sessionQueueLimit(project.Settings, queueName); ok {
+		if limit, ok := cfg.queueLimit(queueName); ok {
 			return limit
 		}
 	}
-	return parseMaxParallelSessions(project.Settings[projectMaxParallelSessionsKey])
+	if limit := cfg.ProjectLimits[projectID]; limit > 0 {
+		return limit
+	}
+	return 1
 }
 
 // triggerProjectSessionQueues tops up every queue of a project, including named ones.
@@ -45,14 +57,6 @@ func (s *Server) triggerProjectSessionQueues(project *storage.Project) {
 		return
 	}
 	s.triggerSerialSessionQueue(project.ID)
-	queues, err := parseSessionQueues(project.Settings[projectSessionQueuesKey])
-	if err != nil {
-		logging.Warn("Skipped named session queues of project %s: %v", project.ID, err)
-	}
-	for _, queue := range queues {
-		s.triggerSerialSessionQueue(serialQueueScope(project.ID, queue.Name))
-	}
-	// Always run the safety net: sessions may sit in scopes that settings no longer declare.
 	s.triggerQueuedSessionScopes(project.ID)
 }
 
@@ -185,6 +189,7 @@ func (s *Server) runSerialSessionQueueWorker(ctx context.Context, scope string) 
 
 		shouldContinue := s.runSerialQueuedSession(ctx, next.ID)
 		s.releaseSerialQueueClaim(next.ID)
+		s.releaseSessionSlot(next.ID)
 		if !shouldContinue {
 			s.clearSerialSessionQueueWorker(scope)
 			return
@@ -244,6 +249,9 @@ func (s *Server) nextSerialQueuedSession(scope string) (*session.Session, error)
 		if _, taken := s.serialQueueClaimed[c.ID]; taken {
 			continue
 		}
+		if !s.reserveSessionSlot(c) {
+			continue
+		}
 		s.serialQueueClaimed[c.ID] = struct{}{}
 		return c, nil
 	}
@@ -259,7 +267,7 @@ func (s *Server) hasUnclaimedSerialQueuedSession(scope string) bool {
 	s.serialQueueMu.Lock()
 	defer s.serialQueueMu.Unlock()
 	for _, c := range candidates {
-		if _, taken := s.serialQueueClaimed[c.ID]; !taken {
+		if _, taken := s.serialQueueClaimed[c.ID]; !taken && s.sessionAdmissionBlockReason(c) == "" {
 			return true
 		}
 	}
@@ -300,6 +308,9 @@ func (s *Server) serialQueueCandidates(scope string) ([]*session.Session, error)
 }
 
 func serialQueueScopeForSession(sess *session.Session) string {
+	if sessionAwaitsAdmission(sess) {
+		return serialQueueAdmissionScope
+	}
 	if sess != nil && sess.ProjectID != nil {
 		if projectID := strings.TrimSpace(*sess.ProjectID); projectID != "" {
 			return serialQueueScope(projectID, sessionQueueName(sess))
@@ -326,6 +337,11 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 	}
 
 	prompt, _, ok := firstQueuedUserMessage(sess)
+	awaitedAdmission := sessionAwaitsAdmission(sess)
+	if awaitedAdmission {
+		prompt, ok = lastUserMessage(sess)
+		clearSessionAdmissionQueue(sess)
+	}
 	if !ok {
 		sess.AddAssistantMessage("Queued serial session could not start because it has no initial user message.", nil)
 		sess.SetStatus(session.StatusFailed)
@@ -336,8 +352,9 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 		return true
 	}
 
-	// The worktree is created only now, at start time.
-	if sess.ProjectID != nil && (sess.ParentID == nil || *sess.ParentID == "") && s.sessionWorktree(sess) == nil {
+	// The worktree is created only now, at start time; sessions held back by a limit
+	// would have started in place, so they keep doing that.
+	if !awaitedAdmission && sess.ProjectID != nil && (sess.ParentID == nil || *sess.ParentID == "") && s.sessionWorktree(sess) == nil {
 		branch, _ := sess.Metadata["worktree_branch"].(string)
 		baseRef, _ := sess.Metadata["worktree_base_ref"].(string)
 		if err := s.createSessionWorktree(sess.ID, *sess.ProjectID, branch, baseRef); err != nil {
@@ -364,7 +381,11 @@ func (s *Server) runSerialQueuedSession(ctx context.Context, sessionID string) b
 
 	runCtx, finishRun := s.beginBackgroundSessionRun(ctx, sess.ID)
 	logging.LogSession("serial_queue_started", sess.ID, "queued serial session")
-	s.runBackgroundSession(runCtx, finishRun, sess, prompt)
+	if mention := s.admittedChatMention(sess, prompt, awaitedAdmission); mention != nil {
+		s.runBackgroundAgentMention(runCtx, finishRun, sess, mention)
+	} else {
+		s.runBackgroundSession(runCtx, finishRun, sess, prompt)
+	}
 
 	fresh, err := s.sessionManager.Get(sess.ID)
 	if err != nil {
@@ -396,6 +417,25 @@ func (s *Server) runBackgroundSession(runCtx context.Context, finishRun func(), 
 			logging.Warn("Background session finalize failed for session %s: %v", sess.ID, finalizeErr)
 		}
 	}
+}
+
+// admittedChatMention keeps "@agent" chats deferred by a limit on the same path as immediate ones.
+func (s *Server) admittedChatMention(sess *session.Session, prompt string, awaitedAdmission bool) *agentMention {
+	if !awaitedAdmission {
+		return nil
+	}
+	return s.resolveAgentMention(sess, prompt)
+}
+
+func (s *Server) runBackgroundAgentMention(runCtx context.Context, finishRun func(), sess *session.Session, mention *agentMention) {
+	defer s.queueTelegramSessionMessageSync(sess.ID)
+	defer finishRun()
+	reply, err := s.completeAgentMentionTurn(runCtx, sess, mention)
+	if err != nil {
+		logging.Warn("Failed to save agent mention reply for session %s: %v", sess.ID, err)
+		return
+	}
+	s.publishSessionEvent(sess.ID, ChatStreamEvent{Type: "done", Content: reply, Messages: s.messagesToResponse(sess.Messages), Status: string(sess.Status)})
 }
 
 func firstQueuedUserMessage(sess *session.Session) (string, []session.ImageAttachment, bool) {

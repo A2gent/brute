@@ -68,6 +68,7 @@ func TestSerialQueueLimitForNamedQueue(t *testing.T) {
 	if err := store.SaveProject(project); err != nil {
 		t.Fatalf("save project: %v", err)
 	}
+	server.migrateProjectConcurrencySettings()
 
 	cases := map[string]int{
 		project.ID:                              3,
@@ -76,6 +77,7 @@ func TestSerialQueueLimitForNamedQueue(t *testing.T) {
 		serialQueueScope(project.ID, "images"):  2,
 		serialQueueScope(project.ID, "unknown"): 3,
 		serialQueueGlobalScope:                  1,
+		serialQueueAdmissionScope:               admissionScopeDefaultWorkers,
 	}
 	for scope, want := range cases {
 		if got := server.serialQueueLimitForScope(scope); got != want {
@@ -115,6 +117,7 @@ func TestCreateJobRejectsUnknownQueue(t *testing.T) {
 	if err := store.SaveProject(project); err != nil {
 		t.Fatalf("save project: %v", err)
 	}
+	server.migrateProjectConcurrencySettings()
 
 	body := `{"name":"Loop","schedule_text":"every hour","task_prompt":"do it","enabled":true,
 		"project_id":"project-queue-validation","queue_name":"nope"}`
@@ -273,15 +276,8 @@ func TestRemovedQueueDetachesLoopsFromProject(t *testing.T) {
 		t.Fatalf("save job: %v", err)
 	}
 
-	body, _ := json.Marshal(map[string]interface{}{
-		"settings": map[string]string{projectSessionQueuesKey: ""},
-	})
-	req := httptest.NewRequest(http.MethodPut, "/projects/"+projectID, strings.NewReader(string(body)))
-	rec := httptest.NewRecorder()
-	server.router.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("update project status = %d, want 200: %s", rec.Code, rec.Body.String())
-	}
+	server.migrateProjectConcurrencySettings()
+	putConcurrency(t, server, `{"queues":[]}`)
 
 	stored, err := store.GetJob(job.ID)
 	if err != nil {
@@ -370,6 +366,7 @@ func TestNamedQueueLimitsConcurrentLoopRuns(t *testing.T) {
 
 	sessionManager := session.NewManager(store)
 	server := NewServer(cfg, nil, tools.NewManager(cfg.WorkDir), sessionManager, store, speechcache.New(0), 0)
+	server.migrateProjectConcurrencySettings()
 
 	projectID := project.ID
 	saveQueued := func(task, queueName string) {
@@ -434,15 +431,8 @@ func TestQueuedSessionsStartAfterTheirQueueIsDeleted(t *testing.T) {
 
 	queued := saveNamedQueueSession(t, sessionManager, projectID, "godot")
 
-	body, _ := json.Marshal(map[string]interface{}{
-		"settings": map[string]string{projectSessionQueuesKey: ""},
-	})
-	req := httptest.NewRequest(http.MethodPut, "/projects/"+projectID, strings.NewReader(string(body)))
-	rec := httptest.NewRecorder()
-	server.router.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("update project status = %d, want 200: %s", rec.Code, rec.Body.String())
-	}
+	server.migrateProjectConcurrencySettings()
+	putConcurrency(t, server, `{"queues":[]}`)
 
 	if got := waitSessionStatus(t, sessionManager, queued.ID, session.StatusCompleted, 3*time.Second); got != session.StatusCompleted {
 		t.Fatalf("session in removed queue status = %s, want %s", got, session.StatusCompleted)
@@ -533,6 +523,7 @@ func newNamedQueueProjectServer(t *testing.T, settings map[string]string) (*Serv
 
 	sessionManager := session.NewManager(store)
 	server := NewServer(cfg, nil, tools.NewManager(cfg.WorkDir), sessionManager, store, speechcache.New(0), 0)
+	server.migrateProjectConcurrencySettings()
 	return server, sessionManager, project.ID
 }
 
@@ -612,8 +603,7 @@ func TestLoweringNamedQueueLimitRetiresSurplusWorkers(t *testing.T) {
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 		Settings: map[string]string{
-			projectMaxParallelSessionsKey: "1",
-			projectSessionQueuesKey:       `[{"name":"godot","limit":2}]`,
+			projectSessionQueuesKey: `[{"name":"godot","limit":2}]`,
 		},
 	}
 	if err := store.SaveProject(project); err != nil {
@@ -630,6 +620,7 @@ func TestLoweringNamedQueueLimitRetiresSurplusWorkers(t *testing.T) {
 
 	sessionManager := session.NewManager(store)
 	server := NewServer(cfg, nil, tools.NewManager(cfg.WorkDir), sessionManager, store, speechcache.New(0), 0)
+	server.migrateProjectConcurrencySettings()
 	projectID := project.ID
 	for i := 0; i < 4; i++ {
 		saveNamedQueueSession(t, sessionManager, projectID, "godot")
@@ -653,9 +644,11 @@ func TestLoweringNamedQueueLimitRetiresSurplusWorkers(t *testing.T) {
 		t.Fatal("both workers did not start before the limit was lowered")
 	}
 
-	project.Settings[projectSessionQueuesKey] = `[{"name":"godot","limit":1}]`
-	if err := store.SaveProject(project); err != nil {
-		t.Fatalf("save project: %v", err)
+	mu.Lock()
+	lowered = true
+	mu.Unlock()
+	if err := server.saveConcurrencyConfig(concurrencyConfig{Queues: []sessionQueueConfig{{Name: "godot", Limit: 1}}}); err != nil {
+		t.Fatalf("save concurrency: %v", err)
 	}
 	mu.Lock()
 	lowered = true
@@ -697,5 +690,14 @@ func TestResumeRestoresNamedQueueSessions(t *testing.T) {
 	}
 	if got := sessionQueueName(reloaded); got != "godot" {
 		t.Fatalf("resumed session queue name = %q, want godot", got)
+	}
+}
+
+func putConcurrency(t *testing.T, server *Server, body string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/concurrency", strings.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update concurrency status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 }

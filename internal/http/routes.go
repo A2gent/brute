@@ -106,6 +106,7 @@ func (s *Server) registerSystemRoutes(r chi.Router) {
 		r.Post("/sub-agent-containers/restart", s.handleRestartRunningSubAgentContainers)
 		r.Get("/reload-readiness", s.handleReloadReadiness)
 		r.Get("/version", s.handleSystemVersion)
+		r.Get("/resources", s.handleSystemResources)
 		r.Post("/update", s.handleSystemUpdate)
 	})
 }

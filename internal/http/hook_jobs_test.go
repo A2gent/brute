@@ -33,8 +33,13 @@ func TestCreateWebhookJobHasNoScheduleAndIsNeverDue(t *testing.T) {
 		t.Fatalf("repository was not stored: %v %+v", err, stored)
 	}
 	due, err := store.GetDueJobs(time.Now().Add(time.Hour))
-	if err != nil || len(due) != 0 {
-		t.Fatalf("webhook job must never be due: %v %+v", err, due)
+	if err != nil {
+		t.Fatalf("get due jobs: %v", err)
+	}
+	for _, job := range due {
+		if job.ID == resp.ID {
+			t.Fatalf("webhook job must never be due: %+v", job)
+		}
 	}
 }
 

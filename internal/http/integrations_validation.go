@@ -220,6 +220,8 @@ func defaultIntegrationName(provider string) string {
 		return "Meshy"
 	case "tripo":
 		return "Tripo3D"
+	case "minimax":
+		return "MiniMax"
 	default:
 		return provider
 	}

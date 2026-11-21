@@ -34,6 +34,7 @@ var supportedIntegrationProviders = map[string]struct{}{
 	"blender":         {},
 	"meshy":           {},
 	"tripo":           {},
+	"minimax":         {},
 	"youtube":         {},
 	"a2_registry":     {},
 }
@@ -71,6 +72,7 @@ var requiredConfigFields = map[string][]string{
 	"blender":         {"binary_path"},
 	"meshy":           {"api_key"},
 	"tripo":           {"api_key"},
+	"minimax":         {"api_key"},
 	"youtube":         {},
 	"a2_registry":     {"api_key"},
 }

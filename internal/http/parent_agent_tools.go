@@ -83,7 +83,7 @@ var toolPlacements = map[string]toolPlacement{
 	"notify_webapp": placementChild, "parallel": placementChild, "pipeline": placementChild,
 	"question": placementChild, "random_number": placementChild,
 	"read": placementChild, "relevance_gate": placementChild, "replace_lines": placementChild,
-	"session_task_progress": placementChild, "sql_query": placementChild, "stt": placementChild,
+	"session_task_progress": placementChild, "show_html": placementChild, "sql_query": placementChild, "stt": placementChild,
 	"suggest_git_commit": placementChild, "suggest_session": placementChild, "take_camera_photo_tool": placementChild,
 	"take_screenshot_tool": placementChild, "tts": placementChild, "wait_until": placementChild, "write": placementChild,
 	"youtube_transcript": placementChild,
@@ -104,7 +104,7 @@ var hostPathTools = map[string]bool{
 	"blender_render":                true, "blender_run_script": true,
 	"comfyui_generate_image": true, "comfyui_run_workflow": true,
 	"leonardo_generate_image": true, "openai_generate_image": true,
-	"meshy_generate_3d": true, "tripo_generate_3d": true,
+	"meshy_generate_3d": true, "tripo_generate_3d": true, "minimax_generate_video": true,
 }
 
 func parentAgentToolAllowed(name string) bool {

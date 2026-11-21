@@ -198,7 +198,7 @@ func TestParentAgentToolsIntegrationAllowlistAndDirectScope(t *testing.T) {
 		"telegram_user_list_chats", "telegram_user_read_messages", "discord_send_message", "exa_search",
 		"tavily_search", "perplexity_search", "leonardo_generate_image", "comfyui_generate_image",
 		"comfyui_run_workflow", "blender_render", "blender_run_script", "meshy_generate_3d",
-		"tripo_generate_3d", "openai_generate_image",
+		"tripo_generate_3d", "minimax_generate_video", "openai_generate_image",
 	}
 	manager := child.toolManagerForSession(sess)
 	for _, name := range allowed {

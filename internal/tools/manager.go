@@ -145,6 +145,7 @@ func NewManagerWithOptions(workDir string, opts *ManagerOptions) *Manager {
 	m.Register(NewRandomNumberTool())
 	m.Register(NewSuggestSessionTool())
 	m.Register(NewSuggestGitCommitTool())
+	m.Register(NewShowHTMLTool())
 	m.Register(NewCurrentTimeTool())
 	m.Register(NewTakeScreenshotTool(workDir))
 	m.Register(NewTakeCameraPhotoTool(workDir))

@@ -36,6 +36,7 @@ var integrationToolsByProvider = map[string][]string{
 	"blender":         {"blender_render", "blender_run_script"},
 	"meshy":           {"meshy_generate_3d"},
 	"tripo":           {"tripo_generate_3d"},
+	"minimax":         {"minimax_generate_video"},
 	"telegram":        {"telegram_send_message"},
 	"telegram_user":   {"telegram_user_list_chats", "telegram_user_read_messages"},
 	"discord":         {"discord_send_message"},

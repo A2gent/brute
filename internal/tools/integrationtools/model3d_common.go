@@ -185,7 +185,7 @@ func pollModel3DTask(ctx context.Context, interval time.Duration, check func(con
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("timed out waiting for 3D generation: %w", ctx.Err())
+			return fmt.Errorf("timed out waiting for generation task: %w", ctx.Err())
 		case <-time.After(interval):
 		}
 	}

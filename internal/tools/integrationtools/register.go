@@ -22,7 +22,7 @@ func IsIntegrationBackedTool(name string) bool {
 		"telegram_send_message", "telegram_user_list_chats", "telegram_user_read_messages",
 		"discord_send_message", "exa_search", "tavily_search", "perplexity_search",
 		"leonardo_generate_image", "comfyui_generate_image", "comfyui_run_workflow",
-		"blender_render", "blender_run_script", "meshy_generate_3d", "tripo_generate_3d",
+		"blender_render", "blender_run_script", "meshy_generate_3d", "tripo_generate_3d", "minimax_generate_video",
 		"openai_generate_image":
 		return true
 	}
@@ -66,6 +66,7 @@ func Register(manager *tools.Manager, store storage.Store, clipStore *speechcach
 	manager.Register(NewBlenderRunScriptTool(store, manager.WorkDir(), filepath.Join(manager.WorkDir(), "generated", "blender")))
 	manager.Register(NewMeshyGenerate3DTool(store, manager.WorkDir(), filepath.Join(manager.WorkDir(), "generated", "meshy")))
 	manager.Register(NewTripoGenerate3DTool(store, manager.WorkDir(), filepath.Join(manager.WorkDir(), "generated", "tripo")))
+	manager.Register(NewMiniMaxGenerateVideoTool(store, manager.WorkDir(), filepath.Join(manager.WorkDir(), "generated", "minimax")))
 }
 
 // SpeechEngineTools returns the engine-specific TTS implementations keyed by engine name. They are
